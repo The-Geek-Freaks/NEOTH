@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Archive Bridge combined product gate source review PASS; hosted execution pending",
+  "status": "Archive Bridge startup fixture repair reviewed; hosted retry pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 255809,
-    "sha256": "A8E2C20617876FCFA836FC7F1BB4DB7073CE14FE58E0C2872AFD8C3DC8F3DC58"
+    "bytes": 255796,
+    "sha256": "6A4D1E32835DC1B59C6710C4DC6B591828B15F843ECDF2B1A992B84F88D4A741"
   },
   "sourceInputs": 1422,
   "requiredNativeTests": [
@@ -53532,6 +53532,44 @@
       }
     ],
     "note": "Actual compiled CLI/daemon and installed tracked bundle, exact-event retry and SQLite effect, isolated cleanup. No native Obsidian desktop or parent acceptance. Existing Rollback native2012/777 continue independently.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1741BridgeStartupFixture": {
+    "base": "72550779924d281f08534447ba1ab2df688c6856",
+    "sources": [
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 24968,
+        "sha256": "5D2652FC3E1704C342ACE206B98255E98EF1D54E47282790389542F8D3A9EA37",
+        "blob": "79986b6c0154a5ffba5ec0d454430ae63b055b0a"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 4935,
+        "sha256": "15B17338671E187CF037C4011F988CB56C57B27C0259C16F38C1BA413768E0F5",
+        "blob": "901331d0aa8772163986d8046851f671a2c8567e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 486398,
+        "sha256": "ECAD9BF79A78F6D565EB74E92CCD96C67EBC5EE283B9CABDFD3EC763009C3146",
+        "blob": "ddaf1cf299666dd1eedd441f5dfd2a0cad807d91"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1505914,
+        "sha256": "0334B5C3D0816FC8F40465AA049420C63FB11F2351D7446CFCD258AD73DD46BA",
+        "blob": "6bbd4d8e650210d8bfcb7cd2d186a36328d73614"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2116437,
+        "sha256": "1D0935C61882B8D5B320E6F030190F374B27F35797A90E74212875F944F70CEF",
+        "blob": "6af702cee3eea51018ef966950f8d9127eca98ee"
+      }
+    ],
+    "note": "Original failed product36552210067 at72550779 had daemon_exited_early and full cleanup. Explicit manually-completed onboarding config plus bounded redacted startup diagnostics; no product guard bypass or local validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

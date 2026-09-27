@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1741 Archive Bridge startup fixture correction (2026-09-27):**
+Product36352210067 at72550779 passed locked plugin/typecheck/build/contracts,
+helper checks and CLI build, then failed with daemon_exited_early after install.
+Original artifact10942598720 ZIPdbe40e676b395540370ea4f35d29daba655eafd33f9113596617a60f472414dd
+verified; all six cleanup flags true. Source shows the minimal fixture lacked
+explicit onboarding completion required by serve; the discarded original
+stderr does not prove the precise startup message. The fixture now declares
+its completed manual integration setup and captures only bounded hashed logs,
+fixed diagnostic classes and exit codes. Product guards remain unchanged.
+A fresh combined hosted run is required. Existing Rollback native2012/777
+continue onb26808ea; no local runtime or parent ROAD closure.
+
 **W1736/W1738 Archive Bridge combined product gate (2026-09-27):**
 A dedicated manual main-only workflow verifies the locked0.2.0 bundle, its
 tracked artifact equality and contract checks, then builds the actual CLI.

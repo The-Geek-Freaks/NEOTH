@@ -52,16 +52,42 @@ def write_bridge_config(home: Path, vault: Path) -> None:
     # FreedomConfig derives defaults, so this is the smallest complete daemon
     # configuration.  It admits exactly the accountless local Obsidian source.
     policy = {"revision": 1, "consent": "explicitly_granted", "retention": "encrypted_evidence", "egress": "local_only", "agent_authority": "denied", "side_effects": "forbidden", "limits": {"max_items_per_run": 1000, "max_bytes_per_item": 16777216, "max_total_bytes_per_run": 134217728, "max_runtime_seconds": 300}}
-    value = {"operator_id": "archive-bridge-canary", "obsidian_vault": str(vault), "obsidian_vault_reader_enabled": True, "obsidian_archive_bridge_enabled": True, "context_connectors": {"schema_version": 1, "enabled": True, "registered_accounts": [{"configuration": {"connector_id": "obsidian", "account_id": None, "subject_id": "archive-bridge-canary", "credential_ref": None, "policy": policy}, "lifecycle": "active", "lifecycle_revision": 1}]}}
+    value = {"operator_id": "archive-bridge-canary", "onboarding_complete": True, "obsidian_vault": str(vault), "obsidian_vault_reader_enabled": True, "obsidian_archive_bridge_enabled": True, "context_connectors": {"schema_version": 1, "enabled": True, "registered_accounts": [{"configuration": {"connector_id": "obsidian", "account_id": None, "subject_id": "archive-bridge-canary", "credential_ref": None, "policy": policy}, "lifecycle": "active", "lifecycle_revision": 1}]}}
     # JSON is valid YAML; avoid a parser dependency in the acceptance helper.
     (home / "freedom.yaml").write_text(json.dumps(value), encoding="utf-8")
 
-def start_daemon(binary: Path, home: Path, env: dict[str, str], daemons: list[subprocess.Popen[bytes]]) -> subprocess.Popen[bytes]:
-    process = subprocess.Popen([str(binary), "serve", "--config", str(home / "freedom.yaml")], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    daemons.append(process)
+def redacted_daemon_diagnostic(reason: str, returncode: int | None, raw: bytes) -> dict:
+    if reason not in {"daemon_exited_early", "daemon_not_ready"}: raise Failure("daemon_diagnostic_reason_invalid")
+    bounded = raw[:LIMIT]
+    signatures = (
+        (b"GOLD-ADAPT-OH-03: onboarding incomplete", "onboarding_incomplete"),
+        (b"mode 0o700 required", "home_permissions_rejected"),
+        (b"missing field", "configuration_missing_field"),
+        (b"runtime config pair at", "runtime_config_pair_rejected"),
+    )
+    # Emit only a fixed diagnostic class; never return matched text or paths.
+    classification = next((code for marker, code in signatures if marker in bounded), "unclassified")
+    return {"reason": reason, "classification": classification, "returncode": returncode, "log_sha256": hashlib.sha256(bounded).hexdigest(), "log_bytes": len(bounded), "log_truncated": len(raw) > LIMIT}
+
+def capture_daemon_diagnostic(path: Path, reason: str, returncode: int | None) -> dict:
+    try:
+        with path.open("rb") as stream: raw = stream.read(LIMIT + 1)
+    except OSError: raw = b""
+    return redacted_daemon_diagnostic(reason, returncode, raw)
+
+def start_daemon(binary: Path, home: Path, env: dict[str, str], root: Path, state: dict) -> subprocess.Popen[bytes]:
+    log = root / f"daemon-{len(state['daemons'])}.log"; state["artifacts"].append(log)
+    try:
+        sink = log.open("xb")
+        try: process = subprocess.Popen([str(binary), "serve", "--config", str(home / "freedom.yaml")], env=env, stdin=subprocess.DEVNULL, stdout=sink, stderr=subprocess.STDOUT)
+        finally: sink.close()
+    except OSError as error: raise Failure("daemon_spawn_failed") from error
+    state["daemons"].append(process)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        if process.poll() is not None: raise Failure("daemon_exited_early")
+        if process.poll() is not None:
+            state["daemon_diagnostics"].append(capture_daemon_diagnostic(log, "daemon_exited_early", process.returncode))
+            raise Failure("daemon_exited_early")
         try:
             json_command([str(binary), "--output", "json", "obsidian", "bridge", "pairing-status"], env)
             return process
@@ -69,6 +95,7 @@ def start_daemon(binary: Path, home: Path, env: dict[str, str], daemons: list[su
     process.terminate()
     try: process.wait(timeout=10)
     except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
+    state["daemon_diagnostics"].append(capture_daemon_diagnostic(log, "daemon_not_ready", process.returncode))
     raise Failure("daemon_not_ready")
 
 def stop_daemon(process: subprocess.Popen[bytes]) -> None:
@@ -199,7 +226,7 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
     # Only then are operator-owned settings/additions introduced, matching a
     # real installed plugin rather than asking install to accept a foreign slot.
     (plugin_dir / "data.json").write_bytes(sentinel); (plugin_dir / "operator.extra").write_bytes(unknown)
-    daemon = start_daemon(binary, home, env, state["daemons"])
+    state["stage"] = "daemon_start_for_pair"; daemon = start_daemon(binary, home, env, root, state)
     try:
         state["stage"] = "pair"
         pairing = json_command([str(binary), "--output", "json", "obsidian", "bridge", "pair", "--vault", str(vault)], env)
@@ -209,7 +236,7 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
     pairing_file = root / "pairing.json"; state["pairing"] = pairing_file; pairing_file.write_text(json.dumps(pairing), encoding="utf-8")
     state["stage"] = "offline_queue"; offline = driver(node, driver_path, plugin_dir / "main.js", vault, root / "offline.json", "offline-pair", env, state["artifacts"], pairing_file)
     if offline["pending"] != 1 or offline["exchanges"]: raise Failure("offline_queue_not_retained")
-    daemon = start_daemon(binary, home, env, state["daemons"])
+    state["stage"] = "daemon_start_for_accept"; daemon = start_daemon(binary, home, env, root, state)
     try:
         state["stage"] = "daemon_ipc_accept"; accepted = driver(node, driver_path, plugin_dir / "main.js", vault, root / "accepted.json", "sync", env, state["artifacts"])
         if accepted["pending"] or "accepted" not in accepted["exchanges"] or len(accepted["sync_descriptors"]) != 1 or receipt_count(home) != 1: raise Failure("sync_not_accepted")
@@ -227,8 +254,8 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
         state["stage"] = "stale"; stale_queued = driver(node, driver_path, plugin_dir / "main.js", vault, root / "stale-queued.json", "sync", env, state["artifacts"])
         if stale_queued["pending"] != 1: raise Failure("stale_queue_not_retained")
         note.unlink()
-        daemon = start_daemon(binary, home, env, state["daemons"])
-        stale = driver(node, driver_path, plugin_dir / "main.js", vault, root / "stale.json", "sync", env, state["artifacts"])
+        state["stage"] = "daemon_start_for_stale"; daemon = start_daemon(binary, home, env, root, state)
+        state["stage"] = "stale"; stale = driver(node, driver_path, plugin_dir / "main.js", vault, root / "stale.json", "sync", env, state["artifacts"])
         if stale["pending"] or "stale_revision" not in stale["exchanges"]: raise Failure("stale_not_proven")
         observe_import_effect(home, b"fixture")
         # Queue once while offline, then revoke before the old generation can sync.
@@ -236,8 +263,8 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
         note.write_text("---\nsource: neoth-archive-bridge\n---\nold generation", encoding="utf-8")
         state["stage"] = "unpair"; retained = driver(node, driver_path, plugin_dir / "main.js", vault, root / "retained.json", "sync", env, state["artifacts"])
         if retained["pending"] != 1: raise Failure("unpair_fixture_queue_invalid")
-        daemon = start_daemon(binary, home, env, state["daemons"])
-        json_command([str(binary), "--output", "json", "obsidian", "bridge", "unpair", "--vault", str(vault)], env)
+        state["stage"] = "daemon_start_for_unpair"; daemon = start_daemon(binary, home, env, root, state)
+        state["stage"] = "unpair"; json_command([str(binary), "--output", "json", "obsidian", "bridge", "unpair", "--vault", str(vault)], env)
         inert = driver(node, driver_path, plugin_dir / "main.js", vault, root / "inert.json", "sync", env, state["artifacts"])
         # Unpair withdraws the private listener, so no synthetic `unpaired`
         # response is expected. The old generation must remain queued and no
@@ -267,12 +294,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--root", required=True); parser.add_argument("--home", required=True); parser.add_argument("--vault", required=True); parser.add_argument("--receipt", required=True); parser.add_argument("--node", default="node"); parser.add_argument("--workflow", required=True); args = parser.parse_args()
     binary, root, home, vault, receipt, workflow = Path(args.binary).resolve(), Path(args.root).resolve(), Path(args.home).resolve(), Path(args.vault).resolve(), Path(args.receipt).resolve(), Path(args.workflow).resolve()
     require_hosted(root, home, vault, receipt); receipt.parent.mkdir(parents=True, exist_ok=True)
-    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "artifacts": [], "daemons": []}; outcome: dict | None = None; error = None
+    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "artifacts": [], "daemons": [], "daemon_diagnostics": []}; outcome: dict | None = None; error = None
     try: outcome = execute(binary, root, home, vault, workflow, args.node, state)
     except Failure as caught: error = str(caught)
     except Exception: error = "unexpected_failure"
     cleanup = cleanup_owned(root, home, vault, state["host_home"], state["pairing"], state["artifacts"], state["daemons"])
-    result = {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "outcome": "passed" if outcome is not None and all(cleanup.values()) else "failed", "stage": "cleanup" if outcome is not None else state["stage"], "failure": error, "cleanup": cleanup, "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui"}
+    result = {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "outcome": "passed" if outcome is not None and all(cleanup.values()) else "failed", "stage": "cleanup" if outcome is not None else state["stage"], "failure": error, "cleanup": cleanup, "daemon_start_diagnostics": state["daemon_diagnostics"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui"}
     if outcome is not None: result.update(outcome)
     receipt.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     return 0 if result["outcome"] == "passed" else 1

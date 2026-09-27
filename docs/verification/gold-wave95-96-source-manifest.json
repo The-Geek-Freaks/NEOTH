@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T21:32:12.8093815Z",
-  "validationStatus": "Archive Bridge combined product gate source review PASS; hosted execution pending",
+  "capturedUtc": "2026-09-27T21:46:11.4280760Z",
+  "validationStatus": "Archive Bridge startup fixture repair reviewed; hosted retry pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3488,8 +3488,8 @@
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_canary.py",
-      "bytes": 23014,
-      "sha256": "4DF27B9CED617A90976F909F6C957F7D47DEFCDE8C6F1D2F4406DEDABB9BE19C"
+      "bytes": 24968,
+      "sha256": "5D2652FC3E1704C342ACE206B98255E98EF1D54E47282790389542F8D3A9EA37"
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
@@ -3568,8 +3568,8 @@
     },
     {
       "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
-      "bytes": 3994,
-      "sha256": "D6C0BDA899D0971B3B277EEBEBC8648EA8D43229182DFF5B8486D5E0987FF9C7"
+      "bytes": 4935,
+      "sha256": "15B17338671E187CF037C4011F988CB56C57B27C0259C16F38C1BA413768E0F5"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3633,18 +3633,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 485560,
-      "sha256": "C752978E5AAD289BB8C539E73690DAAEE89E9C30F3C7C0CA35E96D185A95CFF9"
+      "bytes": 486398,
+      "sha256": "ECAD9BF79A78F6D565EB74E92CCD96C67EBC5EE283B9CABDFD3EC763009C3146"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1505076,
-      "sha256": "2052D5AFD736C4920BECE198811C9F4D2935A489B76D650363BA9D9C92952EA4"
+      "bytes": 1505914,
+      "sha256": "0334B5C3D0816FC8F40465AA049420C63FB11F2351D7446CFCD258AD73DD46BA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2115599,
-      "sha256": "298A104C4DD72FA0DCD03320188993727C8CAAB2A8C7902AFD0E780EDD3DF256"
+      "bytes": 2116437,
+      "sha256": "1D0935C61882B8D5B320E6F030190F374B27F35797A90E74212875F944F70CEF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -23,6 +23,7 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
         self.assertEqual(account[0]["lifecycle"], "active")
         self.assertTrue(value["obsidian_vault_reader_enabled"])
         self.assertTrue(value["obsidian_archive_bridge_enabled"])
+        self.assertTrue(value["onboarding_complete"])
 
     def test_hosted_guard_rejects_non_isolated_or_non_main_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -60,5 +61,19 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
             (home / "obsidian_archive_bridge_state.v1.json").write_text('{"opaque-source":"opaque-revision"}', encoding="utf-8")
             canary.observe_import_effect(home, b"fixture")
             with self.assertRaises(canary.Failure): canary.observe_import_effect(home, b"different")
+
+    def test_daemon_diagnostic_never_echoes_secret_bearing_stderr(self) -> None:
+        raw = b"startup failed token=do-not-emit\n"
+        value = canary.redacted_daemon_diagnostic("daemon_exited_early", 17, raw)
+        encoded = __import__("json").dumps(value)
+        self.assertEqual(value["reason"], "daemon_exited_early")
+        self.assertEqual(value["returncode"], 17)
+        self.assertNotIn("do-not-emit", encoded)
+        self.assertNotIn("token=", encoded)
+        self.assertIn("log_sha256", value)
+        self.assertEqual(value["classification"], "unclassified")
+        classified = canary.redacted_daemon_diagnostic("daemon_exited_early", 1, b"GOLD-ADAPT-OH-03: onboarding incomplete secret=never-output")
+        self.assertEqual(classified["classification"], "onboarding_incomplete")
+        self.assertNotIn("never-output", __import__("json").dumps(classified))
 
 if __name__ == "__main__": unittest.main()
