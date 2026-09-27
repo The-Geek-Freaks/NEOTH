@@ -1,5 +1,6 @@
 name: W1623 managed n8n Update acceptance
-on: {workflow_dispatch:}
+on:
+  workflow_dispatch:
 permissions: {contents: read}
 env: {CARGO_BUILD_JOBS: '1', CARGO_INCREMENTAL: '0', CARGO_PROFILE_DEV_DEBUG: '0', DOCKER_HOST: unix:///var/run/docker.sock, DOCKER_CONTEXT: ''}
 jobs:

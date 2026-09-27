@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T13:14:13.9692451Z",
-  "validationStatus": "managed-update-source-reviewed-hosted-pending",
+  "capturedUtc": "2026-09-27T13:15:51.2781926Z",
+  "validationStatus": "managed-update-hosted-dispatch-repair",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -74,7 +74,7 @@
     {
       "path": ".github/workflows/n8n-managed-update.yml",
       "bytes": 3112,
-      "sha256": "1EE39BDA0A1AF063829DCE205B88F4D97346C4A4684D118EAC7CA7D69E5C8A1E"
+      "sha256": "21EADDBB4C4615EC1729BA1FAFABB60ED8FA378581B43D2BBBD60B98A222DDE5"
     },
     {
       "path": ".github/workflows/n8n-product-bootstrap.yml",
