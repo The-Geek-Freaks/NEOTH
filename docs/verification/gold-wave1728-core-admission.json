@@ -1,0 +1,18 @@
+{
+  "schema": "neoth-core-admission/v1",
+  "run": 36346789651,
+  "source": "6483ba4a7f4ea713bccc452cf6096d04072a83f8",
+  "artifact": 10940927191,
+  "zipSha256": "c9a651df38a0387d3f40209c0448af50e31dc615c5550f89ce70ceb17d38c773",
+  "status": "SOURCE_ADMITTED_PASS",
+  "cliSha256": "426f52b933889be22fceac3098e67d46e20606e80b1a7a11a82dbb513e160b65",
+  "currentReferenceIdentical": true,
+  "gates": [
+    "Check exact-source slim-core production Clippy",
+    "Type-check core test targets before native validation",
+    "Build current public CLI",
+    "Export generated reference"
+  ],
+  "workspaceClippyRequested": false,
+  "localExecutableValidationRan": false
+}

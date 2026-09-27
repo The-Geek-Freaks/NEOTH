@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1725/W1728 complete Restore product and Core admitted (2026-09-27):**
+Product36346791804 at6483ba4a fully passed with custody v2: authenticated fresh
+Restore candidate/active generation, six archives and PDF marker, retained
+source, restored Backup, Repair healthy/start/recreate, Uninstall/Reinstall,
+Purge and fresh post-Purge generation. Both Docker generations and isolated
+home were removed. Original artifact10940618808 ZIP0c81f0c95f68a7f06f3533d472b0d620c79e289b9d6f404483ae1eb770366dfb
+and29 raw producer bindings verified. This is full Linux Restore lifecycle
+and cleanup acceptance for that producer, not a Paperless Rollback-command pass.
+Core36346789651 at6483ba4a passed slim Clippy, test-target typecheck and CLI;
+original artifact10940927191 ZIPc9a651df38a0387d3f40209c0448af50e31dc615c5550f89ce70ceb17d38c773
+and internal reference hash verified; generated CLI bytes unchanged.
+Group2005run36346794100 and Windows770run36346796236 remain pending.
+W1723/W1724/W1727 actual Rollback implementation/tests/product proof are
+unpublished WIP under review, including interrupted-command/publication
+recovery. No Rollback or parent-road acceptance. ROAD1324/1077/245/2 unchanged.
+Evidence: docs/verification/gold-wave1725-paperless-restore-admission.json
+and docs/verification/gold-wave1728-core-admission.json.
+
 **W1721 authenticated hosted formatting (2026-09-27):** Exact two-file rustfmt
 patch from Preflight36346777755 at6483ba4a imported. Original artifact10941021963
 ZIP486894916580ac9b7fc93723ec83aca0d21f638394695b8241cc38dd6cfe6e23, producer,

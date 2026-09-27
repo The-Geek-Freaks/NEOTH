@@ -1,0 +1,25 @@
+{
+  "schema": "neoth-paperless-restore-admission/v1",
+  "run": 36346791804,
+  "source": "6483ba4a7f4ea713bccc452cf6096d04072a83f8",
+  "artifact": 10940618808,
+  "zipSha256": "0c81f0c95f68a7f06f3533d472b0d620c79e289b9d6f404483ae1eb770366dfb",
+  "sourceBindingsVerified": 29,
+  "status": "SOURCE_ADMITTED_PASS",
+  "custodySchema": 2,
+  "retainedSourceAndActiveGenerationsCleaned": true,
+  "isolatedHomeRemoved": true,
+  "stages": [
+    "Authenticated Restore candidate and active generation",
+    "six archive hashes and PDF marker",
+    "immutable custody and active/history authority",
+    "restored-generation Backup",
+    "Repair healthy/start/recreate",
+    "Uninstall and Reinstall",
+    "confirmed Purge and repeated preview",
+    "fresh post-Purge token/generation and retained archives",
+    "both Docker generations and isolated home cleanup"
+  ],
+  "localExecutableValidationRan": false,
+  "rollbackCommandAccepted": false
+}
