@@ -1,22 +1,27 @@
 {
   "schema": "neoth-gold-verification/v1",
   "wave": "W1597",
-  "status": "root_admitted_exact_linux_group_scope",
+  "status": "root_admitted_exact_linux_and_windows_native_scope",
   "producer_commit": "e639e712f1b8243fb68533ecd7a1508f0ec31a14",
-  "admitted_scope": "exact_hosted_linux_group_native_selection_only",
+  "admitted_scope": "exact_hosted_linux_group_and_windows_native_cohort_only",
   "group": {
     "run": 36311757940,
     "selected": 1924,
     "executed": 1924,
     "failed": 0,
-    "compiled": true,
-    "inputs_matched": 10,
-    "inputs_mismatches": 0
+    "inputs_matched": 10
   },
   "windows": {
     "run": 36311759439,
-    "status": "in_progress",
-    "not_included": true
+    "compile_status": 0,
+    "expected": 689,
+    "executed": 689,
+    "passed": 689,
+    "failed": 0,
+    "missing": 0,
+    "source_bindings": 689,
+    "unique_source_paths_matched": 99,
+    "source_mismatches": 0
   },
   "public_docs_published": true
 }

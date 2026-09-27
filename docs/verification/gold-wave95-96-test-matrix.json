@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "group1932-execution-count-repaired-hosted-pending",
+  "status": "rollback-native-both-platforms-and-target-amd64-preflight-admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 242941,
-    "sha256": "AC2691FA5A475B77DB03D3A279DCD7CBD0B20BE3675EAE6BECE5273E22A94972"
+    "bytes": 243163,
+    "sha256": "DC7D04A20493BBB30E9316794D416BF7A4F4C1DC870880C36630BF64B21DB9F2"
   },
-  "sourceInputs": 1355,
+  "sourceInputs": 1356,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -50326,6 +50326,44 @@
       }
     ],
     "note": "Correct stale shell1924 count to exact1932; failed old run stopped before compilation/test execution. New product gate succeeded; admission separate.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1597_1599NativeAndTargetProductAcceptance": {
+    "base": "5cc5ba686dfc4f0645ba21a162267d7bfcbbaeba",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1597-retained-native-admission.json",
+        "bytes": 694,
+        "sha256": "919F4946512D7988E8C4A89DE656BE77793EFFC8181D9919696A15CA889387B1",
+        "blob": "c58654eb00daaa8d834e139076368a0b347cbe0d"
+      },
+      {
+        "path": "docs/verification/gold-wave1599-target-preflight-product-accepted.json",
+        "bytes": 4546,
+        "sha256": "E6389A7FC965BBE2F2BE2E648A15797AF6B7D3D0EC0D5212BDAE37CA70992122",
+        "blob": "ad2d4fa16aada132962e0c8f70d4dd453adb68ee"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 441676,
+        "sha256": "B922E4DC9B835CA70E58B9769B5EEFB352C7967C39FF66D9159D4D133B0E98A8",
+        "blob": "d96d09170d4d2a823edecf38c5f9c9b98866b4b3"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1460607,
+        "sha256": "14B399A7348975DF6F897579F2490291A29B255F6752F879992DE50B6881ED5B",
+        "blob": "55b52f13b779a974c67a52734ab754db3fce963f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2071130,
+        "sha256": "D211F0F163E480780F171216A642B7EA32CE7BEA5B13F3B87BBD21842286BC67",
+        "blob": "e08465fd88bb6977afd6eed7e84c7a36ee808eb8"
+      }
+    ],
+    "note": "Original Rollback Group1924 and Windows689 admitted exacte639; actual target preflight36312856719@3b267d83 admitted Linux amd64 only. No migration or full Update acceptance, no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

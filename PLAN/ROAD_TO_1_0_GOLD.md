@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1597/W1599 Native Rollback and actual target-preflight accepted (2026-09-27):**
+The original e639e712 Windows run36311759439 completed689/689 pass, zero failed
+or missing; artifact10929608049 and689 source bindings through99 raw producer
+paths verify. Together with Group1924/1924 this accepts the exact native cohorts.
+Actual target run36312856719 at3b267d83 built the CLI and passed Linux-amd64
+preflight: index/child/config digests, Docker config ID/RepoDigest/platform,
+unknown-selector and unsupported-platform errors with zero Docker calls, and
+unchanged empty container/volume/home inventories. Original artifact10928834202
+API/download digest and all nine source bindings verify; compiled binary hash
+is retained. This accepts image preflight only, not server startup, migration,
+cutover or the managed Update operation. New native target cases/Core remain
+under hosted checks. Road counts1324/1077/245/2 unchanged; no local execution.
+Evidence: docs/verification/gold-wave1597-retained-native-admission.json and
+ docs/verification/gold-wave1599-target-preflight-product-accepted.json.
 **W1600 Group-count execution guard corrected (2026-09-27):** Run36312858808
 at3b267d83 correctly selected1932 cases, but a second shell guard still expected
 1924 and stopped before compilation/tests. Both guards now require1932; the

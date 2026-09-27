@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "wave": "W1599",
+  "status": "ROOT_ACCEPTED_LINUX_AMD64_TARGET_PREFLIGHT_ONLY",
+  "decision": "ADMIT_LINUX_AMD64_TARGET_PREFLIGHT_ONLY",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36312856719,
+    "workflow": "W1592 n8n update-target compiled CLI preflight",
+    "event": "workflow_dispatch",
+    "conclusion": "success",
+    "head_branch": "main",
+    "head_sha": "3b267d83d9f843ff639f1ab0ab08e05a6972e1a2",
+    "attempt": 1,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36312856719"
+  },
+  "artifact": {
+    "id": 10928834202,
+    "name": "w1592-n8n-update-target-36312856719-1",
+    "size_bytes": 1407,
+    "api_digest": "sha256:c5e0e04f4139487ad4b6b9ab831b5e6b7f76f70423b3037299e19998bdc0475e",
+    "downloaded_zip_sha256": "c5e0e04f4139487ad4b6b9ab831b5e6b7f76f70423b3037299e19998bdc0475e",
+    "zip_digest_matches_api": true,
+    "safe_zip": {
+      "entry_count": 1,
+      "unsafe_entry_count": 0,
+      "total_uncompressed_bytes": 3022
+    },
+    "receipt": {
+      "path": "receipt.json",
+      "sha256": "d7ac86407f407bdc637b1f92ac89024d0bb83f48d501ba4c2f44dc8ef8410195",
+      "outcome": "passed"
+    }
+  },
+  "producer_bindings": {
+    "producer_tree": "7dfce98fac77bf51a4393daee2f8f2b1d940cffc",
+    "raw_git_cat_file_and_hash_object_match_for_all_receipt_inputs": true,
+    "input_sha256": {
+      ".github/workflows/n8n-update-target-preflight.yml": "9edab799b492f2a4e6b4dd1536d7494918b21fb9d825ab638d8a7384a89bca33",
+      "SRC/neothd/src/cli/n8n.rs": "857a6c4359f2315396d16c68e00c56ee947c6c7467c291ce571fe8f9f712f9da",
+      "SRC/neothd/src/installers/n8n.rs": "2ddddced6e4c1cb8be49742e039b9aa67b6dad464723d5c728b06bc05e0eefca",
+      "SRC/neothd/src/integrations/n8n.rs": "7ad0415c5ec4dc30e2c265c6fe15f5ec1d5bc2db9e154c21bf918ba9071336a0",
+      "SRC/neothd/src/integrations/n8n/managed_update_target.rs": "6e5e024901e5218bd72eea91120dd3047b9b0cdb7fae64a1310de6e951264a55",
+      "SRC/neothd/src/integrations/n8n/managed_update_target_tests.rs": "fee09ebdff3ffa2ef0db0492a22ba54ffb330900f4f72b84f79de76971d5bcc9",
+      "docs/verification/gold-wave1587-update-target-metadata-accepted.json": "d32e643a7cd94e1f7b394ebacdce58155e2820253252aa88136de0eb97fe1ae1",
+      "packaging/n8n_update_target_preflight_canary.py": "5f9a7107904ad9494e6edc33ce0b935f57b46903978d3246939f08d768e2e609",
+      "packaging/tests/test_n8n_update_target_preflight_canary.py": "de7db4674d6c8110542463c6e99096c77caac316d2046e7bec575783d92d701e"
+    },
+    "compiled_binary_sha256": "5c987c09acee5e0ecb0e0e5101e0e318a7b2d1d2520b0e1497c91722e039dd70"
+  },
+  "preflight": {
+    "scenario": "n8n_update_target_preflight",
+    "selector": "n8n-2.40.7",
+    "version": "2.40.7",
+    "platform": "linux/amd64",
+    "runtime_image": "docker.io/n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+    "index_digest": "sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+    "child_manifest_digest": "sha256:599d68c7b6fb18b5ac1e7cd013a2e72c886ec1c807b9d436d56e90da32c664ac",
+    "config_digest": "sha256:f3bf0d098792d61b470ac74b110e3a32d5c5d1e4920ae2b78215ad41a599824a",
+    "catalog_evidence_sha256": "a3c804dbdb2cc45cb0fdaa6a40be49522dc7811123c46eec51883032ad60fb02",
+    "docker_image": {
+      "id_matches_config_digest": true,
+      "repo_digest_bound": true,
+      "platform": "linux/amd64"
+    },
+    "negative_controls": {
+      "unknown_selector": {
+        "exit_code": 1,
+        "expected_error": "unknown_selector",
+        "docker_invocations": 0
+      },
+      "unsupported_platform": {
+        "exit_code": 2,
+        "expected_error": "unsupported_platform",
+        "docker_invocations": 0
+      }
+    },
+    "post_run_inventories": {
+      "containers": {
+        "count": 0,
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      "volumes": {
+        "count": 0,
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      "home": {
+        "count": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "excluded_claims": [
+    "managed n8n Update migration, database modification or cutover",
+    "updater implementation or Update job admission",
+    "non-Linux-amd64 platform acceptance",
+    "persistent container, volume, binding, configuration or home state",
+    "CLI_REFERENCE.md replacement",
+    "P2-20 or release closure"
+  ],
+  "localExecutableValidationRan": false
+}
