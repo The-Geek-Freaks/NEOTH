@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "status": "HOSTED_FORMAT_IMPORTED",
+  "run": 36302995542,
+  "producer": "00aa8660a36938e69ac816ca8dfaa240835f3d32",
+  "artifact": 10925493233,
+  "zipSha256": "0feeffa8f90d52c630b3f12db46199535a3b028b6213eee183e42e3de2237636",
+  "path": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+  "preimage": "55ce6a53c5b79d0698635f33508ec7e324b0a3ce",
+  "postimage": "7c037f8ca912a8d293a82ae149522acd9f18e7ef",
+  "internalHashesVerified": true,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

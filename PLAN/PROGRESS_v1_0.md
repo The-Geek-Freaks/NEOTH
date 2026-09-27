@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1543 hosted Restore formatting import (2026-09-27):**
+Imported the exact candidate-predicate rustfmt postimage from original artifact
+10925493233 / Preflight36302995542 at00aa8660, with ZIP/internal/producer and
+Git pre/postimage verification. No local formatter ran. Group36302995899,
+Windows36302997586, Core36302999480 and Product36303000905 validate00aa8660;
+no functional acceptance yet. All Rollback changes remain unpublished WIP.
+Evidence: docs/verification/gold-wave1543-restore-format.json.
+
 **W1534-W1541 Restore gate repairs and Backup Core acceptance (2026-09-27):**
 Backup Core36168674462 at ecf99aa7 is now admitted: slim production Clippy,
 default-test typecheck, public CLI build and full Linux workspace Clippy all

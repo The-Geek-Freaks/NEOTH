@@ -277,11 +277,13 @@ fn no_host_port_bindings(bindings: &Option<BTreeMap<String, serde_json::Value>>)
 }
 
 fn has_fixed_inert_process(config: &Config) -> bool {
-    config.entrypoint.as_ref().is_some_and(|entrypoint| {
-        entrypoint.len() == 1 && entrypoint[0] == INERT_ENTRYPOINT
-    }) && config.command.as_ref().is_some_and(|command| {
-        command.len() == 2 && command[0] == "-e" && command[1] == INERT_KEEPALIVE_ARGUMENT
-    })
+    config
+        .entrypoint
+        .as_ref()
+        .is_some_and(|entrypoint| entrypoint.len() == 1 && entrypoint[0] == INERT_ENTRYPOINT)
+        && config.command.as_ref().is_some_and(|command| {
+            command.len() == 2 && command[0] == "-e" && command[1] == INERT_KEEPALIVE_ARGUMENT
+        })
 }
 
 fn no_published_ports(ports: &Option<BTreeMap<String, Option<Vec<serde_json::Value>>>>) -> bool {
