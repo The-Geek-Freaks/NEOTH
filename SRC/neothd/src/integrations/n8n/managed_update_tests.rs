@@ -802,6 +802,15 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
         "n8n-uninstall-{}.receipt.json",
         second_uninstall.job_id
     ));
+    assert!(std::fs::metadata(&second_receipt).unwrap().len() > 4096);
+    assert_eq!(
+        super::super::managed_uninstall::cleanup_disposition_at(
+            home.path(),
+            &second_uninstall,
+        )
+        .unwrap(),
+        Some("cleared")
+    );
     let second_view: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&second_receipt).unwrap()).unwrap();
     assert_eq!(
@@ -860,7 +869,7 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
 }
 
 #[tokio::test]
-async fn tampered_retained_update_provenance_blocks_second_reinstall_before_effects() {
+async fn tampered_or_oversized_retained_update_receipt_blocks_second_reinstall_before_effects() {
     let (home, mut runner, state, _source) = fixture(true).await;
     let update = update_managed_at_with(
         home.path(),
@@ -901,10 +910,25 @@ async fn tampered_retained_update_provenance_blocks_second_reinstall_before_effe
     let mut receipt: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     receipt["update"]["source_archive_sha256"] = serde_json::Value::String("0".repeat(64));
-    std::fs::write(path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
 
     let before = state.lock().unwrap().calls.clone();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    assert!(
+        super::super::install_retained_at_with(
+            home.path(),
+            &second_uninstall.job_id,
+            SecretString::from("update-key"),
+            &mut runner,
+            &Ready,
+            &Probe,
+            &mut cancel,
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(state.lock().unwrap().calls, before);
+    std::fs::write(&path, vec![b'x'; 16 * 1024 + 1]).unwrap();
     assert!(
         super::super::install_retained_at_with(
             home.path(),

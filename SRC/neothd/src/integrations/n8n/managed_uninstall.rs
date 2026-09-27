@@ -30,6 +30,7 @@ use crate::integrations::{
 };
 
 const UNINSTALL_BINDING_FILE: &str = "n8n-managed-uninstall.v1.json";
+const MAX_COMPLETION_RECEIPT_BYTES: u64 = 16 * 1024;
 const STEPS: [&str; 4] = [
     "validate-ready-runtime-binding",
     "persist-remove-dispatch",
@@ -331,9 +332,14 @@ fn write_completion_receipt(
         rollback_restore,
         update,
     };
+    let bytes =
+        serde_json::to_vec(&receipt).map_err(|_| "n8n_uninstall_receipt_serialize_failed")?;
+    if bytes.len() as u64 > MAX_COMPLETION_RECEIPT_BYTES {
+        return Err("n8n_uninstall_receipt_oversized");
+    }
     crate::util::atomic_write::atomic_write_private(
         &receipt_path(home, &receipt.uninstall_job_id),
-        &serde_json::to_vec(&receipt).map_err(|_| "n8n_uninstall_receipt_serialize_failed")?,
+        &bytes,
     )
     .map_err(|_| "n8n_uninstall_receipt_write_failed")
 }
@@ -348,10 +354,21 @@ fn read_completion_receipt(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("n8n_uninstall_receipt_read_failed"),
     };
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 4096 {
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_COMPLETION_RECEIPT_BYTES
+    {
         return Err("n8n_uninstall_receipt_invalid");
     }
-    let bytes = std::fs::read(&path).map_err(|_| "n8n_uninstall_receipt_read_failed")?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .map_err(|_| "n8n_uninstall_receipt_read_failed")?
+        .take(MAX_COMPLETION_RECEIPT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "n8n_uninstall_receipt_read_failed")?;
+    if bytes.len() as u64 > MAX_COMPLETION_RECEIPT_BYTES {
+        return Err("n8n_uninstall_receipt_invalid");
+    }
     let receipt: UninstallCompletionReceipt =
         serde_json::from_slice(&bytes).map_err(|_| "n8n_uninstall_receipt_invalid")?;
     if !matches!(receipt.schema_version, 1..=3)

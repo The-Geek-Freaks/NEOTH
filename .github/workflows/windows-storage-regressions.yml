@@ -813,7 +813,7 @@ jobs:
           installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_receipt_but_missing_source_companion_rejects_without_recreation_or_effects	neothd/src/installers/paperless_backup_tests.rs
           installers::paperless_lifecycle::paperless_backup::tests::corrupt_interrupted_source_companion_restores_then_holds_without_copy_replay	neothd/src/installers/paperless_backup_tests.rs
           installers::paperless_lifecycle::paperless_backup::tests::backup_readiness_waits_after_source_restart_and_committed_receipt_reentry	neothd/src/installers/paperless_backup_tests.rs
-          integrations::n8n::managed_runtime::managed_update::tests::tampered_retained_update_provenance_blocks_second_reinstall_before_effects	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::tampered_or_oversized_retained_update_receipt_blocks_second_reinstall_before_effects	neothd/src/integrations/n8n/managed_update_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.

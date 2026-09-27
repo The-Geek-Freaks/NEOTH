@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1673 Repeated Update receipt bound (2026-09-27):**
+Update product36329535494 at70e8b768 reached the later uninstall-status check
+and failed there; original artifact10935785886 and30 raw producer bindings verify.
+The failure did not record its actual cleanup value. Source inspection found a
+concrete mismatch: a second schema3 receipt contains both current and retained
+Update metadata, while its reader still capped every receipt at4KiB. The writer
+and reader now share a16KiB cap; the read itself stops at16KiB+1 to reject growth.
+The native full second-cycle test asserts that a valid receipt exceeds4KiB and
+its cleanup disposition resolves; an oversized receipt rejects before effects.
+The test uses file-backend cleared, while the hosted Keychain canary still demands
+preserved_unproven. No broad acceptance of unknown cleanup was retained.
+Root reviewed the bounded reader/writer and fixed a moved test-path reference.
+Native test counts remain2189/1979/744; renamed tamper/oversize test is registered.
+Fresh product/Core/native verification remains required; no ROAD closure.
 **W1670-W1671 Backup product history and exact CLI reference (2026-09-27):**
 Paperless36329534029 at70e8b768 proved running/stopped six-volume Backup,
 retained PDF bytes, original source state and controlled Repair recovery, then
