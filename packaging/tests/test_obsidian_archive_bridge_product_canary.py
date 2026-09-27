@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -118,5 +119,37 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
             b"TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)\nobsidian vault reader cron enabled",
         )
         self.assertEqual(full_start["last_milestone"], "obsidian_reader_started")
+
+    def test_disposable_master_key_uses_public_restore_and_cleanup_removes_raw_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()
+            calls: list[tuple[list[str], dict[str, str]]] = []
+            state: dict = {"master_key_seed": None}
+            def fake_run(argv: list[str], env: dict[str, str], timeout: int = 45) -> bytes:
+                calls.append((argv, env)); return b"master-key restored"
+            with mock.patch.object(canary, "run", side_effect=fake_run), mock.patch.object(canary.secrets, "token_bytes", return_value=b"k" * 32):
+                seed = canary.provision_disposable_master_key(Path("/product/neoth"), home, {"NEOTH_HOME": str(home)}, root, state)
+            self.assertEqual(seed.read_bytes(), b"k" * 32)
+            self.assertEqual(state["master_key_seed"], seed)
+            self.assertEqual(calls, [(["/product/neoth", "security", "restore-master-key", "--source", str(seed), "--home", str(home)], {"NEOTH_HOME": str(home)})])
+            cleanup = canary.cleanup_owned(root, home, root / "vault", root / "host-home", root / "pairing.json", [], [], seed)
+            self.assertTrue(all(cleanup.values()), cleanup)
+            self.assertTrue(cleanup["master_key_seed_removed"])
+            self.assertFalse(seed.exists())
+
+    def test_rejected_master_key_restore_still_leaves_seed_in_cleanup_custody(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()
+            state: dict = {"master_key_seed": None}
+            with mock.patch.object(canary, "run", side_effect=canary.Failure("command_failed")), mock.patch.object(canary.secrets, "token_bytes", return_value=b"k" * 32):
+                with self.assertRaisesRegex(canary.Failure, "master_key_restore_failed"):
+                    canary.provision_disposable_master_key(Path("/product/neoth"), home, {}, root, state)
+            seed = state["master_key_seed"]
+            self.assertIsInstance(seed, Path)
+            self.assertTrue(seed.exists())
+            cleanup = canary.cleanup_owned(root, home, root / "vault", root / "host-home", root / "pairing.json", [], [], seed)
+            self.assertTrue(all(cleanup.values()), cleanup)
+            self.assertTrue(cleanup["master_key_seed_removed"])
+            self.assertFalse(seed.exists())
 
 if __name__ == "__main__": unittest.main()

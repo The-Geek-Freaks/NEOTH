@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1747 exact channel target probes source-reviewed; focused16 hosted pending",
+  "status": "W1751 bridge key fixture source-reviewed hosted-pending; W1747 authentic hosted format; Linux2012 admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 256155,
-    "sha256": "AC7924D2FC3EEC6E12F30793D6A8F340A94810DC4DF2FF2592EA02A67C8B19AF"
+    "bytes": 256384,
+    "sha256": "18FD63B6DE4575D41DE76146A1287DBEBA7E0234304F8B434ECA135A31642E16"
   },
-  "sourceInputs": 1424,
+  "sourceInputs": 1425,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -53722,6 +53722,68 @@
       }
     ],
     "note": "W1750 independent Rust source PASS. Five new exact target/CLI cases plus prior11 in existing feature lane; default portable/group/windows counts unchanged. W1751 bridge authenticated missing AEAD master-key diagnosis; key provisioning correction not part of this channel commit. Strict local BSOD hold, no runtime claims or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1751KeyProvisioning": {
+    "base": "feedc88df9e760e4abb6c12fec53ff3dda58c5bc",
+    "sources": [
+      {
+        "path": "docs/obsidian-archive-bridge.md",
+        "bytes": 6639,
+        "sha256": "82F19C13A384BBBFE35B66318FE65E2A86CA6F07AF4265697189D4206AC5006A",
+        "blob": "19cac4842f101daf1621b2f3fa61bfdf449a039d"
+      },
+      {
+        "path": "docs/verification/gold-wave1746-linux-group2012-admission.json",
+        "bytes": 2754,
+        "sha256": "054B54E1B2CCC087BB31AE5EAFAD8C45BECB3964AA6FB26A241A311C554AF226",
+        "blob": "55d03232f89cbd2f9b994f04524cbf276a342f0c"
+      },
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 31618,
+        "sha256": "C25B8005131375B58A1D55670B756A9B281126C2CEC88B10661CC31BA33FA5A6",
+        "blob": "bd28d79c62a47b8751dc81945b7af0e169a45c98"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 10562,
+        "sha256": "5145F9A751FCFE5E00A8173E5B59D3EE00D8118B671D892C76C4C24ACBB27933",
+        "blob": "9e1ef55d731caf0e9974a2ef2fcfd3a5bfc740f4"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 491155,
+        "sha256": "0E8E46395E0B136CA72F1857296E39381EB3F5B5BB054E697AECDFD1EAAF3692",
+        "blob": "345521da5b04965ad021a5aa6a051d9f68562aee"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1510671,
+        "sha256": "1AD326831645D853B8F02DD890EAAB3861FAC2AA82E4FED3727115CF45FD4C7D",
+        "blob": "eff0a5fbb038205601bacca18a0bbec03ce561b6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2121194,
+        "sha256": "1F390F7A8FE4927CCE0EBBA970BBBF3F90F50F22608F89F283A454F3EBF93B6F",
+        "blob": "5980314800d8981487c78e808e4aa0859d882672"
+      },
+      {
+        "path": "SRC/neothd/src/channels/gchat.rs",
+        "bytes": 33355,
+        "sha256": "22E952F89C39284AA4AD7ED9ACB3F3E4F6E0A883A4F7477325F8145892071F13",
+        "blob": "5762ace8c3311f9f1b07002034939b1a7915939c"
+      },
+      {
+        "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+        "bytes": 45305,
+        "sha256": "A3802B075700B24A92B6DD68BCA8033F89471DEDC89A3AA87D70E0DAA5E5A796",
+        "blob": "664678368a6f21332253924f6cb09e40445cdd20"
+      }
+    ],
+    "note": "Independent W1751 static review found no blocker; sole test-layout warning corrected with all cleanup flags assertions. Actual restore CLI provisions only disposable key. Source-hashed masterkey guard preserved; first-use operator setup not claimed. Exact GitHub formatter artifact10943284369 onfeedc88d authenticated and applied. Original Linux36353588150 plus all2012 exact identities and310 raw producer hashes admitted at8b434951. Windows777 success awaiting original admission. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

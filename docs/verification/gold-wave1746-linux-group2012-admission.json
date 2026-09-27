@@ -1,0 +1,75 @@
+{
+  "schema": "neoth-native-group-admission/v1",
+  "decision": "accepted",
+  "scope": "Linux Group2012 native regression evidence only",
+  "repository": "The-Geek-Freaks/NEOTH",
+  "run": {
+    "id": 36353588150,
+    "workflow": "Research and loop lifecycle quality",
+    "status": "completed",
+    "conclusion": "success",
+    "producer_commit": "8b434951497195713b8f3e12dc24628f568a5392",
+    "producer_ref": "refs/heads/main"
+  },
+  "original_artifacts": [
+    {
+      "id": 10943263922,
+      "kind": "source identities",
+      "sha256": "e5c3d75bab1efea6c69c742a7e635256af2da275830d45246d12515d6cf92073",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10943368307,
+      "kind": "lifecycle receipt",
+      "sha256": "26bf89dbe76e489f77eb34164bdcd18be771652b2820f97e1caa01ae3bfc2999",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10943452382,
+      "kind": "Cargo lifecycle log",
+      "sha256": "677694b02f7a8e37877fce9eccc6e13cacee508148a2cca708bee361193ef54e",
+      "api_digest_matches_download": true
+    }
+  ],
+  "receipt": {
+    "required_count": 2012,
+    "selected_count": 2012,
+    "executed_count": 2012,
+    "failed_fixtures": [],
+    "source_head_matches_producer": true
+  },
+  "log_terminals": {
+    "discovery_count": 2012,
+    "run_count": 2012,
+    "successful_single_test_result_count": 2012,
+    "failed_test_terminal_count": 0,
+    "failure_marker_count": 0
+  },
+  "formerly_failed_rollback_tests": [
+    "rollback_stateful_base_restores_exact_prior_files_and_removes_absent_pointer",
+    "rollback_stateful_readiness_failure_compensates_without_removing_retained_generations",
+    "rollback_stateful_ambiguous_stop_holds_and_blocks_replay_or_peer_restore",
+    "rollback_stateful_preserves_partial_or_stopped_old_runtime_without_readiness_claim"
+  ],
+  "formerly_failed_rollback_tests_all_have_discovery_run_and_ok_terminal": true,
+  "producer_source_binding": {
+    "fixture_identity_count": 2012,
+    "unique_source_path_count": 310,
+    "all_raw_git_blob_sha256_values_match_authenticated_source_identity_artifact": true
+  },
+  "limitations": [
+    "This admits only the completed Linux Group2012 run.",
+    "It is not a product lifecycle admission or a replacement for Windows evidence.",
+    "Windows run 36353589543 is separately completed successfully but is not authenticated in this Linux record."
+  ],
+  "exactIdentityProof": {
+    "sourceFixtures": 2012,
+    "uniqueDiscovery": 2012,
+    "uniqueListed": 2012,
+    "uniqueRunWithIdentityAndSinglePass": 2012,
+    "contiguousPassTerminals": 1995,
+    "interleavedStdoutPassTerminals": 17,
+    "eachSourceIdentityExactlyOnceAtEveryBoundary": true,
+    "verifiedBy": "Root independent original-log block identity comparison"
+  }
+}

@@ -490,9 +490,7 @@ fn parse_chat_target_probe(
         .and_then(serde_json::Value::as_u64)
         .context("BlueBubbles chat target probe omitted numeric status")?;
     if envelope_status != 200 {
-        anyhow::bail!(
-            "BlueBubbles chat target probe envelope reported status {envelope_status}"
-        );
+        anyhow::bail!("BlueBubbles chat target probe envelope reported status {envelope_status}");
     }
     let actual_guid = value
         .pointer("/data/guid")
@@ -1008,30 +1006,44 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(channel
-            .probe_chat_target("iMessage;-;+14155551234")
-            .await
-            .unwrap()
-            .contains("configured chat target"));
+        assert!(
+            channel
+                .probe_chat_target("iMessage;-;+14155551234")
+                .await
+                .unwrap()
+                .contains("configured chat target")
+        );
 
         for (status, body) in [
-            (reqwest::StatusCode::OK, br#"{"status":200,"data":{"guid":"other"}}"#.as_slice()),
-            (reqwest::StatusCode::OK, b"not-json-bb&?target-secret".as_slice()),
-            (reqwest::StatusCode::UNAUTHORIZED, b"bb&?target-secret".as_slice()),
+            (
+                reqwest::StatusCode::OK,
+                br#"{"status":200,"data":{"guid":"other"}}"#.as_slice(),
+            ),
+            (
+                reqwest::StatusCode::OK,
+                b"not-json-bb&?target-secret".as_slice(),
+            ),
+            (
+                reqwest::StatusCode::UNAUTHORIZED,
+                b"bb&?target-secret".as_slice(),
+            ),
         ] {
             let error = parse_chat_target_probe(status, body, "iMessage;-;+14155551234")
                 .unwrap_err()
                 .to_string();
             assert!(!error.contains("bb&?target-secret"), "{error}");
-            let error = parse_chat_target_probe(status, body, "iMessage;-;+14155551234")
-                .unwrap_err();
+            let error =
+                parse_chat_target_probe(status, body, "iMessage;-;+14155551234").unwrap_err();
             assert!(
                 !format!("{error:#}").contains("bb&?target-secret"),
                 "full error chain leaked the server password"
             );
         }
         for invalid in [".", "..", "a/b", " route"] {
-            assert!(channel.probe_chat_target(invalid).await.is_err(), "{invalid}");
+            assert!(
+                channel.probe_chat_target(invalid).await.is_err(),
+                "{invalid}"
+            );
         }
     }
 

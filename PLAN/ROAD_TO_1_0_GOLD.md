@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1751-W1752 Bridge key provisioning and hosted channel format (2026-09-28):**
+The authenticated ArchiveBridge failure occurs after BOOT because its load-only
+owner needs an existing WAL/config AEAD identity; `init --provider skip` did
+not provision one. The disposable canary now imports a CSPRNG32-byte fixture
+key through the public `security restore-master-key --source ... --home ...`
+command before daemon startup. Exclusive private seed custody is registered
+before writes/CLI effects and checked by a separate cleanup flag, including
+failed restore. No production key loader or startup guard is weakened; this
+validates a provisioned fixture, not an unimplemented fresh-operator setup flow.
+W1747 Preflight36355288872 atfeedc88d failed formatting only. Original formatter
+artifact10943284369 ZIP1fd7ee3d32a96ecfbda0140e005bca10cd3961b359c8393f9185e11990584a2f
+and internal producer/patch checksums verified; exact patch touches only the
+two changed channel adapters. No local formatter, compiler or test was run.
+Native Group36353588150 and Windows36353589543 at8b434951 are now successful;
+Linux originals,310 producer-source blobs and all2012 exact discovery/run/PASS
+identities are admitted; Windows original-artifact admission remains pending.
+ArchiveBridge and focused16-channel hosted acceptance remain pending.
+
 **W1747/W1750 Exact channel target probes (2026-09-28):**
 `channel test imessage` and `channel test gchat` now add a read-only,
 authenticated lookup of the configured outbound chat GUID / Google Chat space.

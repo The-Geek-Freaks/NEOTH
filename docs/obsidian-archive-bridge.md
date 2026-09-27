@@ -24,10 +24,24 @@ install/update/repair/uninstall with retained settings and vault contents.
 The adapter supplies Obsidian host methods; it does not prove execution in the
 native Obsidian desktop application. Receipts distinguish source and installed
 artifact hashes, product outcomes, and cleanup. A submitted workflow or a
-source review alone does not establish a passed lifecycle. This new combined
-gate is pending its first hosted execution.
+source review alone does not establish a passed lifecycle. This combined
+gate has not yet passed its hosted lifecycle.
+
+The disposable hosted fixture provisions its own fresh WAL/config AEAD identity
+before starting the daemon through the public `neoth security restore-master-key`
+command. Its 32-byte raw recovery input exists only in the isolated runner root,
+is never included in the receipt, and cleanup must remove it. This exercises the
+supported recovery/binding contract; it does not write `wal/master.key` directly
+or weaken the bridge owner's load-only key check. It is fixture setup only, not
+an operator recovery instruction or a claim about an existing installation.
 
 ## Prerequisites
+
+The instance needs an existing WAL/config AEAD master key in its own home.
+Bridge startup loads that identity and fails if it is absent or invalid; it
+never generates a replacement for an existing installation. The disposable
+fixture provisioning above does not establish a first-use setup flow for a
+new operator installation.
 
 Run a compatible NEOTH daemon for the same user. Configure all of these in
 `freedom.yaml` before pairing:

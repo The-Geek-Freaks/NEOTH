@@ -778,18 +778,23 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        assert!(channel
-            .probe_space_target_at(
-                url::Url::parse(&format!("{}/v1/spaces/AAAA", server.uri())).unwrap(),
-                "spaces/AAAA",
-                "test-bearer",
-            )
-            .await
-            .unwrap()
-            .contains("configured Google Chat space target"));
+        assert!(
+            channel
+                .probe_space_target_at(
+                    url::Url::parse(&format!("{}/v1/spaces/AAAA", server.uri())).unwrap(),
+                    "spaces/AAAA",
+                    "test-bearer",
+                )
+                .await
+                .unwrap()
+                .contains("configured Google Chat space target")
+        );
 
         for (status, body) in [
-            (reqwest::StatusCode::OK, br#"{"name":"spaces/OTHER"}"#.as_slice()),
+            (
+                reqwest::StatusCode::OK,
+                br#"{"name":"spaces/OTHER"}"#.as_slice(),
+            ),
             (reqwest::StatusCode::OK, b"not-json-test-bearer".as_slice()),
             (reqwest::StatusCode::FORBIDDEN, b"test-bearer".as_slice()),
         ] {
@@ -804,7 +809,10 @@ mod tests {
             );
         }
         for invalid in ["spaces/.", "spaces/..", "spaces/%2e", "spaces/%2F"] {
-            assert!(validate_space_target_resource(invalid).is_err(), "{invalid}");
+            assert!(
+                validate_space_target_resource(invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 

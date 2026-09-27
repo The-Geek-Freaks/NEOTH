@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T22:24:00.9466967Z",
-  "validationStatus": "W1747 exact channel target probes source-reviewed; focused16 hosted pending",
+  "capturedUtc": "2026-09-27T22:39:13.9429867Z",
+  "validationStatus": "W1751 bridge key fixture source-reviewed hosted-pending; W1747 authentic hosted format; Linux2012 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1333,8 +1333,8 @@
     },
     {
       "path": "docs/obsidian-archive-bridge.md",
-      "bytes": 5750,
-      "sha256": "7E238F45CE9ECDC564A123C49C87639D3D4F64F693ADCF3B95CF26763DD85A5A"
+      "bytes": 6639,
+      "sha256": "82F19C13A384BBBFE35B66318FE65E2A86CA6F07AF4265697189D4206AC5006A"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -2602,6 +2602,11 @@
       "sha256": "41362794FEAF598FE9A5A7AF2878A8E8EAC6B169466298E3FA28CD98AA0B5EDC"
     },
     {
+      "path": "docs/verification/gold-wave1746-linux-group2012-admission.json",
+      "bytes": 2754,
+      "sha256": "054B54E1B2CCC087BB31AE5EAFAD8C45BECB3964AA6FB26A241A311C554AF226"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3488,8 +3493,8 @@
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_canary.py",
-      "bytes": 29215,
-      "sha256": "ED5B4F8C9A3907E641F40AF755982BDBAECF1BFCF33E4080A5686344F0F98308"
+      "bytes": 31618,
+      "sha256": "C25B8005131375B58A1D55670B756A9B281126C2CEC88B10661CC31BA33FA5A6"
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
@@ -3568,8 +3573,8 @@
     },
     {
       "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
-      "bytes": 8040,
-      "sha256": "E64BEAABE9BB19377D9961F3DF530AD27F8795110E779D42638C6B7BBC105CBF"
+      "bytes": 10562,
+      "sha256": "5145F9A751FCFE5E00A8173E5B59D3EE00D8118B671D892C76C4C24ACBB27933"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3633,18 +3638,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 489827,
-      "sha256": "7DC7CA3153A8904F741E2416A05D23D7E4E560FCD05117F13F812F871C8C4825"
+      "bytes": 491155,
+      "sha256": "0E8E46395E0B136CA72F1857296E39381EB3F5B5BB054E697AECDFD1EAAF3692"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1509343,
-      "sha256": "216171151E8C769A6C90BAAAC7F1DE8906A8FEAE7831A31E6BA6793260DD30FF"
+      "bytes": 1510671,
+      "sha256": "1AD326831645D853B8F02DD890EAAB3861FAC2AA82E4FED3727115CF45FD4C7D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2119866,
-      "sha256": "A14161802984C4CCFE8FE8EE3F1A94E8EEBD9F20C3458A38271A33BB11069D63"
+      "bytes": 2121194,
+      "sha256": "1F390F7A8FE4927CCE0EBBA970BBBF3F90F50F22608F89F283A454F3EBF93B6F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4348,8 +4353,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/gchat.rs",
-      "bytes": 33208,
-      "sha256": "7A5E5E3C1A5B88658CFD4EB627ABE6DC1DBC663DC748A5180C520021CF0BE46A"
+      "bytes": 33355,
+      "sha256": "22E952F89C39284AA4AD7ED9ACB3F3E4F6E0A883A4F7477325F8145892071F13"
     },
     {
       "path": "SRC/neothd/src/channels/identity.rs",
@@ -4358,8 +4363,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
-      "bytes": 45103,
-      "sha256": "03259806C2CADAA3327AF4BE63564C311D2DD2B45616033423F864EA8129D37D"
+      "bytes": 45305,
+      "sha256": "A3802B075700B24A92B6DD68BCA8033F89471DEDC89A3AA87D70E0DAA5E5A796"
     },
     {
       "path": "SRC/neothd/src/channels/irc.rs",
