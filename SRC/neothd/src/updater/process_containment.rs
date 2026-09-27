@@ -145,7 +145,10 @@ impl std::fmt::Display for ContainedChildError {
                 formatter,
                 "contained updater helper {worker} worker did not finish after containment"
             ),
-            Self::StdinIntegrity => write!(formatter, "contained updater helper stdin integrity mismatch"),
+            Self::StdinIntegrity => write!(
+                formatter,
+                "contained updater helper stdin integrity mismatch"
+            ),
             Self::Stdin(error) => write!(formatter, "write exact updater helper stdin: {error}"),
         }
     }
@@ -291,7 +294,8 @@ impl ContainedChild {
             ContainedStdin::Exact(exact_stdin.to_vec()),
             output_cap,
             Some(retained),
-        ).await
+        )
+        .await
     }
 
     pub(crate) async fn spawn_in_retained_directory_with_zeroizing_stdin(
@@ -303,7 +307,13 @@ impl ContainedChild {
     ) -> std::result::Result<Self, ContainedChildError> {
         let retained = configure_retained_working_directory(&mut command, directory, display_path)
             .map_err(ContainedChildError::Setup)?;
-        Self::spawn_configured_with_retained(command, ContainedStdin::Zeroizing(stdin), output_cap, Some(retained)).await
+        Self::spawn_configured_with_retained(
+            command,
+            ContainedStdin::Zeroizing(stdin),
+            output_cap,
+            Some(retained),
+        )
+        .await
     }
 
     pub(crate) async fn spawn_in_retained_directory_with_file_stdin(
@@ -317,7 +327,17 @@ impl ContainedChild {
     ) -> std::result::Result<Self, ContainedChildError> {
         let retained = configure_retained_working_directory(&mut command, directory, display_path)
             .map_err(ContainedChildError::Setup)?;
-        Self::spawn_configured_with_retained(command, ContainedStdin::File { input, expected_bytes, expected_sha256 }, output_cap, Some(retained)).await
+        Self::spawn_configured_with_retained(
+            command,
+            ContainedStdin::File {
+                input,
+                expected_bytes,
+                expected_sha256,
+            },
+            output_cap,
+            Some(retained),
+        )
+        .await
     }
 
     /// Launch a caller-configured command through the same owned process-tree
@@ -328,7 +348,13 @@ impl ContainedChild {
         exact_stdin: &[u8],
         output_cap: usize,
     ) -> std::result::Result<Self, ContainedChildError> {
-        Self::spawn_configured_with_retained(command, ContainedStdin::Exact(exact_stdin.to_vec()), output_cap, None).await
+        Self::spawn_configured_with_retained(
+            command,
+            ContainedStdin::Exact(exact_stdin.to_vec()),
+            output_cap,
+            None,
+        )
+        .await
     }
 
     async fn spawn_configured_with_retained(
@@ -808,25 +834,37 @@ async fn write_contained_stdin(
     source: ContainedStdin,
 ) -> std::result::Result<(), StdinTaskError> {
     match source {
-        ContainedStdin::Exact(bytes) => stdin
-            .write_all(&bytes)
-            .await
-            .map_err(StdinTaskError::Io)?,
+        ContainedStdin::Exact(bytes) => {
+            stdin.write_all(&bytes).await.map_err(StdinTaskError::Io)?
+        }
         ContainedStdin::Zeroizing(bytes) => stdin
             .write_all(bytes.as_slice())
             .await
             .map_err(StdinTaskError::Io)?,
-        ContainedStdin::File { input, expected_bytes, expected_sha256 } => {
+        ContainedStdin::File {
+            input,
+            expected_bytes,
+            expected_sha256,
+        } => {
             let mut input = tokio::fs::File::from_std(input);
             let mut total = 0u64;
             let mut digest = Sha256::new();
             let mut buffer = [0u8; 16 * 1024];
             loop {
                 let read = input.read(&mut buffer).await.map_err(StdinTaskError::Io)?;
-                if read == 0 { break; }
-                total = total.checked_add(read as u64).ok_or(StdinTaskError::Integrity)?;
-                if total > expected_bytes { return Err(StdinTaskError::Integrity); }
-                stdin.write_all(&buffer[..read]).await.map_err(StdinTaskError::Io)?;
+                if read == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(read as u64)
+                    .ok_or(StdinTaskError::Integrity)?;
+                if total > expected_bytes {
+                    return Err(StdinTaskError::Integrity);
+                }
+                stdin
+                    .write_all(&buffer[..read])
+                    .await
+                    .map_err(StdinTaskError::Io)?;
                 digest.update(&buffer[..read]);
             }
             if total != expected_bytes || format!("{:x}", digest.finalize()) != expected_sha256 {
@@ -1505,7 +1543,9 @@ mod tests {
         .await
         .unwrap();
         assert!(matches!(
-            child.wait_until(Instant::now() + Duration::from_secs(2)).await,
+            child
+                .wait_until(Instant::now() + Duration::from_secs(2))
+                .await,
             Err(ContainedChildError::StdinIntegrity)
         ));
     }

@@ -148,16 +148,21 @@ pub enum QuarantineAction {
 }
 
 fn parse_paperless_backup_job_id(value: &str) -> std::result::Result<String, String> {
-    let valid = value.strip_prefix("paperless-backup-").is_some_and(|suffix| {
-        suffix.len() == 64
-            && suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    });
+    let valid = value
+        .strip_prefix("paperless-backup-")
+        .is_some_and(|suffix| {
+            suffix.len() == 64
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
     if valid {
         Ok(value.to_owned())
     } else {
-        Err("expected paperless-backup- followed by exactly 64 lowercase hexadecimal characters".into())
+        Err(
+            "expected paperless-backup- followed by exactly 64 lowercase hexadecimal characters"
+                .into(),
+        )
     }
 }
 
@@ -804,10 +809,8 @@ mod tests {
     fn paperless_restore_cli_requires_canonical_backup_id_without_target_overrides() {
         use clap::Parser;
         let job = format!("paperless-backup-{}", "0123456789abcdef".repeat(4));
-        let cli = crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "restore", job.as_str(),
-        ])
-        .unwrap();
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "paperless", "restore", job.as_str()])
+            .unwrap();
         assert!(matches!(
             cli.command,
             crate::cli::Commands::Paperless(PaperlessArgs {
@@ -833,19 +836,33 @@ mod tests {
         ] {
             assert!(
                 crate::cli::Cli::try_parse_from([
-                    "neoth", "paperless", "restore", invalid.as_str(),
+                    "neoth",
+                    "paperless",
+                    "restore",
+                    invalid.as_str(),
                 ])
                 .is_err(),
                 "accepted invalid backup selector: {invalid:?}",
             );
         }
         for option in [
-            "--archive", "--container", "--volume", "--image", "--project", "--directory",
-            "--endpoint", "--token",
+            "--archive",
+            "--container",
+            "--volume",
+            "--image",
+            "--project",
+            "--directory",
+            "--endpoint",
+            "--token",
         ] {
             assert!(
                 crate::cli::Cli::try_parse_from([
-                    "neoth", "paperless", "restore", job.as_str(), option, "unowned",
+                    "neoth",
+                    "paperless",
+                    "restore",
+                    job.as_str(),
+                    option,
+                    "unowned",
                 ])
                 .is_err(),
                 "accepted target override: {option}",

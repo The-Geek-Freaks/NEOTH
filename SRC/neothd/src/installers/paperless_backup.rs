@@ -8,7 +8,11 @@ use super::*;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
 use cap_std::fs::OpenOptions;
 use sha2::Sha256;
-use std::{ffi::OsStr, io::{Read as _, Seek as _, SeekFrom}, path::Path};
+use std::{
+    ffi::OsStr,
+    io::{Read as _, Seek as _, SeekFrom},
+    path::Path,
+};
 
 pub(crate) const BACKUP_CUSTODY_NAME: &str = ".neoth-paperless-backup-custody.v1.json";
 const BACKUP_DIR: &str = "backups";
@@ -831,17 +835,31 @@ pub(crate) fn resolve_completed_backup_at(
     job_id: &str,
 ) -> Result<PaperlessHistoricalBackup, LifecycleError> {
     if !canonical_backup_job_id(job_id) {
-        return Err(LifecycleError::Command("paperless_restore_backup_job_invalid"));
+        return Err(LifecycleError::Command(
+            "paperless_restore_backup_job_invalid",
+        ));
     }
     ensure_bound(root)?;
     let dir = backup_job_dir(root, job_id)?;
-    let source_path = root.display.join("state").join(BACKUP_DIR).join(job_id).join(BACKUP_SOURCE_NAME);
+    let source_path = root
+        .display
+        .join("state")
+        .join(BACKUP_DIR)
+        .join(job_id)
+        .join(BACKUP_SOURCE_NAME);
     let source_bytes = crate::skills::store::read_regular_file_bounded(
-        &dir, OsStr::new(BACKUP_SOURCE_NAME), &source_path, RECEIPT_READ_LIMIT,
-    ).map_err(|_| LifecycleError::Receipt)?;
-    let source: BackupSource = serde_json::from_slice(&source_bytes).map_err(|_| LifecycleError::Receipt)?;
+        &dir,
+        OsStr::new(BACKUP_SOURCE_NAME),
+        &source_path,
+        RECEIPT_READ_LIMIT,
+    )
+    .map_err(|_| LifecycleError::Receipt)?;
+    let source: BackupSource =
+        serde_json::from_slice(&source_bytes).map_err(|_| LifecycleError::Receipt)?;
     let Some(restore_binding) = source.restore_binding.clone() else {
-        return Err(LifecycleError::Command("paperless_restore_historical_config_unsupported"));
+        return Err(LifecycleError::Command(
+            "paperless_restore_historical_config_unsupported",
+        ));
     };
     if source.schema_version != 2
         || source.operation != "paperless.backup.source"
@@ -850,23 +868,40 @@ pub(crate) fn resolve_completed_backup_at(
     {
         return Err(LifecycleError::Receipt);
     }
-    let install: StoredPaperlessInstallReceipt = serde_json::from_slice(&source.install_receipt_bytes)
-        .map_err(|_| LifecycleError::Receipt)?;
+    let install: StoredPaperlessInstallReceipt =
+        serde_json::from_slice(&source.install_receipt_bytes)
+            .map_err(|_| LifecycleError::Receipt)?;
     validate_install_receipt(&install, &root.display)?;
-    let snapshot: PaperlessVolumeSetSnapshot = serde_json::from_slice(&source.volume_set_snapshot_bytes)
-        .map_err(|_| LifecycleError::Receipt)?;
+    let snapshot: PaperlessVolumeSetSnapshot =
+        serde_json::from_slice(&source.volume_set_snapshot_bytes)
+            .map_err(|_| LifecycleError::Receipt)?;
     validate_volume_set_snapshot(&snapshot, &install.project)?;
     if install.volume_set_id.as_deref() != Some(snapshot.volume_set_id.as_str()) {
         return Err(LifecycleError::Receipt);
     }
-    let receipt_path = root.display.join("state").join(BACKUP_DIR).join(job_id).join("receipt.v1.json");
+    let receipt_path = root
+        .display
+        .join("state")
+        .join(BACKUP_DIR)
+        .join(job_id)
+        .join("receipt.v1.json");
     let receipt_bytes = crate::skills::store::read_regular_file_bounded(
-        &dir, OsStr::new("receipt.v1.json"), &receipt_path, RECEIPT_READ_LIMIT,
-    ).map_err(|_| LifecycleError::Receipt)?;
-    let receipt: PaperlessBackupReceipt = serde_json::from_slice(&receipt_bytes)
-        .map_err(|_| LifecycleError::Receipt)?;
+        &dir,
+        OsStr::new("receipt.v1.json"),
+        &receipt_path,
+        RECEIPT_READ_LIMIT,
+    )
+    .map_err(|_| LifecycleError::Receipt)?;
+    let receipt: PaperlessBackupReceipt =
+        serde_json::from_slice(&receipt_bytes).map_err(|_| LifecycleError::Receipt)?;
     let custody = historical_custody_from_receipt(&source, &install, &snapshot, &receipt)?;
-    validate_receipt(&receipt, &custody, &install, &source.install_receipt_bytes, &source.volume_set_snapshot_bytes)?;
+    validate_receipt(
+        &receipt,
+        &custody,
+        &install,
+        &source.install_receipt_bytes,
+        &source.volume_set_snapshot_bytes,
+    )?;
     verify_archives_on_disk(root, &receipt)?;
     Ok(PaperlessHistoricalBackup {
         job_id: receipt.job_id,
@@ -888,7 +923,11 @@ pub(crate) fn open_archive_for_restore(
     historical: &PaperlessHistoricalBackup,
     archive: &PaperlessBackupArchive,
 ) -> Result<std::fs::File, LifecycleError> {
-    if archive.archive_path != format!("state/{BACKUP_DIR}/{}/{}.tar", historical.job_id, archive.logical_name)
+    if archive.archive_path
+        != format!(
+            "state/{BACKUP_DIR}/{}/{}.tar",
+            historical.job_id, archive.logical_name
+        )
         || !historical.archives.iter().any(|known| known == archive)
     {
         return Err(LifecycleError::Receipt);
@@ -897,7 +936,9 @@ pub(crate) fn open_archive_for_restore(
     let name = format!("{}.tar", archive.logical_name);
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
-    let file = dir.open_with(OsStr::new(&name), &options).map_err(|_| LifecycleError::Io)?;
+    let file = dir
+        .open_with(OsStr::new(&name), &options)
+        .map_err(|_| LifecycleError::Io)?;
     let metadata = file.metadata().map_err(|_| LifecycleError::Io)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(LifecycleError::Receipt);
@@ -908,29 +949,46 @@ pub(crate) fn open_archive_for_restore(
     let mut buffer = [0u8; 16 * 1024];
     loop {
         let read = file.read(&mut buffer).map_err(|_| LifecycleError::Io)?;
-        if read == 0 { break; }
-        total = total.checked_add(read as u64).ok_or(LifecycleError::Receipt)?;
-        if total > BACKUP_ARCHIVE_LIMIT { return Err(LifecycleError::Receipt); }
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or(LifecycleError::Receipt)?;
+        if total > BACKUP_ARCHIVE_LIMIT {
+            return Err(LifecycleError::Receipt);
+        }
         hasher.update(&buffer[..read]);
     }
     if total != archive.bytes || format!("{:x}", hasher.finalize()) != archive.sha256 {
         return Err(LifecycleError::Receipt);
     }
-    file.seek(SeekFrom::Start(0)).map_err(|_| LifecycleError::Io)?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| LifecycleError::Io)?;
     Ok(file)
 }
 
 fn canonical_backup_job_id(value: &str) -> bool {
     value.len() == "paperless-backup-".len() + 64
         && value.starts_with("paperless-backup-")
-        && value["paperless-backup-".len()..].bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        && value["paperless-backup-".len()..]
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn valid_restore_binding(binding: &RestoreConfigBinding) -> bool {
     binding.compose_contract_id == paperless_staging::OCI_CONTRACT_ID
-        && [binding.environment_fingerprint.as_str(), binding.token_fingerprint.as_str()]
-            .into_iter()
-            .all(|value| value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+        && [
+            binding.environment_fingerprint.as_str(),
+            binding.token_fingerprint.as_str(),
+        ]
+        .into_iter()
+        .all(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
 }
 
 fn historical_custody_from_receipt(
@@ -944,9 +1002,16 @@ fn historical_custody_from_receipt(
     }
     let mut members = Vec::with_capacity(install.containers.len());
     for container in &install.containers {
-        let running = receipt.original_running.iter().find(|state| state.service == container.service)
+        let running = receipt
+            .original_running
+            .iter()
+            .find(|state| state.service == container.service)
             .ok_or(LifecycleError::Receipt)?;
-        members.push(BackupMember { service: container.service.clone(), container_id: container.id.clone(), running: running.running });
+        members.push(BackupMember {
+            service: container.service.clone(),
+            container_id: container.id.clone(),
+            running: running.running,
+        });
     }
     Ok(BackupCustody {
         schema_version: 1,
@@ -1228,7 +1293,11 @@ fn write_source_companion_new(
         // An interrupted legacy v1 custody may still need its absent source
         // companion reconstructed.  Do not manufacture an invalid v2 record
         // with a null binding: v2 means the binding is present and verified.
-        schema_version: if custody.restore_binding.is_some() { 2 } else { 1 },
+        schema_version: if custody.restore_binding.is_some() {
+            2
+        } else {
+            1
+        },
         operation: "paperless.backup.source".into(),
         job_id: custody.job_id.clone(),
         install_receipt_bytes: custody.install_receipt_bytes.clone(),
@@ -1821,8 +1890,9 @@ pub(crate) fn restore_config_binding(
     binding: &EnvBinding,
     credentials: &Credentials,
 ) -> Result<RestoreConfigBinding, LifecycleError> {
-    let values = paperless_bootstrap::parse_dotenv_values(binding.env.as_slice(), &RESTORE_CONFIG_KEYS)
-        .map_err(|_| LifecycleError::Credentials)?;
+    let values =
+        paperless_bootstrap::parse_dotenv_values(binding.env.as_slice(), &RESTORE_CONFIG_KEYS)
+            .map_err(|_| LifecycleError::Credentials)?;
     if values.len() != RESTORE_CONFIG_KEYS.len()
         || RESTORE_CONFIG_KEYS
             .iter()
@@ -1839,8 +1909,8 @@ pub(crate) fn restore_config_binding(
         environment.update((value.len() as u64).to_be_bytes());
         environment.update(value.as_bytes());
     }
-    let token = valid_token(credentials.paperless_token.as_ref())
-        .ok_or(LifecycleError::Credentials)?;
+    let token =
+        valid_token(credentials.paperless_token.as_ref()).ok_or(LifecycleError::Credentials)?;
     let mut token_digest = Sha256::new();
     token_digest.update(b"neoth.paperless.restore.token.v1\0");
     token_digest.update((token.expose_secret().len() as u64).to_be_bytes());

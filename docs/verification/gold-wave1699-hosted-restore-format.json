@@ -1,0 +1,21 @@
+{
+  "schema": "neoth-hosted-restore-format/v1",
+  "run": 36337404786,
+  "producer": "36a329a7e11e64851616102f29c08377025be39f",
+  "artifact": 10938100772,
+  "zipSha256": "2f26b9e68d71a50b40aa3d3ea0111330cd7d21a81dc9b145bbe7c01cf2f3d436",
+  "patchSha256": "D6E894DC716BABCE78493CE7D50C7DC52EE0CE41CFD2157E2C5C2046207D236F",
+  "files": [
+    "SRC/neothd/src/cli/paperless.rs",
+    "SRC/neothd/src/installers/paperless_backup.rs",
+    "SRC/neothd/src/installers/paperless_backup_tests.rs",
+    "SRC/neothd/src/installers/paperless_generation_auth.rs",
+    "SRC/neothd/src/installers/paperless_lifecycle.rs",
+    "SRC/neothd/src/installers/paperless_restore.rs",
+    "SRC/neothd/src/installers/paperless_restore_tests.rs",
+    "SRC/neothd/src/installers/paperless_staging.rs",
+    "SRC/neothd/src/updater/process_containment.rs"
+  ],
+  "localFormatterRan": false,
+  "scope": "Original hosted formatter patch only; compilation failed separately before runtime and is being repaired"
+}

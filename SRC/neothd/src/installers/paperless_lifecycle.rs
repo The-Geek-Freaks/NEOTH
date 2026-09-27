@@ -399,17 +399,26 @@ pub trait ComposeExecutor: Send {
     /// Bounded secret/config stdin for a fixed Docker command. The caller owns
     /// exact bytes and must never place a credential in argv or environment.
     async fn run_with_stdin(
-        &mut self, _argv: &[String], _root: &OwnedPaperlessRoot, _stdin: Zeroizing<Vec<u8>>,
+        &mut self,
+        _argv: &[String],
+        _root: &OwnedPaperlessRoot,
+        _stdin: Zeroizing<Vec<u8>>,
     ) -> Result<CommandOutput, LifecycleError> {
         Err(LifecycleError::Command("paperless_stdin_unsupported"))
     }
     /// Stream a capability-opened archive into a fixed Docker stdin consumer.
     /// Success requires the exact expected byte count and digest.
     async fn run_stream_from_file(
-        &mut self, _argv: &[String], _root: &OwnedPaperlessRoot, _input: std::fs::File,
-        _expected_bytes: u64, _expected_sha256: &str,
+        &mut self,
+        _argv: &[String],
+        _root: &OwnedPaperlessRoot,
+        _input: std::fs::File,
+        _expected_bytes: u64,
+        _expected_sha256: &str,
     ) -> Result<(), LifecycleError> {
-        Err(LifecycleError::Command("paperless_archive_input_unsupported"))
+        Err(LifecycleError::Command(
+            "paperless_archive_input_unsupported",
+        ))
     }
 }
 #[async_trait]
@@ -421,7 +430,10 @@ trait RetainedComposeExecutor: ComposeExecutor {
         binding: &EnvBinding,
     ) -> Result<CommandOutput, LifecycleError>;
     async fn run_retained_with_compose(
-        &mut self, argv: &[String], root: &OwnedPaperlessRoot, binding: &EnvBinding,
+        &mut self,
+        argv: &[String],
+        root: &OwnedPaperlessRoot,
+        binding: &EnvBinding,
         compose_input: Vec<u8>,
     ) -> Result<CommandOutput, LifecycleError>;
 }
@@ -596,38 +608,80 @@ impl ComposeExecutor for DockerExecutor {
         }
     }
 
-    async fn run_with_stdin(&mut self, argv: &[String], root: &OwnedPaperlessRoot, stdin: Zeroizing<Vec<u8>>) -> Result<CommandOutput, LifecycleError> {
-        if stdin.len() > ENV_LIMIT { return Err(LifecycleError::Command("paperless_stdin_limit")); }
-        let (program,args)=argv.split_first().ok_or(LifecycleError::Command("paperless_empty_command"))?;
-        let command = configured_docker_command(program,args,&root.display);
+    async fn run_with_stdin(
+        &mut self,
+        argv: &[String],
+        root: &OwnedPaperlessRoot,
+        stdin: Zeroizing<Vec<u8>>,
+    ) -> Result<CommandOutput, LifecycleError> {
+        if stdin.len() > ENV_LIMIT {
+            return Err(LifecycleError::Command("paperless_stdin_limit"));
+        }
+        let (program, args) = argv
+            .split_first()
+            .ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let command = configured_docker_command(program, args, &root.display);
         let mut child = crate::updater::process_containment::ContainedChild::spawn_in_retained_directory_with_zeroizing_stdin(command, &root.root, &root.display, stdin, OUTPUT_LIMIT).await.map_err(|_|LifecycleError::Command("paperless_stdin_spawn_failed"))?;
-        let output = match child.wait_until(std::time::Instant::now() + COMMAND_TIMEOUT).await {
+        let output = match child
+            .wait_until(std::time::Instant::now() + COMMAND_TIMEOUT)
+            .await
+        {
             Ok(output) => output,
             Err(crate::updater::process_containment::ContainedChildError::DeadlineElapsed) => {
-                child.terminate_and_reap().await.map_err(|_|LifecycleError::Command("paperless_stdin_reap_failed"))?;
+                child
+                    .terminate_and_reap()
+                    .await
+                    .map_err(|_| LifecycleError::Command("paperless_stdin_reap_failed"))?;
                 return Err(LifecycleError::Command("paperless_stdin_timeout"));
             }
             Err(_) => return Err(LifecycleError::Command("paperless_stdin_failed")),
         };
-        if !output.status.success() { return Err(LifecycleError::Command("paperless_stdin_failed")); }
-        String::from_utf8(output.stdout).map(|stdout|CommandOutput{stdout}).map_err(|_|LifecycleError::Command("paperless_command_non_utf8"))
+        if !output.status.success() {
+            return Err(LifecycleError::Command("paperless_stdin_failed"));
+        }
+        String::from_utf8(output.stdout)
+            .map(|stdout| CommandOutput { stdout })
+            .map_err(|_| LifecycleError::Command("paperless_command_non_utf8"))
     }
 
-    async fn run_stream_from_file(&mut self, argv:&[String], root:&OwnedPaperlessRoot, input:std::fs::File, expected_bytes:u64, expected_sha256:&str)->Result<(),LifecycleError>{
-        if expected_sha256.len()!=64||!expected_sha256.bytes().all(|b|b.is_ascii_hexdigit()){return Err(LifecycleError::Receipt)}
-        let (program,args)=argv.split_first().ok_or(LifecycleError::Command("paperless_empty_command"))?;
-        let command = configured_docker_command(program,args,&root.display);
+    async fn run_stream_from_file(
+        &mut self,
+        argv: &[String],
+        root: &OwnedPaperlessRoot,
+        input: std::fs::File,
+        expected_bytes: u64,
+        expected_sha256: &str,
+    ) -> Result<(), LifecycleError> {
+        if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(LifecycleError::Receipt);
+        }
+        let (program, args) = argv
+            .split_first()
+            .ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let command = configured_docker_command(program, args, &root.display);
         let mut child = crate::updater::process_containment::ContainedChild::spawn_in_retained_directory_with_file_stdin(command, &root.root, &root.display, input, expected_bytes, expected_sha256.to_owned(), OUTPUT_LIMIT).await.map_err(|_|LifecycleError::Command("paperless_archive_input_spawn_failed"))?;
-        let output = match child.wait_until(std::time::Instant::now() + COMMAND_TIMEOUT).await {
+        let output = match child
+            .wait_until(std::time::Instant::now() + COMMAND_TIMEOUT)
+            .await
+        {
             Ok(output) => output,
             Err(crate::updater::process_containment::ContainedChildError::DeadlineElapsed) => {
-                child.terminate_and_reap().await.map_err(|_|LifecycleError::Command("paperless_archive_input_reap_failed"))?;
+                child
+                    .terminate_and_reap()
+                    .await
+                    .map_err(|_| LifecycleError::Command("paperless_archive_input_reap_failed"))?;
                 return Err(LifecycleError::Command("paperless_archive_input_timeout"));
             }
-            Err(crate::updater::process_containment::ContainedChildError::StdinIntegrity) => return Err(LifecycleError::Receipt),
+            Err(crate::updater::process_containment::ContainedChildError::StdinIntegrity) => {
+                return Err(LifecycleError::Receipt);
+            }
             Err(_) => return Err(LifecycleError::Command("paperless_archive_input_failed")),
         };
-        output.status.success().then_some(()).ok_or(LifecycleError::Command("paperless_archive_input_failed"))
+        output
+            .status
+            .success()
+            .then_some(())
+            .ok_or(LifecycleError::Command("paperless_archive_input_failed"))
     }
 }
 #[async_trait]
@@ -640,8 +694,15 @@ impl RetainedComposeExecutor for DockerExecutor {
     ) -> Result<CommandOutput, LifecycleError> {
         self.run_retained_owned(argv, root, binding, None).await
     }
-    async fn run_retained_with_compose(&mut self, argv:&[String], root:&OwnedPaperlessRoot, binding:&EnvBinding, compose_input:Vec<u8>)->Result<CommandOutput,LifecycleError>{
-        self.run_retained_owned(argv,root,binding,Some(compose_input)).await
+    async fn run_retained_with_compose(
+        &mut self,
+        argv: &[String],
+        root: &OwnedPaperlessRoot,
+        binding: &EnvBinding,
+        compose_input: Vec<u8>,
+    ) -> Result<CommandOutput, LifecycleError> {
+        self.run_retained_owned(argv, root, binding, Some(compose_input))
+            .await
     }
 }
 
@@ -663,12 +724,13 @@ impl DockerExecutor {
         let compose_input = match supplied_compose {
             Some(bytes) => bytes,
             None => match binding.volume_set_id.as_deref() {
-            Some(volume_set_id) => {
-                paperless_staging::render_compose_with_volume_set_id(volume_set_id)
-                    .ok_or(LifecycleError::LaunchBinding)?
-            }
-            None => paperless_staging::legacy_compose_bytes().to_vec(),
-        }};
+                Some(volume_set_id) => {
+                    paperless_staging::render_compose_with_volume_set_id(volume_set_id)
+                        .ok_or(LifecycleError::LaunchBinding)?
+                }
+                None => paperless_staging::legacy_compose_bytes().to_vec(),
+            },
+        };
         let mut child =
             crate::updater::process_containment::ContainedChild::spawn_in_retained_directory(
                 command,
@@ -815,8 +877,12 @@ async fn install_at_with_readiness_and_bootstrap<
     // Restore receipt is already custody-authorized by read_install_receipt;
     // deriving the base name here would otherwise create an empty sibling.
     let active_receipt = read_install_receipt(&owned)?;
-    let active_project = active_receipt.as_ref().map(|receipt| receipt.project.clone());
-    let active_schema = active_receipt.as_ref().map(|receipt| receipt.schema_version);
+    let active_project = active_receipt
+        .as_ref()
+        .map(|receipt| receipt.project.clone());
+    let active_schema = active_receipt
+        .as_ref()
+        .map(|receipt| receipt.schema_version);
     let engine = select_local_engine(executor, &owned).await?;
     paperless_generation_rotation::rotate_completed_purge_generation_at(
         executor, &engine, &owned, &binding,
@@ -824,7 +890,9 @@ async fn install_at_with_readiness_and_bootstrap<
     .await?;
     let project = active_project
         .clone()
-        .or(paperless_generation_auth::pending_generation_project(&owned)?)
+        .or(paperless_generation_auth::pending_generation_project(
+            &owned,
+        )?)
         .unwrap_or_else(|| project_name(&root_path));
     let fresh_credentials = if paperless_generation_auth::has_pending_marker(&owned)? {
         let current =
@@ -2089,11 +2157,24 @@ pub(crate) fn restore_project_name(
     restored_volume_set_id: &str,
 ) -> Option<String> {
     let suffix = backup_job_id.strip_prefix("paperless-backup-")?;
-    if base_project.is_empty() || suffix.len() != 64 || !suffix.bytes().all(|b| b.is_ascii_hexdigit())
-        || !paperless_staging::valid_volume_set_id(restored_volume_set_id) { return None; }
-    let digest = Sha256::digest(format!("{base_project}\0{suffix}\0{restored_volume_set_id}").as_bytes());
-    let value = format!("{base_project}-restore-{}", hex::encode(digest)[..16].to_owned());
-    (value.len() <= 63 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).then_some(value)
+    if base_project.is_empty()
+        || suffix.len() != 64
+        || !suffix.bytes().all(|b| b.is_ascii_hexdigit())
+        || !paperless_staging::valid_volume_set_id(restored_volume_set_id)
+    {
+        return None;
+    }
+    let digest =
+        Sha256::digest(format!("{base_project}\0{suffix}\0{restored_volume_set_id}").as_bytes());
+    let value = format!(
+        "{base_project}-restore-{}",
+        hex::encode(digest)[..16].to_owned()
+    );
+    (value.len() <= 63
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    .then_some(value)
 }
 struct ExpectedImage {
     service: &'static str,
@@ -3122,12 +3203,15 @@ mod tests {
             self.run(argv, &root.display).await
         }
         async fn run_retained_with_compose(
-            &mut self, argv:&[String], root:&OwnedPaperlessRoot, binding:&EnvBinding,
-            compose_input:Vec<u8>,
-        )->Result<CommandOutput,LifecycleError>{
+            &mut self,
+            argv: &[String],
+            root: &OwnedPaperlessRoot,
+            binding: &EnvBinding,
+            compose_input: Vec<u8>,
+        ) -> Result<CommandOutput, LifecycleError> {
             compose_environment(binding)?;
             self.retained_compose_inputs.push(compose_input);
-            self.run(argv,&root.display).await
+            self.run(argv, &root.display).await
         }
     }
     struct EventuallyReady(AtomicUsize);

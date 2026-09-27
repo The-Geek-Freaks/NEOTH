@@ -472,10 +472,7 @@ fn valid_fingerprint(value: Option<&str>) -> bool {
         value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     })
 }
-fn generation_project_is_authorized(
-    root: &OwnedPaperlessRoot,
-    project: &str,
-) -> bool {
+fn generation_project_is_authorized(root: &OwnedPaperlessRoot, project: &str) -> bool {
     project == project_name(&root.display)
         || paperless_restore::restore_project_authorized_at(root, project).is_ok()
 }

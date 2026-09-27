@@ -3,6 +3,9 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1699 Hosted Restore formatting (2026-09-27):** Verified original Preflight36337404786 artifact10938100772 at36a329a7 (ZIP2f26b9e68d71a50b40aa3d3ea0111330cd7d21a81dc9b145bbe7c01cf2f3d436) and imported its exact9-file Rust patch. Product helper tests passed; Core36337439917 and Product36337441758 stopped at Rust compilation, with no runtime acceptance. Targeted build repairs follow. No local formatter/runtime ran; no ROAD closure.
+Evidence: docs/verification/gold-wave1699-hosted-restore-format.json.
+
 **W1698 Paperless Restore source (2026-09-27):** Same-instance Restore is
 implemented for an exact canonical Backup job: stopped no-port candidate,
 six verified archive streams, local authenticated readiness, loopback cutover

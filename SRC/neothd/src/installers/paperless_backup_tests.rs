@@ -1172,15 +1172,15 @@ async fn legacy_inflight_source_recovery_never_writes_schema_two_without_binding
     .unwrap();
     assert_eq!(resumed.job_id, completed.job_id);
     assert_eq!(fake.streams(), streams);
-    let recovered: BackupSource = serde_json::from_slice(&std::fs::read(source_path).unwrap()).unwrap();
+    let recovered: BackupSource =
+        serde_json::from_slice(&std::fs::read(source_path).unwrap()).unwrap();
     assert_eq!(recovered.schema_version, 1);
     assert!(recovered.restore_binding.is_none());
 }
 #[tokio::test]
 async fn exact_restore_resolver_rejects_legacy_and_binding_or_archive_mutants_without_effects() {
     for mutation in ["legacy", "canonical", "config", "archive"] {
-        let (home, credentials, _) =
-            super::super::tests::installed_home_for_uninstall_test().await;
+        let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
         let mut fake = StatefulBackupExecutor::new(true);
         let completed = backup_at_with(
             home.path(),
