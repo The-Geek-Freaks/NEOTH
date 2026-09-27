@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1534-W1541 Restore gate repairs and Backup Core acceptance (2026-09-27):**
+Backup Core36168674462 at ecf99aa7 is now admitted: slim production Clippy,
+default-test typecheck, public CLI build and full Linux workspace Clippy all
+passed; original generated-reference ZIP, internal hash, producer and four
+compiler terminals verify. Its older CLI reference is retained, not imported.
+Restore Group36171648346 at5bc24162 passed1892/1906; Windows36171651908
+passed657/671. The same14 lifecycle fixtures failed before Restore because
+the fake live container lacked its required volume. That fixture and four
+Candidate Clippy findings from Core36171655499 are corrected in source.
+Product36171981875 atfa758e0e failed while preparing its fixture key, before
+Restore. Original ZIP and39 producer bindings verify; Docker cleanup passed,
+full cleanup did not. The canary now accepts only login200/mint200-or201 and
+reports bounded operation/status diagnostics before successful-body checks.
+The old receipt does not establish201 as its cause. Independent static review
+passed; all repaired-source native/Core/product gates still require GitHub.
+No ROAD checkbox closes; Portable2116/Group1906/Windows671 remain unchanged.
+Rollback schema/runtime/coordinator work is separate unpublished WIP. Claude
+TASK080/081 remain unacknowledged; no local executable validation occurred.
+Evidence: docs/verification/gold-wave1536-backup-core-accepted.json and
+ docs/verification/gold-wave1541-restore-gate-repair.json.
+
 **W1528 candidate test formatting import (2026-09-25):**
 Imported only two hosted rustfmt assertion wraps from Preflight36171647648
 at5bc24162; original ZIP/API/internal hashes, producer and exact pre/post Git

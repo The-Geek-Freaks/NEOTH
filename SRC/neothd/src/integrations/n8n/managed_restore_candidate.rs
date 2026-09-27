@@ -109,7 +109,7 @@ pub(crate) fn restore_candidate_command(
         "--restart".into(),
         "no".into(),
         "--tmpfs".into(),
-        format!("/tmp:{TMPFS_OPTIONS}"),
+        format!("/tmp:rw,noexec,nosuid,nodev,size={RESTORE_CANDIDATE_TMPFS_BYTES}"),
         "--mount".into(),
         format!(
             "type=volume,source={},target=/home/node/.n8n",
@@ -273,13 +273,13 @@ pub(crate) fn parse_observed_restore_candidate_json(
 }
 
 fn no_host_port_bindings(bindings: &Option<BTreeMap<String, serde_json::Value>>) -> bool {
-    bindings.as_ref().map_or(true, BTreeMap::is_empty)
+    bindings.as_ref().is_none_or(BTreeMap::is_empty)
 }
 
 fn has_fixed_inert_process(config: &Config) -> bool {
-    config.entrypoint.as_ref().map_or(false, |entrypoint| {
+    config.entrypoint.as_ref().is_some_and(|entrypoint| {
         entrypoint.len() == 1 && entrypoint[0] == INERT_ENTRYPOINT
-    }) && config.command.as_ref().map_or(false, |command| {
+    }) && config.command.as_ref().is_some_and(|command| {
         command.len() == 2 && command[0] == "-e" && command[1] == INERT_KEEPALIVE_ARGUMENT
     })
 }

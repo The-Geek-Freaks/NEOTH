@@ -1,0 +1,69 @@
+{
+  "schema": "neoth-hosted-core-admission/v1",
+  "decision": "admitted",
+  "capturedUtc": "2026-09-27T07:07:31Z",
+  "scope": "Backup producer core Clippy, test typecheck, public CLI build, and Linux workspace Clippy",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36168674462,
+    "jobId": 108182597363,
+    "headSha": "ecf99aa764f889cdea1bd925b4f855568770e5bf",
+    "sourceRef": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36168674462"
+  },
+  "gates": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success",
+      "startedAt": "2026-09-25T17:42:41Z",
+      "completedAt": "2026-09-25T17:44:57Z"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success",
+      "startedAt": "2026-09-25T17:44:57Z",
+      "completedAt": "2026-09-25T17:49:20Z"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success",
+      "startedAt": "2026-09-25T17:49:20Z",
+      "completedAt": "2026-09-25T17:52:58Z"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success",
+      "startedAt": "2026-09-25T17:53:00Z",
+      "completedAt": "2026-09-25T18:17:17Z"
+    }
+  ],
+  "artifact": {
+    "id": 10879677941,
+    "name": "generated-cli-reference",
+    "sha256": "c040d268484d8053a69ed76362d1143424cfc4cfa0fb94360631dd7f58fbe737",
+    "apiDigestMatchesOriginalZip": true,
+    "producerHeadVerified": true,
+    "internalHashesVerified": true,
+    "entryCount": 3,
+    "referenceSha256": "3c9d16e4580e2ee8d70aedcaaa7448f274ad8662fc62b72bf15d72e0a24c951a",
+    "imported": false
+  },
+  "workflow": {
+    "path": ".github/workflows/cli-reference.yml",
+    "blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+    "sha256": "0b971561dcb33d02fc5943f1ad3f37cfe22ffa0bcc8229704d9d7e395695403b"
+  },
+  "log": {
+    "sha256": "136ef04f98d54604320e3812d43dab3ec2829a4a4e568206c6c455fae9271841",
+    "compileSuccessTerminals": 4
+  },
+  "limits": [
+    "Producer ecf99aa7 only; does not validate later Restore or unpublished Rollback changes.",
+    "Test typecheck is not test execution; native Backup and real-product admissions remain separate.",
+    "Generated CLI artifact retained as evidence; older generated reference is not imported over the later Restore reference.",
+    "No local executable validation, roadmap closure, deployment, or release acceptance."
+  ],
+  "localExecutableValidationRan": false
+}

@@ -575,15 +575,32 @@ def bootstrap_secret(job: str, kind: str) -> str:
         raise Failure("restore_scope_secret_unavailable") from error
 
 def restore_scope_reply(runtime_id: str, payload: dict) -> dict:
-    if not ID.fullmatch(runtime_id) or payload.get("op") not in {"login", "mint"}:
+    op = payload.get("op")
+    if not ID.fullmatch(runtime_id) or op not in {"login", "mint"}:
         raise Failure("restore_scope_request_invalid")
     raw = run_with_payload(
         ["docker", "exec", "-i", "-u", "node", runtime_id, "node", "--no-warnings", "-e", RESTORE_API_KEY_CLIENT],
         json.dumps(payload, separators=(",", ":")).encode("utf-8"), timeout=20,
     )
-    value = read_json_bytes(raw)
-    if set(value) != {"status", "cookie", "body"} or value.get("status") != 200 or not isinstance(value.get("cookie"), str) or not isinstance(value.get("body"), dict) or "data" not in value["body"]:
-        raise Failure("restore_scope_response_invalid")
+    try:
+        value = read_json_bytes(raw)
+    except Failure as error:
+        raise Failure(f"restore_scope_{op}_response_json_invalid") from error
+    if (
+        set(value) != {"status", "cookie", "body"}
+        or type(value.get("status")) is not int
+        or not isinstance(value.get("cookie"), str)
+        or not isinstance(value.get("body"), dict)
+    ):
+        raise Failure(f"restore_scope_{op}_response_shape_invalid")
+    status = value["status"]
+    if not 100 <= status <= 599:
+        raise Failure(f"restore_scope_{op}_response_status_out_of_range")
+    accepted = {"login": {200}, "mint": {200, 201}}
+    if status not in accepted[op]:
+        raise Failure(f"restore_scope_{op}_response_status_{status}")
+    if "data" not in value["body"]:
+        raise Failure(f"restore_scope_{op}_response_shape_invalid")
     return value
 
 def mint_restore_credential_key(job: str, runtime_id: str) -> bytes:

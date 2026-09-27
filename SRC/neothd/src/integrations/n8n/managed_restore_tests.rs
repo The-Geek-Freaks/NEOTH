@@ -174,6 +174,10 @@ impl super::super::ManagedDockerRunner for Runner {
         let mut s = self.0.lock().unwrap();
         s.calls.push("live-create".into());
         s.next += 1;
+        s.volume = Some(super::super::ObservedVolume {
+            name: volume.clone(),
+            labels: BTreeMap::new(),
+        });
         s.original = Some(original(format!("{:064x}", s.next), &job, volume));
         s.original_running = true;
         Ok(receipt())

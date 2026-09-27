@@ -185,17 +185,61 @@ class RestoreCredentialKeyTests(unittest.TestCase):
                 with self.assertRaisesRegex(canary.Failure, error):
                     canary.mint_restore_credential_key(self.job, self.runtime)
 
-    def test_restore_scope_reply_rejects_wrong_status_or_shape(self) -> None:
-        valid_payload = {"op": "login", "browserId": "browser", "email": "owner@example.invalid", "password": "password"}
-        invalid = (
-            {"status": 201, "cookie": "n8n-auth=session", "body": {"data": {}}},
-            {"status": 200, "cookie": "n8n-auth=session", "body": []},
-            {"status": 200, "cookie": "n8n-auth=session", "body": {}},
+    def test_restore_scope_reply_labels_non_success_status_by_operation(self) -> None:
+        cases = (
+            (
+                {"op": "login", "browserId": "browser", "email": "owner@example.invalid", "password": "password"},
+                401,
+                "restore_scope_login_response_status_401",
+            ),
+            (
+                {"op": "mint", "browserId": "browser", "cookie": "n8n-auth=session", "label": "fixture"},
+                403,
+                "restore_scope_mint_response_status_403",
+            ),
+            (
+                {"op": "mint", "browserId": "browser", "cookie": "n8n-auth=session", "label": "fixture"},
+                202,
+                "restore_scope_mint_response_status_202",
+            ),
+            (
+                {"op": "mint", "browserId": "browser", "cookie": "n8n-auth=session", "label": "fixture"},
+                204,
+                "restore_scope_mint_response_status_204",
+            ),
         )
-        for reply in invalid:
-            with self.subTest(reply=reply), patch.object(canary, "run_with_payload", return_value=json.dumps(reply).encode()):
-                with self.assertRaisesRegex(canary.Failure, "restore_scope_response_invalid"):
-                    canary.restore_scope_reply(self.runtime, valid_payload)
+        for payload, status, code in cases:
+            reply = {"status": status, "cookie": "", "body": {}}
+            with self.subTest(op=payload["op"], status=status), patch.object(
+                canary, "run_with_payload", return_value=json.dumps(reply).encode()
+            ):
+                with self.assertRaisesRegex(canary.Failure, code):
+                    canary.restore_scope_reply(self.runtime, payload)
+
+    def test_restore_scope_reply_labels_malformed_envelope_by_operation(self) -> None:
+        cases = (
+            ({"op": "login", "browserId": "browser", "email": "owner@example.invalid", "password": "password"}, "login"),
+            ({"op": "mint", "browserId": "browser", "cookie": "n8n-auth=session", "label": "fixture"}, "mint"),
+        )
+        for payload, op in cases:
+            reply = {"status": 200, "cookie": "", "body": []}
+            with self.subTest(op=op), patch.object(canary, "run_with_payload", return_value=json.dumps(reply).encode()):
+                with self.assertRaisesRegex(canary.Failure, f"restore_scope_{op}_response_shape_invalid"):
+                    canary.restore_scope_reply(self.runtime, payload)
+
+    def test_restore_scope_reply_redacts_invalid_helper_json_by_operation(self) -> None:
+        payload = {"op": "login", "browserId": "browser", "email": "owner@example.invalid", "password": "password"}
+        with patch.object(canary, "run_with_payload", return_value=b"not-json"), patch.object(
+            canary, "read_json_bytes", side_effect=canary.Failure("product_json_invalid")
+        ):
+            with self.assertRaisesRegex(canary.Failure, "restore_scope_login_response_json_invalid"):
+                canary.restore_scope_reply(self.runtime, payload)
+
+    def test_restore_scope_reply_accepts_successful_created_response(self) -> None:
+        payload = {"op": "mint", "browserId": "browser", "cookie": "n8n-auth=session", "label": "fixture"}
+        reply = {"status": 201, "cookie": "", "body": {"data": {"rawApiKey": "restore-key"}}}
+        with patch.object(canary, "run_with_payload", return_value=json.dumps(reply).encode()):
+            self.assertEqual(canary.restore_scope_reply(self.runtime, payload), reply)
 
 
 class ProductReceiptTests(unittest.TestCase):

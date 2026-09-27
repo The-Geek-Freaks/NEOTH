@@ -1,0 +1,71 @@
+{
+  "schema": "neoth-restore-gate-repair/v1",
+  "capturedUtc": "2026-09-27T07:20:26Z",
+  "status": "source-reviewed-hosted-validation-pending",
+  "base": "9f30ac3c1e594c1db699aa83238b60a4acc1e8f0",
+  "failedRuns": [
+    {
+      "run": 36171648346,
+      "source": "5bc241627b7a221dc75a492b05cef63986ec9753",
+      "gate": "Group1906",
+      "passed": 1892,
+      "failed": 14,
+      "failure": "Shared Restore test setup omitted the live named volume."
+    },
+    {
+      "run": 36171651908,
+      "source": "5bc241627b7a221dc75a492b05cef63986ec9753",
+      "gate": "Windows671",
+      "passed": 657,
+      "failed": 14,
+      "failure": "Same shared fixture setup failure; test binary compiled successfully."
+    },
+    {
+      "run": 36171655499,
+      "source": "5bc241627b7a221dc75a492b05cef63986ec9753",
+      "gate": "Core",
+      "failure": "Unused tmpfs constant and three unnecessary_map_or production Clippy diagnostics."
+    },
+    {
+      "run": 36171981875,
+      "source": "fa758e0e12d2933ab0753bb4c9d4c36ae1110ca2",
+      "gate": "Product",
+      "failure": "restore_scope_response_invalid",
+      "stage": "managed_n8n_restore_credential_key",
+      "restoreStarted": false,
+      "dockerCleanup": true,
+      "completeCleanup": false
+    }
+  ],
+  "productEvidence": {
+    "artifact": 10880482203,
+    "zipSha256": "2d974533e0e8de91b647c91ddfe45d0f8cc26be3ab1ff4834869e87342d95a3a",
+    "originalZipMatchesApi": true,
+    "receiptSha256": "3b0c4ee15927d223be57a095c1a0fac14192e5344fb84adabd95d9fc1b62138f",
+    "producerBindings": 39,
+    "producerBindingsVerified": true
+  },
+  "fixes": [
+    "Stateful native test runner records the real default-volume existence before Backup validation.",
+    "Candidate command derives exact tmpfs bytes from its constant; equivalent Option predicates remove Clippy findings.",
+    "Canary accepts explicit terminal statuses login200 and mint200/201; rejects202/204.",
+    "Canary returns bounded nonsecret operation/status diagnostics without response body, cookie, key or payload."
+  ],
+  "review": {
+    "status": "approved-static-only",
+    "reportSha256": "5dec023fe3ecf4a6d95108b6a5d5c2640b53fc472cb5d5bcc98426da674eef5f"
+  },
+  "limitations": [
+    "HTTP201 was not recorded by the failed producer; compatibility support is not a proven root-cause diagnosis.",
+    "Source repair is not native or product acceptance; hosted reruns required.",
+    "Unpublished Rollback changes excluded from this repair publication.",
+    "No ROAD closure or product/release completion claim."
+  ],
+  "inventory": {
+    "portable": 2116,
+    "grouped": 1906,
+    "windows": 671,
+    "nativeIdentitiesUnchanged": true
+  },
+  "localExecutableValidationRan": false
+}
