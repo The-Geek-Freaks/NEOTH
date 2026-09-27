@@ -2988,6 +2988,14 @@ Read durable adoption status. This does not make a live HTTP request
 
 Remove the exact NEOTH-managed container and retain its data volume. Repeating an interrupted command reconciles absence without retrying deletion
 
+### `neoth n8n update`
+
+Migrate a private copy to a reviewed n8n release and retain the original runtime
+
+- `--target <TARGET>` — Exact reviewed target selector, for example n8n-2.40.7
+- `--platform <PLATFORM>` — Linux platform of the managed Docker engine
+- `--api-key-stdin` — Read the existing n8n API key from piped standard input
+
 ### `neoth n8n update-target`
 
 Verify a reviewed update image before any managed lifecycle operation

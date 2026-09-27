@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1645-W1648 Exact CLI reference and Update canary continuation (2026-09-27):**
+Core36324048254 at2a80e652 passed slim Clippy, test-target typecheck and public
+CLI build/export; workspace Clippy is still running. Original artifact
+10933628085/API ZIP digest and internal SHA bind the imported CLI reference,
+which adds the8 generated Update-command lines. Preflight36324047857 provided
+an authenticated one-file rustfmt patch; it was imported without local tools.
+Product36323839089 at ef2ecebc failed with an opaque unexpected error and no
+proven cleanup. Static caller/producer checking found two later contract errors:
+reinstall JSON omits operation, and Update purge uses its own exact phrase and
+volume namespace. Both are fixed with focused helper regressions. A redacted
+static-frame/command diagnostic now preserves failure location without raw
+exception text, argv or credentials. The old run's exact failing cause remains
+unproven; fresh product validation is required. Native cohorts can now run
+against the generated reference. Paperless work remains excluded WIP. No ROAD
+closure or local executable validation.
+Evidence: docs/verification/gold-wave1645-1648-update-continuation.json.
 **W1642 Managed Update production Clippy passes; test-source repair (2026-09-27):**
 Core36323249105 at2bac2a4c passed slim production Clippy, then its native test
 source check found exactly three errors: two fake-runner running predicates

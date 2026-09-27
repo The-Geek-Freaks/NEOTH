@@ -108,6 +108,26 @@ class Boundaries(unittest.TestCase):
    receipt_path.write_text(json.dumps(value),encoding="utf-8")
    with self.assertRaises(canary.Failure): canary.validate_update_backup(home,"backup","f"*64,update)
 class JobManifestTests(unittest.TestCase):
+ def test_reinstall_accepts_actual_cli_envelope_without_operation_field(self):
+  prior="00000000-0000-4000-8000-000000000001"; uninstall="00000000-0000-4000-8000-000000000002"; new="00000000-0000-4000-8000-000000000003"
+  value={"job_id":new,"state":"ready","probe_binding":"authenticated_n8n_workflows","failure_code":None}
+  self.assertEqual(canary.ready_reinstall(json.dumps(value).encode(),prior,uninstall),new)
+  for change in ({"state":"failed"},{"job_id":prior},{"probe_binding":"port_only"}):
+   with self.assertRaises(canary.product.Failure): canary.ready_reinstall(json.dumps({**value,**change}).encode(),prior,uninstall)
+ def test_update_purge_requires_its_exact_volume_and_confirmation(self):
+  job="00000000-0000-4000-8000-000000000001"; uninstall="00000000-0000-4000-8000-000000000002"
+  update={"update_job_id":job,"update_volume":"neoth_n8n_update_"+job.replace("-","")}
+  phrase=f"PURGE N8N UPDATE VOLUME {uninstall} {update['update_volume']}"
+  plan={"operation":"purge","state":"confirmation_required","uninstall_job_id":uninstall,"volume":update["update_volume"],"confirmation":phrase}
+  self.assertEqual(canary.update_purge_plan(plan,uninstall,update),phrase)
+  for change in ({"confirmation":phrase.replace("UPDATE ","")},{"volume":"foreign"},{"uninstall_job_id":job}):
+   with self.assertRaises(canary.Failure): canary.update_purge_plan({**plan,**change},uninstall,update)
+ def test_failure_diagnostic_never_exports_exception_text(self):
+  secret="PRIVATE-CREDENTIAL-MUST-NOT-APPEAR"
+  for error in (ValueError(secret),KeyError(secret),canary.product.Failure(secret),canary.migration.Failure(secret)):
+   diagnostic=canary.failure_diagnostic(error)
+   self.assertNotIn(secret,json.dumps(diagnostic))
+   self.assertEqual(set(diagnostic),{"kind","frames"})
  def test_real_observer_projection_returns_validated_manifest(self):
   job="00000000-0000-4000-8000-000000000001"
   row={"job_id":job,"operation":"backup","state":"ready","state_revision":5,"completed_steps":4,"total_steps":4,"manifest_sha256":"a"*64}

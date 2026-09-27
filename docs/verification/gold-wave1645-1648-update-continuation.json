@@ -1,0 +1,32 @@
+{
+  "schema": "neoth-gold-hosted-continuation/v1",
+  "batch": "W1645-W1648",
+  "capturedUtc": "2026-09-27T14:12:07.4073242Z",
+  "producer": "2a80e6520c0a51f67c5b44f0dacb8b3b4a715dcd",
+  "coreRun": 36324048254,
+  "core": "slim Clippy, test-source check, public CLI build/export passed; workspace pending",
+  "cli": {
+    "artifact": 10933628085,
+    "zipSha256": "2b090bfb7c0a242d20c203d5f7f13391814fdaa71402edb38f5e3e53671478d4",
+    "payloadSha256": "5ea7b25f8a0e646fc44b900a0743763059fe35f6aaacae1c09821cc6fe95cd2f",
+    "addedLines": 8
+  },
+  "format": {
+    "run": 36324047857,
+    "artifact": 10933043182,
+    "zipSha256": "126fa2976fb93c819c5e6412b2b43a78d87783375a3cb8c7ae1568cf4e89b670",
+    "patchSha256": "473ad0efffa99d2773380efd7bb0f51b87426d38d28a5f523f3e164b2924dd99",
+    "files": 1
+  },
+  "productFailure": {
+    "run": 36323839089,
+    "producer": "ef2ecebc989ddd9fa3ea4f05d194987aeb2a44b4",
+    "artifact": 10933491644,
+    "zipSha256": "980d0d42e42369fd3683c4fdb770b50fcc39c77243d3a967e026a9dc61c268dc",
+    "stage": "unexpected",
+    "cause": "not established; new static mismatches corrected, redacted frame diagnostic added",
+    "cleanupProven": false
+  },
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

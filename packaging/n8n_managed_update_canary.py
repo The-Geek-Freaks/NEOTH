@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hosted acceptance proof for the compiled managed n8n Update path."""
 from __future__ import annotations
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, traceback
 from pathlib import Path
 import n8n_product_bootstrap_canary as product
 import n8n_update_migration_canary as migration
@@ -73,6 +73,32 @@ def ready_operation(raw_bytes, operation):
     value = product.read_json_bytes(raw_bytes)
     if not isinstance(value, dict) or value.get("state") != "ready" or value.get("operation") != operation or value.get("failure_code") is not None or not isinstance(value.get("job_id"), str): raise Failure("downstream_operation_not_ready")
     return value["job_id"]
+
+def ready_reinstall(raw_bytes, source_job, uninstall):
+    return product.validate_reinstall_product(product.read_json_bytes(raw_bytes), source_job, uninstall)
+
+def update_purge_plan(value, uninstall, update):
+    job = update["update_job_id"]
+    volume = update["update_volume"]
+    if not product.JOB.fullmatch(uninstall) or not product.JOB.fullmatch(job) or volume != "neoth_n8n_update_" + job.replace("-", ""):
+        raise Failure("update_purge_target_invalid")
+    phrase = f"PURGE N8N UPDATE VOLUME {uninstall} {volume}"
+    if value != {"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall, "volume": volume, "confirmation": phrase}:
+        raise Failure("update_purge_plan_invalid")
+    return phrase
+
+def failure_diagnostic(error):
+    """Keep only static frame locations and already-redacted command evidence."""
+    kinds = {KeyError: "key_error", TypeError: "type_error", AttributeError: "attribute_error", ValueError: "value_error", OSError: "io_error"}
+    kind = kinds.get(type(error), "helper_failure" if isinstance(error, (Failure, product.Failure, migration.Failure)) else "unexpected")
+    files = {"n8n_managed_update_canary.py", "n8n_product_bootstrap_canary.py", "n8n_update_migration_canary.py"}
+    frames = [{"file": Path(frame.filename).name, "line": frame.lineno, "function": frame.name}
+              for frame in traceback.extract_tb(error.__traceback__)[-12:]
+              if Path(frame.filename).name in files and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", frame.name)]
+    result = {"kind": kind, "frames": frames}
+    if isinstance(error, product.CommandFailure):
+        result["command"] = error.diagnostic
+    return result
 
 def job_manifest(home, job, operation):
     # The observer validates the complete Ready row and returns its hashed
@@ -265,7 +291,7 @@ def update_downstream(binary, home, update, workflow_key, credential_key):
         uninstall_manifest = job_manifest(home, uninstall, "uninstall")
         product.validate_uninstall_status(product.read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall]), uninstall)
         if not product.exact_absent("container", current): raise Failure("update_uninstall_runtime_present")
-        reinstall = ready_operation(raw([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall, "--api-key-stdin"], payload=api_key_stdin(workflow_key)), "install")
+        reinstall = ready_reinstall(raw([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall, "--api-key-stdin"], payload=api_key_stdin(workflow_key)), update["update_job_id"], uninstall)
         reinstall_manifest = job_manifest(home, reinstall, "install")
         new_id = update_runtime(home, update, current, reinstall, reinstall_manifest)
         bounded_reinstall_rejection(binary, uninstall, api_key_stdin(workflow_key))
@@ -275,7 +301,7 @@ def update_downstream(binary, home, update, workflow_key, credential_key):
     uninstall = ready_operation(raw([str(binary), "--output", "json", "n8n", "uninstall"]), "uninstall")
     uninstall_manifest = job_manifest(home, uninstall, "uninstall")
     plan = product.read_json_bytes(raw([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall]))
-    phrase = product.validate_purge_plan(plan, uninstall, volume)
+    phrase = update_purge_plan(plan, uninstall, update)
     purge = ready_operation(raw([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall, "--confirm", phrase]), "purge")
     purge_manifest = job_manifest(home, purge, "purge")
     if not product.exact_absent("container", current) or not product.exact_absent("volume", volume): raise Failure("update_purge_effect_unproven")
@@ -358,7 +384,9 @@ def main(argv):
         if again["update_job_id"] != update["update_job_id"] or again["new_container_id"] != update["new_container_id"] or again["update_volume"] != update["update_volume"]: raise Failure("update_repeat_not_idempotent")
         downstream = update_downstream(a.binary, a.home, update, key, scoped)
         out.update({"update":{k:update[k] for k in ("update_job_id","selector","version","platform","runtime_image","update_volume","new_container_id","retained_source_name")},"source_archive":{"member_manifest_sha256":before_manifest,"archive_sha256":before_sha,"archive_bytes":before_bytes,"after_member_manifest_sha256":after_manifest,"after_archive_sha256":after_sha,"after_archive_bytes":after_bytes},"content":{"workflows":COUNT,"node_groups":True,"credential_decryption":True,"anonymous_401":True,"historical_key":True},"downstream":downstream,"outcome":"passed"})
-    except Exception as e: out["failure_stage"]=str(e) if isinstance(e,Failure) else "unexpected"
+    except Exception as e:
+        out["failure_stage"]=str(e) if isinstance(e,Failure) else "unexpected"
+        out["failure_diagnostic"] = failure_diagnostic(e)
     finally:
         # Only the product helper's exact owned-custody cleanup is allowed.
         cleaned=cleanup_update_fixture(a.home, source, update, update_attempted)
