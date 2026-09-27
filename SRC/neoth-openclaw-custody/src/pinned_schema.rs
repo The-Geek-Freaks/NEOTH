@@ -191,7 +191,7 @@ fn secret_ref_match(
     for id_row in channel_schema.leaves.iter().filter(|row| {
         row.scope.is_none()
             && row.json_type == "string"
-            && row.path_template.contains("{anyOf:1}{oneOf:")
+            && is_object_composition_member(row.path_template.as_str())
             && row.path_template.ends_with(".id")
     }) {
         let parent = id_row.path_template.strip_suffix(".id")?;
@@ -219,6 +219,19 @@ fn secret_ref_match(
         }
     }
     None
+}
+
+/// A SecretRef is admissible only for an exact pinned object-composition
+/// family.  The numeric `anyOf` branch is schema provenance, not a stable
+/// semantic discriminator: Google Chat's current service-account family is
+/// `anyOf:2`, while other supported families use other ordinals.
+fn is_object_composition_member(template: &str) -> bool {
+    template
+        .strip_suffix(".id")
+        .and_then(|parent| parent.rsplit('.').next())
+        .is_some_and(|component| {
+            component.contains("{anyOf:") && component.contains("{oneOf:")
+        })
 }
 
 /// Account objects are structural records, not values copied into a target.
@@ -595,6 +608,39 @@ mod tests {
             lookup("telegram", &[PathPart::Key("proxy")], "secret_ref")
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family() {
+        let matched = lookup(
+            "googlechat",
+            &[
+                PathPart::Key("accounts"),
+                PathPart::Key("work"),
+                PathPart::Key("serviceAccount"),
+            ],
+            "secret_ref",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(matched.scope, SchemaScope::TypedLeaf);
+        assert!(matched
+            .path_template
+            .starts_with("accounts.{key}.serviceAccount{anyOf:2}{oneOf:"));
+
+        assert!(
+            lookup(
+                "googlechat",
+                &[
+                    PathPart::Key("accounts"),
+                    PathPart::Key("work"),
+                    PathPart::Key("unrelatedObject"),
+                ],
+                "secret_ref",
+            )
+            .unwrap()
+            .is_none()
         );
     }
 

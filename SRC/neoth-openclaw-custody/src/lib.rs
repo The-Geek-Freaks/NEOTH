@@ -266,6 +266,48 @@ pub struct SelectedSlackAccount {
     app_token: OpenClawSecret,
 }
 
+/// The two OpenClaw transports whose source configuration can establish an
+/// explicit, schema-bound *conversion obligation*, but can never be treated as
+/// credentials for NEOTH's replacement transport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConvertedRelinkChannel {
+    IMessage,
+    GoogleChat,
+}
+
+impl ConvertedRelinkChannel {
+    fn source_channel(self) -> &'static str {
+        match self {
+            Self::IMessage => "imessage",
+            Self::GoogleChat => "googlechat",
+        }
+    }
+}
+
+/// Opaque provenance for one explicitly selected source account that needs a
+/// transport relink.  It deliberately contains no effective OpenClaw values:
+/// an imsg account is not a BlueBubbles credential and an OpenClaw Google Chat
+/// account is not a NEOTH Pub/Sub service-account credential.
+pub struct SelectedConvertedRelinkAccount {
+    channel: ConvertedRelinkChannel,
+    source_account_label: String,
+    source_set: SourceSetBinding,
+}
+
+impl SelectedConvertedRelinkAccount {
+    pub fn channel(&self) -> ConvertedRelinkChannel {
+        self.channel
+    }
+
+    pub fn source_account_label(&self) -> &str {
+        &self.source_account_label
+    }
+
+    pub fn source_set(&self) -> &SourceSetBinding {
+        &self.source_set
+    }
+}
+
 impl SelectedSlackAccount {
     pub fn source_account_label(&self) -> &str {
         &self.source_account_label
@@ -320,6 +362,22 @@ impl LoadedOpenClawDocument {
 
     pub fn select_slack_account(&self, source_account_label: &str) -> Result<SelectedSlackAccount> {
         select_slack_from_merged(&self.merged, source_account_label, self.source_set.clone())
+    }
+
+    /// Select an explicitly named, pinned-schema OpenClaw source account for a
+    /// future transport relink.  Selection establishes provenance only; no
+    /// source value crosses this boundary.
+    pub fn select_converted_relink_account(
+        &self,
+        channel: ConvertedRelinkChannel,
+        source_account_label: &str,
+    ) -> Result<SelectedConvertedRelinkAccount> {
+        select_converted_relink_from_merged(
+            &self.merged,
+            channel,
+            source_account_label,
+            self.source_set.clone(),
+        )
     }
 }
 
@@ -560,6 +618,19 @@ pub fn select_slack_account(
     load_openclaw_document(config, inventory_sha256)?.select_slack_account(source_account_label)
 }
 
+/// Select a schema-backed OpenClaw iMessage or Google Chat account as the
+/// source provenance for a converted transport relink.  This does not import
+/// credentials, endpoints, routes, or service-account references.
+pub fn select_converted_relink_account(
+    config: &Path,
+    channel: ConvertedRelinkChannel,
+    source_account_label: &str,
+    inventory_sha256: &str,
+) -> Result<SelectedConvertedRelinkAccount> {
+    load_openclaw_document(config, inventory_sha256)?
+        .select_converted_relink_account(channel, source_account_label)
+}
+
 fn select_from_merged(
     merged: &Value,
     source_account_label: &str,
@@ -672,6 +743,118 @@ fn select_slack_from_merged(
         bot_token: OpenClawSecret(Zeroizing::new(bot_token.to_owned())),
         app_token: OpenClawSecret(Zeroizing::new(app_token.to_owned())),
     })
+}
+
+fn select_converted_relink_from_merged(
+    merged: &Value,
+    channel: ConvertedRelinkChannel,
+    source_account_label: &str,
+    source_set: SourceSetBinding,
+) -> Result<SelectedConvertedRelinkAccount> {
+    anyhow::ensure!(
+        !source_account_label.trim().is_empty(),
+        "OpenClaw converted-relink source account label is empty"
+    );
+    let source_channel = channel.source_channel();
+    let channels = merged
+        .get("channels")
+        .and_then(Value::as_object)
+        .context("OpenClaw channels must be an object")?;
+    let configured_channel = channels
+        .get(source_channel)
+        .and_then(Value::as_object)
+        .context("selected OpenClaw converted-relink channel must be an object")?;
+    let accounts = configured_channel
+        .get("accounts")
+        .and_then(Value::as_object)
+        .context("selected OpenClaw converted-relink channel must contain accounts")?;
+    let selected = accounts
+        .get(source_account_label)
+        .context("selected OpenClaw converted-relink account is missing")?;
+    let selected_object = selected
+        .as_object()
+        .context("selected OpenClaw converted-relink account must be an object")?;
+    anyhow::ensure!(
+        !selected_object.is_empty(),
+        "selected OpenClaw converted-relink account must not be empty"
+    );
+    anyhow::ensure!(
+        pinned_schema::account_container(source_channel)?.is_some(),
+        "selected OpenClaw converted-relink account is not represented by the pinned schema"
+    );
+
+    let mut path = vec![
+        PathPart::Key("channels".to_string()),
+        PathPart::Key(source_channel.to_string()),
+        PathPart::Key("accounts".to_string()),
+        PathPart::Key(source_account_label.to_string()),
+    ];
+    validate_converted_relink_value(selected, &mut path)?;
+
+    Ok(SelectedConvertedRelinkAccount {
+        channel,
+        source_account_label: source_account_label.to_owned(),
+        source_set,
+    })
+}
+
+/// Accept only leaves that the pinned schema can identify.  A valid SecretRef
+/// is admissible when the schema supports it because this is provenance-only;
+/// the reference remains opaque and is never resolved or returned.
+fn validate_converted_relink_value(value: &Value, path: &mut Vec<PathPart>) -> Result<()> {
+    match secret_ref_state(value) {
+        SecretRefState::InvalidCandidate => {
+            anyhow::bail!("selected OpenClaw converted-relink account has an invalid secret reference")
+        }
+        SecretRefState::Valid => {
+            let schema = schema_lookup(path, value)?;
+            anyhow::ensure!(
+                matches!(
+                    schema.map(|item| item.scope),
+                    Some(pinned_schema::SchemaScope::TypedLeaf)
+                ),
+                "selected OpenClaw converted-relink account has an unsupported secret reference"
+            );
+            return Ok(());
+        }
+        SecretRefState::NotSecretRef => {}
+    }
+
+    if schema_lookup(path, value)?
+        .is_some_and(|schema| schema.scope == pinned_schema::SchemaScope::OpaqueSubtree)
+    {
+        anyhow::bail!("selected OpenClaw converted-relink account has an opaque schema subtree")
+    }
+
+    match value {
+        Value::Object(object) if !object.is_empty() => {
+            for (key, child) in object {
+                path.push(PathPart::Key(key.clone()));
+                validate_converted_relink_value(child, path)?;
+                path.pop();
+            }
+            Ok(())
+        }
+        Value::Array(values) if !values.is_empty() => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(PathPart::Index(index));
+                validate_converted_relink_value(child, path)?;
+                path.pop();
+            }
+            Ok(())
+        }
+        _ => {
+            let schema = schema_lookup(path, value)?;
+            anyhow::ensure!(
+                matches!(
+                    schema.map(|item| item.scope),
+                    Some(pinned_schema::SchemaScope::TypedLeaf)
+                ),
+                "selected OpenClaw converted-relink account has an unsupported or incompatible pinned leaf"
+            );
+            Ok(())
+        }
+    }
 }
 
 pub fn render_human(report: &OpenClawImportReport) -> String {
@@ -2402,6 +2585,140 @@ mod tests {
             selected.source_set().source_set_sha256,
             current.source_set_sha256
         );
+    }
+
+    #[test]
+    fn converted_relink_selection_is_explicit_schema_bound_and_value_opaque() {
+        let temp = tempdir().unwrap();
+        let imessage_secret = "imessage-converted-relink-secret-must-not-render";
+        let gchat_secret = "gchat-converted-relink-secret-must-not-render";
+        let source = [
+            "{ channels: { imessage: { accounts: { personal: { cliPath: '",
+            imessage_secret,
+            "' } } }, googlechat: { accounts: { work: { serviceAccount: { source: 'env', provider: 'default', id: '",
+            gchat_secret,
+            "' } } } } } }",
+        ]
+        .concat();
+        let path = write_config(temp.path(), &source);
+        let inventory = canonical_known_channel_inventory_sha256();
+
+        let imessage = select_converted_relink_account(
+            &path,
+            ConvertedRelinkChannel::IMessage,
+            "personal",
+            &inventory,
+        )
+        .unwrap();
+        assert_eq!(imessage.channel(), ConvertedRelinkChannel::IMessage);
+        assert_eq!(imessage.source_account_label(), "personal");
+        assert!(!format!("{:?}", imessage.source_set()).contains(imessage_secret));
+
+        let gchat = select_converted_relink_account(
+            &path,
+            ConvertedRelinkChannel::GoogleChat,
+            "work",
+            &inventory,
+        )
+        .unwrap();
+        assert_eq!(gchat.channel(), ConvertedRelinkChannel::GoogleChat);
+        assert_eq!(gchat.source_account_label(), "work");
+        assert!(!format!("{:?}", gchat.source_set()).contains(gchat_secret));
+    }
+
+    #[test]
+    fn converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted() {
+        let secret = "converted-relink-error-secret-must-not-render";
+        let cases = [
+            (
+                "blank account",
+                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }".to_string(),
+                ConvertedRelinkChannel::IMessage,
+                " ",
+            ),
+            (
+                "missing account",
+                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }".to_string(),
+                ConvertedRelinkChannel::IMessage,
+                "missing",
+            ),
+            (
+                "empty account",
+                "{ channels: { imessage: { accounts: { work: {} } } } }".to_string(),
+                ConvertedRelinkChannel::IMessage,
+                "work",
+            ),
+            (
+                "unknown leaf",
+                format!(
+                    "{{ channels: {{ imessage: {{ accounts: {{ work: {{ unknownTransport: '{secret}' }} }} }} }} }}"
+                ),
+                ConvertedRelinkChannel::IMessage,
+                "work",
+            ),
+            (
+                "opaque subtree",
+                format!(
+                    "{{ channels: {{ googlechat: {{ accounts: {{ work: {{ serviceAccount: {{ raw: '{secret}' }} }} }} }} }} }}"
+                ),
+                ConvertedRelinkChannel::GoogleChat,
+                "work",
+            ),
+            (
+                "malformed secret reference",
+                format!(
+                    "{{ channels: {{ googlechat: {{ accounts: {{ work: {{ serviceAccount: {{ source: 'env', id: '{secret}' }} }} }} }} }} }}"
+                ),
+                ConvertedRelinkChannel::GoogleChat,
+                "work",
+            ),
+            (
+                "unsupported secret reference",
+                format!(
+                    "{{ channels: {{ imessage: {{ accounts: {{ work: {{ cliPath: {{ source: 'env', provider: 'default', id: '{secret}' }} }} }} }} }} }}"
+                ),
+                ConvertedRelinkChannel::IMessage,
+                "work",
+            ),
+        ];
+        let inventory = canonical_known_channel_inventory_sha256();
+
+        for (case, body, channel, account) in cases {
+            let temp = tempdir().unwrap();
+            let path = write_config(temp.path(), &body);
+            let error = match select_converted_relink_account(&path, channel, account, &inventory) {
+                Ok(_) => panic!("{case} must fail"),
+                Err(error) => error,
+            };
+            let rendered = format!("{error:#}");
+            assert!(!rendered.contains(secret), "{case}: source value leaked");
+        }
+    }
+
+    #[test]
+    fn converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift() {
+        let temp = tempdir().unwrap();
+        let included = temp.path().join("converted.json5");
+        std::fs::write(
+            &included,
+            "{ imessage: { accounts: { work: { cliPath: '/usr/bin/imsg-a' } } } }",
+        )
+        .unwrap();
+        let path = write_config(temp.path(), "{ channels: { $include: './converted.json5' } }");
+        let inventory = canonical_known_channel_inventory_sha256();
+        let loaded = load_openclaw_document(&path, &inventory).unwrap();
+        let selected = loaded
+            .select_converted_relink_account(ConvertedRelinkChannel::IMessage, "work")
+            .unwrap();
+        assert_eq!(selected.source_set(), loaded.source_set());
+
+        std::fs::write(
+            &included,
+            "{ imessage: { accounts: { work: { cliPath: '/usr/bin/imsg-b' } } } }",
+        )
+        .unwrap();
+        let current = inspect_source_set(&path, &inventory).unwrap();
+        assert_ne!(selected.source_set(), &current);
     }
 
     #[test]

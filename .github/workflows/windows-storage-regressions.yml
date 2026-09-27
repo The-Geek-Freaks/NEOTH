@@ -70,6 +70,8 @@ jobs:
           test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
 
           cat > "$evidence/selection.tsv" <<'EOF'
+          daemon::audit_rpc::tests::token_replaces_a_prior_boot_token_atomically	neothd/src/daemon/audit_rpc/tests.rs
+          daemon::audit_rpc::tests::token_replaces_a_corrupt_stale_token_before_a_successor_boot	neothd/src/daemon/audit_rpc/tests.rs
           tools::managed_browser::tests::controlled_install_publishes_marker_resolves_and_is_idempotent	neothd/src/tools/managed_browser.rs
           tools::managed_browser::tests::controlled_zip_fixture_extracts_only_the_expected_root_and_executable	neothd/src/tools/managed_browser.rs
           tools::managed_browser::tests::controlled_zip_fixture_rejects_escape_and_case_collision_before_write	neothd/src/tools/managed_browser.rs
@@ -871,7 +873,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 777 ]]; then
+          if [[ "$expected" -ne 779 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

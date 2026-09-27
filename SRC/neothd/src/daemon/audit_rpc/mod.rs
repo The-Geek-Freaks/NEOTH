@@ -20,7 +20,7 @@
 //!   2. **Per-boot bearer token.** 32 bytes from the OS CSPRNG, base64url, freshly
 //!      minted on every daemon start (a token captured before a restart is dead
 //!      after it), written `0600` on unix / DPAPI-wrapped+DACL on Windows via the
-//!      same `write_key_securely` path as the WAL HMAC key. Only a SAME-UID
+//!      private atomic replacement path used by key recovery. Only a SAME-UID
 //!      process can read it. Checked constant-time; 5-strike cooldown on failure.
 //!   3. **Compile-time event-type allowlist.** Only the one-shot-emittable
 //!      permission-band codes are acceptable over IPC; anything else

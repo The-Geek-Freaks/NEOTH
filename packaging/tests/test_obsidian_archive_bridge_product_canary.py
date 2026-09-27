@@ -123,6 +123,7 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
     def test_daemon_diagnostic_prefers_inner_rpc_failures_without_retaining_error_text(self) -> None:
         cases = (
             (b"mint mandatory daemon internal-RPC token: write audit-RPC token /private/token: File exists", "audit_rpc_token_write_failed"),
+            (b"mint mandatory daemon internal-RPC token: atomically replace audit-RPC token /private/token: denied", "audit_rpc_token_write_failed"),
             (b"mint mandatory daemon internal-RPC token: OS RNG unavailable", "audit_rpc_token_mint_failed"),
             (b"bind mandatory daemon internal-RPC listener: create exclusive audit-RPC runtime directory /private/socket", "audit_rpc_runtime_create_failed"),
             (b"bind mandatory daemon internal-RPC listener: create private audit-RPC runtime root /private/root", "audit_rpc_root_create_failed"),

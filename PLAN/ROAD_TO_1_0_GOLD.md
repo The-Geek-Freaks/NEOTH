@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1754 / W1756 Relink source custody and daemon token restart (2026-09-28):**
+The converted-relink selector now binds an explicitly named iMessage or Google
+Chat source account to the pinned schema/inventory and exact source set. Raw
+source values remain private. Valid pinned SecretRefs remain opaque; unknown,
+malformed and opaque shapes are rejected. The schema matcher now recognizes
+Google Chat's actual anyOf:2 reference family through exact typed sibling
+bindings. Independent Rust source review PASS; four new custody regressions
+plus the complete custody crate run in the dedicated grouped-workflow job.
+The diagnostic ArchiveBridge36357234491 at718ab134 failed second startup with
+inner audit_rpc_token_write_failed. Original artifact10944855069 ZIP
+020b7fb86b1dc75d3ac361a02f9ba6fb4ce6380ae0b20468f3cdfa0b7e7655de
+is authenticated; all seven cleanup flags true. A surviving prior-boot token
+collides with the old exclusive writer. Token initialization now uses existing
+private/DPAPI-aware atomic replacement; HMAC create-new semantics stay intact.
+Independent source review PASS; two successor/corrupt-token cases registered
+for Linux and Windows. Hosted validation is pending; no product success yet.
+Portable2228 / Group2014 / Windows779, plus custody4 in its own crate job.
+This is a source prerequisite, not a complete converted-import relink flow.
+ROAD1324/1077/245/2 unchanged. No local executable validation under BSOD hold.
 **W1753 restart diagnosis / W1755 Channel16 admitted (2026-09-28):**
 FocusedChannel16run36356198071 atca2ad7f2 is successful and admitted from
 three original API-digest ZIPs,13 raw producer-source bindings and all16 exact

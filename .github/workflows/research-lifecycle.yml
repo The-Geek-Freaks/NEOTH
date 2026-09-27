@@ -7,6 +7,60 @@ permissions:
   contents: read
 
 jobs:
+  openclaw-custody:
+    name: OpenClaw source custody and converted relink selection
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Bind custody source and pinned fixtures
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/openclaw-custody"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          sha256sum SRC/neoth-openclaw-custody/src/*.rs \
+            SRC/neoth-openclaw-custody/src/fixtures/*.json \
+            SRC/neoth-openclaw-custody/Cargo.toml SRC/Cargo.toml SRC/Cargo.lock \
+            .github/workflows/research-lifecycle.yml > "$evidence/source-sha256.txt"
+          cat > "$evidence/required.txt" <<'EOF'
+          tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque
+          tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted
+          tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift
+          pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family
+          EOF
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Discover and run complete custody crate regressions
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/openclaw-custody"
+          cargo test -p neoth-openclaw-custody --lib --locked -- --list 2>&1 | tee "$evidence/discovery.log"
+          cargo test -p neoth-openclaw-custody --lib --locked -- --test-threads=1 2>&1 | tee "$evidence/tests.log"
+          : > "$evidence/passed.txt"
+          while IFS= read -r name; do
+            test "$(grep -Fxc "$name: test" "$evidence/discovery.log")" -eq 1
+            test "$(grep -Fxc "test $name ... ok" "$evidence/tests.log")" -eq 1
+            printf '%s\n' "$name" >> "$evidence/passed.txt"
+          done < "$evidence/required.txt"
+          test "$(wc -l < "$evidence/passed.txt")" -eq 4
+      - name: Retain custody source and exact test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openclaw-custody-${{ github.sha }}
+          path: ${{ runner.temp }}/openclaw-custody/
+          if-no-files-found: error
+          retention-days: 14
+
   research-lifecycle:
     name: Research and loop lifecycle quality
     runs-on: ubuntu-24.04
@@ -277,6 +331,7 @@ jobs:
               "wave1660BackupSourceAndRetention": 5,
               "wave1698PaperlessRestore": 26,
               "wave1731PaperlessRollback": 7,
+              "wave1756AuditTokenRestart": 2,
           }
           required_names = []
           # Run newest subsystem waves first; all exact catalog identities remain required.
@@ -289,8 +344,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
-          if expected_count != 2012:
-              raise SystemExit(f"Grouped required test catalog must contain exactly 2012 identities (got {expected_count})")
+          if expected_count != 2014:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 2014 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -359,8 +414,8 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
-          [[ "$expected_count" == "2012" ]] || {
-            echo "Grouped fixture catalog must contain exactly 2012 identities (got $expected_count)" >&2
+          [[ "$expected_count" == "2014" ]] || {
+            echo "Grouped fixture catalog must contain exactly 2014 identities (got $expected_count)" >&2
             exit 1
           }
           artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"

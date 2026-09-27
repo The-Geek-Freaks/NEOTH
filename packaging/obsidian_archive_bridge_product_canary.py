@@ -119,6 +119,7 @@ def redacted_daemon_diagnostic(reason: str, returncode: int | None, raw: bytes) 
         # Inner contexts precede their wrapping serve context. A restart error
         # must distinguish token persistence from socket/discovery publication.
         (b"write audit-RPC token", "audit_rpc_token_write_failed"),
+        (b"atomically replace audit-RPC token", "audit_rpc_token_write_failed"),
         (b"mint mandatory daemon internal-RPC token", "audit_rpc_token_mint_failed"),
         (b"create exclusive audit-RPC runtime directory", "audit_rpc_runtime_create_failed"),
         (b"create private audit-RPC runtime root", "audit_rpc_root_create_failed"),
@@ -308,6 +309,9 @@ def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing:
 
 def bindings(asset: Path, driver_path: Path, workflow: Path) -> dict[str, str]:
     paths = {
+        "audit_token": Path("SRC/neothd/src/daemon/audit_rpc/token.rs"),
+        "key_storage": Path("SRC/neothd/src/wal/compaction.rs"),
+        "atomic_write": Path("SRC/neothd/src/util/atomic_write.rs"),
         "bundle_main": asset / "main.js", "bundle_manifest": asset / "manifest.json", "bundle_lock": asset / "package-lock.json",
         "bundle_source": asset / "src/main.ts", "bundle_contract": asset / "test/plugin-contract.mjs",
         "predecessor_main": asset / "releases/0.1.1/main.js", "predecessor_manifest": asset / "releases/0.1.1/manifest.json", "predecessor_ownership": asset / "releases/0.1.1/ownership.json",

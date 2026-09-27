@@ -856,6 +856,42 @@ fn token_round_trips_through_secure_write() {
 }
 
 #[test]
+fn token_replaces_a_prior_boot_token_atomically() {
+    let dir = tempdir().unwrap();
+    let first = init_rpc_token(dir.path()).unwrap();
+    let second = init_rpc_token(dir.path()).unwrap();
+    assert_ne!(first, second, "each daemon boot must mint a fresh bearer");
+    assert_eq!(read_rpc_token(dir.path()).unwrap(), second);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            std::fs::metadata(rpc_token_path(dir.path()))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "replacement must retain owner-only token permissions"
+        );
+    }
+}
+
+#[test]
+fn token_replaces_a_corrupt_stale_token_before_a_successor_boot() {
+    let dir = tempdir().unwrap();
+    let path = rpc_token_path(dir.path());
+    std::fs::write(&path, b"corrupt-stale-token").unwrap();
+    let fresh = init_rpc_token(dir.path()).unwrap();
+    assert_eq!(read_rpc_token(dir.path()).unwrap(), fresh);
+    assert_ne!(
+        std::fs::read(&path).unwrap(),
+        b"corrupt-stale-token",
+        "a stale token must not block or survive successor token publication"
+    );
+}
+
+#[test]
 fn sidecar_round_trips_typed_endpoint_without_bearer_material() {
     let dir = tempdir().unwrap();
     let endpoint_nonce = test_endpoint_nonce();

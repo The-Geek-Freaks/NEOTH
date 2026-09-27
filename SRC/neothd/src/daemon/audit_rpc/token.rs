@@ -2,8 +2,8 @@
 //!
 //! 32 bytes from the OS CSPRNG, base64url, freshly minted on every daemon start
 //! (a token captured before a restart is dead after it), written `0600` on unix
-//! / DPAPI-wrapped+DACL on Windows via the same `write_key_securely` path as the
-//! WAL HMAC key — only a SAME-UID process can read it.
+//! / DPAPI-wrapped+DACL on Windows through the same private replacement
+//! primitive as protected key recovery — only a SAME-UID process can read it.
 
 use std::path::{Path, PathBuf};
 
@@ -27,8 +27,15 @@ pub fn init_rpc_token(home: &Path) -> Result<String> {
     std::fs::create_dir_all(home)
         .with_context(|| format!("create neoth home {}", home.display()))?;
     let path = rpc_token_path(home);
-    crate::wal::compaction::write_key_securely(&path, token.as_bytes())
-        .with_context(|| format!("write audit-RPC token {}", path.display()))?;
+    // A predecessor may have died after token publication but before its
+    // SidecarGuard could remove the per-boot capability. Replace that stale
+    // value atomically: remove-then-create would open an availability gap,
+    // while create-new would make the required daemon authority unrestartable.
+    // `rewrap_key` keeps the platform-specific private storage contract
+    // (0600 on Unix; DPAPI/DACL on Windows) without changing HMAC-key callers'
+    // intentionally create-new behavior.
+    crate::wal::compaction::rewrap_key(&path, token.as_bytes())
+        .with_context(|| format!("atomically replace audit-RPC token {}", path.display()))?;
     Ok(token)
 }
 
