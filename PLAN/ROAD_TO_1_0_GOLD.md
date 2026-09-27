@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1708-W1709 Restore startup and Core evidence (2026-09-27):**
+Core36340155292 at4e207896 passed slim Clippy, native-test typecheck and public
+CLI build. Original generated-reference artifact10939065647/ZIP
+24cc2517ff7ab5aaf2174b4f5b6a28f085ca37453649404d530330514b18ee3a was verified
+and imported unchanged, including the Restore command. Actual product36340156957
+copied all6 archives, then failed before candidate_ready;29 raw producer
+bindings and its original ZIP are verified. The exact HTTP cause is unproven.
+The source-level startup race is corrected: candidate auth now retries completed
+stdin-command failures with existing45s/1s stage-guarded readiness cadence;
+fatal execution errors propagate immediately. Paused regressions require four
+failures before fifth success and bounded timeout/fatal paths without source
+cutover. Each child retains its separate120s containment bound. The prior Core
+pass applies to4e207896; fresh verification of this patch remains required.
+ROAD1324/1077/245/2 unchanged, Group2005/Windows770 not yet dispatched;
+no local executable validation. Evidence: docs/verification/gold-wave1708-restore-readiness.json.
+
 **W1706 Restore candidate-probe bound (2026-09-27):**
 Core36339834144 and Product36339835900 atf009bc94 exposed one remaining
 E0599 after the private executor-trait correction. The candidate API probe's

@@ -145,14 +145,14 @@ class CustodyTests(unittest.TestCase):
 
     def test_command_failure_allowlists_repair_and_generation_auth_markers_without_output(self) -> None:
         secret = "untrusted-command-output"
-        result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict paperless_restore_journal_invalid paperless_restore_active_authority_invalid paperless_restore_historical_backup_invalid " + secret).encode(), False, False)
+        result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict paperless_restore_journal_invalid paperless_restore_active_authority_invalid paperless_restore_historical_backup_invalid paperless_restore_candidate_probe_not_ready paperless_stdin_failed paperless_stdin_spawn_failed " + secret).encode(), False, False)
         for action, command in (("restore", "product_restore"), ("repair", "product_repair"), ("uninstall", "product_uninstall"), ("purge", "product_purge")):
             encoded = json.dumps(canary.CommandFailure(["neoth", "--output", "json", "paperless", action], result).diagnostic)
             with self.subTest(action=action):
                 self.assertNotIn(secret, encoded)
                 self.assertIn("paperless_repair_start_outcome_ambiguous", encoded)
                 self.assertIn("paperless_generation_auth_token_conflict", encoded)
-                for marker in ("paperless_restore_journal_invalid", "paperless_restore_active_authority_invalid", "paperless_restore_historical_backup_invalid"):
+                for marker in ("paperless_restore_journal_invalid", "paperless_restore_active_authority_invalid", "paperless_restore_historical_backup_invalid", "paperless_restore_candidate_probe_not_ready", "paperless_stdin_failed", "paperless_stdin_spawn_failed"):
                     self.assertIn(marker, encoded)
                 self.assertIn(command, encoded)
 

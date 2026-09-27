@@ -3296,6 +3296,12 @@ Print the full quarantine item JSON for a specific uid
 
 Restore receipt-owned containers using the same pinned images and retained data volumes
 
+### `neoth paperless restore`
+
+Restore a completed same-instance backup into a new managed generation. The previous generation is stopped and retained for recovery
+
+- `<BACKUP_JOB_ID>` — Exact backup job ID returned by `paperless backup`
+
 ### `neoth paperless status`
 
 Check authenticated local API readiness using stored credentials. Artifact provenance and managed installation readiness remain separate

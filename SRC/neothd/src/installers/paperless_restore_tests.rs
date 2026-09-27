@@ -197,6 +197,9 @@ struct RestoreFake {
     active_ids: Vec<String>,
     id_projects: BTreeMap<String, String>,
     project_sets: BTreeMap<String, String>,
+    stdin_failures: usize,
+    stdin_calls: usize,
+    stdin_fatal: bool,
 }
 impl RestoreFake {
     fn new(mixed: bool) -> Self {
@@ -222,6 +225,9 @@ impl RestoreFake {
             active_ids: vec![],
             id_projects: BTreeMap::new(),
             project_sets: BTreeMap::new(),
+            stdin_failures: 0,
+            stdin_calls: 0,
+            stdin_fatal: false,
         }
     }
     fn count(&self, name: &str) -> usize {
@@ -467,6 +473,14 @@ impl RetainedComposeExecutor for RestoreFake {
         _: Zeroizing<Vec<u8>>,
     ) -> Result<CommandOutput, LifecycleError> {
         self.commands.push(argv.to_vec());
+        self.stdin_calls += 1;
+        if self.stdin_fatal {
+            return Err(LifecycleError::Command("paperless_stdin_spawn_failed"));
+        }
+        if self.stdin_failures > 0 {
+            self.stdin_failures -= 1;
+            return Err(LifecycleError::Command("paperless_stdin_failed"));
+        }
         let web = self.id("webserver");
         if !argv.iter().any(|x| x == &web) || !self.running[&web] {
             return Err(LifecycleError::Command("candidate_auth_before_ready"));
@@ -608,12 +622,14 @@ async fn restore_fixture(
         .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_candidate_start() {
     let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
     let mut f = RestoreFake::new(true);
     let b = restore_fixture(home.path(), &c, &mut f).await;
     let start = f.commands.len();
+    f.stdin_failures = 4;
+    let readiness_started = tokio::time::Instant::now();
     restore_at_with(
         home.path(),
         &c,
@@ -662,6 +678,14 @@ async fn restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_c
     assert!(
         saw_broker_copy,
         "all six restores include the broker archive"
+    );
+    assert_eq!(
+        f.stdin_calls, 5,
+        "four transient failures exceed the obsolete three-attempt loop"
+    );
+    assert!(
+        tokio::time::Instant::now().duration_since(readiness_started) >= READINESS_RETRY * 4,
+        "each transient candidate probe failure consumes the bounded retry delay"
     );
 }
 
@@ -805,8 +829,70 @@ async fn restore_stateful_tampered_retired_custody_blocks_recovery_before_fresh_
     assert_eq!(fake.count("create"), creates);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect() {
+    {
+        let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fatal_fake = RestoreFake::new(false);
+        let backup = restore_fixture(home.path(), &c, &mut fatal_fake).await;
+        let original = fatal_fake.source_state();
+        let stops = fatal_fake.count("stop");
+        fatal_fake.stdin_fatal = true;
+        assert!(matches!(
+            restore_at_with(
+                home.path(),
+                &c,
+                &backup.job_id,
+                &mut fatal_fake,
+                &RestoreReady(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Command("paperless_stdin_spawn_failed"))
+        ));
+        assert_eq!(
+            fatal_fake.stdin_calls, 1,
+            "fatal probe errors are never retried"
+        );
+        assert_eq!(fatal_fake.source_state(), original);
+        assert_eq!(
+            fatal_fake.count("stop"),
+            stops,
+            "fatal candidate probe cannot cut over source"
+        );
+    }
+    {
+        let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut deadline_fake = RestoreFake::new(false);
+        let backup = restore_fixture(home.path(), &c, &mut deadline_fake).await;
+        let original = deadline_fake.source_state();
+        let stops = deadline_fake.count("stop");
+        deadline_fake.stdin_failures = 100;
+        assert!(matches!(
+            restore_at_with(
+                home.path(),
+                &c,
+                &backup.job_id,
+                &mut deadline_fake,
+                &RestoreReady(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Command("paperless_restore_candidate_probe_not_ready"))
+        ));
+        assert!(
+            (45..=46).contains(&deadline_fake.stdin_calls),
+            "deadline uses bounded one-second retries"
+        );
+        assert_eq!(
+            deadline_fake.source_state(),
+            original,
+            "candidate deadline cannot cut over source"
+        );
+        assert_eq!(
+            deadline_fake.count("stop"),
+            stops,
+            "no source stop before authenticated candidate readiness"
+        );
+    }
     let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
     let mut f = RestoreFake::new(false);
     let b = restore_fixture(home.path(), &c, &mut f).await;

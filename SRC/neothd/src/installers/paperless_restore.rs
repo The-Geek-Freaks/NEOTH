@@ -715,6 +715,7 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         executor,
         &engine,
         &owned,
+        &binding,
         credentials,
         &custody.candidate_container_ids,
     )
@@ -1311,6 +1312,7 @@ async fn authenticated_candidate_probe<E: RetainedComposeExecutor>(
     executor: &mut E,
     engine: &Engine,
     root: &OwnedPaperlessRoot,
+    binding: &EnvBinding,
     credentials: &Credentials,
     ids: &[String],
 ) -> Result<(), LifecycleError> {
@@ -1318,8 +1320,9 @@ async fn authenticated_candidate_probe<E: RetainedComposeExecutor>(
         valid_token(credentials.paperless_token.as_ref()).ok_or(LifecycleError::Credentials)?;
     let id = candidate_id_for_service(ids, "webserver")?;
     let script = "import sys,urllib.request; t=sys.stdin.buffer.read().decode().strip(); r=urllib.request.Request('http://127.0.0.1:8000/api/documents/?page=1',headers={'Authorization':'Token '+t}); sys.exit(0 if 200<=urllib.request.urlopen(r,timeout=10).status<300 else 1)";
-    let mut last = None;
-    for _ in 0..3 {
+    let deadline = tokio::time::Instant::now() + READINESS_DEADLINE;
+    loop {
+        ensure_stage(root, binding)?;
         match executor
             .run_with_stdin(
                 &engine.docker("exec", &["-i", id, "python", "-c", script]),
@@ -1328,11 +1331,26 @@ async fn authenticated_candidate_probe<E: RetainedComposeExecutor>(
             )
             .await
         {
-            Ok(_) => return Ok(()),
-            Err(error) => last = Some(error),
+            Ok(_) => {
+                ensure_stage(root, binding)?;
+                return Ok(());
+            }
+            Err(LifecycleError::Command("paperless_stdin_failed")) => {
+                ensure_stage(root, binding)?;
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    return Err(LifecycleError::Command(
+                        "paperless_restore_candidate_probe_not_ready",
+                    ));
+                }
+                tokio::time::sleep_until(std::cmp::min(deadline, now + READINESS_RETRY)).await;
+            }
+            Err(error) => {
+                ensure_stage(root, binding)?;
+                return Err(error);
+            }
         }
     }
-    Err(last.unwrap_or(LifecycleError::Readiness))
 }
 
 fn restore_custody_name(job_id: &str) -> Result<String, LifecycleError> {

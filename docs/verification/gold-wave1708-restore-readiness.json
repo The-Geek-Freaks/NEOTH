@@ -1,0 +1,76 @@
+{
+  "schema": "neoth-restore-readiness-repair/v1",
+  "capturedUtc": "2026-09-27T18:36:59.2830746Z",
+  "producer": "4e207896fb37b90f59549b85d5037414b733af8d",
+  "core": {
+    "run": 36340155292,
+    "result": "success",
+    "accepted": [
+      "slim production Clippy",
+      "native test-target typecheck",
+      "public CLI build",
+      "authentic generated CLI reference"
+    ],
+    "workspaceClippy": "not requested",
+    "artifact": 10939065647,
+    "zipSha256": "24cc2517ff7ab5aaf2174b4f5b6a28f085ca37453649404d530330514b18ee3a",
+    "coreLogSha256": "DFFAFB1994DE04008039FDC99DC25C8E8AA67C26DA4A48CFEF35AF7C1AA77A07"
+  },
+  "product": {
+    "run": 36340156957,
+    "result": "failed",
+    "artifact": 10938523488,
+    "zipSha256": "55adbd68520de03539458e67bc8f0f4dd8b7240698562ed79d1a65c38fa6e807",
+    "verifiedRawProducerBindings": 29,
+    "stage": "before_restore",
+    "journalPhase": "archives_extracted",
+    "journalBytes": 25566,
+    "exactHttpCauseProven": false
+  },
+  "repair": "Delayed stage-guarded candidate readiness; only completed stdin failure retries; fatal errors preserved; same authenticated local API/contained child",
+  "testNamesUnchanged": true,
+  "review": "W1708 Rust static PASS; Root added deadline upper bound45..46 and fixed diagnostic markers",
+  "workingTreeSourceHashes": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "A4B93F77140A89B52392AF6817C68BDFA86B8B244C11C3C0332A90D620C49D17"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "0F796B4CA2589594DD4DB2A45E48003A20A5204352A6349A3C62E60445C4DD87"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "B7848FFC63E399E50C3A8FDB19A55F93F6F42ED39170FA4A67D39DC73EB3D1D4"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "8AA85703E13184FC8D3328142254A309061299F19FFA8CD8167C792F102325A8"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "sha256": "426F52B933889BE22FCEAC3098E67D46E20606E80B1A7A11A82DBB513E160B65"
+    }
+  ],
+  "reports": [
+    {
+      "path": "work/gold-20260906/wave1708-restore-runtime-repair/BACKEND.md",
+      "sha256": "99E3043A2187BB6752DF2A1E2EDB6E3E838AB6289611E4BCCEA4F3951F64008B"
+    },
+    {
+      "path": "work/gold-20260906/wave1708-restore-runtime-repair/RUST-REVIEW.md",
+      "sha256": "3C63119972770A3B20E64C97A5149071CA05394B1E0EA011AE392367A2719F24"
+    },
+    {
+      "path": "work/gold-20260906/wave1708-restore-readiness/TESTS.md",
+      "sha256": "C0424F5DE36E8A4491E5D59C25254A6E2F32D3DE5D81101F7841D17BDBE87CE2"
+    },
+    {
+      "path": "work/gold-20260906/wave1708-restore-runtime-repair/source-bindings.json",
+      "sha256": "9C4A0CC6327303B6E1FBA87B83C9996951EF410F351D31E1CC45D601CE0C037C"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "freshHostedValidation": "pending",
+  "roadClosure": false
+}
