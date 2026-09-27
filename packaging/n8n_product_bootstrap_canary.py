@@ -33,8 +33,57 @@ INSTALL_FAILURE_CODES = (
     "adoption_cleanup_failed", "adoption_cancel_request_failed", "adoption_job_missing",
     "adoption_job_read_failed", "adoption_contract_missing",
 )
+ROLLBACK_FAILURE_CODES = (
+    "n8n_rollback_adoption_custody_unknown", "n8n_rollback_backup_missing",
+    "n8n_rollback_backup_not_ready", "n8n_rollback_backup_read_failed",
+    "n8n_rollback_backup_receipt_mismatch", "n8n_rollback_binding_bytes_missing",
+    "n8n_rollback_compensated", "n8n_rollback_compensation_recovery_mismatch",
+    "n8n_rollback_conflicting_custody", "n8n_rollback_custody_create_failed",
+    "n8n_rollback_custody_invalid", "n8n_rollback_custody_mismatch",
+    "n8n_rollback_custody_pending", "n8n_rollback_custody_retire_failed",
+    "n8n_rollback_custody_serialize_failed", "n8n_rollback_custody_write_failed",
+    "n8n_rollback_exact_identity_unknown", "n8n_rollback_job_missing",
+    "n8n_rollback_live_name_not_absent", "n8n_rollback_new_id_missing",
+    "n8n_rollback_new_remove_outcome_unknown", "n8n_rollback_new_runtime_mismatch",
+    "n8n_rollback_new_runtime_not_ready", "n8n_rollback_old_binding_unavailable",
+    "n8n_rollback_old_running_state_unknown", "n8n_rollback_old_runtime_authentication_failed",
+    "n8n_rollback_old_runtime_mismatch", "n8n_rollback_old_runtime_not_ready",
+    "n8n_rollback_old_start_outcome_unknown", "n8n_rollback_phase_invalid",
+    "n8n_rollback_receipt_invalid", "n8n_rollback_receipt_mismatch",
+    "n8n_rollback_receipt_missing", "n8n_rollback_receipt_serialize_failed",
+    "n8n_rollback_receipt_write_failed", "n8n_rollback_reconciliation_required",
+    "n8n_rollback_requested_restore_mismatch", "n8n_rollback_restore_missing",
+    "n8n_rollback_restore_not_ready", "n8n_rollback_restore_read_failed",
+    "n8n_rollback_restore_receipt_mismatch", "n8n_rollback_restore_volume_owner_mismatch",
+    "n8n_rollback_retired_name_not_absent", "n8n_rollback_runtime_missing",
+    "n8n_rollback_runtime_not_ready", "n8n_rollback_runtime_source_missing",
+    "n8n_rollback_stop_outcome_unknown", "n8n_rollback_terminal_custody_mismatch",
+    "n8n_rollback_historical_runtime_invalid", "n8n_rollback_runtime_lineage_mismatch",
+    "n8n_rollback_retired_name_invalid_job",
+)
+ROLLBACK_OUTPUT_FAILURE_CODES = frozenset((*ROLLBACK_FAILURE_CODES, *INSTALL_FAILURE_CODES))
+JOB_STATES = frozenset(("queued", "running", "validating", "configuring", "ready", "failed", "cancelled"))
 
 class Failure(RuntimeError): pass
+
+def rollback_failure_projection(stdout: bytes) -> dict:
+    """Return only source-defined failed-Rollback fields from CLI JSON output."""
+    try:
+        value = json.loads(stdout)
+    except Exception:
+        return {}
+    if not isinstance(value, dict) or value.get("operation") != "rollback":
+        return {}
+    projection = {}
+    state = value.get("state")
+    if isinstance(state, str) and state in JOB_STATES:
+        projection["state"] = state
+    # Rollback delegates its config publication to the same fixed-code adoption
+    # publisher used by install, so either source-defined code is safe here.
+    failure_code = value.get("failure_code")
+    if isinstance(failure_code, str) and failure_code in ROLLBACK_OUTPUT_FAILURE_CODES:
+        projection["failure_code"] = failure_code
+    return projection
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -68,7 +117,7 @@ class CommandFailure(Failure):
         program = Path(argv[0]).name
         command = "other"
         if program == "neoth" and argv[1:4] == ["--output", "json", "n8n"]:
-            command = {"install": "product_install", "status": "product_status", "repair": "product_repair"}.get(argv[4], "other") if len(argv) > 4 else "other"
+            command = {"install": "product_install", "status": "product_status", "repair": "product_repair", "rollback": "product_rollback"}.get(argv[4], "other") if len(argv) > 4 else "other"
         elif program in {"docker", "sqlite3", "secret-tool"}:
             command = program
         self.diagnostic = {
@@ -103,6 +152,7 @@ class CommandFailure(Failure):
             "n8n_repair_runtime_state_unknown", "n8n_repair_source_missing",
             "n8n_repair_source_read_failed", "n8n_repair_start_outcome_uncertain",
             "n8n_docker_output_limit", "n8n_docker_non_utf8",
+            *ROLLBACK_FAILURE_CODES,
             "stale integration job revision", "stale integration job state",
             "illegal integration job transition",
             *INSTALL_FAILURE_CODES,
@@ -114,6 +164,10 @@ class CommandFailure(Failure):
         self.diagnostic["known_error_categories"] = [
             marker for marker in known if marker.encode() in result.stderr
         ]
+        if command == "product_rollback":
+            projection = rollback_failure_projection(result.stdout)
+            if projection:
+                self.diagnostic["rollback_stdout"] = projection
 
 def read_json(path: Path) -> dict:
     try:
@@ -1131,6 +1185,7 @@ def main() -> int:
             "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
             "SRC/neothd/src/integrations/n8n/managed_restore_content.rs",
             "SRC/neothd/src/integrations/n8n/managed_rollback.rs",
+            "docs/n8n-managed-uninstall.md",
             "SRC/neothd/src/integrations/n8n/managed_restore_verify.js",
             "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
             "packaging/tests/n8n_restore_content.test.cjs",

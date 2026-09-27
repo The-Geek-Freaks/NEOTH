@@ -780,6 +780,46 @@ class CustodyBoundaryTests(unittest.TestCase):
         self.assertEqual(failure.diagnostic["exit_code"], 1)
         self.assertEqual(failure.diagnostic["known_error_categories"], ["n8n_bootstrap_docker_failed"])
 
+    def test_rollback_command_diagnosis_projects_allowlisted_failed_job_output(self) -> None:
+        secret = "must-never-appear-in-rollback-diagnosis"
+        stdout = json.dumps({
+            "job_id": "12345678-1234-7234-8234-123456789abc", "state": "failed",
+            "operation": "rollback", "failure_code": "n8n_rollback_new_runtime_not_ready",
+            "receipt": {"private_key": secret},
+        }).encode()
+        result = canary.bounded.Result(1, stdout, secret.encode(), False, False)
+        failure = canary.CommandFailure(
+            ["SRC/target/debug/neoth", "--output", "json", "n8n", "rollback", "--restore", "fixture", "--api-key-stdin"], result
+        )
+        encoded = json.dumps(failure.diagnostic)
+        self.assertEqual(failure.diagnostic["command"], "product_rollback")
+        self.assertEqual(failure.diagnostic["rollback_stdout"], {
+            "state": "failed", "failure_code": "n8n_rollback_new_runtime_not_ready",
+        })
+        self.assertNotIn(secret, encoded)
+
+    def test_rollback_command_diagnosis_rejects_unallowlisted_output_fields(self) -> None:
+        secret = "must-never-appear-in-rollback-diagnosis"
+        stdout = json.dumps({
+            "state": secret, "operation": "rollback", "failure_code": secret,
+            "redacted_error": secret,
+        }).encode()
+        result = canary.bounded.Result(1, stdout, secret.encode(), False, False)
+        failure = canary.CommandFailure(
+            ["neoth", "--output", "json", "n8n", "rollback", "--restore", "fixture", "--api-key-stdin"], result
+        )
+        self.assertNotIn("rollback_stdout", failure.diagnostic)
+        self.assertNotIn(secret, json.dumps(failure.diagnostic))
+
+    def test_rollback_failure_projection_rejects_non_scalar_fields(self) -> None:
+        secret = "must-never-appear-in-rollback-diagnosis"
+        for state, failure_code in (([secret], {"private": secret}), (None, None)):
+            with self.subTest(state=type(state).__name__, failure_code=type(failure_code).__name__):
+                stdout = json.dumps({
+                    "operation": "rollback", "state": state, "failure_code": failure_code,
+                }).encode()
+                self.assertEqual(canary.rollback_failure_projection(stdout), {})
+
     def test_inner_transport_category_is_distinct_from_outer_helper_timeout(self) -> None:
         secret = "private-transport-output"
         for suffix in ("empty_command", "spawn_failed", "stdin_failed", "capture_failed",

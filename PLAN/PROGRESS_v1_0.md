@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1567 Rollback diagnostics source reviewed (2026-09-27):**
+The failed actual Rollback now has bounded diagnostics for the exact product
+command: only allowlisted scalar state/failure_code values and fixed Rust
+error markers are retained. All51 Rollback literals match source; malformed
+arrays/objects/null cannot break the projection. Independent source review
+passed; three focused redaction/shape regressions await the hosted helper gate.
+The prior real failure cause remains unknown; Restore readability/decryption
+alone does not establish normal-server startup or writable-volume readiness.
+Group1924run36307422610 and Windows689run36307423883 at0c69696d both failed
+compilation in the new retained-lifecycle tests; no native acceptance claimed.
+Core36306515321 still runs full workspace Clippy after passing slim Clippy,
+test typecheck and generated CLI; retained Core36306946513 remains pending.
+No ROAD checkbox closure and no local execution. Next: corrected native module
+paths plus the actual product rerun with these diagnostics.
+Evidence: docs/verification/gold-wave1567-rollback-diagnostics.json.
 **W1562/W1565-W1566 Rollback product failure and hosted imports (2026-09-27):**
 Product36306516850 atb278eef3 failed at historical_restore_rollback: command
 exit1 with no known error category. Original artifact10928190254 and36 raw

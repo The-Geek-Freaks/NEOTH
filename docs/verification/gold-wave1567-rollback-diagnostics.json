@@ -1,0 +1,28 @@
+{
+  "schema": "neoth-rollback-diagnostics-source-review/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T08:58:30.0826090Z",
+  "base": "0c69696d14e9fd7a956629e039640ae8eb21f9d4",
+  "reviewedBlobs": {
+    "packaging/n8n_product_bootstrap_canary.py": "663b735df7d0ed0c207bc6966a049bb4caf50cd1",
+    "packaging/tests/test_n8n_product_bootstrap_canary.py": "f49bbfb307171dd00dada6bbb842e8d12821ce0a"
+  },
+  "reviewReportSha256": "1C8BECFD25C419EE992E7BEDD38267551000438F9991AD52F4E04D301CB33750",
+  "assertions": [
+    "Classify exact n8n JSON rollback command without recording arguments.",
+    "Only source-defined scalar state/failure_code and fixed stderr markers are projected.",
+    "51 rollback literals match current Rust integration sources.",
+    "Invalid JSON or non-scalar fields are omitted without TypeError.",
+    "Raw stdout/stderr, receipts, keys, cookies and arbitrary error text are excluded."
+  ],
+  "tests": "Three added focused helper regressions; execution pending on GitHub.",
+  "failedProductRun": 36306516850,
+  "cause": "Unknown; no inference from exit code or output lengths.",
+  "limits": [
+    "Source review is not product acceptance.",
+    "Restore offline readability/decryption is not normal-server writable-volume readiness.",
+    "Native runs36307422610/36307423883 failed compilation and admit no fixtures."
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}
