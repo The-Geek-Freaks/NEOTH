@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1734 Rollback optional-port compilation repair (2026-09-27):**
+Core36349853969 and Product36349855973 at9cdae427 failed before execution
+with the same E0308/E0599: HostConfig.PortBindings is an optional map.
+The narrow correction reads the optional map explicitly, preserves rejection
+of unexpected exposure, and refuses absent/null webserver loopback proof.
+Root checked the actual HostConfig declaration and minimal correction.
+Preflight36350057343 and CodeQL36350057123 at the authenticated format commit
+0df0ed8c passed. New Core/product runs required; native2012/777 not yet
+started. No local build/parser/test/formatter, runtime acceptance still open.
+
 **W1733 hosted Rollback formatting imported (2026-09-27):**
 Exact four-file rustfmt patch from Preflight36349825974 at9cdae427 imported.
 Original artifact10941368837 ZIPb65f55a4b0efb8ea44670888f0888935b4873a377777999de2163e26f82549f3,

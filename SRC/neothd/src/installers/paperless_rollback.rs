@@ -854,18 +854,19 @@ async fn observe_generation<E: ComposeExecutor>(
         }
         validate_old_source_mounts(&actual, project, &item.service)?;
         let webserver = item.service == "webserver";
-        for (key, entries) in &actual.host_config.port_bindings {
-            if entries.as_ref().is_some_and(|entries| !entries.is_empty())
-                && (!webserver || key != "8000/tcp")
-            {
-                return Err(LifecycleError::Receipt);
+        let port_bindings = actual.host_config.port_bindings.as_ref();
+        if let Some(port_bindings) = port_bindings {
+            for (key, entries) in port_bindings {
+                if entries.as_ref().is_some_and(|entries| !entries.is_empty())
+                    && (!webserver || key != "8000/tcp")
+                {
+                    return Err(LifecycleError::Receipt);
+                }
             }
         }
         if webserver
-            && !actual
-                .host_config
-                .port_bindings
-                .get("8000/tcp")
+            && !port_bindings
+                .and_then(|bindings| bindings.get("8000/tcp"))
                 .and_then(|entries| entries.as_ref())
                 .is_some_and(|entries| {
                     entries.len() == 1

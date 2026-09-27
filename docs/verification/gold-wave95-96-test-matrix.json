@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted Rollback formatting imported; Core and product pending",
+  "status": "Rollback HostConfig optional map compiler errors corrected; hosted retry pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 254466,
-    "sha256": "04E01F47BE522284E246DD18A2DFBE3998DC24127DB3D856DF515ACED759FDE3"
+    "bytes": 254479,
+    "sha256": "2535C3123254C71D9A8EC0C56676E9E09019BAE4189F424D6580295705A3B9E2"
   },
   "sourceInputs": 1415,
   "requiredNativeTests": [
@@ -53400,6 +53400,38 @@
       }
     ],
     "note": "Preflight36349825974 original artifact10941368837 API ZIP/internal hashes/four Git postimages verified. No local formatter; original semantic9cdae427 gates continue.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1734RollbackOptionalPorts": {
+    "base": "0df0ed8cbb1020b591b6de09b0272d2c9a58f94c",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 483940,
+        "sha256": "530171A84436AEE140D085B2A22A0C37770D9DD2D6FF63E37C6ADA44EE864713",
+        "blob": "a66370d4afe27ff7b9d514a8f7425c5eabeab221"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1502871,
+        "sha256": "7CE0438F267BB51F367A9575D1968C73754440C5E44D53DA34F481154A33541A",
+        "blob": "d20281877b9144eaa86128652b55208e9a346291"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2113394,
+        "sha256": "21C7E30886EE83D669C98E34925E81CAC509F586FA30E5797EDFA964004D211E",
+        "blob": "903ff7f4df4175d4c21ccd291ba8d48b9938e4e5"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_rollback.rs",
+        "bytes": 40358,
+        "sha256": "1915169AF982DA5D74CE5C90488003414644177AB09C033E87DF3C56F2D49C28",
+        "blob": "fb635f22f8162a2eca240fc368d36fc3a0fc9ead"
+      }
+    ],
+    "note": "Core36349853969 and Product36349855973 exact same E0308/E0599. Required webserver binding remains fail-closed; no validation weakening. Root source diff/type review only.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
