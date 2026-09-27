@@ -107,9 +107,11 @@ impl super::super::ManagedDockerRunner for Runner {
         name: &str,
     ) -> Result<super::super::InspectVolumeOutcome, &'static str> {
         let s = self.0.lock().unwrap();
-        Ok((s.restore_volume.name == name && !s.restore_volume_removed)
-            .then(|| super::super::InspectVolumeOutcome::Found(s.restore_volume.clone()))
-            .unwrap_or(super::super::InspectVolumeOutcome::Absent))
+        Ok(if s.restore_volume.name == name && !s.restore_volume_removed {
+            super::super::InspectVolumeOutcome::Found(s.restore_volume.clone())
+        } else {
+            super::super::InspectVolumeOutcome::Absent
+        })
     }
     async fn create(
         &mut self,
@@ -217,7 +219,7 @@ impl super::super::ManagedDockerRunner for Runner {
         id: &str,
     ) -> Result<super::super::ManagedCommandReceipt, &'static str> {
         let mut s = self.0.lock().unwrap();
-        if !s.new.as_ref().is_some_and(|x| x.id == id) {
+        if s.new.as_ref().is_none_or(|x| x.id != id) {
             return Err("remove");
         };
         s.calls.push(format!("remove:{id}"));

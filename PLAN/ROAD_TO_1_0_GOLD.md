@@ -8,6 +8,39 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1569 Downstream actual-product coverage source reviewed (2026-09-27):**
+The separate rollback_only scenario now continues through two historical-key
+Uninstall/Reinstall cycles, third Uninstall and confirmed Restore-volume Purge.
+It binds V2 receipts, distinct exact runtime IDs,13 workflows/one credential,
+retired original-source preservation, wrong-confirmation zero observed effect
+and repeat-Purge history. Independent review corrected delayed cleanup custody:
+confirmed absences and validated new IDs are handed to finally before later
+status/content observations. Five injected handoff failures exercise cleanup.
+This is source coverage pending its own hosted product run, not runtime proof.
+No native selection or ROAD count change. No local executable validation.
+Evidence: docs/verification/gold-wave1569-rollback-downstream-product.json.
+**W1572/W1574 Rollback contract and workspace Clippy corrections (2026-09-27):**
+Independent review confirms the source mismatch behind the failed publication:
+the Rollback contract expected a fixed historical-key placeholder while the
+shared Ready receipt carries a canonical endpoint-bound authenticated probe
+hash. Published4719d3b0 now uses the shared expected-probe function before
+enqueue and asserts the durable binding in the existing success regression.
+Product36309143264 targets this repair; acceptance remains pending.
+Core36306515321 atb278eef3 passed slim Clippy/test typecheck/CLI but failed full
+workspace Clippy on two test-helper lints. Explicit if/else and is_none_or now
+preserve the same volume-removal and exact-ID guards. Fresh Core proof required.
+W1571 remains authentic failure evidence; no local execution or ROAD closure.
+Evidence: docs/verification/gold-wave1572-rollback-publication-repair.json
+ and docs/verification/gold-wave1574-rollback-clippy-repair.json.
+**W1571 Actual Rollback publication failure isolated (2026-09-27):**
+Diagnostic Product36308031598 at15bfbcb0 failed after candidate Restore with
+product_rollback, state failed and fixed code adoption_cleanup_failed. Original
+artifact10927933589/API digest and all37 exact producer input hashes verify.
+The code narrows failure to the shared configuration publisher; it does not
+identify which internal checkpoint failed. Docker/fixture cleanup and completed
+Rollback remain unproven. W1572 investigates the precise cause; W1569 downstream
+product coverage remains under independent correction/review. No ROAD closure.
+Evidence: docs/verification/gold-wave1571-rollback-product-diagnostics.json.
 **W1568/W1570 Native compiler correction and failure custody (2026-09-27):**
 Original Group36307422610 and Windows36307423883 artifacts authenticate exact
 producer0c69696d, source bindings and internal hashes. Both selections stopped

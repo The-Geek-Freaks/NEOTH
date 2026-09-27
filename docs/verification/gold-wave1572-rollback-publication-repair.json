@@ -1,0 +1,14 @@
+{
+  "schema": "neoth-rollback-publication-contract-repair/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T09:23:04.7492076Z",
+  "publishedProducer": "4719d3b0babdf7c60d25822ecefd37671e1bcbde",
+  "failedProductRun": 36308031598,
+  "diagnosis": "Rollback expected a fixed historical-key placeholder digest, while the shared publisher supplies the canonical endpoint-bound authenticated probe digest. Ready evidence equality rejects the mismatch.",
+  "repair": "Construct the immutable contract with expected_authenticated_probe_sha256 for the validated source loopback endpoint before enqueue; preserve receipt equality and transaction boundaries.",
+  "regression": "Existing ready_success_keeps_same_old_id_and_reentry_has_no_effect now asserts the stored endpoint probe binding.",
+  "reviewSha256": "A9220213AF6093F9D14E66117C200B0AE0315132D250C491C481480619704B75",
+  "productRerun": 36309143264,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

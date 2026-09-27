@@ -223,6 +223,39 @@ def validate_reinstalled_custody(runtime: dict, reinstall_job: str, reinstall_ma
             or runtime.get("volume") != volume or runtime.get("image") != IMAGE):
         raise Failure("reinstall_custody_invalid")
     return runtime_id
+
+def rollback_restore_retention(rollback_job: str, rollback_manifest: str, restore_job: str,
+                               restore_manifest: str, backup_job: str, backup_manifest: str,
+                               volume: str, old_runtime_id: str, old_name: str) -> dict:
+    return {
+        "rollback_job_id": rollback_job, "rollback_manifest_sha256": rollback_manifest,
+        "restore_job_id": restore_job, "restore_manifest_sha256": restore_manifest,
+        "backup_job_id": backup_job, "backup_manifest_sha256": backup_manifest,
+        "restore_volume": volume, "retained_source_container_id": old_runtime_id,
+        "retained_source_name": old_name,
+    }
+
+def rollback_reinstall_source(uninstall_job: str, uninstall_manifest: str, source_job: str,
+                              source_manifest: str, restore_job: str, retention: dict) -> dict:
+    return {
+        "uninstall_job_id": uninstall_job, "uninstall_manifest_sha256": uninstall_manifest,
+        "source_install_job_id": source_job, "source_install_manifest_sha256": source_manifest,
+        "bootstrap_volume": False, "volume_owner_install_job_id": restore_job,
+        "rollback_restore": retention,
+    }
+
+def validate_rollback_reinstalled_custody(runtime: dict, reinstall_job: str,
+                                          reinstall_manifest: str, volume: str,
+                                          prior_runtime_id: str, port: int,
+                                          retained_source: dict) -> str:
+    runtime_id = validate_reinstalled_custody(
+        runtime, reinstall_job, reinstall_manifest, volume, prior_runtime_id, port,
+    )
+    if (runtime.get("retained_reinstall") != retained_source
+            or runtime.get("bootstrap_volume_owner_install_job_id") is not None
+            or runtime.get("lineage") != "install"):
+        raise Failure("rollback_reinstall_custody_invalid")
+    return runtime_id
 def validate_uninstall_status(value: dict, uninstall_job: str) -> None:
     row = value.get("job")
     if (not isinstance(row, dict) or row.get("id") != uninstall_job
@@ -283,6 +316,33 @@ def read_reinstall_uninstall_completion_receipt(home: Path, uninstall_job: str, 
     }
     if value != expected:
         raise Failure("reinstall_uninstall_completion_receipt_invalid")
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
+
+def read_rollback_uninstall_completion_receipt(home: Path, uninstall_job: str,
+                                               uninstall_manifest: str, source_job: str,
+                                               source_manifest: str, runtime_id: str,
+                                               volume: str, port: int, retention: dict,
+                                               retained_source: dict | None) -> dict:
+    path = home / f"n8n-uninstall-{uninstall_job}.receipt.json"
+    value = read_json(path)
+    expected = {
+        "schema_version": 2,
+        "uninstall_job_id": uninstall_job,
+        "uninstall_manifest_sha256": uninstall_manifest,
+        "source_install_job_id": source_job,
+        "source_install_manifest_sha256": source_manifest,
+        "cleanup_disposition": "preserved_unproven",
+        "source_container_id": runtime_id,
+        "source_image": IMAGE,
+        "source_host_port": port,
+        "source_volume": volume,
+        "source_bootstrap_volume": False,
+        "source_volume_owner_install_job_id": retention["restore_job_id"] if retained_source else None,
+        "source_retained_reinstall": retained_source,
+        "rollback_restore": retention,
+    }
+    if value != expected:
+        raise Failure("rollback_uninstall_completion_receipt_invalid")
     return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
 def observe_exact_job(home: Path, job: str, operation: str) -> dict:
     if not JOB.fullmatch(job):
@@ -350,6 +410,13 @@ def purge_phrase(uninstall_job: str, volume: str) -> str:
 def validate_purge_plan(value: dict, uninstall_job: str, volume: str) -> str:
     phrase = purge_phrase(uninstall_job, volume)
     if value != {"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall_job, "volume": volume, "confirmation": phrase}: raise Failure("purge_plan_invalid")
+    return phrase
+def restore_purge_phrase(uninstall_job: str, volume: str) -> str:
+    if not JOB.fullmatch(uninstall_job) or not VOLUME.fullmatch(volume): raise Failure("restore_purge_target_invalid")
+    return f"PURGE N8N RESTORE VOLUME {uninstall_job} {volume}"
+def validate_restore_purge_plan(value: dict, uninstall_job: str, volume: str) -> str:
+    phrase = restore_purge_phrase(uninstall_job, volume)
+    if value != {"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall_job, "volume": volume, "confirmation": phrase}: raise Failure("restore_purge_plan_invalid")
     return phrase
 def validate_purge_product(value: dict, uninstall_job: str) -> str:
     job = required(value, "job_id", str)
@@ -595,7 +662,9 @@ def cleanup_owned_runtime_and_volume(runtime_id: str, volume: str, job: str, por
 
 def cleanup_rollback_fixture(old: tuple[str, str, str, str] | None,
                              new: tuple[str, str, str] | None,
-                             restore: tuple[str, str] | None, port: int) -> bool:
+                             restore: tuple[str, str] | None, port: int,
+                             new_runtime_already_absent: bool = False,
+                             restore_volume_already_absent: bool = False) -> bool:
     """Best-effort deletion of independently witnessed Rollback fixture custody.
 
     A missing witness is deliberately unproven, never an invitation to target a
@@ -633,9 +702,12 @@ def cleanup_rollback_fixture(old: tuple[str, str, str, str] | None,
     else:
         new_id, rollback_job, restore_volume = new
         try:
-            validate_runtime(docker_inspect(new_id), rollback_job, restore_volume, new_id, port)
-            run(["docker", "rm", "-f", new_id])
-            new_removed = exact_absent("container", new_id)
+            if new_runtime_already_absent:
+                new_removed = exact_absent("container", new_id)
+            else:
+                validate_runtime(docker_inspect(new_id), rollback_job, restore_volume, new_id, port)
+                run(["docker", "rm", "-f", new_id])
+                new_removed = exact_absent("container", new_id)
         except Exception:
             new_removed = False
         results.append(new_removed)
@@ -646,12 +718,25 @@ def cleanup_rollback_fixture(old: tuple[str, str, str, str] | None,
             try:
                 if not new_removed or expected_restore_volume != restore_volume:
                     raise Failure("rollback_restore_container_retained")
-                validate_restore_volume(docker_inspect(restore_volume), restore_job, old[3] if old else "")
-                run(["docker", "volume", "rm", restore_volume])
-                results.append(exact_absent("volume", restore_volume))
+                if restore_volume_already_absent:
+                    results.append(exact_absent("volume", restore_volume))
+                else:
+                    validate_restore_volume(docker_inspect(restore_volume), restore_job, old[3] if old else "")
+                    run(["docker", "volume", "rm", restore_volume])
+                    results.append(exact_absent("volume", restore_volume))
             except Exception:
                 results.append(False)
     return bool(results) and all(results)
+
+def witness_downstream_runtime_absent(runtime_id: str) -> bool:
+    if not ID.fullmatch(runtime_id) or not exact_absent("container", runtime_id):
+        raise Failure("rollback_downstream_runtime_absence_unproven")
+    return True
+
+def transfer_downstream_cleanup_custody(runtime_id: str, job: str, volume: str) -> tuple[str, str, str]:
+    if not ID.fullmatch(runtime_id) or not JOB.fullmatch(job) or not VOLUME.fullmatch(volume):
+        raise Failure("rollback_downstream_cleanup_custody_invalid")
+    return (runtime_id, job, volume)
 
 def capture_rollback_cleanup_custody(rollback: dict, old_id: str, old_job: str,
                                      old_volume: str, restore_job: str,
@@ -1169,7 +1254,7 @@ def main() -> int:
             return 2
     except Exception:
         return 2
-    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "scenario": "rollback" if args.rollback_only else "lifecycle", "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False; rollback_fixture_started = rollback_cleanup_proven = False; rollback_old_custody: tuple[str, str, str, str] | None = None; rollback_new_custody: tuple[str, str, str] | None = None; rollback_restore_custody: tuple[str, str] | None = None; restore_cleanup_targets: list[tuple[str, str, str]] = []
+    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "scenario": "rollback" if args.rollback_only else "lifecycle", "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False; rollback_fixture_started = rollback_cleanup_proven = False; rollback_new_runtime_absent = rollback_restore_volume_purged = False; rollback_old_custody: tuple[str, str, str, str] | None = None; rollback_new_custody: tuple[str, str, str] | None = None; rollback_restore_custody: tuple[str, str] | None = None; restore_cleanup_targets: list[tuple[str, str, str]] = []
     try:
         receipt.update({"helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "bounded_helper_sha256": hashlib.sha256(Path(bounded.__file__).read_bytes()).hexdigest(), "workflow_sha256": hashlib.sha256((Path.cwd() / ".github/workflows/n8n-product-bootstrap.yml").read_bytes()).hexdigest(), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((Path.cwd() / "SRC/Cargo.lock").read_bytes()).hexdigest()})
         input_names = (
@@ -1478,6 +1563,159 @@ def main() -> int:
                     or observe_credential_count(args.port, credential_key) != 1):
                 raise Failure("rollback_backup_historical_state_unproven")
             receipt["rollback"] = {"job_id": rollback_job, "job_row_sha256": rollback_record["row_sha256"], "restore_job_id": restore_job, "retained_source_id_sha256": hashlib.sha256(runtime_id.encode()).hexdigest(), "retained_source_name": retired_name, "new_runtime_id_sha256": hashlib.sha256(rollback_id.encode()).hexdigest(), "restore_volume_sha256": hashlib.sha256(restore_volume.encode()).hexdigest(), "historical_key_authenticated": True, "workflows_persisted": True, "credential_count_source_before": 2, "credential_count_restored": 1, "repeat_read_only": True, "backup_v2_job_id": rollback_backup_job, "backup_v2_generation": rollback_backup["generation"], "fixture_cleanup_proven": False}
+            retention = rollback_restore_retention(
+                rollback_job, rollback["rollback_manifest_sha256"], restore_job,
+                restore["restore_manifest_sha256"], backup_job,
+                restore["backup_manifest_sha256"], restore_volume, runtime_id, retired_name,
+            )
+            receipt["stage"] = "rollback_restore_volume_uninstall_1"
+            uninstall_1_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            rollback_new_runtime_absent = witness_downstream_runtime_absent(rollback_id)
+            uninstall_1_job = validate_uninstall_product(read_json_bytes(uninstall_1_raw), rollback_job)
+            uninstall_1_record = observe_exact_job(home, uninstall_1_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_1_job]), uninstall_1_job)
+            uninstall_1_completion = read_rollback_uninstall_completion_receipt(
+                home, uninstall_1_job, uninstall_1_record["manifest_sha256"], rollback_job,
+                rollback["rollback_manifest_sha256"], rollback_id, restore_volume, args.port,
+                retention, None,
+            )
+            validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if docker_inspect(runtime_id).get("Name") != f"/{retired_name}" or not exact_absent("container", restore["candidate_container_id"]):
+                raise Failure("rollback_uninstall_1_retained_source_mutation")
+            restore_source_1 = rollback_reinstall_source(
+                uninstall_1_job, uninstall_1_record["manifest_sha256"], rollback_job,
+                rollback["rollback_manifest_sha256"], restore_job, retention,
+            )
+            receipt["stage"] = "rollback_restore_volume_reinstall_1"
+            reinstall_1_raw = run_with_payload(
+                [str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_1_job, "--api-key-stdin"], canonical_key + b"\n",
+            )
+            reinstall_1_job = validate_reinstall_product(read_json_bytes(reinstall_1_raw), rollback_job, uninstall_1_job)
+            reinstall_1_record = observe_exact_job(home, reinstall_1_job, "install")
+            reinstall_1_id = validate_rollback_reinstalled_custody(
+                read_json(home / "n8n-managed-runtime.v2.json"), reinstall_1_job,
+                reinstall_1_record["manifest_sha256"], restore_volume, rollback_id, args.port,
+                restore_source_1,
+            )
+            validate_runtime(docker_inspect(reinstall_1_id), reinstall_1_job, restore_volume, reinstall_1_id, args.port)
+            rollback_new_custody = transfer_downstream_cleanup_custody(reinstall_1_id, reinstall_1_job, restore_volume)
+            rollback_new_runtime_absent = False
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_1_job]), reinstall_1_job, args.port)
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if (authenticated_probe_with_key(canonical_key, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_credential_count(args.port, credential_key) != 1
+                    or read_rollback_uninstall_completion_receipt(home, uninstall_1_job, uninstall_1_record["manifest_sha256"], rollback_job, rollback["rollback_manifest_sha256"], rollback_id, restore_volume, args.port, retention, None) != uninstall_1_completion):
+                raise Failure("rollback_reinstall_1_state_unproven")
+            if assert_reinstall_repeat_rejected(binary, uninstall_1_job, canonical_key + b"\n")["reason"] != "active_runtime_pre_effect_rejection":
+                raise Failure("rollback_reinstall_1_repeat_unproven")
+            receipt["stage"] = "rollback_restore_volume_uninstall_2"
+            uninstall_2_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            rollback_new_runtime_absent = witness_downstream_runtime_absent(reinstall_1_id)
+            uninstall_2_job = validate_uninstall_product(read_json_bytes(uninstall_2_raw), reinstall_1_job)
+            uninstall_2_record = observe_exact_job(home, uninstall_2_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_2_job]), uninstall_2_job)
+            uninstall_2_completion = read_rollback_uninstall_completion_receipt(
+                home, uninstall_2_job, uninstall_2_record["manifest_sha256"], reinstall_1_job,
+                reinstall_1_record["manifest_sha256"], reinstall_1_id, restore_volume, args.port,
+                retention, restore_source_1,
+            )
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            restore_source_2 = rollback_reinstall_source(
+                uninstall_2_job, uninstall_2_record["manifest_sha256"], reinstall_1_job,
+                reinstall_1_record["manifest_sha256"], restore_job, retention,
+            )
+            receipt["stage"] = "rollback_restore_volume_reinstall_2"
+            reinstall_2_raw = run_with_payload(
+                [str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_2_job, "--api-key-stdin"], canonical_key + b"\n",
+            )
+            reinstall_2_job = validate_reinstall_product(read_json_bytes(reinstall_2_raw), reinstall_1_job, uninstall_2_job)
+            reinstall_2_record = observe_exact_job(home, reinstall_2_job, "install")
+            reinstall_2_id = validate_rollback_reinstalled_custody(
+                read_json(home / "n8n-managed-runtime.v2.json"), reinstall_2_job,
+                reinstall_2_record["manifest_sha256"], restore_volume, reinstall_1_id, args.port,
+                restore_source_2,
+            )
+            validate_runtime(docker_inspect(reinstall_2_id), reinstall_2_job, restore_volume, reinstall_2_id, args.port)
+            rollback_new_custody = transfer_downstream_cleanup_custody(reinstall_2_id, reinstall_2_job, restore_volume)
+            rollback_new_runtime_absent = False
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_2_job]), reinstall_2_job, args.port)
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if (reinstall_2_id == reinstall_1_id
+                    or authenticated_probe_with_key(canonical_key, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_credential_count(args.port, credential_key) != 1
+                    or read_rollback_uninstall_completion_receipt(home, uninstall_2_job, uninstall_2_record["manifest_sha256"], reinstall_1_job, reinstall_1_record["manifest_sha256"], reinstall_1_id, restore_volume, args.port, retention, restore_source_1) != uninstall_2_completion):
+                raise Failure("rollback_reinstall_2_state_unproven")
+            if assert_reinstall_repeat_rejected(binary, uninstall_2_job, canonical_key + b"\n")["reason"] != "active_runtime_pre_effect_rejection":
+                raise Failure("rollback_reinstall_2_repeat_unproven")
+            receipt["stage"] = "rollback_restore_volume_uninstall_3"
+            uninstall_3_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            rollback_new_runtime_absent = witness_downstream_runtime_absent(reinstall_2_id)
+            uninstall_3_job = validate_uninstall_product(read_json_bytes(uninstall_3_raw), reinstall_2_job)
+            uninstall_3_record = observe_exact_job(home, uninstall_3_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_3_job]), uninstall_3_job)
+            uninstall_3_completion = read_rollback_uninstall_completion_receipt(
+                home, uninstall_3_job, uninstall_3_record["manifest_sha256"], reinstall_2_job,
+                reinstall_2_record["manifest_sha256"], reinstall_2_id, restore_volume, args.port,
+                retention, restore_source_2,
+            )
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if (docker_inspect(runtime_id).get("Name") != f"/{retired_name}"
+                    or not exact_absent("container", rollback_id)
+                    or read_rollback_uninstall_completion_receipt(home, uninstall_1_job, uninstall_1_record["manifest_sha256"], rollback_job, rollback["rollback_manifest_sha256"], rollback_id, restore_volume, args.port, retention, None) != uninstall_1_completion
+                    or read_rollback_uninstall_completion_receipt(home, uninstall_2_job, uninstall_2_record["manifest_sha256"], reinstall_1_job, reinstall_1_record["manifest_sha256"], reinstall_1_id, restore_volume, args.port, retention, restore_source_1) != uninstall_2_completion):
+                raise Failure("rollback_uninstall_3_history_mutation")
+            receipt["stage"] = "confirmed_restore_volume_purge"
+            restore_plan_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall_3_job])
+            restore_phrase = validate_restore_purge_plan(read_json_bytes(restore_plan_raw), uninstall_3_job, restore_volume)
+            retained_before_wrong = docker_inspect(runtime_id)
+            restore_volume_before_wrong = docker_inspect(restore_volume)
+            validate_restore_volume(restore_volume_before_wrong, restore_job, volume)
+            history_before_wrong = (
+                observe_exact_job(home, rollback_job, "rollback"), observe_exact_job(home, uninstall_1_job, "uninstall"),
+                observe_exact_job(home, reinstall_1_job, "install"), observe_exact_job(home, uninstall_2_job, "uninstall"),
+                observe_exact_job(home, reinstall_2_job, "install"), observe_exact_job(home, uninstall_3_job, "uninstall"),
+            )
+            wrong_restore = bounded.run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall_3_job, "--confirm", restore_phrase + " wrong"], timeout=180)
+            if (wrong_restore.code == 0 or wrong_restore.timed_out or wrong_restore.overflow
+                    or b"n8n_purge_confirmation_mismatch" not in wrong_restore.stderr
+                    or json_sha256(docker_inspect(runtime_id)) != json_sha256(retained_before_wrong)
+                    or json_sha256(docker_inspect(restore_volume)) != json_sha256(restore_volume_before_wrong)
+                    or not exact_absent("container", reinstall_2_id)
+                    or read_rollback_uninstall_completion_receipt(home, uninstall_3_job, uninstall_3_record["manifest_sha256"], reinstall_2_job, reinstall_2_record["manifest_sha256"], reinstall_2_id, restore_volume, args.port, retention, restore_source_2) != uninstall_3_completion
+                    or history_before_wrong != (
+                        observe_exact_job(home, rollback_job, "rollback"), observe_exact_job(home, uninstall_1_job, "uninstall"),
+                        observe_exact_job(home, reinstall_1_job, "install"), observe_exact_job(home, uninstall_2_job, "uninstall"),
+                        observe_exact_job(home, reinstall_2_job, "install"), observe_exact_job(home, uninstall_3_job, "uninstall"),
+                    )):
+                raise Failure("restore_purge_wrong_confirmation_mutation")
+            restore_purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall_3_job, "--confirm", restore_phrase])
+            restore_purge_job = validate_purge_product(read_json_bytes(restore_purge_raw), uninstall_3_job)
+            restore_purge_record = observe_exact_job(home, restore_purge_job, "purge")
+            restore_purge_completion = read_purge_receipt(home, restore_purge_job, restore_purge_record["manifest_sha256"], uninstall_3_job, restore_volume)
+            if not exact_absent("volume", restore_volume) or not exact_absent("container", reinstall_2_id):
+                raise Failure("restore_purge_effect_unproven")
+            rollback_restore_volume_purged = True
+            restore_purge_repeat = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", uninstall_3_job, "--confirm", restore_phrase])
+            if (restore_purge_repeat != restore_purge_raw
+                    or observe_exact_job(home, restore_purge_job, "purge") != restore_purge_record
+                    or read_purge_receipt(home, restore_purge_job, restore_purge_record["manifest_sha256"], uninstall_3_job, restore_volume) != restore_purge_completion
+                    or docker_inspect(runtime_id).get("Name") != f"/{retired_name}"):
+                raise Failure("restore_purge_repeat_mutation")
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            receipt["rollback_downstream"] = {
+                "uninstall_1_job_id": uninstall_1_job, "reinstall_1_job_id": reinstall_1_job,
+                "reinstall_1_runtime_id_sha256": hashlib.sha256(reinstall_1_id.encode()).hexdigest(),
+                "uninstall_2_job_id": uninstall_2_job, "reinstall_2_job_id": reinstall_2_job,
+                "reinstall_2_runtime_id_sha256": hashlib.sha256(reinstall_2_id.encode()).hexdigest(),
+                "uninstall_3_job_id": uninstall_3_job, "uninstall_3_receipt_sha256": uninstall_3_completion["sha256"],
+                "workflows_persisted": True, "credential_count_each_reattach": 1,
+                "retired_source_preserved": True, "wrong_confirmation_no_effect": True,
+                "restore_purge_job_id": restore_purge_job, "restore_volume_absent": True,
+                "repeat_purge_read_only": True,
+            }
         if not args.rollback_only:
             receipt["stage"] = "managed_n8n_stopped_source_backup"
             run(["docker", "container", "stop", runtime_id])
@@ -1757,6 +1995,7 @@ def main() -> int:
         if rollback_fixture_started:
             rollback_cleanup_proven = cleanup_rollback_fixture(
                 rollback_old_custody, rollback_new_custody, rollback_restore_custody, args.port,
+                rollback_new_runtime_absent, rollback_restore_volume_purged,
             )
             receipt["rollback_fixture_cleanup_proven"] = rollback_cleanup_proven
             if isinstance(receipt.get("rollback"), dict):

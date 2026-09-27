@@ -275,6 +275,63 @@ class RollbackReceiptTests(unittest.TestCase):
             ["docker", "rm", "-f", new[0]], ["docker", "volume", "rm", restore_volume],
         ])
 
+    def test_progressive_downstream_cleanup_uses_only_current_witness(self) -> None:
+        restore_volume = canary.restore_volume_name(self.restore_job)
+        old = (self.old_id, "neoth-n8n-retired-" + self.rollback_job.replace("-", ""), self.rollback_job, self.old_volume)
+        old_row = self.runtime_row(self.old_id, self.rollback_job, self.old_volume, False)
+        old_row["Name"] = f"/{old[1]}"
+        old_volume = {"Name": self.old_volume, "Labels": {
+            "io.neoth.managed": "n8n", "io.neoth.n8n-job": self.rollback_job,
+            "io.neoth.n8n-bootstrap": "v2",
+        }}
+        restore_row = {"Name": restore_volume, "Labels": {
+            "io.neoth.managed": "n8n", "io.neoth.n8n-restore": self.restore_job,
+            "io.neoth.n8n-restore-schema": "1",
+        }}
+        stages = (
+            ("after_u1", "f" * 64, self.rollback_job, True, False),
+            ("after_r1", "1" * 64, "11111111-1234-7234-8234-123456789abc", False, False),
+            ("after_u2", "1" * 64, "11111111-1234-7234-8234-123456789abc", True, False),
+            ("after_r2", "2" * 64, "22222222-1234-7234-8234-123456789abc", False, False),
+            ("after_purge_effect", "2" * 64, "22222222-1234-7234-8234-123456789abc", True, True),
+        )
+        for label, current_id, current_job, current_absent, volume_absent in stages:
+            with self.subTest(stage=label):
+                current_row = self.runtime_row(current_id, current_job, restore_volume, True)
+                def inspect(identifier: str) -> dict:
+                    return {
+                        self.old_id: old_row, self.old_volume: old_volume,
+                        current_id: current_row, restore_volume: restore_row,
+                    }[identifier]
+                with patch.object(canary, "docker_inspect", side_effect=inspect), patch.object(
+                    canary, "exact_absent", return_value=True
+                ), patch.object(canary, "run") as command:
+                    if current_absent:
+                        witnessed_absent = canary.witness_downstream_runtime_absent(current_id)
+                        with self.assertRaisesRegex(canary.Failure, "later_job_observation"):
+                            raise canary.Failure("later_job_observation")
+                        current = (current_id, current_job, restore_volume)
+                    else:
+                        current = canary.transfer_downstream_cleanup_custody(current_id, current_job, restore_volume)
+                        witnessed_absent = False
+                        with self.assertRaisesRegex(canary.Failure, "later_status_or_probe"):
+                            raise canary.Failure("later_status_or_probe")
+                    self.assertTrue(canary.cleanup_rollback_fixture(
+                        old, current, (self.restore_job, restore_volume), 5681,
+                        witnessed_absent, volume_absent,
+                    ))
+                calls = [call.args[0] for call in command.call_args_list]
+                self.assertIn(["docker", "rm", "-f", self.old_id], calls)
+                self.assertIn(["docker", "volume", "rm", self.old_volume], calls)
+                if current_absent:
+                    self.assertNotIn(["docker", "rm", "-f", current_id], calls)
+                else:
+                    self.assertIn(["docker", "rm", "-f", current_id], calls)
+                if volume_absent:
+                    self.assertNotIn(["docker", "volume", "rm", restore_volume], calls)
+                else:
+                    self.assertIn(["docker", "volume", "rm", restore_volume], calls)
+
 
 class RestoreCredentialKeyTests(unittest.TestCase):
     job = "12345678-1234-7234-8234-123456789abc"
@@ -541,6 +598,40 @@ class ProductUninstallReceiptTests(unittest.TestCase):
         argv = command.call_args.args[0]
         self.assertNotIn("private-key", json.dumps(argv))
         self.assertEqual(command.call_args.kwargs["payload"], b"private-key\n")
+
+    def test_rollback_uninstall_v2_receipt_preserves_restore_lineage(self) -> None:
+        rollback = "fedcba98-1234-7234-8234-123456789abc"
+        restore = "abcdef12-1234-7234-8234-123456789abc"
+        backup = "11111111-1234-7234-8234-123456789abc"
+        old_id, old_name, runtime = "d" * 64, "neoth-n8n-retired-" + rollback.replace("-", ""), "c" * 64
+        volume = canary.restore_volume_name(restore)
+        retention = canary.rollback_restore_retention(rollback, "a" * 64, restore, "b" * 64, backup, "e" * 64, volume, old_id, old_name)
+        uninstall = "22222222-1234-7234-8234-123456789abc"
+        expected = {
+            "schema_version": 2, "uninstall_job_id": uninstall, "uninstall_manifest_sha256": "f" * 64,
+            "source_install_job_id": rollback, "source_install_manifest_sha256": "a" * 64,
+            "cleanup_disposition": "preserved_unproven", "source_container_id": runtime,
+            "source_image": canary.IMAGE, "source_host_port": 5681, "source_volume": volume,
+            "source_bootstrap_volume": False, "source_volume_owner_install_job_id": None,
+            "source_retained_reinstall": None, "rollback_restore": retention,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / f"n8n-uninstall-{uninstall}.receipt.json").write_text(json.dumps(expected))
+            canary.read_rollback_uninstall_completion_receipt(home, uninstall, "f" * 64, rollback, "a" * 64, runtime, volume, 5681, retention, None)
+            expected["rollback_restore"] = dict(retention, restore_volume="foreign")
+            (home / f"n8n-uninstall-{uninstall}.receipt.json").write_text(json.dumps(expected))
+            with self.assertRaisesRegex(canary.Failure, "rollback_uninstall_completion_receipt_invalid"):
+                canary.read_rollback_uninstall_completion_receipt(home, uninstall, "f" * 64, rollback, "a" * 64, runtime, volume, 5681, retention, None)
+
+    def test_restore_volume_purge_plan_requires_restore_confirmation_phrase(self) -> None:
+        uninstall = "12345678-1234-7234-8234-123456789abc"
+        volume = "neoth_n8n_" + "b" * 32
+        phrase = canary.restore_purge_phrase(uninstall, volume)
+        self.assertEqual(phrase, f"PURGE N8N RESTORE VOLUME {uninstall} {volume}")
+        self.assertEqual(canary.validate_restore_purge_plan({"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall, "volume": volume, "confirmation": phrase}, uninstall, volume), phrase)
+        with self.assertRaises(canary.Failure):
+            canary.validate_restore_purge_plan({"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall, "volume": volume, "confirmation": phrase + " wrong"}, uninstall, volume)
 
     def test_retained_volume_rejects_wrong_id_volume_or_job(self) -> None:
         row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}

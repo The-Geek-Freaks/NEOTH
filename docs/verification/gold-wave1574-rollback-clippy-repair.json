@@ -1,0 +1,20 @@
+{
+  "schema": "neoth-rollback-test-clippy-repair/v1",
+  "status": "SOURCE_REPAIRED_HOSTED_PENDING",
+  "failedRun": 36306515321,
+  "producer": "b278eef3b2257ece3924b55a917b7f96c4604f79",
+  "passedGates": [
+    "slim production Clippy",
+    "default test target typecheck",
+    "public CLI build and generated reference"
+  ],
+  "failedGate": "workspace Clippy: two test-helper lint errors",
+  "repair": [
+    "Use explicit if/else for inspect_volume while preserving restore_volume_removed.",
+    "Use equivalent is_none_or guard for new exact runtime ID."
+  ],
+  "sourceBlob": "ef0b63333a6f8bea0408a62b53b6513c1f52a2ee",
+  "failedLogSha256": "BBBA8A2D863FB7A519417822C3B430A34B02555BBFD04B60E035307C75D4B01D",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

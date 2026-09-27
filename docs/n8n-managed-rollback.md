@@ -44,4 +44,9 @@ Hosted native and actual product acceptance for this Rollback lifecycle are
 still required. The compiled-product workflow has a separate `rollback_only`
 scenario checking that two live-source credentials become the older snapshot's
 one credential, alongside authenticated API access and retained workflows.
+It then checks two Uninstall/Reinstall cycles using that same historical key,
+another Uninstall, and explicitly confirmed Purge of only the Restore volume.
+The original retired container and source volume must survive those operations.
+Wrong-confirmation and repeat-Purge checks preserve recorded history; fixture
+cleanup follows each newly verified runtime identity and confirmed absence.
 A source-reviewed scenario is not a passing product result or release proof.

@@ -1,0 +1,25 @@
+{
+  "schema": "neoth-rollback-downstream-product-source/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "4719d3b0babdf7c60d25822ecefd37671e1bcbde",
+  "reviewedBlobs": {
+    "packaging/n8n_product_bootstrap_canary.py": "51f0addabf0e88d9f49de247b4d9bfd85263a786",
+    "packaging/tests/test_n8n_product_bootstrap_canary.py": "547b1482c7b67135c91f3627f090ac1a5e4c0534"
+  },
+  "reviewSha256": "00964BEE020DDD20E70E3058B69FF6108E0D40897DBE8454806B17D7C8441A24",
+  "scenario": "rollback_only: Rollback/Backup-v2/U1/R1/U2/R2/U3/confirmed Restore-volume Purge",
+  "checks": [
+    "V2 immutable Rollback/Restore/Backup origin across two distinct exact reattach IDs.",
+    "13 workflows and one credential with historical key after each reattach.",
+    "Retained old exact container/name/source volume unchanged.",
+    "Wrong confirmation has no observed effect; repeated completed purge retains exact history/receipt.",
+    "Every confirmed absence and new validated identity updates finally custody before later observations.",
+    "Five staged failure injections exercise the actual cleanup helper."
+  ],
+  "limits": [
+    "Unprovable identities remain unproven; no by-name cleanup or guessed ownership.",
+    "Source review does not establish hosted scenario success."
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "neoth-wave1571-rollback-product-diagnostics/v1",
+  "decision": "recorded_failed_product_diagnostic",
+  "producer": "15bfbcb0ae30e6909468f092765626903d55d627",
+  "run": 36308031598,
+  "artifact": {
+    "id": 10927933589,
+    "sha256": "9956c19ede6149c2970565b9a6179ae43edd051df789402297b93b0e35e744a2",
+    "safe_entries": 1
+  },
+  "command_failure": {
+    "stage": "historical_restore_rollback",
+    "failure_stage": "command_failed",
+    "command": "product_rollback",
+    "exit_code": 1,
+    "timed_out": false,
+    "known_error_categories": [],
+    "rollback_stdout": {
+      "state": "failed",
+      "failure_code": "adoption_cleanup_failed"
+    }
+  },
+  "cleanup": {
+    "proven": false,
+    "docker_proven": false,
+    "rollback_fixture_proven": false
+  },
+  "limits": [
+    "Does not establish a completed rollback or a root cause.",
+    "Raw stderr is not projected."
+  ],
+  "inputProvenance": {
+    "receiptInputHashes": 37,
+    "rawProducerMismatches": 0,
+    "localExecutableValidationRan": false
+  }
+}
