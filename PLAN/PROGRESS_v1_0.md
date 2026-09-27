@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1730 exact Linux Group2005 admitted (2026-09-27):**
+Run36346794100 at6483ba4a passed all2005 selected tests. Root admitted original
+artifact/API ZIP digests,310 raw producer source blobs,10 additional inputs,
+and2005 exact discovered/run/single-pass terminals; zero failures or missing
+fixtures. This completes the Linux native gate for the accepted Restore batch.
+Windows770run36346796236 remains pending. Actual Paperless Rollback is still
+unpublished: Root W1731 completes the transaction after review blockers,
+W1724 tests cover exact compensation and stopped/partial source states,
+W1727 product helper has independent static PASS. No Rollback runtime or
+parent ROAD acceptance;1324/1077/245/2 unchanged. No local executable validation.
+Evidence: docs/verification/gold-wave1730-group2005-accepted.json.
+
 **W1725/W1728 complete Restore product and Core admitted (2026-09-27):**
 Product36346791804 at6483ba4a fully passed with custody v2: authenticated fresh
 Restore candidate/active generation, six archives and PDF marker, retained
