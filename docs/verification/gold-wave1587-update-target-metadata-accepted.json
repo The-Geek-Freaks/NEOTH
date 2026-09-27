@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "wave": "W1587",
+  "status": "ROOT_ACCEPTED_METADATA_EVIDENCE_ONLY",
+  "decision": "ADMIT_METADATA_EVIDENCE_ONLY",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36310908154,
+    "workflow": "W1580 n8n update target metadata evidence",
+    "event": "workflow_dispatch",
+    "conclusion": "success",
+    "head_branch": "main",
+    "head_sha": "7d59298e393ff11faceb36ef0f4e55a3700a6d8e",
+    "attempt": 1,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36310908154"
+  },
+  "artifact": {
+    "id": 10928439046,
+    "name": "n8n-update-target-evidence-36310908154",
+    "api_digest": "sha256:a3c804dbdb2cc45cb0fdaa6a40be49522dc7811123c46eec51883032ad60fb02",
+    "downloaded_zip_sha256": "a3c804dbdb2cc45cb0fdaa6a40be49522dc7811123c46eec51883032ad60fb02",
+    "zip_digest_matches_api": true,
+    "safe_zip": {
+      "entry_count": 22,
+      "unsafe_entry_count": 0,
+      "total_uncompressed_bytes": 27719
+    },
+    "internal_sha256sums": {
+      "member_count": 18,
+      "all_members_match": true,
+      "finalization_exit": 0
+    }
+  },
+  "producer_bindings": {
+    "producer_head_matches_run_head": true,
+    "raw_git_blob_export_and_hash_object_verified": true,
+    "files": [
+      {
+        "path": "SRC/neothd/src/installers/n8n.rs",
+        "sha256": "2ddddced6e4c1cb8be49742e039b9aa67b6dad464723d5c728b06bc05e0eefca",
+        "git_blob": "9300ec26f8fe44076ccd6992fa7b4dc0160c182e"
+      },
+      {
+        "path": ".github/workflows/n8n-update-target-evidence.yml",
+        "sha256": "3f24519a038a84c45adf8929f6471a3098bad40e0a02c7f3fe7f5467d8dea920",
+        "git_blob": "f094bf1983c1553c8f30fe5fe2384ac10b32a48e"
+      },
+      {
+        "path": "packaging/tests/test_n8n_update_target_evidence.py",
+        "sha256": "841b13a0d10033010983aad6724ad2ea8a18eee819e44a3be075f421b1399b3b",
+        "git_blob": "80341187fe3d834f95cec4e6d48265ca52d993c8"
+      },
+      {
+        "path": "packaging/n8n_update_target_evidence.py",
+        "sha256": "9843efa4d8f0dad881c07f8b74a5218bfb6b66aa58e169753503db8ec5387066",
+        "git_blob": "9d6f722031d95b35cb742ddae064d9159b652257"
+      }
+    ]
+  },
+  "hosted_gates": {
+    "capture_result_all_nine_exit_zero": true,
+    "regression_tests": {
+      "command": "python3 -m unittest discover -s packaging/tests -p test_n8n_update_target_evidence.py",
+      "executed": 3,
+      "failed": 0,
+      "covered_methods": [
+        "test_index_rejects_wrong_digest_before_parsing",
+        "test_index_rejects_wrong_platform_and_shape",
+        "test_release_rejects_mutable_ref"
+      ]
+    }
+  },
+  "target": {
+    "version": "2.40.7",
+    "release_tag": "n8n@2.40.7",
+    "release_is_draft": false,
+    "release_is_prerelease": false,
+    "release_ref": "refs/heads/release/2.40.7",
+    "source_commit": "09b3ce6f9889c889e13cf3747f6f6c68eebdeeb6",
+    "canonical_ghcr_subject": "oci://ghcr.io/n8n-io/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+    "docker_hub_immutable_reference": "docker.io/n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+    "oci_index": {
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "same_raw_bytes": true,
+      "ghcr_status": 200,
+      "docker_hub_status": 200,
+      "linux_amd64": "sha256:599d68c7b6fb18b5ac1e7cd013a2e72c886ec1c807b9d436d56e90da32c664ac",
+      "linux_arm64": "sha256:7215c2cb5c7093041d094f4e1afb1a4be50486962c590d8df6182031c283b2bb"
+    }
+  },
+  "attestation": {
+    "verification_exit": 0,
+    "trust_policy": "GitHub CLI default Sigstore public-good verification",
+    "predicate_type": "https://slsa.dev/provenance/v1",
+    "signer_workflow": "n8n-io/n8n/.github/workflows/docker-build-push.yml",
+    "source_ref": "refs/heads/release/2.40.7",
+    "source_digest": "09b3ce6f9889c889e13cf3747f6f6c68eebdeeb6",
+    "runner_environment": "github-hosted",
+    "self_hosted_runners_denied": true
+  },
+  "excluded_claims": [
+    "mutable tag resolution as authority",
+    "Docker pull, selected-platform construction, RepoDigests or runtime identity",
+    "authenticated n8n readiness or isolated-volume migration success",
+    "installer pin replacement",
+    "managed n8n Update implementation or admission",
+    "P2-20 or release closure"
+  ],
+  "localExecutableValidationRan": false,
+  "admitted_scope": "Fixed n8n 2.40.7 release, canonical GHCR SLSA provenance, and bounded GHCR/Docker Hub immutable OCI-index metadata correspondence only."
+}

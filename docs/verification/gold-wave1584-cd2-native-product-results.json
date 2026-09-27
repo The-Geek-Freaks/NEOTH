@@ -1,0 +1,105 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1584",
+  "status": "recorded_verified_failures_not_admitted",
+  "producer_commit": "cd2bfc6edd46e8bb2ada40f9af302a8341a488c6",
+  "outcome": "failed_native_and_product_results",
+  "native": {
+    "group": {
+      "run": 36309500096,
+      "executed": 1924,
+      "failed": 3
+    },
+    "windows": {
+      "run": 36309502319,
+      "executed": 689,
+      "passed": 686,
+      "failed": 3,
+      "missing": 0
+    }
+  },
+  "product": {
+    "run": 36309498531,
+    "stage": "repeat_historical_rollback",
+    "failure_stage": "command_failed",
+    "command": "product_rollback",
+    "exit_code": 1,
+    "known_error_categories": [
+      "n8n_rollback_custody_mismatch"
+    ],
+    "timed_out": false,
+    "docker_cleanup_proven": true,
+    "rollback_fixture_cleanup_proven": true,
+    "cleanup_proven": false
+  },
+  "admission": "not_admitted",
+  "public_docs_published": true,
+  "verified_original_evidence": {
+    "schema": "neoth-gold-admission/v1",
+    "wave": "W1584",
+    "producer_commit": "cd2bfc6edd46e8bb2ada40f9af302a8341a488c6",
+    "producer_is_origin_main_ancestor": true,
+    "artifacts": {
+      "group_receipt": {
+        "id": 10928542769,
+        "sha256": "70834393511e711cea97eb5b7debcdc5c27c510df616cad49dc840eac30073a9"
+      },
+      "group_log": {
+        "id": 10929415737,
+        "sha256": "f0baa80ef121293dc83af40f9fa121f50c6717c9bfab83f90a61e461c7655d1d"
+      },
+      "group_source": {
+        "id": 10928926844,
+        "sha256": "0467fab7e59ccb26a5bc0f1170f7b79fb2b52f11662f6e402218ef0a0c6ab280"
+      },
+      "product": {
+        "id": 10929060436,
+        "sha256": "4c0ad738ec9a4922fc6fa5f41019cbfe3e66fba0a2bd4ad3914ede8051e6f63f"
+      }
+    },
+    "native": {
+      "group": {
+        "run": 36309500096,
+        "selected": 1924,
+        "executed": 1924,
+        "failed": 3
+      },
+      "windows": {
+        "run": 36309502319,
+        "expected": 689,
+        "executed": 689,
+        "passed": 686,
+        "failed": 3,
+        "missing": 0
+      },
+      "failed_fixtures": [
+        "rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_source",
+        "ready_success_keeps_same_old_id_and_reentry_has_no_effect",
+        "failed_compensated_reentry_retires_only_custody"
+      ]
+    },
+    "product": {
+      "run": 36309498531,
+      "stage": "repeat_historical_rollback",
+      "failure_stage": "command_failed",
+      "command": "product_rollback",
+      "exit_code": 1,
+      "known_error_categories": [
+        "n8n_rollback_custody_mismatch"
+      ],
+      "timed_out": false,
+      "docker_cleanup_proven": true,
+      "rollback_fixture_cleanup_proven": true,
+      "cleanup_proven": false
+    },
+    "provenance": {
+      "group_input_matched": 10,
+      "group_input_mismatches": 0,
+      "product_input_matched": 37,
+      "product_input_mismatches": 0,
+      "windows_source_bindings": 689,
+      "windows_source_mismatches": 0
+    },
+    "decision": "recorded_failed_native_and_product_results_not_admitted"
+  }
+}

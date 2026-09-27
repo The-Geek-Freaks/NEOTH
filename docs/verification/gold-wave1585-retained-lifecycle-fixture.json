@@ -1,0 +1,11 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1585/W1589",
+  "status": "source_reviewed_hosted_validation_pending",
+  "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+  "blob": "babbb8e81e2edb27afb6224a07ceb10d58f38772",
+  "change": "Assert exact persisted active rollback ID, Ready uninstall and runtime absence; preserve retired source and Restore volume assertions.",
+  "source_review": "W1589 accepted; no production change",
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

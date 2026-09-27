@@ -1,0 +1,46 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1586",
+  "status": "root_admitted_exact_linux_product_scope",
+  "producer_commit": "cbc2f93c62a0a061e5e589c3ebdee3236137273e",
+  "hosted_run": 36310538428,
+  "outcome": "passed",
+  "admitted_scope": "exact_hosted_linux_product_rollback_scenario_only",
+  "rollback": {
+    "backup_v2_generation": 3,
+    "repeat_read_only": true,
+    "workflows_persisted": true,
+    "credential_count_source_before": 2,
+    "credential_count_restored": 1
+  },
+  "downstream": {
+    "uninstall_count": 3,
+    "reinstall_count": 2,
+    "credential_count_each_reattach": 1,
+    "retired_source_preserved": true,
+    "restore_volume_absent": true,
+    "repeat_purge_read_only": true,
+    "wrong_confirmation_no_effect": true
+  },
+  "cleanup": {
+    "docker": true,
+    "rollback_fixture": true,
+    "restore": true,
+    "aggregate": true
+  },
+  "public_docs_published": true,
+  "artifact": {
+    "id": 10929306104,
+    "sha256": "6cf94a388a751ce1573c2e418f71b065f154d478e471e05595ddc59f454ebf73",
+    "safe_entries": 1
+  },
+  "provenance": {
+    "input_count": 37,
+    "input_mismatches": 0
+  },
+  "limitations": [
+    "No cross-platform claim.",
+    "No whole-road or broader release claim.",
+    "Admission is confined to the authenticated hosted product scenario and projected receipt fields."
+  ]
+}

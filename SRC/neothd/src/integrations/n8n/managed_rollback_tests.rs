@@ -731,6 +731,11 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
     )
     .await
     .unwrap();
+    let active_rollback_id = read_binding(home.path())
+        .unwrap()
+        .unwrap()
+        .container_id
+        .expect("Ready rollback has an active container ID");
     let old = state.lock().unwrap().old.id.clone();
     let old_name = state.lock().unwrap().old_name.clone();
     let restore_volume = state.lock().unwrap().restore_volume.name.clone();
@@ -738,7 +743,9 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
         super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
             .await
             .unwrap();
-    assert_eq!(runner.calls(&format!("remove:{}", "2".repeat(64))), 1);
+    assert_eq!(uninstall.state, JobState::Ready);
+    assert_eq!(runner.calls(&format!("remove:{active_rollback_id}")), 1);
+    assert!(state.lock().unwrap().new.is_none());
     assert_eq!(state.lock().unwrap().old.id, old);
     assert_eq!(state.lock().unwrap().old_name, old_name);
     assert!(!state.lock().unwrap().restore_volume_removed);

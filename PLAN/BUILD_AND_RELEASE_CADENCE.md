@@ -3,6 +3,28 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1584-W1589 Rollback product accepted; Update target metadata accepted (2026-09-27):**
+Original Rollback run36310538428 at cbc2f93c passed the complete hosted Linux
+scenario: historical credential count2-to-1,13 workflows, read-only repeat,
+Backup v2 generation3, three Uninstalls/two Reinstalls, retained original
+container/volume, wrong-confirmation no effect, confirmed Restore-volume Purge
+and read-only repeat. All cleanup, isolated-home removal and secret clearing
+passed. Artifact10929306104 API/download digest and37 raw producer inputs
+match. This admits exactly that Linux product scenario, not native/Core or
+cross-platform/release acceptance. Earlier cd2 native/product failures remain
+recorded in W1584. W1585 corrects one native fixture's wrong hard-coded fake
+container ID, with independent W1589 approval; hosted rerun remains required.
+W1587 admits n8n2.40.7 target metadata only from successful run36310908154 at
+7d59298e: signed GHCR subject, exact final release/ref/commit, digest-addressed
+cross-registry index bytes and Linux platform descriptors;18 artifact checksums,
+four raw producer bindings and three hosted verifier tests passed. Runtime
+pull/identity, isolated-volume migration and managed Update remain pending.
+Update must migrate a stopped-source copy in a fresh target volume and retain
+the original volume unchanged. No local executable validation or ROAD closure.
+Evidence: gold-wave1584-cd2-native-product-results.json,
+ gold-wave1585-retained-lifecycle-fixture.json,
+ gold-wave1586-rollback-product-accepted.json and
+ gold-wave1587-update-target-metadata-accepted.json under docs/verification.
 **W1577/W1580 Next Update target evidence gate source reviewed (2026-09-27):**
 Discovery identifies final n8n2.40.7 as a candidate after2.40.5; newer2.41.3 is
 prerelease and excluded. A separate fixed-target hosted verifier now checks
