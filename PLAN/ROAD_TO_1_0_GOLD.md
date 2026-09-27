@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1675 Paperless Backup full product accepted (2026-09-27):**
+Product36330901213 atc48aadb4 passed its complete real Linux lifecycle. Original
+artifact10935424477/ZIP digest and27 raw producer source bindings are verified.
+The running and stopped Backup each produced6 private archives containing the
+known PDF. Source IDs/state survived; controlled recovery, healthy/start/recreate
+Repair, retained Uninstall/Reinstall and document metadata/download bytes passed.
+Purge removed the six owned volumes, repeat was read-only, fresh generation/token
+rotation passed, and Docker resources plus isolated home were fully removed.
+This accepts that exact compiled Linux product flow; Group1979/Windows744 and
+latest n8n Update remain separate running gates. Paperless Restore/Update and
+upstream OCI signature admission remain open. ROAD counts1324/1077/245/2 unchanged.
+Evidence: docs/verification/gold-wave1675-paperless-backup-product-accepted.json.
 **W1674 Hosted format import (2026-09-27):** Preflight36331275739 at6c03220c supplied authenticated artifact10934789646 (ZIP1243c2923812ae3c7072f86299a47a05acbac176f20f0f53ad22494e7d084d9b). Its exact one-file native-test formatting patch was imported. Group1979run36331277964, Windows744run36331279741 and Update36331276264 remain active on the semantic producer; Paperless36330901213 runs atc48aadb4. No local formatter, duplicate native dispatch, or acceptance claim.
 **W1673 Repeated Update receipt bound (2026-09-27):**
 Update product36329535494 at70e8b768 reached the later uninstall-status check

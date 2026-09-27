@@ -228,5 +228,10 @@ This command accepts no target, image, container, credential or archive override
 
 This is a same-instance physical backup tied to the exact images and retained
 configuration; it does not export credentials or implement cross-instance
-restore, database migration or Paperless update. Source and product-canary code
-have been statically reviewed; new hosted Backup acceptance is still pending.
+restore, database migration or Paperless update. GitHub product run `36330901213` at `c48aadb4` passed both running and stopped
+six-volume Backup, retained PDF bytes, source recovery, downstream Repair,
+Uninstall/Reinstall, Purge, fresh generation and complete cleanup. Original
+artifact and 27 raw producer bindings are admitted in
+`docs/verification/gold-wave1675-paperless-backup-product-accepted.json`.
+This proves that exact Linux product flow; native/other release gates and
+Paperless Restore/Update remain separate.

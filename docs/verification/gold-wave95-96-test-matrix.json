@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "status": "PAPERLESS_BACKUP_PRODUCT_ADMITTED_NATIVE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 249225,
-    "sha256": "1F9EF4AF303AF2554421F59C44E7C57F7B39CED3E07E308973B677BCB24E427A"
+    "bytes": 249448,
+    "sha256": "A5896AF321C0963233C7E00B1343574C3D381793843857F0E892B76E02127992"
   },
-  "sourceInputs": 1388,
+  "sourceInputs": 1389,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -51971,6 +51971,44 @@
       }
     ],
     "note": "Authenticated one-file6c03220c native-test rustfmt patch ADCDEB2D8B0E30B1D0874D9C0289E7A6627C5C209B58200C6A7A44E5E33E9574 imported; unchanged production. Native/product gates active.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1675PaperlessBackupProductAccepted": {
+    "base": "297cc40685633fd66b762e971f188578e8431226",
+    "sources": [
+      {
+        "path": "docs/paperless-readiness.md",
+        "bytes": 14578,
+        "sha256": "C9B23424E67BB581999658A236ADF0A2C19C8285AE7359967B8FCC3EB674F2B1",
+        "blob": "90f19d60837242d2537c17ba2d0ad750a1b5a8f4"
+      },
+      {
+        "path": "docs/verification/gold-wave1675-paperless-backup-product-accepted.json",
+        "bytes": 8080,
+        "sha256": "3675B7BA34DC3E02DE4D268973892F1359BD1C44B30E717025F6528D525D1CAC",
+        "blob": "25322a41b4b9bdde68d801d5aad6cdf5efa8af90"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 462149,
+        "sha256": "08D3759A835CE03960C267A9A2C5607F694C186C87355F1035318A37224219CE",
+        "blob": "06fa9a80d22a4793d806ba8f809a2ab877ea1a34"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1481080,
+        "sha256": "2B899F497E199ACDFBA3EA383751FC2D0142E4831094451458B0997A6C31D6D9",
+        "blob": "b2f44b1b13c389f777465d9d0f309575287c8c43"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2091603,
+        "sha256": "0D334BC43632E2BD11DF9A2FD18BAE7B511A9BF6279F65C584AC51CBB6C821E2",
+        "blob": "994cf1587da33abd872551f4d5435d4f8a3d9d9e"
+      }
+    ],
+    "note": "Actual Linux Paperless backup+full downstream lifecycle accepted atc48aadb4 from original artifact10935424477 and27 raw producer bindings, complete cleanup. Native gates and n8n Update still separate/pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
