@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1742 Rollback native failure isolated (2026-09-27):**
+Group36351441068 atb26808ea executed2012 selected cases:2008 single-pass
+terminals and4 failures, all in the new stateful Rollback cohort. The original
+source/log/receipt ZIP API digests and the failing fixture's raw producer blob
+591795bf14c900b8965d47b1dceed2eda6659c0113d01b801b0114bd747aeceb
+are verified. Base/partial-old-state cases explicitly fail volume ownership;
+readiness/ambiguous-stop scenarios do not reach their expected later errors.
+The source Docker volume labels were incorrectly read from mutable active
+state. The fake now captures the original set once; independent Rust review
+PASS. Production validation and all assertions are retained. Actual Rollback product remains admitted at0b14919d.
+Windows777run36351443009 continues; no native cohort acceptance or ROAD closure.
+ArchiveBridge retry36353049554 atfd141bf4 active. No local executable validation.
+
 **W1741 Archive Bridge startup fixture correction (2026-09-27):**
 Product36352210067 at72550779 passed locked plugin/typecheck/build/contracts,
 helper checks and CLI build, then failed with daemon_exited_early after install.

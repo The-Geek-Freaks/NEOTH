@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T21:46:11.4280760Z",
-  "validationStatus": "Archive Bridge startup fixture repair reviewed; hosted retry pending",
+  "capturedUtc": "2026-09-27T21:55:41.8218219Z",
+  "validationStatus": "Rollback original Docker-label fixture correction reviewed; hosted2012/777 retry pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3633,18 +3633,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 486398,
-      "sha256": "ECAD9BF79A78F6D565EB74E92CCD96C67EBC5EE283B9CABDFD3EC763009C3146"
+      "bytes": 487333,
+      "sha256": "F13A0BABB7BF5AEA73093FD9C20FF347784453EE677130A9FE185ED43B14A3C7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1505914,
-      "sha256": "0334B5C3D0816FC8F40465AA049420C63FB11F2351D7446CFCD258AD73DD46BA"
+      "bytes": 1506849,
+      "sha256": "F3FA6A9CB930CC68E734A5DE788C5F0E671A38BDF908026C3D597D227E0F4765"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2116437,
-      "sha256": "1D0935C61882B8D5B320E6F030190F374B27F35797A90E74212875F944F70CEF"
+      "bytes": 2117372,
+      "sha256": "350B49BF775A011B076B0A96EB7E14FE8E66EA19573C2BF0E1543E0FA80A49BF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5708,8 +5708,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
-      "bytes": 68245,
-      "sha256": "591795BF14C900B8965D47B1DCEED2EDA6659C0113D01B801B0114BD747AECEB"
+      "bytes": 68713,
+      "sha256": "DDDE26262006755D9447BB337EF6D35F494735F5996BC1A3B99925C4F54304EC"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore.rs",

@@ -196,6 +196,7 @@ struct RestoreFake {
     commands: Vec<Vec<String>>,
     project: String,
     volume_set: String,
+    source_volume_set: Option<String>,
     candidate: bool,
     active: bool,
     lose_copy: bool,
@@ -229,6 +230,7 @@ impl RestoreFake {
             commands: vec![],
             project: String::new(),
             volume_set: String::new(),
+            source_volume_set: None,
             candidate: false,
             active: false,
             lose_copy: false,
@@ -391,12 +393,13 @@ impl RestoreFake {
             .ok_or(LifecycleError::Receipt)?;
         let set = if let Some(set) = self.project_sets.get(project) {
             set.clone()
+        } else if project == &source_project {
+            self.source_volume_set
+                .as_ref()
+                .cloned()
+                .ok_or(LifecycleError::Receipt)?
         } else {
-            let bytes = std::fs::read(cwd.join(RECEIPT_DIR).join(VOLUME_SET_NAME))
-                .map_err(|_| LifecycleError::Receipt)?;
-            serde_json::from_slice::<PaperlessVolumeSetSnapshot>(&bytes)
-                .map_err(|_| LifecycleError::Receipt)?
-                .volume_set_id
+            return Err(LifecycleError::Receipt);
         };
         Ok(CommandOutput {
             stdout: format!(
@@ -664,6 +667,17 @@ async fn restore_fixture(
     c: &Credentials,
     f: &mut RestoreFake,
 ) -> paperless_backup::PaperlessBackupReceipt {
+    // Docker volume labels outlive the mutable active snapshot. Capture the
+    // original source generation before Restore replaces VOLUME_SET_NAME.
+    if f.source_volume_set.is_none() {
+        f.source_volume_set = Some(
+            serde_json::from_slice::<PaperlessVolumeSetSnapshot>(
+                &std::fs::read(restore_state(home).join(VOLUME_SET_NAME)).unwrap(),
+            )
+            .unwrap()
+            .volume_set_id,
+        );
+    }
     paperless_backup::backup_at_with(home, c, f, &RestoreReady(AtomicBool::new(true)))
         .await
         .unwrap()
