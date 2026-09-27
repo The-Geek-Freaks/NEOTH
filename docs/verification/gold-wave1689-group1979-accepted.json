@@ -1,0 +1,68 @@
+{
+  "schema": "neoth-group1979-accepted/v1",
+  "capturedUtc": "2026-09-27T16:52:42.7246905Z",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36333331820,
+    "jobId": 108659355650,
+    "jobName": "Research and loop lifecycle quality",
+    "headSha": "60d68325c26b301ef514708eddd5eecefa5549ef",
+    "sourceRef": "refs/heads/main",
+    "finalStatus": "completed",
+    "finalConclusion": "success"
+  },
+  "artifacts": [
+    {
+      "role": "grouped-cargo-log",
+      "id": 10937086990,
+      "sha256": "e60525f4e1e08907aab87d28cd0ac1f535c3275df8f2762681fc00386884d827",
+      "apiDigestMatchesLocalZip": true
+    },
+    {
+      "role": "grouped-source-identities",
+      "id": 10937111553,
+      "sha256": "659c6126ae1d0f3ee81710d423b34a8c062f16ead8bd11c3a74a5916d7a88b25",
+      "apiDigestMatchesLocalZip": true
+    },
+    {
+      "role": "grouped-lifecycle-receipt",
+      "id": 10936693615,
+      "sha256": "35a4c22b736277e3ea8db059ac094b2a8d3cace3a347cd329f29871bd5dae427",
+      "apiDigestMatchesLocalZip": true
+    }
+  ],
+  "cohort": {
+    "discovered": 1979,
+    "selected": 1979,
+    "executed": 1979,
+    "passed": 1979,
+    "failed": 0,
+    "duplicateFixtureTests": 0,
+    "duplicateFixtureNames": 0,
+    "selectionEqualsDiscovery": true,
+    "uniqueSourcePaths": 309,
+    "uniqueSourcePathHashPairs": 309,
+    "unsafeSourcePaths": 0,
+    "sourceGitBlobHashesChecked": 309,
+    "sourceGitBlobHashMismatches": 0,
+    "inputGitBlobHashesChecked": 10,
+    "inputGitBlobHashMismatches": 0,
+    "unsafeInputPaths": 0
+  },
+  "logEvidence": {
+    "runHeaders": 1979,
+    "runningOneTestEntries": 1979,
+    "onePassedZeroFailedSummaries": 1979,
+    "failedTestLines": 0,
+    "failedSummaries": 0,
+    "failureSections": 0,
+    "panicLines": 0,
+    "logSha256": "499289f8c42e45e5f2dbbf23fc9f9dc3c7677a53ab34c83943ba3836054c78ad",
+    "compileStderrBytes": 973,
+    "compileStderrSha256": "f43a5e5865b7d189ba53d4f806d9213256c8cd66955ecf7793ba77ed7e8939a7",
+    "compileErrorLines": 0
+  },
+  "admissionSha256": "FEF397CDCD86C1C44D3D7A820FB2C9C2269FC88943854CDA6ED1DD740A995B45",
+  "localExecutableValidationRan": false,
+  "scope": "1979 exact native Linux fixtures at60d68325; no Restore/runtime/Windows/global release acceptance"
+}

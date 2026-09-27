@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "hosted-format-import-native-running",
+  "status": "group1979-accepted-windows744-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 249838,
-    "sha256": "62F2828B747590C2156F08279B7A04364B70B31FAF96C062EF1ABD19E8BD6571"
+    "bytes": 250030,
+    "sha256": "2948FEA87BAD773B328D44B8F6094A5EA09E8DD6A9252B77C13B7C2268B5581C"
   },
-  "sourceInputs": 1391,
+  "sourceInputs": 1392,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -52111,6 +52111,38 @@
       }
     ],
     "note": "Original artifact10936780930 verified; exact Backup test-only rustfmt imported. Group/Windows semantic run60d68325 active. Restore WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1689Group1979Accepted": {
+    "base": "e830c01b5e7e92fc0fdb55a5dc02420cd554b531",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1689-group1979-accepted.json",
+        "bytes": 2246,
+        "sha256": "34C5B0D0BB20AA5028F7A3BCE7194EDEC2B20C1B62E340F955B9A787FD2300B8",
+        "blob": "4f8992d9cf7ee085c34a4bef4118314ecb5a90a3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 465321,
+        "sha256": "D3F2B7336CF4A837EB2824DBD84BF7D0BCB5483F258DE8897EF4608A2CFCC09D",
+        "blob": "4bce203a7015c737aa7e1687fc65ece29eaff30e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1484252,
+        "sha256": "64CB63AE3459B2FB96329DA5EEAC1AB120DF0CC8592F46471C001F7AA6ED14E5",
+        "blob": "a87cd9ed3ddad9e9f39c6751c3605fb1e1f5ac49"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2094775,
+        "sha256": "A6339EB368A16EB7B2DDD7CFF34083BD1AD255ACA56347D1DB0FD6FE653AC288",
+        "blob": "283c927ef3cbb082df3fdb9e0f88d5180f53cd8b"
+      }
+    ],
+    "note": "1979/1979 exact Linux fixtures accepted at60d68325 from3 original ZIP artifacts;309 source +10 input raw Git bindings. Restore WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

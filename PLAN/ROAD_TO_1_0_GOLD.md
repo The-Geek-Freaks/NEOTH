@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1689 Group1979 accepted (2026-09-27):** GitHub36333331820 at60d68325
+passed all1979 exact Linux fixtures with zero failures. Original source/log/
+receipt artifact ZIP digests verified; all1979 discovery/run/terminal records
+matched. Root verified309 source-file bindings and10 workflow/input bindings
+against raw producer Git blobs. The16 Backup failures are resolved in this
+cohort. Windows744run36333333558 remains active. Hosted formatting e830c01b
+Preflight passed. Paperless Restore remains unpublished and review-blocked
+while durable recovery and per-generation history are completed. No ROAD box
+closed and no local executable validation ran.
+Evidence: docs/verification/gold-wave1689-group1979-accepted.json.
 **W1686 Hosted fixture formatting (2026-09-27):** Original Preflight36333331247 artifact10936780930 at60d68325 verified (ZIP ce774b2ad167d763149f3bc2518aef186118e01862d44a8a6ef6501778b6f0b5). Imported the exact one-file rustfmt patch only. Group1979run36333331820 and Windows744run36333333558 still verify the semantic test correction. No local formatter ran; Restore remains unpublished WIP.
 
 **W1680 Backup native fixture repair and latest Core (2026-09-27):**
