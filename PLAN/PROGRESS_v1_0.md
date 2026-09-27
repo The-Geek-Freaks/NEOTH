@@ -2,6 +2,8 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1686 Hosted fixture formatting (2026-09-27):** Original Preflight36333331247 artifact10936780930 at60d68325 verified (ZIP ce774b2ad167d763149f3bc2518aef186118e01862d44a8a6ef6501778b6f0b5). Imported the exact one-file rustfmt patch only. Group1979run36333331820 and Windows744run36333333558 still verify the semantic test correction. No local formatter ran; Restore remains unpublished WIP.
+
 **W1680 Backup native fixture repair and latest Core (2026-09-27):**
 Group1979run36331277964 and Windows744run36331279741 at6c03220c both
 compiled and executed their full selections; the same16 Backup cases failed.

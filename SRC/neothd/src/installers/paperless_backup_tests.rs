@@ -132,9 +132,10 @@ impl StatefulBackupExecutor {
                 .and_then(|index| argv.get(index + 1))
                 .and_then(|filter| filter.strip_prefix("name="))
                 .ok_or(LifecycleError::Receipt)?;
-            if !paperless_staging::PAPERLESS_VOLUMES.iter().any(|volume| {
-                super::super::volume_name(&project, volume.logical_name) == requested
-            }) {
+            if !paperless_staging::PAPERLESS_VOLUMES
+                .iter()
+                .any(|volume| super::super::volume_name(&project, volume.logical_name) == requested)
+            {
                 return Ok(CommandOutput {
                     stdout: String::new(),
                 });
