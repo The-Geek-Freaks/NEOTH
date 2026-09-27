@@ -1,0 +1,35 @@
+{
+  "schema": "neoth-windows744-accepted/v1",
+  "capturedUtc": "2026-09-27T17:10:04.8698223Z",
+  "run": {
+    "id": 36333333558,
+    "status": "completed",
+    "conclusion": "success",
+    "headSha": "60d68325c26b301ef514708eddd5eecefa5549ef",
+    "workflow": "Windows storage regressions",
+    "htmlUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36333333558"
+  },
+  "artifact": {
+    "id": 10937156131,
+    "sha256": "092249781896632e0a729846fd28ba2a7618adf45001674dd6b9b8bcb19359dc",
+    "apiDigestMatchesLocalZip": true
+  },
+  "cohort": {
+    "selected": 744,
+    "executed": 744,
+    "passed": 744,
+    "failed": 0,
+    "missing": 0,
+    "uniqueTests": 744,
+    "exactPassingTerminalsVerified": 744,
+    "sourceGitBlobHashesChecked": 106,
+    "inputGitBlobHashesChecked": 13,
+    "allSourceBindingsMatch": true,
+    "terminalLogsAllMatch": true,
+    "evidenceFileHashesVerified": 10
+  },
+  "compileLogSha256": "84d9989f83c25a649a56877f280e5b23ac81f1447214e404c5b4218d16c60aee",
+  "admissionSha256": "ed0cb1902a0436fd9e57bfa6c3f21ec7b2444ebd766f9a8f0cb9549f0ad85dfb",
+  "localExecutableValidationRan": false,
+  "scope": "744 exact native Windows regressions at60d68325; no unpublished Restore or global release acceptance"
+}

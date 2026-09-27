@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1691 Windows744 accepted (2026-09-27):** GitHub36333333558 at60d68325
+passed all744 exact Windows regressions with zero failures or missing cases.
+Root verified the original artifact10937156131 ZIP/API digest, all744 named
+passing terminals/log hashes,106 source bindings,13 producer inputs and10
+internal evidence hashes. The16 shared Backup fixture failures are resolved
+on Windows as well as Linux Group1979. Paperless Restore remains unpublished
+and review-blocked pending complete failed-generation custody and contained
+archive/token streaming. No ROAD box closed; no local executable validation.
+Evidence: docs/verification/gold-wave1691-windows744-accepted.json.
 **W1689 Group1979 accepted (2026-09-27):** GitHub36333331820 at60d68325
 passed all1979 exact Linux fixtures with zero failures. Original source/log/
 receipt artifact ZIP digests verified; all1979 discovery/run/terminal records

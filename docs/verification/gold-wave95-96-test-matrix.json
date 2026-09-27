@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "group1979-accepted-windows744-pending",
+  "status": "Windows744 and Linux1979 accepted at60d68325; Restore remains unpublished WIP",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 250030,
-    "sha256": "2948FEA87BAD773B328D44B8F6094A5EA09E8DD6A9252B77C13B7C2268B5581C"
+    "bytes": 250261,
+    "sha256": "FF57B32F1AE0A852D2AB0A1A3DC0215017DB46B4F4D769F70C0590381EAEAC09"
   },
-  "sourceInputs": 1392,
+  "sourceInputs": 1393,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -52143,6 +52143,38 @@
       }
     ],
     "note": "1979/1979 exact Linux fixtures accepted at60d68325 from3 original ZIP artifacts;309 source +10 input raw Git bindings. Restore WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1691Windows744Accepted": {
+    "base": "bf3738feb9812e59398630e139e8b21d43b19028",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1691-windows744-accepted.json",
+        "bytes": 1242,
+        "sha256": "12DF83A32DDA4A733D9DCCB91525B90A759A1EC360879488ED5DC10D3D43FDF0",
+        "blob": "c96598465e57c901da730e443f7fce51f39dae81"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 465995,
+        "sha256": "5B09F9AF45547D16D75D0D015A127083AF847CE1351053B9DE9513993F3EFF06",
+        "blob": "61a7ea133a3f5b44c21e11fd43b91e47a2c941e8"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1484926,
+        "sha256": "CFA6E63F48A47FC69FD00335A322AB9940AF0E3423B96F52F5E6FBE7D22DCC52",
+        "blob": "9bbb65410162b0b99594666467b7c26b65dbb4e5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2095449,
+        "sha256": "85D54877A9FC901C149A04BA6100089F43961F8B414E8A0B9A169EC6E1DAA3D4",
+        "blob": "c830e52c731e4eef9b0f0283ce6484aa7f5dffe2"
+      }
+    ],
+    "note": "Original Windows artifact digest and744 exact terminal logs,106 source bindings,13 input bindings and10 evidence-file hashes verified. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
