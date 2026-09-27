@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T10:07:44.4718819Z",
-  "validationStatus": "rollback-product-admitted-native-fixture-hosted-pending-update-metadata-only",
+  "capturedUtc": "2026-09-27T10:12:45.8100190Z",
+  "validationStatus": "hosted-format-import-native-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2337,6 +2337,11 @@
       "sha256": "D32E643A7CD94E1F7B394EBACDCE58155E2820253252AA88136DE0EB97FE1AE1"
     },
     {
+      "path": "docs/verification/gold-wave1593-retained-fixture-hosted-format.json",
+      "bytes": 529,
+      "sha256": "BBB80C4338BCA1C4D2B5D9B27630188401E7A1BF4C30D267322FB3F0A8E18E4F"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3308,18 +3313,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 437184,
-      "sha256": "540BD4B01B1C9C7C3CD7138A09BE2A4FF85E9752EE7BAB32C1A69AA6AB1C6AA7"
+      "bytes": 437651,
+      "sha256": "EC20E8965786C0B19B91635BE864C280B29272BDDD37110A2AB747FF639D9588"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1456115,
-      "sha256": "607CC7B82653AF26130604A6FAC68CEAAC87574DDE7ECC65620898DDFA605001"
+      "bytes": 1456582,
+      "sha256": "DA8F5C7B8B8D9D81C59EF9DA45296AD571EBFC6016C3E9F8824EE3371F135EE7"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2066638,
-      "sha256": "412E5CED841FF03926E0E5E5729C236A696BE0310F01D938417AE2189353F56D"
+      "bytes": 2067105,
+      "sha256": "ABE94553953490C34D96B9606C0723932E353E853CA32BC8F8F823E232472156"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5488,8 +5493,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
-      "bytes": 29522,
-      "sha256": "1F3C70B021C591FD375FF33AEFD0998C26A7DCCF9D267DA4A0CD00137F8DAEB5"
+      "bytes": 29521,
+      "sha256": "820CAF27812E50491697760BC9D18AFA87942FD3921EBC83D5F0D1CC06384D00"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback.rs",

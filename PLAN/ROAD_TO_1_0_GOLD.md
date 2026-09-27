@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1593 Hosted formatting imported (2026-09-27):** Exact Preflight36311662375
+artifact10928594650 at e639e712 authenticates the remaining test-expression
+line wrap. ZIP/API/internal checksums and pre/post Git blobs match. No local
+formatter ran. Group36311757940/Windows36311759439 validate the e639 fixture;
+Core gates retain their older producer bindings until fresh source is checked.
+Evidence: docs/verification/gold-wave1593-retained-fixture-hosted-format.json.
 **W1584-W1589 Rollback product accepted; Update target metadata accepted (2026-09-27):**
 Original Rollback run36310538428 at cbc2f93c passed the complete hosted Linux
 scenario: historical credential count2-to-1,13 workflows, read-only repeat,

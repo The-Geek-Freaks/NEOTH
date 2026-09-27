@@ -575,8 +575,8 @@ async fn failed_compensated_reentry_retires_only_custody() {
         new_container_id: Some("2".repeat(64)),
     };
     create(home.path(), &c).unwrap();
-    let mutation_counts = ["create", "remove:", "rename:", "stop:", "start:"]
-        .map(|prefix| runner.calls(prefix));
+    let mutation_counts =
+        ["create", "remove:", "rename:", "stop:", "start:"].map(|prefix| runner.calls(prefix));
     let call_count = state.lock().unwrap().calls.len();
     let replay = rollback_managed_at_with(
         home.path(),

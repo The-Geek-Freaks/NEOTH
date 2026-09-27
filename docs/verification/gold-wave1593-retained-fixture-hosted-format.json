@@ -1,0 +1,13 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1593",
+  "status": "authentic_hosted_format_import",
+  "run": 36311662375,
+  "producer": "e639e712f1b8243fb68533ecd7a1508f0ec31a14",
+  "artifact": 10928594650,
+  "zipSha256": "7d19c44badd6274c778671726249467860d9a2d48af952cec51f26a44589f743",
+  "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+  "preimage": "babbb8e81e2edb27afb6224a07ceb10d58f38772",
+  "postimage": "0aebc1265e65f34c3c722b50d427be56b8e83ec5",
+  "localExecutableValidationRan": false
+}
