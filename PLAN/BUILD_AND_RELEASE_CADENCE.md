@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1733 hosted Rollback formatting imported (2026-09-27):**
+Exact four-file rustfmt patch from Preflight36349825974 at9cdae427 imported.
+Original artifact10941368837 ZIPb65f55a4b0efb8ea44670888f0888935b4873a377777999de2163e26f82549f3,
+producer, internal member hashes and all resulting Git blobs verified.
+Core36349853969 and Rollback product36349855973 continue on9cdae427;
+product helper gates already passed. No local formatter or duplicate dispatch.
+Native2012/777 await generated CLI. Runtime acceptance remains pending.
+
 **W1731 complete Paperless Rollback source; W1730 Windows770 admitted (2026-09-27):**
 Selected Restore-ID rollback now uses immutable initial authority, per-command
 intent and exact post-effect ID/image/label/mount/loopback/state verification.

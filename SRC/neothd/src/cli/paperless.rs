@@ -157,12 +157,10 @@ pub enum QuarantineAction {
 }
 
 fn parse_paperless_restore_job_id(value: &str) -> std::result::Result<String, String> {
-    let canonical = value
-        .strip_prefix("paperless-restore-")
-        .is_some_and(|id| {
-            crate::installers::paperless_staging::valid_volume_set_id(id)
-                && id.bytes().all(|byte| !byte.is_ascii_uppercase())
-        });
+    let canonical = value.strip_prefix("paperless-restore-").is_some_and(|id| {
+        crate::installers::paperless_staging::valid_volume_set_id(id)
+            && id.bytes().all(|byte| !byte.is_ascii_uppercase())
+    });
     if !canonical {
         return Err("expected a canonical paperless-restore UUID job ID".to_owned());
     }
@@ -254,15 +252,14 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
                     anyhow::anyhow!("Paperless rollback could not read the configured credentials")
                 })?;
         if let Some(confirmation) = confirm {
-            let receipt =
-                crate::installers::paperless_lifecycle::paperless_restore::rollback_at(
-                    &home,
-                    &credentials,
-                    restore_job_id,
-                    confirmation,
-                )
-                .await
-                .map_err(anyhow::Error::new)?;
+            let receipt = crate::installers::paperless_lifecycle::paperless_restore::rollback_at(
+                &home,
+                &credentials,
+                restore_job_id,
+                confirmation,
+            )
+            .await
+            .map_err(anyhow::Error::new)?;
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string(&receipt)?)
@@ -954,8 +951,8 @@ mod tests {
     fn paperless_rollback_cli_binds_restore_id_and_confirmation_without_target_overrides() {
         use clap::Parser;
         let job = "paperless-restore-12345678-1234-4234-8234-123456789abc";
-        let preview = crate::cli::Cli::try_parse_from(["neoth", "paperless", "rollback", job])
-            .unwrap();
+        let preview =
+            crate::cli::Cli::try_parse_from(["neoth", "paperless", "rollback", job]).unwrap();
         assert!(matches!(
             preview.command,
             crate::cli::Commands::Paperless(PaperlessArgs {
@@ -965,7 +962,12 @@ mod tests {
         ));
         let phrase = "ROLLBACK PAPERLESS RESTORE exact-custody exact-current-receipt ";
         let confirmed = crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "rollback", job, "--confirm", phrase,
+            "neoth",
+            "paperless",
+            "rollback",
+            job,
+            "--confirm",
+            phrase,
         ])
         .unwrap();
         assert!(matches!(
@@ -985,19 +987,37 @@ mod tests {
             format!("{job} "),
             "paperless-restore-not-a-uuid".to_owned(),
         ] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "paperless", "rollback", invalid.as_str(),
-            ])
-            .is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "paperless",
+                    "rollback",
+                    invalid.as_str(),
+                ])
+                .is_err()
+            );
         }
         for option in [
-            "--archive", "--container", "--volume", "--image", "--project",
-            "--directory", "--endpoint", "--token",
+            "--archive",
+            "--container",
+            "--volume",
+            "--image",
+            "--project",
+            "--directory",
+            "--endpoint",
+            "--token",
         ] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "paperless", "rollback", job, option, "unowned",
-            ])
-            .is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "paperless",
+                    "rollback",
+                    job,
+                    option,
+                    "unowned",
+                ])
+                .is_err()
+            );
         }
     }
 

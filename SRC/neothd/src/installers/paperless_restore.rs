@@ -1627,9 +1627,13 @@ fn read_active_pointer_bytes(root: &OwnedPaperlessRoot) -> Result<Vec<u8>, Lifec
     crate::skills::store::read_regular_file_bounded(
         &state,
         std::ffi::OsStr::new(RESTORE_ACTIVE_POINTER_NAME),
-        &root.display.join(RECEIPT_DIR).join(RESTORE_ACTIVE_POINTER_NAME),
+        &root
+            .display
+            .join(RECEIPT_DIR)
+            .join(RESTORE_ACTIVE_POINTER_NAME),
         RECEIPT_READ_LIMIT,
-    ).map_err(|_| LifecycleError::Receipt)
+    )
+    .map_err(|_| LifecycleError::Receipt)
 }
 
 fn validate_restore_active_pointer(pointer: &RestoreActivePointer) -> Result<(), LifecycleError> {
@@ -1868,11 +1872,17 @@ fn restore_active_pointer_bytes(
 ) -> Result<(), LifecycleError> {
     let state = lifecycle_state_dir(root)?;
     let name = std::ffi::OsStr::new(RESTORE_ACTIVE_POINTER_NAME);
-    let path = root.display.join(RECEIPT_DIR).join(RESTORE_ACTIVE_POINTER_NAME);
+    let path = root
+        .display
+        .join(RECEIPT_DIR)
+        .join(RESTORE_ACTIVE_POINTER_NAME);
     match prior {
         RestorePriorActivePointer::Present { bytes, sha256 } => {
-            if restore_digest(bytes) != *sha256 { return Err(LifecycleError::Receipt); }
-            let pointer: RestoreActivePointer = serde_json::from_slice(bytes).map_err(|_| LifecycleError::Receipt)?;
+            if restore_digest(bytes) != *sha256 {
+                return Err(LifecycleError::Receipt);
+            }
+            let pointer: RestoreActivePointer =
+                serde_json::from_slice(bytes).map_err(|_| LifecycleError::Receipt)?;
             validate_restore_active_pointer(&pointer)?;
             crate::skills::store::atomic_write_private_child(&state, name, &path, bytes)
                 .map_err(|_| LifecycleError::Io)?;
