@@ -91,6 +91,16 @@ struct RestoreArchive {
     sha256: String,
 }
 
+/// Exact bytes of the active Restore authority displaced by this transaction.
+/// Absence is representable only when the capability-safe read found no
+/// pointer at all; corrupt or inaccessible pointers are never normalized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum RestorePriorActivePointer {
+    Present { bytes: Vec<u8>, sha256: String },
+    Absent { absence: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RestoreCustody {
@@ -127,6 +137,14 @@ struct RestoreCustody {
     active_container_ids: Vec<String>,
     #[serde(default)]
     committed_install_receipt_sha256: Option<String>,
+    /// Schema-2 rollback prerequisite: immutable proof of the authority that
+    /// named the displaced schema-3 generation, or a strict NotFound proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prior_active_pointer: Option<RestorePriorActivePointer>,
+    /// Schema-2 rollback prerequisite: non-secret binding of the live source
+    /// actually displaced by this restore, kept distinct from archive source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollback_restore_binding: Option<paperless_backup::RestoreConfigBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -289,7 +307,7 @@ pub(crate) fn authorize_restore_successor_volume_set_at(
 }
 
 fn validate_restore_custody(custody: &RestoreCustody) -> Result<(), LifecycleError> {
-    if custody.schema_version != 1
+    if !matches!(custody.schema_version, 1 | 2)
         || custody.operation != RESTORE_OPERATION
         || !valid_restore_job_id(&custody.restore_job_id)
         || !paperless_staging::valid_volume_set_id(&custody.source_volume_set_id)
@@ -372,6 +390,47 @@ fn validate_restore_custody(custody: &RestoreCustody) -> Result<(), LifecycleErr
         {
             return Err(LifecycleError::Receipt);
         }
+    }
+    match (
+        custody.schema_version,
+        &custody.prior_active_pointer,
+        &custody.rollback_restore_binding,
+    ) {
+        (1, None, None) => {}
+        (2, Some(pointer), Some(binding)) => {
+            if !paperless_backup::valid_restore_binding(binding) {
+                return Err(LifecycleError::Receipt);
+            }
+            match pointer {
+                RestorePriorActivePointer::Present { bytes, sha256 } => {
+                    if sha256.len() != 64
+                        || !sha256
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                        || restore_digest(bytes) != *sha256
+                    {
+                        return Err(LifecycleError::Receipt);
+                    }
+                    let pointer: RestoreActivePointer = serde_json::from_slice(bytes)
+                        .map_err(|_| LifecycleError::Receipt)?;
+                    validate_restore_active_pointer(&pointer)?;
+                    if prior.schema_version != 3
+                        || !pointer
+                            .authorized_volume_set_ids
+                            .iter()
+                            .any(|id| id == &custody.rollback_volume_set_id)
+                    {
+                        return Err(LifecycleError::Receipt);
+                    }
+                }
+                RestorePriorActivePointer::Absent { absence }
+                    if absence == "not_found"
+                        && matches!(prior.schema_version, 1 | 2)
+                        && prior.project == custody.base_project => {}
+                RestorePriorActivePointer::Absent { .. } => return Err(LifecycleError::Receipt),
+            }
+        }
+        _ => return Err(LifecycleError::Receipt),
     }
     Ok(())
 }
@@ -492,6 +551,8 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
     let (current_bytes, current) = read_install_receipt_with_bytes(&owned)?;
     validate_install_receipt(&current, &root_path)?;
     let prior_volume_set_snapshot_bytes = read_current_volume_set_snapshot_bytes(&owned)?;
+    let base_project = project_name(&root_path);
+    let prior_active_pointer = capture_prior_active_pointer(&owned, &current, &base_project)?;
     let engine = select_local_engine(executor, &owned).await?;
     let restored_volume_set_id = uuid::Uuid::new_v4().to_string();
     let restore_project = restore_project_name(
@@ -573,12 +634,12 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         })
         .collect();
     let mut custody = RestoreCustody {
-        schema_version: 1,
+        schema_version: 2,
         operation: RESTORE_OPERATION.to_owned(),
         phase: RestorePhase::Prepared,
         restore_job_id: format!("paperless-restore-{restored_volume_set_id}"),
         backup_job_id: backup_job_id.to_owned(),
-        base_project: project_name(&root_path),
+        base_project,
         source_project: historical.project.clone(),
         source_volume_set_id: historical.volume_set_id.clone(),
         rollback_project: current.project.clone(),
@@ -599,6 +660,8 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         candidate_container_ids: Vec::new(),
         active_container_ids: Vec::new(),
         committed_install_receipt_sha256: None,
+        prior_active_pointer: Some(prior_active_pointer),
+        rollback_restore_binding: Some(current_binding),
     };
     // Capturing the current receipt is intentional: source archive lineage is
     // immutable above, while exact old runtime IDs are separately retained for
@@ -1538,6 +1601,21 @@ fn read_active_restore_custody(
     .map_err(|_| LifecycleError::Receipt)?;
     let pointer: RestoreActivePointer =
         serde_json::from_slice(&pointer_bytes).map_err(|_| LifecycleError::Receipt)?;
+    validate_restore_active_pointer(&pointer)?;
+    let (custody_bytes, custody) = read_committed_custody(root, &pointer.custody_name)?;
+    if custody.restore_job_id != pointer.restore_job_id
+        || restore_digest(&custody_bytes) != pointer.custody_sha256
+        || !pointer
+            .authorized_volume_set_ids
+            .iter()
+            .any(|id| id == &custody.restored_volume_set_id)
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    Ok((pointer, custody_bytes, custody))
+}
+
+fn validate_restore_active_pointer(pointer: &RestoreActivePointer) -> Result<(), LifecycleError> {
     if pointer.schema_version != 1
         || pointer.operation != RESTORE_OPERATION
         || !valid_restore_job_id(&pointer.restore_job_id)
@@ -1559,17 +1637,63 @@ fn read_active_restore_custody(
     {
         return Err(LifecycleError::Receipt);
     }
-    let (custody_bytes, custody) = read_committed_custody(root, &pointer.custody_name)?;
-    if custody.restore_job_id != pointer.restore_job_id
-        || restore_digest(&custody_bytes) != pointer.custody_sha256
-        || !pointer
-            .authorized_volume_set_ids
-            .iter()
-            .any(|id| id == &custody.restored_volume_set_id)
-    {
-        return Err(LifecycleError::Receipt);
+    Ok(())
+}
+
+fn capture_prior_active_pointer(
+    root: &OwnedPaperlessRoot,
+    displaced: &StoredPaperlessInstallReceipt,
+    base_project: &str,
+) -> Result<RestorePriorActivePointer, LifecycleError> {
+    let state = lifecycle_state_dir(root)?;
+    match crate::skills::store::read_regular_file_bounded(
+        &state,
+        std::ffi::OsStr::new(RESTORE_ACTIVE_POINTER_NAME),
+        &root
+            .display
+            .join(RECEIPT_DIR)
+            .join(RESTORE_ACTIVE_POINTER_NAME),
+        RECEIPT_READ_LIMIT,
+    ) {
+        Ok(bytes) => {
+            let pointer: RestoreActivePointer =
+                serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
+            validate_restore_active_pointer(&pointer)?;
+            let (custody_bytes, custody) = read_committed_custody(root, &pointer.custody_name)?;
+            if custody.restore_job_id != pointer.restore_job_id
+                || restore_digest(&custody_bytes) != pointer.custody_sha256
+                || !pointer
+                    .authorized_volume_set_ids
+                    .iter()
+                    .any(|id| id == &custody.restored_volume_set_id)
+            {
+                return Err(LifecycleError::Receipt);
+            }
+            if displaced.schema_version != 3
+                || !restore_receipt_identity_authorized(&custody, &pointer, displaced)
+            {
+                return Err(LifecycleError::Receipt);
+            }
+            Ok(RestorePriorActivePointer::Present {
+                sha256: restore_digest(&bytes),
+                bytes,
+            })
+        }
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            if !matches!(displaced.schema_version, 1 | 2) || displaced.project != base_project {
+                return Err(LifecycleError::Receipt);
+            }
+            Ok(RestorePriorActivePointer::Absent {
+                absence: "not_found".to_owned(),
+            })
+        }
+        Err(_) => Err(LifecycleError::Receipt),
     }
-    Ok((pointer, custody_bytes, custody))
 }
 
 fn write_active_pointer(

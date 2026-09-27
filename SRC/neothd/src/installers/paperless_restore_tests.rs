@@ -60,6 +60,8 @@ fn committed_lineage() -> RestoreCustody {
         candidate_container_ids: vec![],
         active_container_ids: vec![],
         committed_install_receipt_sha256: None,
+        prior_active_pointer: None,
+        rollback_restore_binding: None,
     }
 }
 
@@ -89,6 +91,13 @@ fn schema3_receipt(
 #[test]
 fn committed_restore_authorizes_repaired_and_successor_generations_but_not_forged_ones() {
     let custody = committed_lineage();
+    let legacy = serde_json::to_value(&custody).unwrap();
+    assert!(legacy.get("prior_active_pointer").is_none());
+    assert!(legacy.get("rollback_restore_binding").is_none());
+    let legacy_round_trip: RestoreCustody = serde_json::from_value(legacy).unwrap();
+    assert_eq!(legacy_round_trip.schema_version, 1);
+    assert!(legacy_round_trip.prior_active_pointer.is_none());
+    assert!(legacy_round_trip.rollback_restore_binding.is_none());
     let pointer = RestoreActivePointer {
         schema_version: 1,
         operation: RESTORE_OPERATION.to_owned(),
@@ -831,6 +840,25 @@ async fn restore_stateful_tampered_retired_custody_blocks_recovery_before_fresh_
 
 #[tokio::test(start_paused = true)]
 async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect() {
+    for pointer_kind in ["malformed", "nonfile"] {
+        let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut pointer_fake = RestoreFake::new(false);
+        let backup = restore_fixture(home.path(), &c, &mut pointer_fake).await;
+        let pointer_path = restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME);
+        match pointer_kind {
+            "malformed" => std::fs::write(&pointer_path, b"{}\n").unwrap(),
+            "nonfile" => std::fs::create_dir(&pointer_path).unwrap(),
+            _ => unreachable!(),
+        }
+        let commands = pointer_fake.commands.len();
+        let effects = pointer_fake.effects();
+        assert!(matches!(
+            restore_at_with(home.path(), &c, &backup.job_id, &mut pointer_fake, &RestoreReady(AtomicBool::new(true))).await,
+            Err(LifecycleError::Command("paperless_restore_active_authority_invalid"))
+        ), "{pointer_kind}");
+        assert_eq!(pointer_fake.commands.len(), commands, "{pointer_kind} blocks before engine selection");
+        assert_eq!(pointer_fake.effects(), effects, "{pointer_kind}");
+    }
     {
         let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
         let mut mismatch_fake = RestoreFake::new(false);
@@ -839,8 +867,8 @@ async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have
             .join("backups")
             .join(&backup.job_id)
             .join("source.v1.json");
-        let mut source: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+        let original_source = std::fs::read(&source_path).unwrap();
+        let mut source: serde_json::Value = serde_json::from_slice(&original_source).unwrap();
         let current = source["restore_binding"]["environment_fingerprint"]
             .as_str()
             .unwrap();
@@ -863,6 +891,26 @@ async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have
                 &RestoreReady(AtomicBool::new(true))
             )
             .await,
+            Err(LifecycleError::Receipt)
+        ));
+        assert_eq!(mismatch_fake.commands.len(), commands);
+        assert_eq!(mismatch_fake.effects(), effects);
+
+        // Keep the immutable historical source/custody pair coherent. Changing
+        // the current token reaches the actual same-instance compatibility gate.
+        std::fs::write(&source_path, &original_source).unwrap();
+        let mut changed_credentials = c.clone();
+        changed_credentials.paperless_token =
+            Some(SecretString::from("different-current-restore-token"));
+        assert!(matches!(
+            restore_at_with(
+                home.path(),
+                &changed_credentials,
+                &backup.job_id,
+                &mut mismatch_fake,
+                &RestoreReady(AtomicBool::new(true))
+            )
+            .await,
             Err(LifecycleError::Command(
                 "paperless_restore_config_fingerprint_mismatch"
             ))
@@ -873,6 +921,7 @@ async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have
             "config mismatch blocks before engine selection"
         );
         assert_eq!(mismatch_fake.effects(), effects);
+        assert_eq!(std::fs::read(&source_path).unwrap(), original_source);
     }
     {
         let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
@@ -1029,6 +1078,20 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     )
     .await
     .unwrap();
+    let first_custody: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(restore_state(home.path()).join(&first.rollback_custody_ref)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first_custody["schema_version"], 2);
+    assert_eq!(first_custody["prior_active_pointer"]["state"], "absent");
+    assert_eq!(first_custody["prior_active_pointer"]["absence"], "not_found");
+    assert!(first_custody["rollback_restore_binding"].is_object());
+    let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+    let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+    let successor = "00000000-0000-0000-0000-000000000001";
+    authorize_restore_successor_volume_set_at(&owned, &first.restore_project, successor).unwrap();
+    let original_pointer_bytes =
+        std::fs::read(restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME)).unwrap();
     let creates = fake.count("create");
     let second_backup = restore_fixture(home.path(), &credentials, &mut fake).await;
     let second = restore_at_with(
@@ -1042,6 +1105,103 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     .unwrap();
     assert_ne!(first.restore_job_id, second.restore_job_id);
     assert_eq!(fake.count("create"), creates + 1);
+    let second_custody: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(restore_state(home.path()).join(&second.rollback_custody_ref)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(second_custody["schema_version"], 2);
+    assert_eq!(second_custody["prior_active_pointer"]["state"], "present");
+    let captured = second_custody["prior_active_pointer"]["bytes"].as_array().unwrap();
+    assert!(!captured.is_empty());
+    assert_eq!(second_custody["prior_active_pointer"]["sha256"].as_str().unwrap().len(), 64);
+    let captured_bytes: Vec<u8> = captured.iter().map(|item| item.as_u64().unwrap() as u8).collect();
+    let captured_pointer: RestoreActivePointer = serde_json::from_slice(&captured_bytes).unwrap();
+    assert!(captured_pointer.authorized_volume_set_ids.iter().any(|known| known == successor));
+    assert_eq!(captured_bytes, original_pointer_bytes);
+    assert_eq!(
+        second_custody["prior_active_pointer"]["sha256"],
+        restore_digest(&original_pointer_bytes)
+    );
+    let mut legacy = first_custody.clone();
+    legacy["schema_version"] = serde_json::Value::from(1);
+    legacy.as_object_mut().unwrap().remove("prior_active_pointer");
+    legacy.as_object_mut().unwrap().remove("rollback_restore_binding");
+    let legacy: RestoreCustody = serde_json::from_value(legacy).unwrap();
+    assert!(validate_restore_custody(&legacy).is_ok(), "v1 historical custody stays verifiable");
+    let mut absent_project_mismatch = first_custody.clone();
+    let mismatched_project = "neoth-paperless-abcdef123456";
+    let prior_bytes: Vec<u8> = serde_json::from_value(
+        absent_project_mismatch["prior_install_receipt_bytes"].clone(),
+    )
+    .unwrap();
+    let mut prior: serde_json::Value = serde_json::from_slice(&prior_bytes).unwrap();
+    prior["project"] = serde_json::Value::String(mismatched_project.to_owned());
+    absent_project_mismatch["prior_install_receipt_bytes"] =
+        serde_json::to_value(serde_json::to_vec(&prior).unwrap()).unwrap();
+    let rollback_snapshot_bytes: Vec<u8> = serde_json::from_value(
+        absent_project_mismatch["prior_volume_set_snapshot_bytes"].clone(),
+    )
+    .unwrap();
+    let mut rollback_snapshot: serde_json::Value =
+        serde_json::from_slice(&rollback_snapshot_bytes).unwrap();
+    rollback_snapshot["project"] = serde_json::Value::String(mismatched_project.to_owned());
+    absent_project_mismatch["prior_volume_set_snapshot_bytes"] =
+        serde_json::to_value(serde_json::to_vec(&rollback_snapshot).unwrap()).unwrap();
+    absent_project_mismatch["rollback_project"] =
+        serde_json::Value::String(mismatched_project.to_owned());
+    let absent_project_mismatch: RestoreCustody =
+        serde_json::from_value(absent_project_mismatch).unwrap();
+    assert!(matches!(
+        validate_restore_custody(&absent_project_mismatch),
+        Err(LifecycleError::Receipt)
+    ));
+    for mutation in ["missing_pointer", "missing_binding", "bad_absence", "absent_schema3", "bad_binding"] {
+        let mut invalid = second_custody.clone();
+        match mutation {
+            "missing_pointer" => {
+                invalid.as_object_mut().unwrap().remove("prior_active_pointer");
+            }
+            "missing_binding" => {
+                invalid.as_object_mut().unwrap().remove("rollback_restore_binding");
+            }
+            "bad_absence" => {
+                invalid["prior_active_pointer"] = serde_json::json!({"state":"absent","absence":"missing"});
+            }
+            "absent_schema3" => {
+                invalid["prior_active_pointer"] = serde_json::json!({"state":"absent","absence":"not_found"});
+            }
+            "bad_binding" => {
+                invalid["rollback_restore_binding"]["environment_fingerprint"] =
+                    serde_json::Value::String("g".repeat(64));
+            }
+            _ => unreachable!(),
+        };
+        let parsed: RestoreCustody = serde_json::from_value(invalid).unwrap();
+        assert!(matches!(validate_restore_custody(&parsed), Err(LifecycleError::Receipt)), "{mutation}");
+    }
+    let mut missing_rollback_authorization = second_custody.clone();
+    let captured_bytes: Vec<u8> = serde_json::from_value(
+        missing_rollback_authorization["prior_active_pointer"]["bytes"].clone(),
+    )
+    .unwrap();
+    let mut captured_pointer: serde_json::Value = serde_json::from_slice(&captured_bytes).unwrap();
+    let rollback_volume_set_id =
+        missing_rollback_authorization["rollback_volume_set_id"].as_str().unwrap();
+    captured_pointer["authorized_volume_set_ids"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|id| id.as_str() != Some(rollback_volume_set_id));
+    let captured_bytes = serde_json::to_vec(&captured_pointer).unwrap();
+    missing_rollback_authorization["prior_active_pointer"]["bytes"] =
+        serde_json::to_value(&captured_bytes).unwrap();
+    missing_rollback_authorization["prior_active_pointer"]["sha256"] =
+        serde_json::Value::String(restore_digest(&captured_bytes));
+    let missing_rollback_authorization: RestoreCustody =
+        serde_json::from_value(missing_rollback_authorization).unwrap();
+    assert!(matches!(
+        validate_restore_custody(&missing_rollback_authorization),
+        Err(LifecycleError::Receipt)
+    ));
     let history: serde_json::Value = serde_json::from_slice(
         &std::fs::read(restore_state(home.path()).join(RESTORE_HISTORY_NAME)).unwrap(),
     )

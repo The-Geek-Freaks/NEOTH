@@ -1,0 +1,76 @@
+{
+  "schema": "neoth-restore-custody-cleanup/v1",
+  "capturedUtc": "2026-09-27T20:02:26.4800275Z",
+  "base": "2e48e36b1cfe916ff8411f7c346e9daf4e5c1269",
+  "productFailure": {
+    "cleanupProven": false,
+    "zipSha256": "36e0b9bdd43d180d047320fbe709741c660feca47b92f16f701b7a871961a557",
+    "failure": "restore_cleanup_ownership_unproven",
+    "source": "2e48e36b1cfe916ff8411f7c346e9daf4e5c1269",
+    "artifact": 10940640383,
+    "sourceBindingsVerified": 29,
+    "passedStages": [
+      "Restore",
+      "restored-generation Backup",
+      "Repair healthy/start/recreate",
+      "Uninstall/Reinstall",
+      "Purge",
+      "fresh post-Purge generation"
+    ],
+    "fullLifecycleAccepted": false,
+    "run": 36345135915
+  },
+  "changes": [
+    "New custody v2 captures exact prior authority and current config binding",
+    "Legacy v1 retains no invented rollback proof",
+    "Stopped-source cleanup verifies configured loopback and exact IDs before deletion"
+  ],
+  "workingTreeSources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_backup.rs",
+      "sha256": "7AEC8AA485D89E5CFD06A0203762D2EB84E743A47C974F39505F64B34A184CA9"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "BBDB0E4A0BC26453808F5A254970F0674A37B3DF02167028F42BBB71979781DF"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "18214234F4799789B73251A12F5D700E444167557E0C087ABF19A6A6A5342C1E"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "95EA2B48EC824725FB02BBDAA3A5BCC864649B8DE11CA554974A6B0426877D90"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "645CFE290AABA1AEDB240058CB5018900DA76FE5CBF3B5C7BCEB290534E66DE9"
+    }
+  ],
+  "reports": [
+    {
+      "path": "work/gold-20260906/wave1716-rollback-prerequisites/BACKEND.md",
+      "sha256": "6474BEBA4456315E5249075A3EE6B545A7FDBE486D98B868467456AA95DE2EDA"
+    },
+    {
+      "path": "work/gold-20260906/wave1716-rollback-prerequisites/TESTS.md",
+      "sha256": "3521BA64492DC3221396B761B221A0E50D51833AB5204C424F38E51A25DD37E0"
+    },
+    {
+      "path": "work/gold-20260906/wave1716-rollback-prerequisites/RUST-REVIEW.md",
+      "sha256": "A2DE1DEC489CD1BAA52429DCBA40DC5FEF739C63543A1AC1DE2E267936E67D00"
+    },
+    {
+      "path": "work/gold-20260906/wave1718-paperless-lifecycle-failure/REPORT.md",
+      "sha256": "DA22B031B247C5BA6526BE4D733F55285DA2FDC539853C0472B71FB2127CAFF6"
+    },
+    {
+      "path": "work/gold-20260906/wave1718-paperless-lifecycle-failure/PYTHON-REVIEW.md",
+      "sha256": "8AD24918267D73A63A2706A3498547B2BFE32F38D5CC0F009440048C974AC416"
+    }
+  ],
+  "freshHostedValidation": "required",
+  "rollbackCommandImplemented": false,
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

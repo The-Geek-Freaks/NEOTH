@@ -976,7 +976,7 @@ fn canonical_backup_job_id(value: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn valid_restore_binding(binding: &RestoreConfigBinding) -> bool {
+pub(super) fn valid_restore_binding(binding: &RestoreConfigBinding) -> bool {
     binding.compose_contract_id == paperless_staging::OCI_CONTRACT_ID
         && [
             binding.environment_fingerprint.as_str(),

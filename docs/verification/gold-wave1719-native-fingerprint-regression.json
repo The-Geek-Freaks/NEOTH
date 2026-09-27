@@ -1,0 +1,48 @@
+{
+  "schema": "neoth-native-fingerprint-regression/v1",
+  "capturedUtc": "2026-09-27T20:04:03.2424447Z",
+  "producer": "b5335f6b5a4c3c1252a7d3ae3ae30b01aa6e4d31",
+  "group": {
+    "run": 36344409302,
+    "failed": 1,
+    "sourceZip": "f95ec4489710ac2bd7e989850c9b1d6be39caa58f00ee9438a076d5dad535439",
+    "logArtifact": 10939649923,
+    "receiptArtifact": 10940595903,
+    "receiptZip": "7a4b3f1c64ea225c7f7bea4bcf0cd4a5f4c19a70fbc68ca17723fbd42140209d",
+    "missing": 0,
+    "selected": 2005,
+    "passed": 2004,
+    "logZip": "6b3e1477c857ad0f2bf7c3cca0abcdfc8d6ddf2a9cad77602bd0f056c2729b13",
+    "sourceArtifact": 10940815651
+  },
+  "windows": {
+    "run": 36344410932,
+    "passed": 769,
+    "zip": "aca3a03f8ddccca9828b3ebc1248c990e7ea1637697099e4fd3200aea04ca10c",
+    "missing": 0,
+    "failed": 1,
+    "artifact": 10940631909,
+    "selected": 770
+  },
+  "failedTest": "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect",
+  "admission": "failure diagnosis only",
+  "repair": "Historical source integrity rejection retained; coherent historical source plus changed current token reaches true config mismatch before engine/effects",
+  "staticRepairReview": "PASS",
+  "workingTreeBindings": [
+    {
+      "path": "work/gold-20260906/wave1719-native-followup/REPORT.md",
+      "sha256": "38134F2F6BBA72931A6AC9F9992D9FD3D4DE72862A6E10E616701946BAECA284"
+    },
+    {
+      "path": "work/gold-20260906/wave1719-native-followup/REPAIR-REVIEW.md",
+      "sha256": "DCFEE6E4904FB0CC98F3F323831CC65D2901EE759563C77DB84DC6767AC9CAB3"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "18214234F4799789B73251A12F5D700E444167557E0C087ABF19A6A6A5342C1E"
+    }
+  ],
+  "freshHostedValidation": "required",
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

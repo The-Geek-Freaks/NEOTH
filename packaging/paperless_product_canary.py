@@ -275,6 +275,27 @@ def stopped_container_diagnostic(row: dict, identifier: str, project: str, servi
     return {"running": row.get("State", {}).get("Running") is True, "runtime_loopback_binding": matches(runtime), "runtime_binding_count": len(runtime) if isinstance(runtime, list) else 0, "configured_loopback_binding": matches(configured), "configured_binding_count": len(configured) if isinstance(configured, list) else 0}
 
 
+def validate_stopped_container(row: dict, identifier: str, project: str, service: str, image_id: str, port: int) -> str:
+    labels = row.get("Config", {}).get("Labels", {})
+    if row.get("Id") != identifier or not IDENTIFIER.fullmatch(identifier) or row.get("Image") != image_id or row.get("State", {}).get("Running") is not False or labels.get("com.docker.compose.project") != project or labels.get("com.docker.compose.service") != service:
+        raise Failure("restore_cleanup_container_identity_invalid")
+    expected = [(name, destination) for name, owner, destination in VOLUMES if owner == service]
+    mounts = row.get("Mounts")
+    if not isinstance(mounts, list) or len(mounts) != len(expected) or any(not any(m.get("Type") == "volume" and m.get("Name") == f"{project}_{name}" and m.get("Destination") == destination for m in mounts if isinstance(m, dict)) for name, destination in expected):
+        raise Failure("restore_cleanup_container_mount_invalid")
+    runtime_ports = row.get("NetworkSettings", {}).get("Ports")
+    if not isinstance(runtime_ports, dict) or any(binding not in (None, []) for binding in runtime_ports.values()):
+        raise Failure("restore_cleanup_runtime_port_invalid")
+    configured_ports = row.get("HostConfig", {}).get("PortBindings")
+    configured = configured_ports.get("8000/tcp") if isinstance(configured_ports, dict) else None
+    if service == "webserver":
+        if not isinstance(configured, list) or len(configured) != 1 or not isinstance(configured[0], dict) or configured[0].get("HostIp") != "127.0.0.1" or configured[0].get("HostPort") != str(port):
+            raise Failure("restore_cleanup_configured_port_invalid")
+    elif configured not in (None, []):
+        raise Failure("restore_cleanup_configured_port_invalid")
+    return identifier
+
+
 def validate_volume(row: dict, project: str, logical: str, volume_set_id: str | None = None) -> str:
     name = row.get("Name")
     labels = row.get("Labels", {})
@@ -750,7 +771,13 @@ def media_archive_contains_marker(path: Path) -> None:
         raise Failure("backup_media_archive_invalid") from error
 
 
-def validate_backup_source(home: Path, job_id: str, install_raw: bytes, snapshot_raw: bytes) -> None:
+def validate_restore_binding(binding: object, code: str) -> dict:
+    if not isinstance(binding, dict) or set(binding) != {"compose_contract_id", "environment_fingerprint", "token_fingerprint"} or binding.get("compose_contract_id") != PAPERLESS_CONTRACT_ID or any(not isinstance(binding.get(key), str) or not SHA256.fullmatch(binding[key]) for key in ("environment_fingerprint", "token_fingerprint")):
+        raise Failure(code)
+    return binding
+
+
+def validate_backup_source(home: Path, job_id: str, install_raw: bytes, snapshot_raw: bytes) -> dict:
     path = backup_root(home, job_id) / "source.v1.json"
     code = "backup_source_invalid"
     private_path(path, False, code)
@@ -772,8 +799,9 @@ def validate_backup_source(home: Path, job_id: str, install_raw: bytes, snapshot
     value = read_json_bytes(raw, code)
     binding = value.get("restore_binding")
     expected = {"schema_version": 2, "operation": "paperless.backup.source", "job_id": job_id, "install_receipt_bytes": list(install_raw), "volume_set_snapshot_bytes": list(snapshot_raw)}
-    if set(value) != required or any(not isinstance(value.get(key), list) or any(type(byte) is not int for byte in value[key]) for key in ("install_receipt_bytes", "volume_set_snapshot_bytes")) or any(value.get(key) != expected[key] for key in expected) or not isinstance(binding, dict) or set(binding) != {"compose_contract_id", "environment_fingerprint", "token_fingerprint"} or binding.get("compose_contract_id") != PAPERLESS_CONTRACT_ID or any(not isinstance(binding.get(key), str) or not SHA256.fullmatch(binding[key]) for key in ("environment_fingerprint", "token_fingerprint")):
+    if set(value) != required or any(not isinstance(value.get(key), list) or any(type(byte) is not int for byte in value[key]) for key in ("install_receipt_bytes", "volume_set_snapshot_bytes")) or any(value.get(key) != expected[key] for key in expected):
         raise Failure(code)
+    return validate_restore_binding(binding, code)
 
 
 def validate_backup(value: dict, home: Path, project: str, config_ids: dict[str, str], identities: tuple[str, ...], volume_set_id: str, install_receipt_bytes: bytes, volume_set_snapshot_bytes: bytes, expected_running: bool) -> tuple[str, tuple[Path, ...]]:
@@ -817,6 +845,24 @@ def restore_private_json(home: Path, name: str) -> tuple[bytes, dict]:
     return raw, read_json_bytes(raw, "restore_custody_invalid")
 
 
+def capture_absent_restore_active_pointer(home: Path) -> dict:
+    """Prove the initial base installation has no prior Restore authority."""
+    path = home / "paperless" / "state" / ".neoth-paperless-restore-active.v1.json"
+    if path.exists() or path.is_symlink():
+        raise Failure("restore_prior_pointer_unexpected")
+    return {"state": "absent", "absence": "not_found"}
+
+
+def validate_prior_active_pointer(value: object, code: str, expected: dict | None = None) -> dict:
+    if expected is not None and value != expected:
+        raise Failure(code)
+    if value == {"state": "absent", "absence": "not_found"}:
+        return value
+    if not isinstance(value, dict) or set(value) != {"state", "bytes", "sha256"} or value.get("state") != "present" or not isinstance(value.get("bytes"), list) or any(type(byte) is not int or not 0 <= byte <= 255 for byte in value["bytes"]) or not isinstance(value.get("sha256"), str) or not SHA256.fullmatch(value["sha256"]) or hashlib.sha256(bytes(value["bytes"])).hexdigest() != value["sha256"]:
+        raise Failure(code)
+    return value
+
+
 def restore_journal_observation(home: Path) -> dict[str, object]:
     """Return only fixed journal metadata after a failed Restore stage."""
     name = ".neoth-paperless-restore-journal.v1.json"
@@ -835,7 +881,7 @@ def restore_journal_observation(home: Path) -> dict[str, object]:
     return {"state": "invalid"}
 
 
-def validate_restore_authority(home: Path, restore: dict, source_install: bytes, source_snapshot: bytes, restored_install: bytes, source_ids: tuple[str, ...], restored_ids: tuple[str, ...], config_ids: dict[str, str], port: int) -> None:
+def validate_restore_authority(home: Path, restore: dict, source_install: bytes, source_snapshot: bytes, restored_install: bytes, source_ids: tuple[str, ...], restored_ids: tuple[str, ...], config_ids: dict[str, str], port: int, source_binding: dict | None = None, expected_prior_active_pointer: dict | None = None) -> None:
     if not isinstance(source_install, bytes) or not isinstance(source_snapshot, bytes) or not isinstance(restored_install, bytes):
         raise Failure("restore_custody_invalid")
     name, restore_job_id = restore["rollback_custody_ref"], restore["restore_job_id"]
@@ -843,9 +889,14 @@ def validate_restore_authority(home: Path, restore: dict, source_install: bytes,
         raise Failure("restore_custody_invalid")
     custody_raw, custody = restore_private_json(home, name)
     required = {"schema_version", "operation", "phase", "restore_job_id", "backup_job_id", "base_project", "source_project", "source_volume_set_id", "rollback_project", "rollback_volume_set_id", "restore_project", "restored_volume_set_id", "authorized_volume_set_ids", "source_install_receipt_sha256", "source_install_receipt_bytes", "prior_install_receipt_bytes", "source_volume_set_snapshot_bytes", "prior_volume_set_snapshot_bytes", "archives", "old_containers", "candidate_container_ids", "active_container_ids", "committed_install_receipt_sha256"}
+    if source_binding is not None or expected_prior_active_pointer is not None:
+        required |= {"prior_active_pointer", "rollback_restore_binding"}
     base_project = project_name(home / "paperless")
     expected_restore_project = restore_project_name(base_project, restore["backup_job_id"], restore["restored_volume_set_id"])
-    if expected_restore_project is None or restore.get("restore_project") != expected_restore_project or set(custody) != required or custody.get("schema_version") != 1 or custody.get("operation") != "paperless.restore" or custody.get("phase") != "committed" or custody.get("restore_job_id") != restore_job_id or custody.get("backup_job_id") != restore["backup_job_id"] or custody.get("base_project") != base_project or custody.get("source_project") != restore["source_project"] or custody.get("source_volume_set_id") != restore["source_volume_set_id"] or custody.get("restore_project") != expected_restore_project or custody.get("restored_volume_set_id") != restore["restored_volume_set_id"] or custody.get("rollback_project") != restore["source_project"] or custody.get("rollback_volume_set_id") != restore["source_volume_set_id"] or custody.get("source_install_receipt_sha256") != hashlib.sha256(source_install).hexdigest() or custody.get("source_install_receipt_bytes") != list(source_install) or custody.get("source_volume_set_snapshot_bytes") != list(source_snapshot) or custody.get("committed_install_receipt_sha256") != hashlib.sha256(restored_install).hexdigest() or hashlib.sha256(custody_raw).hexdigest() != restore["rollback_custody_sha256"]:
+    expected_schema = 2 if source_binding is not None or expected_prior_active_pointer is not None else 1
+    if expected_restore_project is None or restore.get("restore_project") != expected_restore_project or set(custody) != required or custody.get("schema_version") != expected_schema or custody.get("operation") != "paperless.restore" or custody.get("phase") != "committed" or custody.get("restore_job_id") != restore_job_id or custody.get("backup_job_id") != restore["backup_job_id"] or custody.get("base_project") != base_project or custody.get("source_project") != restore["source_project"] or custody.get("source_volume_set_id") != restore["source_volume_set_id"] or custody.get("restore_project") != expected_restore_project or custody.get("restored_volume_set_id") != restore["restored_volume_set_id"] or custody.get("rollback_project") != restore["source_project"] or custody.get("rollback_volume_set_id") != restore["source_volume_set_id"] or custody.get("source_install_receipt_sha256") != hashlib.sha256(source_install).hexdigest() or custody.get("source_install_receipt_bytes") != list(source_install) or custody.get("source_volume_set_snapshot_bytes") != list(source_snapshot) or custody.get("committed_install_receipt_sha256") != hashlib.sha256(restored_install).hexdigest() or hashlib.sha256(custody_raw).hexdigest() != restore["rollback_custody_sha256"]:
+        raise Failure("restore_custody_invalid")
+    if expected_schema == 2 and (validate_restore_binding(custody.get("rollback_restore_binding"), "restore_custody_invalid") != source_binding or validate_prior_active_pointer(custody.get("prior_active_pointer"), "restore_custody_invalid", expected_prior_active_pointer) is None):
         raise Failure("restore_custody_invalid")
     authorized = custody.get("authorized_volume_set_ids")
     if not isinstance(authorized, list) or not authorized or authorized != sorted(authorized) or len(set(authorized)) != len(authorized) or any(not isinstance(value, str) or not VOLUME_SET_ID.fullmatch(value) for value in authorized) or restore["restored_volume_set_id"] not in authorized:
@@ -882,7 +933,7 @@ def validate_current_restore_authority(home: Path, restore: dict, install_receip
     if not isinstance(name, str) or not RESTORE_CUSTODY_NAME.fullmatch(name):
         raise Failure("restore_current_authority_invalid")
     custody_raw, custody = restore_private_json(home, name)
-    if custody.get("schema_version") != 1 or custody.get("operation") != "paperless.restore" or custody.get("phase") != "committed" or custody.get("restore_job_id") != restore.get("restore_job_id") or custody.get("backup_job_id") != restore.get("backup_job_id") or custody.get("restore_project") != project or hashlib.sha256(custody_raw).hexdigest() != restore.get("rollback_custody_sha256"):
+    if custody.get("schema_version") != 2 or custody.get("operation") != "paperless.restore" or custody.get("phase") != "committed" or custody.get("restore_job_id") != restore.get("restore_job_id") or custody.get("backup_job_id") != restore.get("backup_job_id") or custody.get("restore_project") != project or validate_prior_active_pointer(custody.get("prior_active_pointer"), "restore_current_authority_invalid") is None or validate_restore_binding(custody.get("rollback_restore_binding"), "restore_current_authority_invalid") is None or hashlib.sha256(custody_raw).hexdigest() != restore.get("rollback_custody_sha256"):
         raise Failure("restore_current_authority_invalid")
     _, pointer = restore_private_json(home, ".neoth-paperless-restore-active.v1.json")
     authorized = pointer.get("authorized_volume_set_ids")
@@ -965,12 +1016,11 @@ def cleanup_retained_stopped_generation(project: str, config_ids: dict[str, str]
     try:
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
             row = docker_json(identifier)
-            if row.get("State", {}).get("Running") is not False:
-                raise Failure("restore_cleanup_source_running")
-            projected = json.loads(json.dumps(row)); projected["State"]["Running"] = True
-            validate_container(projected, project, service, config_ids[service], port)
+            if validate_stopped_container(row, identifier, project, service, config_ids[service], port) != identifier:
+                raise Failure("restore_cleanup_container_identity_invalid")
         for (logical, _, _), name in zip(VOLUMES, identities[3:], strict=True):
-            validate_volume(docker_json(name, volume=True), project, logical, volume_set_id)
+            if validate_volume(docker_json(name, volume=True), project, logical, volume_set_id) != name:
+                raise Failure("restore_cleanup_volume_identity_invalid")
         failed = False
         for identifier in identities[:3]:
             try:
@@ -1101,6 +1151,8 @@ def main() -> int:
         # retaining the exact old one stopped for rollback custody.
         restore_source_project, restore_source_ids, restore_source_volume_set = project, identities, volume_set_id
         restore_source_install = running_backup_install_receipt_bytes
+        restore_source_binding = validate_backup_source(home, running_backup_id, restore_source_install, volume_set_snapshot_bytes)
+        restore_prior_active_pointer = capture_absent_restore_active_pointer(home)
         receipt["restore_progress"] = {"stage": "before_restore", "selected_backup_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "running_backup_verified": True, "stopped_backup_verified": True}
         restored = read_json_bytes(run([str(binary), "--output", "json", "paperless", "restore", running_backup_id], timeout=900), "restore_json_invalid")
         restore_job_id, restore_project, restored_volume_set_id = validate_restore(restored, running_backup, restore_source_project, restore_source_volume_set, restore_source_install)
@@ -1113,7 +1165,7 @@ def main() -> int:
         project, restored_configs, identities, volume_set_id = validate_install(restored_install, args.port)
         if restored_install.get("schema_version") != 3 or project != restore_project or restored_configs != config_ids or volume_set_id != restored_volume_set_id:
             raise Failure("restore_install_receipt_invalid")
-        validate_restore_authority(home, restored, restore_source_install, volume_set_snapshot_bytes, restored_install_bytes, restore_source_ids, identities, config_ids, args.port)
+        validate_restore_authority(home, restored, restore_source_install, volume_set_snapshot_bytes, restored_install_bytes, restore_source_ids, identities, config_ids, args.port, restore_source_binding, restore_prior_active_pointer)
         volume_set_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
         for service, identifier in zip(IMAGES, identities[:3], strict=True):

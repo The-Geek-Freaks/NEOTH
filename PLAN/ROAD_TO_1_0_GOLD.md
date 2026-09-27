@@ -8,6 +8,53 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1719 native failure boundary corrected (2026-09-27):**
+Atb5335f6b Group36344409302 executed2005 with2004 passes/one failure;
+Windows36344410932 executed770 with769 passes/one failure, no missing tests.
+Both fail the same newly added config-mismatch fixture: changing the immutable
+Backup source alone correctly trips its source/custody integrity fence before
+the later configuration comparison. The regression now checks this early
+Receipt rejection, restores the exact historical bytes, and changes only a
+cloned current token. It then requires the actual fixed fingerprint-mismatch
+error with zero new engine commands/effects and unchanged historical bytes.
+Original three Group ZIP/API digests and Windows artifact10940631909 ZIP
+aca3a03f8ddccca9828b3ebc1248c990e7ea1637697099e4fd3200aea04ca10c verified;
+exact failed source/log binding verified. This is failure diagnosis, not full
+source admission. Independent narrow repair review PASS; new hosted native
+runs required. ROAD1324/1077/245/2 unchanged, no local executable validation.
+Evidence: docs/verification/gold-wave1719-native-fingerprint-regression.json.
+
+**W1716/W1718 Restore custody and stopped-source cleanup (2026-09-27):**
+New Restore custody v2 captures the exact displaced active-pointer bytes/hash
+or strict NotFound proof plus its non-secret current configuration binding.
+Legacy v1 remains readable without invented rollback authority. Capture occurs
+before engine selection; persisted proof is bound to the displaced receipt
+schema/project/volume-set. Regressions cover byte-exact nested successor
+capture, legacy read, malformed/nonfile input and mismatched proof rejection.
+Product36345135915 at2e48e36b passed lifecycle stages through fresh post-Purge
+installation but failed retained-source cleanup. Original artifact10940640383,
+ZIP36e0b9bdd43d180d047320fbe709741c660feca47b92f16f701b7a871961a557 and29 raw
+producer bindings verified. Cleanup now validates stopped Docker state and
+configured HostConfig loopback ports without fabricating an active runtime
+binding, and prevalidates all3 containers/six volumes before any removal.
+Source reviews PASS; fresh hosted product/native verification required. This
+adds Rollback prerequisites only; the Rollback command is not implemented.
+ROAD1324/1077/245/2 unchanged; no local executable validation.
+Evidence: docs/verification/gold-wave1716-1718-restore-custody-cleanup.json.
+
+**W1717 Core accepted; W1716 Rollback custody prerequisites in progress (2026-09-27):**
+Core36344405268 atb5335f6b passed slim Clippy, native-test typecheck and CLI
+build/export. Original artifact10940258145 ZIP81d95e7c698f17fba6e1554bbd55871797c5a2c560cd9fe5f015d94cea703ea8
+and internal generated-reference hash verified; docs/cli-commands.md is byte
+identical. Full workspace Clippy was not requested in this gate.
+W1715 fixture correction is published at2e48e36b; its hosted helper gate in
+Product36345135915 now passes, and the actual compiled lifecycle is running.
+Group2005run36344409302/Windows770run36344410932 remain pending atb5335f6b.
+Next W1716 source is unpublished: capture exact prior Restore authority and
+non-secret current config binding for future Rollback. No Rollback command or
+new source acceptance is claimed. ROAD1324/1077/245/2 remains unchanged.
+Evidence: docs/verification/gold-wave1717-core-admission.json.
+
 **W1715 Restore successor fixture repair (2026-09-27):**
 Product36344407460 atb5335f6b failed its hosted helper gate (45 tests, one
 error) before the CLI build. The new successor fixture incorrectly retained
