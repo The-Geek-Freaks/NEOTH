@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1680 Backup native fixture repair and latest Core (2026-09-27):**
+Group1979run36331277964 and Windows744run36331279741 at6c03220c both
+compiled and executed their full selections; the same16 Backup cases failed.
+Windows728 passed. Original receipt/Windows artifact ZIP digests and Windows
+count/result hashes are verified. The shared fake ignored Docker volume ls's
+exact name filter and returned all6 volumes, so ownership preflight rejected it
+before the intended scenarios. The test-only fix returns exactly the requested
+owned name or empty output; production guards and assertions remain intact.
+Root reviewed the fix against the actual preflight contract. Fresh native gates
+are required. Core36332166570 at688b0f05 passed slim production Clippy,
+native-test typecheck, public CLI build and authentic unchanged CLI export.
+This latest Core did not request full workspace Clippy. Restore is separately
+unpublished implementation work. ROAD1324/1077/245/2 stays unchanged.
+Evidence: docs/verification/gold-wave1680-backup-native-fixture-repair.json.
 **W1677 Managed n8n Update full product accepted (2026-09-27):**
 Product36331276264 at6c03220c passed the complete real Linux Keychain flow.
 Original artifact10935219337/ZIP digest and30 raw producer bindings are verified.

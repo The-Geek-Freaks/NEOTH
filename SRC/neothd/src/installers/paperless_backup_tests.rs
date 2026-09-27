@@ -126,11 +126,21 @@ impl StatefulBackupExecutor {
     fn volume(&self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError> {
         if argv.iter().any(|p| p == "ls") {
             let project = super::super::project_name(cwd);
+            let requested = argv
+                .iter()
+                .position(|part| part == "--filter")
+                .and_then(|index| argv.get(index + 1))
+                .and_then(|filter| filter.strip_prefix("name="))
+                .ok_or(LifecycleError::Receipt)?;
+            if !paperless_staging::PAPERLESS_VOLUMES.iter().any(|volume| {
+                super::super::volume_name(&project, volume.logical_name) == requested
+            }) {
+                return Ok(CommandOutput {
+                    stdout: String::new(),
+                });
+            }
             return Ok(CommandOutput {
-                stdout: paperless_staging::PAPERLESS_VOLUMES
-                    .iter()
-                    .map(|v| format!("{}\n", super::super::volume_name(&project, v.logical_name)))
-                    .collect(),
+                stdout: format!("{requested}\n"),
             });
         }
         let name = argv
