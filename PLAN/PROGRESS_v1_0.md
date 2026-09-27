@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1562/W1565-W1566 Rollback product failure and hosted imports (2026-09-27):**
+Product36306516850 atb278eef3 failed at historical_restore_rollback: command
+exit1 with no known error category. Original artifact10928190254 and36 raw
+producer bindings verify. Prior credential/zero-credential Restore passed,
+but completed Rollback and aggregate Docker/fixture cleanup are unproven.
+No cause is inferred from output lengths; bounded diagnosis is being added.
+Core36306515321 passed slim Clippy, default test typecheck and public CLI;
+full workspace Clippy is still running. Imported its authentic generated
+reference10927762719 (CLI surface unchanged since producer), plus authentic
+four-file retained-lifecycle rustfmt10927686534 from Preflight36306945840
+atf6d68525. ZIP/API/internal/source/pre-post checks passed; no local execution.
+Core36306946513 independently targets retained lifecyclef6d68525. Native
+Group1924/Windows689 can now run with the generated reference. Counts are
+selection only; no ROAD closure or product/release acceptance.
+Evidence: docs/verification/gold-wave1562-rollback-product-failure.json,
+ docs/verification/gold-wave1565-retained-format.json and
+ docs/verification/gold-wave1566-rollback-cli-reference.json.
+
 **W1556-W1560 Restore-volume retained lifecycle source (2026-09-27):**
 Independent source review passed after fixing repeated reattachment authority:
 V2 Uninstall records preserve the immutable Rollback/Restore/Backup chain while

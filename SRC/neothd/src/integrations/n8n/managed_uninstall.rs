@@ -16,8 +16,8 @@ use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID,
     RetainedReinstallSource, RollbackRestoreRetention, RuntimeBinding, RuntimePhase,
-    is_managed_job, managed_manifest,
-    read_binding, remove_binding, sha256_parts, validate_binding, validate_existing_identity,
+    is_managed_job, managed_manifest, read_binding, remove_binding, sha256_parts, validate_binding,
+    validate_existing_identity,
 };
 use crate::integrations::{
     catalog::CapabilityId,
@@ -210,15 +210,15 @@ fn write_completion_receipt(
                 return Err("n8n_uninstall_rollback_receipt_mismatch");
             }
             Some(RollbackRestoreRetention {
-            rollback_job_id: receipt.rollback_job_id,
-            rollback_manifest_sha256: receipt.rollback_manifest_sha256,
-            restore_job_id: lineage.restore_job_id.clone(),
-            restore_manifest_sha256: receipt.restore_manifest_sha256,
-            backup_job_id: lineage.backup_job_id.clone(),
-            backup_manifest_sha256: receipt.backup_manifest_sha256,
-            restore_volume: binding.volume.clone(),
-            retained_source_container_id: lineage.retained_source_container_id.clone(),
-            retained_source_name: lineage.retained_source_name.clone(),
+                rollback_job_id: receipt.rollback_job_id,
+                rollback_manifest_sha256: receipt.rollback_manifest_sha256,
+                restore_job_id: lineage.restore_job_id.clone(),
+                restore_manifest_sha256: receipt.restore_manifest_sha256,
+                backup_job_id: lineage.backup_job_id.clone(),
+                backup_manifest_sha256: receipt.backup_manifest_sha256,
+                restore_volume: binding.volume.clone(),
+                retained_source_container_id: lineage.retained_source_container_id.clone(),
+                retained_source_name: lineage.retained_source_name.clone(),
             })
         }
     };
@@ -415,26 +415,38 @@ fn rollback_restore_reinstall_request(
     rollback: &RollbackRestoreRetention,
     jobs: Vec<IntegrationJob>,
 ) -> Result<ManagedN8nRequest, &'static str> {
-    let rollback_job = jobs.iter().find(|job| job.job_id.as_str() == rollback.rollback_job_id)
+    let rollback_job = jobs
+        .iter()
+        .find(|job| job.job_id.as_str() == rollback.rollback_job_id)
         .ok_or("n8n_restore_volume_rollback_missing")?;
-    let immediate = jobs.iter().find(|job| job.job_id.as_str() == receipt.source_install_job_id)
+    let immediate = jobs
+        .iter()
+        .find(|job| job.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_restore_volume_source_missing")?;
-    if rollback_job.operation != JobOperation::Rollback || rollback_job.state != JobState::Ready
+    if rollback_job.operation != JobOperation::Rollback
+        || rollback_job.state != JobState::Ready
         || !is_managed_job(rollback_job)
         || rollback_job.manifest_sha256.as_str() != rollback.rollback_manifest_sha256
         || receipt.source_volume.as_deref() != Some(rollback.restore_volume.as_str())
         || !matches!(receipt.source_image.as_deref(), Some(image) if super::valid_historical_n8n_image(image))
         || !matches!(receipt.source_host_port, Some(port) if port != 0)
-    { return Err("n8n_restore_volume_receipt_mismatch"); }
+    {
+        return Err("n8n_restore_volume_receipt_mismatch");
+    }
     match immediate.operation {
         JobOperation::Rollback if immediate.job_id == rollback_job.job_id => {
             if immediate.manifest_sha256.as_str() != rollback.rollback_manifest_sha256 {
                 return Err("n8n_restore_volume_source_mismatch");
             }
         }
-        JobOperation::Install if immediate.state == JobState::Ready && is_managed_job(immediate)
-            && immediate.manifest_sha256.as_str() == receipt.source_install_manifest_sha256 => {
-            let source = receipt.source_retained_reinstall.as_ref()
+        JobOperation::Install
+            if immediate.state == JobState::Ready
+                && is_managed_job(immediate)
+                && immediate.manifest_sha256.as_str() == receipt.source_install_manifest_sha256 =>
+        {
+            let source = receipt
+                .source_retained_reinstall
+                .as_ref()
                 .filter(|source| source.rollback_restore.as_ref() == Some(rollback))
                 .filter(|source| super::valid_retained_reinstall_source(source))
                 .ok_or("n8n_restore_volume_source_mismatch")?;
@@ -442,7 +454,8 @@ fn rollback_restore_reinstall_request(
                 receipt.source_host_port.unwrap_or_default(),
                 receipt.source_image.clone().unwrap_or_default(),
                 rollback.restore_volume.clone(),
-            )?.with_retained_reinstall(source.clone());
+            )?
+            .with_retained_reinstall(source.clone());
             if managed_manifest(&request) != immediate.manifest_sha256 {
                 return Err("n8n_restore_volume_source_mismatch");
             }
@@ -463,19 +476,35 @@ fn rollback_restore_reinstall_request(
         || resolved.host_port != receipt.source_host_port.unwrap_or_default()
         || resolved.retained_source_container_id != rollback.retained_source_container_id
         || resolved.retained_source_name != rollback.retained_source_name
-    { return Err("n8n_restore_volume_chain_mismatch"); }
+    {
+        return Err("n8n_restore_volume_chain_mismatch");
+    }
     if immediate.operation == JobOperation::Rollback
-        && resolved.new_container_id != receipt.source_container_id.as_deref().unwrap_or("") {
+        && resolved.new_container_id != receipt.source_container_id.as_deref().unwrap_or("")
+    {
         return Err("n8n_restore_volume_chain_mismatch");
     }
     for (id, manifest, operation) in [
-        (&rollback.restore_job_id, &rollback.restore_manifest_sha256, JobOperation::Restore),
-        (&rollback.backup_job_id, &rollback.backup_manifest_sha256, JobOperation::Backup),
+        (
+            &rollback.restore_job_id,
+            &rollback.restore_manifest_sha256,
+            JobOperation::Restore,
+        ),
+        (
+            &rollback.backup_job_id,
+            &rollback.backup_manifest_sha256,
+            JobOperation::Backup,
+        ),
     ] {
-        let job = jobs.iter().find(|job| job.job_id.as_str() == id.as_str())
+        let job = jobs
+            .iter()
+            .find(|job| job.job_id.as_str() == id.as_str())
             .ok_or("n8n_restore_volume_chain_job_missing")?;
-        if job.operation != operation || job.state != JobState::Ready
-            || !is_managed_job(job) || job.manifest_sha256.as_str() != manifest.as_str() {
+        if job.operation != operation
+            || job.state != JobState::Ready
+            || !is_managed_job(job)
+            || job.manifest_sha256.as_str() != manifest.as_str()
+        {
             return Err("n8n_restore_volume_chain_mismatch");
         }
     }
@@ -484,15 +513,17 @@ fn rollback_restore_reinstall_request(
         receipt.source_image.clone().unwrap_or_default(),
         rollback.restore_volume.clone(),
     )
-    .map(|request| request.with_retained_reinstall(RetainedReinstallSource {
-        uninstall_job_id: uninstall.job_id.as_str().into(),
-        uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
-        source_install_job_id: immediate.job_id.as_str().into(),
-        source_install_manifest_sha256: immediate.manifest_sha256.as_str().into(),
-        bootstrap_volume: false,
-        volume_owner_install_job_id: rollback.restore_job_id.clone(),
-        rollback_restore: Some(rollback.clone()),
-    }))
+    .map(|request| {
+        request.with_retained_reinstall(RetainedReinstallSource {
+            uninstall_job_id: uninstall.job_id.as_str().into(),
+            uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
+            source_install_job_id: immediate.job_id.as_str().into(),
+            source_install_manifest_sha256: immediate.manifest_sha256.as_str().into(),
+            bootstrap_volume: false,
+            volume_owner_install_job_id: rollback.restore_job_id.clone(),
+            rollback_restore: Some(rollback.clone()),
+        })
+    })
 }
 
 fn uninstall_manifest_from_identity(

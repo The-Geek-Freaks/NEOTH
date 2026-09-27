@@ -1,0 +1,19 @@
+{
+  "schema": "neoth-hosted-cli-reference-import/v1",
+  "status": "GENERATED_REFERENCE_IMPORTED_CORE_PARTIAL",
+  "producer": "b278eef3b2257ece3924b55a917b7f96c4604f79",
+  "run": 36306515321,
+  "artifact": 10927762719,
+  "zipSha256": "9da8139c62e9e26412b7a74d13a6f158d3bdeab9429b655e1afccc16212f55bc",
+  "referenceSha256": "375E26BE61B4D91EDF90C1BAFA8CE187755FA81F68B1031C4AF33423AF2401C3",
+  "internalHashesVerified": true,
+  "cliSourceUnchangedAtImportFromProducer": true,
+  "completedGates": [
+    "slim production Clippy",
+    "default-feature core test typecheck",
+    "public CLI build"
+  ],
+  "workspaceClippy": "still running; no full Core admission",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

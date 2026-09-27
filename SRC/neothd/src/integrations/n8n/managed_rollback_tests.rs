@@ -234,7 +234,9 @@ impl super::super::ManagedDockerRunner for Runner {
         name: &str,
     ) -> Result<super::super::ManagedCommandReceipt, &'static str> {
         let mut s = self.0.lock().unwrap();
-        if s.restore_volume.name != name || s.restore_volume_removed { return Err("volume"); }
+        if s.restore_volume.name != name || s.restore_volume_removed {
+            return Err("volume");
+        }
         s.calls.push(format!("remove-volume:{name}"));
         s.restore_volume_removed = true;
         Ok(receipt())
@@ -685,53 +687,105 @@ fn restart_validator_holds_uncertain_dispatch() {
 async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_source() {
     let (home, mut runner, state, restore) = fixture().await;
     let rollback = rollback_managed_at_with(
-        home.path(), &restore, SecretString::from("historical-key"), &mut runner, &Probe::ok(),
-    ).await.unwrap();
+        home.path(),
+        &restore,
+        SecretString::from("historical-key"),
+        &mut runner,
+        &Probe::ok(),
+    )
+    .await
+    .unwrap();
     let old = state.lock().unwrap().old.id.clone();
     let old_name = state.lock().unwrap().old_name.clone();
     let restore_volume = state.lock().unwrap().restore_volume.name.clone();
-    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(), &mut runner,
-    ).await.unwrap();
+    let uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     assert_eq!(runner.calls(&format!("remove:{}", "2".repeat(64))), 1);
     assert_eq!(state.lock().unwrap().old.id, old);
     assert_eq!(state.lock().unwrap().old_name, old_name);
     assert!(!state.lock().unwrap().restore_volume_removed);
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let reinstalled = super::super::install_retained_at_with(
-        home.path(), &uninstall.job_id, SecretString::from("historical-key"), &mut runner,
-        &Readiness { false_calls: Arc::new(Mutex::new(0)) }, &Probe::ok(), &mut cancel,
-    ).await.unwrap();
+        home.path(),
+        &uninstall.job_id,
+        SecretString::from("historical-key"),
+        &mut runner,
+        &Readiness {
+            false_calls: Arc::new(Mutex::new(0)),
+        },
+        &Probe::ok(),
+        &mut cancel,
+    )
+    .await
+    .unwrap();
     assert_ne!(reinstalled.job_id, rollback.job_id);
-    assert_eq!(state.lock().unwrap().new.as_ref().unwrap().volume, restore_volume);
+    assert_eq!(
+        state.lock().unwrap().new.as_ref().unwrap().volume,
+        restore_volume
+    );
     let first_reinstall_id = state.lock().unwrap().new.as_ref().unwrap().id.clone();
     assert_eq!(state.lock().unwrap().old.id, old);
-    let uninstall_again = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(), &mut runner,
-    ).await.unwrap();
+    let uninstall_again =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let reinstalled_again = super::super::install_retained_at_with(
-        home.path(), &uninstall_again.job_id, SecretString::from("historical-key"), &mut runner,
-        &Readiness { false_calls: Arc::new(Mutex::new(0)) }, &Probe::ok(), &mut cancel,
-    ).await.unwrap();
+        home.path(),
+        &uninstall_again.job_id,
+        SecretString::from("historical-key"),
+        &mut runner,
+        &Readiness {
+            false_calls: Arc::new(Mutex::new(0)),
+        },
+        &Probe::ok(),
+        &mut cancel,
+    )
+    .await
+    .unwrap();
     assert_ne!(reinstalled_again.job_id, reinstalled.job_id);
     let second_reinstall_id = state.lock().unwrap().new.as_ref().unwrap().id.clone();
     assert_ne!(second_reinstall_id, first_reinstall_id);
-    assert_eq!(state.lock().unwrap().new.as_ref().unwrap().volume, restore_volume);
+    assert_eq!(
+        state.lock().unwrap().new.as_ref().unwrap().volume,
+        restore_volume
+    );
     assert_eq!(state.lock().unwrap().old.id, old);
-    let uninstall_third = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(), &mut runner,
-    ).await.unwrap();
-    let plan = super::super::managed_purge::prepare_purge_at(home.path(), &uninstall_third.job_id).unwrap();
-    assert_eq!(plan.confirmation, format!("PURGE N8N RESTORE VOLUME {} {}", uninstall_third.job_id, restore_volume));
+    let uninstall_third =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
+    let plan = super::super::managed_purge::prepare_purge_at(home.path(), &uninstall_third.job_id)
+        .unwrap();
+    assert_eq!(
+        plan.confirmation,
+        format!(
+            "PURGE N8N RESTORE VOLUME {} {}",
+            uninstall_third.job_id, restore_volume
+        )
+    );
     let before_wrong = state.lock().unwrap().calls.len();
-    assert!(super::super::managed_purge::purge_retained_volume_at_with(
-        home.path(), &uninstall_third.job_id, "PURGE N8N RESTORE VOLUME wrong", &mut runner,
-    ).await.is_err());
+    assert!(
+        super::super::managed_purge::purge_retained_volume_at_with(
+            home.path(),
+            &uninstall_third.job_id,
+            "PURGE N8N RESTORE VOLUME wrong",
+            &mut runner,
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(state.lock().unwrap().calls.len(), before_wrong);
     super::super::managed_purge::purge_retained_volume_at_with(
-        home.path(), &uninstall_third.job_id, &plan.confirmation, &mut runner,
-    ).await.unwrap();
+        home.path(),
+        &uninstall_third.job_id,
+        &plan.confirmation,
+        &mut runner,
+    )
+    .await
+    .unwrap();
     assert_eq!(runner.calls(&format!("remove-volume:{restore_volume}")), 1);
     assert_eq!(state.lock().unwrap().old.id, old);
     assert_eq!(state.lock().unwrap().old_name, old_name);
@@ -741,19 +795,42 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
 async fn tampered_restore_volume_uninstall_receipt_has_no_reinstall_or_purge_effect() {
     let (home, mut runner, state, restore) = fixture().await;
     let _ = rollback_managed_at_with(
-        home.path(), &restore, SecretString::from("historical-key"), &mut runner, &Probe::ok(),
-    ).await.unwrap();
-    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
-    let path = home.path().join(format!("n8n-uninstall-{}.receipt.json", uninstall.job_id));
-    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        home.path(),
+        &restore,
+        SecretString::from("historical-key"),
+        &mut runner,
+        &Probe::ok(),
+    )
+    .await
+    .unwrap();
+    let uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
+    let path = home
+        .path()
+        .join(format!("n8n-uninstall-{}.receipt.json", uninstall.job_id));
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     json["rollback_restore"]["restore_volume"] = "neoth_n8n_foreign".into();
     std::fs::write(path, serde_json::to_vec(&json).unwrap()).unwrap();
     let before = state.lock().unwrap().calls.len();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
-    assert!(super::super::install_retained_at_with(
-        home.path(), &uninstall.job_id, SecretString::from("historical-key"), &mut runner,
-        &Readiness { false_calls: Arc::new(Mutex::new(0)) }, &Probe::ok(), &mut cancel,
-    ).await.is_err());
+    assert!(
+        super::super::install_retained_at_with(
+            home.path(),
+            &uninstall.job_id,
+            SecretString::from("historical-key"),
+            &mut runner,
+            &Readiness {
+                false_calls: Arc::new(Mutex::new(0))
+            },
+            &Probe::ok(),
+            &mut cancel,
+        )
+        .await
+        .is_err()
+    );
     assert!(super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id).is_err());
     assert_eq!(state.lock().unwrap().calls.len(), before);
     assert!(!state.lock().unwrap().restore_volume_removed);

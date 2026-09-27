@@ -1,0 +1,65 @@
+{
+  "schema": "neoth-wave1562-rollback-product-failure/v1",
+  "decision": "recorded_failed_product_evidence",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36306516850,
+    "job_id": 108584132379,
+    "head_sha": "b278eef3b2257ece3924b55a917b7f96c4604f79",
+    "source_ref": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "failure",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36306516850"
+  },
+  "artifact": {
+    "id": 10928190254,
+    "name": "w1018-product-n8n-bootstrap-36306516850-1",
+    "api_digest": "sha256:735e287c6168e2e9ec0dd9a25e656bdef5fde9615a914d9627a643966f87171f",
+    "zip_sha256": "735e287c6168e2e9ec0dd9a25e656bdef5fde9615a914d9627a643966f87171f",
+    "api_digest_matches_original_zip": true,
+    "safe_entries": 1,
+    "unsafe_entries": 0,
+    "receipt_preserved": true
+  },
+  "input_provenance": {
+    "receipt_records": 36,
+    "producer_raw_git_sha256_mismatches": 0,
+    "git_blob_hash_object_mismatches": 0
+  },
+  "preceding_restore_receipts": {
+    "restore_with_credential": {
+      "candidate_only": true,
+      "candidate_absent": true,
+      "credential_count": 1,
+      "credential_decryption_proven": true,
+      "workflow_count": 13
+    },
+    "restore_zero_credential": {
+      "candidate_only": true,
+      "candidate_absent": true,
+      "credential_count": 0,
+      "credential_decryption_proven": false,
+      "workflow_count": 13
+    },
+    "restore_cleanup_proven": true
+  },
+  "failure": {
+    "outcome": "failed",
+    "stage": "historical_restore_rollback",
+    "failure_stage": "command_failed",
+    "command": "other",
+    "exit_code": 1,
+    "timed_out": false,
+    "known_error_categories": [],
+    "cleanup_proven": false,
+    "docker_cleanup_proven": false,
+    "rollback_fixture_cleanup_proven": false
+  },
+  "limits": [
+    "The receipt does not establish a completed historical rollback.",
+    "No cause is inferred from stdout or stderr byte lengths, command label, or absent known-error category.",
+    "This is failed product evidence, not a product acceptance or a repair claim.",
+    "New diagnostic instrumentation is owned separately and is outside this evidence admission."
+  ],
+  "local_executable_validation_ran": false
+}

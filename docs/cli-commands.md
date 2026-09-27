@@ -2971,6 +2971,13 @@ Validate a receipt-owned backup in an isolated candidate volume. The live n8n ru
 
 - `--backup <BACKUP>` — Ready backup job whose verified archive is the only restore source
 
+### `neoth n8n rollback`
+
+Promote one verified restore candidate through the managed rollback custody path
+
+- `--restore <RESTORE>` — Ready restore job whose receipt is the only rollback source
+- `--api-key-stdin` — Read the historical n8n API key from piped standard input
+
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request

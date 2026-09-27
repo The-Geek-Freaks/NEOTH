@@ -714,7 +714,8 @@ pub(super) fn managed_manifest(request: &ManagedN8nRequest) -> super::Sha256Dige
         request.volume(),
     ];
     if let Some(source) = &request.retained_reinstall {
-        parts.extend(["n8n-managed-retained-reinstall-v1",
+        parts.extend([
+            "n8n-managed-retained-reinstall-v1",
             source.uninstall_job_id.as_str(),
             source.uninstall_manifest_sha256.as_str(),
             source.source_install_job_id.as_str(),
@@ -724,10 +725,14 @@ pub(super) fn managed_manifest(request: &ManagedN8nRequest) -> super::Sha256Dige
         if let Some(rollback) = &source.rollback_restore {
             parts.extend([
                 "n8n-managed-retained-rollback-restore-v1",
-                rollback.rollback_job_id.as_str(), rollback.rollback_manifest_sha256.as_str(),
-                rollback.restore_job_id.as_str(), rollback.restore_manifest_sha256.as_str(),
-                rollback.backup_job_id.as_str(), rollback.backup_manifest_sha256.as_str(),
-                rollback.restore_volume.as_str(), rollback.retained_source_container_id.as_str(),
+                rollback.rollback_job_id.as_str(),
+                rollback.rollback_manifest_sha256.as_str(),
+                rollback.restore_job_id.as_str(),
+                rollback.restore_manifest_sha256.as_str(),
+                rollback.backup_job_id.as_str(),
+                rollback.backup_manifest_sha256.as_str(),
+                rollback.restore_volume.as_str(),
+                rollback.retained_source_container_id.as_str(),
                 rollback.retained_source_name.as_str(),
             ]);
         }
@@ -746,15 +751,22 @@ pub(super) fn validate_binding(
     job: &IntegrationJob,
 ) -> Result<ManagedN8nRequest, &'static str> {
     let mut request = match &binding.lineage {
-        RuntimeLineage::Install if binding.retained_reinstall.as_ref()
-            .is_some_and(|source| source.rollback_restore.is_some()) =>
+        RuntimeLineage::Install
+            if binding
+                .retained_reinstall
+                .as_ref()
+                .is_some_and(|source| source.rollback_restore.is_some()) =>
         {
             ManagedN8nRequest::historical_rollback(
-                binding.host_port, binding.image.clone(), binding.volume.clone(),
+                binding.host_port,
+                binding.image.clone(),
+                binding.volume.clone(),
             )?
         }
         RuntimeLineage::Install => ManagedN8nRequest::new_with_volume(
-            binding.host_port, N8N_OCI_REFERENCE, binding.volume.clone(),
+            binding.host_port,
+            N8N_OCI_REFERENCE,
+            binding.volume.clone(),
         )?,
         RuntimeLineage::Rollback(_) => ManagedN8nRequest::historical_rollback(
             binding.host_port,
@@ -770,10 +782,10 @@ pub(super) fn validate_binding(
         None => true,
         Some(source) => {
             source.volume_owner_install_job_id
-                    == binding
-                        .bootstrap_volume_owner_job_id
-                        .clone()
-                        .unwrap_or_default()
+                == binding
+                    .bootstrap_volume_owner_job_id
+                    .clone()
+                    .unwrap_or_default()
                 && valid_retained_reinstall_source(source)
         }
     };
@@ -881,8 +893,7 @@ pub(crate) fn valid_historical_n8n_image(image: &str) -> bool {
 }
 
 pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) -> bool {
-    let base =
-        super::JobId::parse(source.uninstall_job_id.clone()).is_ok()
+    let base = super::JobId::parse(source.uninstall_job_id.clone()).is_ok()
         && valid_manifest_sha256(&source.uninstall_manifest_sha256)
         && super::JobId::parse(source.source_install_job_id.clone()).is_ok()
         && valid_manifest_sha256(&source.source_install_manifest_sha256)
@@ -890,9 +901,10 @@ pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) 
     if source.bootstrap_volume {
         return base && source.rollback_restore.is_none();
     }
-    let Some(rollback) = &source.rollback_restore else { return false; };
-    base
-        && source.volume_owner_install_job_id == rollback.restore_job_id
+    let Some(rollback) = &source.rollback_restore else {
+        return false;
+    };
+    base && source.volume_owner_install_job_id == rollback.restore_job_id
         && super::JobId::parse(rollback.rollback_job_id.clone()).is_ok()
         && valid_manifest_sha256(&rollback.rollback_manifest_sha256)
         && super::JobId::parse(rollback.restore_job_id.clone()).is_ok()
@@ -1117,12 +1129,18 @@ async fn verify_retained_volume<R: ManagedDockerRunner>(
             found.labels.get("io.neoth.n8n-restore").map(String::as_str)
                 != Some(source.volume_owner_install_job_id.as_str())
         }
-        || (source.bootstrap_volume && found
-            .labels
-            .get("io.neoth.n8n-bootstrap")
-            .map(String::as_str)
-            != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
-        || (!source.bootstrap_volume && found.labels.get("io.neoth.n8n-restore-schema").map(String::as_str) != Some("1"))
+        || (source.bootstrap_volume
+            && found
+                .labels
+                .get("io.neoth.n8n-bootstrap")
+                .map(String::as_str)
+                != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
+        || (!source.bootstrap_volume
+            && found
+                .labels
+                .get("io.neoth.n8n-restore-schema")
+                .map(String::as_str)
+                != Some("1"))
     {
         anyhow::bail!("n8n_retained_volume_foreign");
     }
@@ -1150,14 +1168,23 @@ pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
         && (found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
             || if retained.is_some_and(|source| !source.bootstrap_volume) {
                 found.labels.get("io.neoth.n8n-restore").map(String::as_str) != Some(owner)
-            } else { found.labels.get("io.neoth.n8n-job").map(String::as_str) != Some(owner) }
-            || (retained.map(|source| source.bootstrap_volume).unwrap_or(true) && found
-                .labels
-                .get("io.neoth.n8n-bootstrap")
-                .map(String::as_str)
-                != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
+            } else {
+                found.labels.get("io.neoth.n8n-job").map(String::as_str) != Some(owner)
+            }
+            || (retained
+                .map(|source| source.bootstrap_volume)
+                .unwrap_or(true)
+                && found
+                    .labels
+                    .get("io.neoth.n8n-bootstrap")
+                    .map(String::as_str)
+                    != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
             || (retained.is_some_and(|source| !source.bootstrap_volume)
-                && found.labels.get("io.neoth.n8n-restore-schema").map(String::as_str) != Some("1")))
+                && found
+                    .labels
+                    .get("io.neoth.n8n-restore-schema")
+                    .map(String::as_str)
+                    != Some("1")))
     {
         return Err("n8n_repair_volume_owner_mismatch");
     }

@@ -1,0 +1,33 @@
+{
+  "schema": "neoth-hosted-format-admission/v1",
+  "status": "HOSTED_FORMAT_IMPORTED",
+  "run": 36306945840,
+  "producer": "f6d68525363448ebbb8ed9c39607b6f7111d0c09",
+  "artifact": 10927686534,
+  "zipSha256": "eeb569f29fa52181374555fd1997e99918671b5146e48ac8ed7f98d24667f15f",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "preimage": "a879a16c9d6c46c50caf6f502058ab1ba5442166",
+      "postimage": "89c979922333fdf64db52973862c41b5b05c0980"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+      "preimage": "8b97c8c69c8bcb09ce0ca18818b0f74cd6c43190",
+      "postimage": "3ce0e31a9ed707d23b9756a7dd4096993271c3f7"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "preimage": "1a085d8c951835ae5d5b62a0eba092f147e4c230",
+      "postimage": "bbb2b6f711fc22166176e20ffec23c6ff8c15c77"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "preimage": "c28052341e13ffb50d4b34a99626420a138d9f50",
+      "postimage": "54c45c842332a2fd1a70fed12d6e2e34a8a55f3b"
+    }
+  ],
+  "internalHashesVerified": true,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}
