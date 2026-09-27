@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-restore-successor-fixture/v1",
+  "capturedUtc": "2026-09-27T19:36:38.6343390Z",
+  "base": "b5335f6b5a4c3c1252a7d3ae3ae30b01aa6e4d31",
+  "failureRun": 36344407460,
+  "hostedHelperTests": 45,
+  "hostedHelperErrors": 1,
+  "failure": "restore_current_authority_invalid in positive successor fixture before CLI build",
+  "repair": "Use actual derived Restore project and coherent six volume bindings, retain distinct base-project negative",
+  "productionValidatorChanged": false,
+  "staticIndependentReview": "PASS",
+  "sources": [
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "AA2EEB9B1FFBA17275C8F866DBB33EA647E2ACAC2574B985B45DA22289B60A54"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "6171DB9DDD6F6D0F4541A364C54E210140D9F1C0FE6491C85A01158D5986A6BE"
+    },
+    {
+      "path": "work/gold-20260906/wave1715-product-helper-repair/REPORT.md",
+      "sha256": "72AD9EA02C77EA651F2EA59BB9E5B36120AD228686227FA38484D386C8580057"
+    },
+    {
+      "path": "work/gold-20260906/wave1715-product-helper-repair/REVIEW.md",
+      "sha256": "A9CA34B8AF81E72E5C84EF1ED81CE0A6B65051E08083B343232A84D75554A5F6"
+    },
+    {
+      "path": "work/gold-20260906/wave1715-product-helper-repair/failed.log",
+      "sha256": "1B306862960882CC763B0DF92C6E27940786DEB23BB8E0324791D260260FAFBB"
+    }
+  ],
+  "continuingRuns": {
+    "group": 36344409302,
+    "core": 36344405268,
+    "windows": 36344410932
+  },
+  "freshProduct": "required",
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

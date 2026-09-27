@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1715 Restore successor fixture repair (2026-09-27):**
+Product36344407460 atb5335f6b failed its hosted helper gate (45 tests, one
+error) before the CLI build. The new successor fixture incorrectly retained
+the historical base project. It now uses the derived active Restore project
+and coherent volume names/project/generation, with an explicit base-project
+negative. Production validators are unchanged; independent static review PASS.
+Core36344405268 has passed slim Clippy and native test-target typecheck; its
+CLI build remains running. Group2005run36344409302 and Windows770run36344410932
+continue atb5335f6b. Only the product gate needs a fresh dispatch for this
+Python-test-only correction. Full product and native admission remain pending.
+ROAD1324/1077/245/2 unchanged; no local executable validation.
+Evidence: docs/verification/gold-wave1715-restore-successor-fixture.json.
+
 **W1713-W1714 Restore lifecycle/schema repairs (2026-09-27):**
 Product36342549396 ataf77c4b9 proves authenticated Restore, retained old source,
 Backup of the new generation and all three Repair paths; then its Uninstall
