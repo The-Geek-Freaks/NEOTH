@@ -303,7 +303,8 @@ def validate_purge_product(value: dict, uninstall_job: str) -> str:
     return job
 
 def validate_backup_product(value: dict, source_job: str,
-                            original_running: bool = True) -> tuple[str, dict]:
+                            original_running: bool = True,
+                            rollback_source: bool = False) -> tuple[str, dict]:
     """Accept only the completed, content-free managed-backup projection."""
     job = required(value, "job_id", str)
     receipt = required(value, "receipt", dict)
@@ -314,10 +315,12 @@ def validate_backup_product(value: dict, source_job: str,
         "generation", "archive_sha256", "archive_bytes",
         "original_running_state", "restored_running_state",
     }
+    if rollback_source:
+        receipt_keys |= {"source_job_id", "source_manifest_sha256", "source_operation"}
     if (set(value) != expected_keys or not JOB.fullmatch(job) or job == source_job
             or value.get("state") != "ready" or value.get("operation") != "backup"
             or value.get("failure_code") is not None or set(receipt) != receipt_keys
-            or receipt.get("schema_version") != 1 or receipt.get("backup_job_id") != job
+            or receipt.get("schema_version") != (2 if rollback_source else 1) or receipt.get("backup_job_id") != job
             or not ID.fullmatch(receipt.get("backup_manifest_sha256", ""))
             or receipt.get("source_install_job_id") != source_job
             or receipt.get("source_pinned_image") != IMAGE
@@ -327,8 +330,56 @@ def validate_backup_product(value: dict, source_job: str,
             or not ID.fullmatch(receipt.get("archive_sha256", ""))
             or type(receipt.get("archive_bytes")) is not int or receipt["archive_bytes"] < 1
             or receipt.get("original_running_state") is not original_running
-            or receipt.get("restored_running_state") is not original_running):
+            or receipt.get("restored_running_state") is not original_running
+            or (rollback_source and (receipt.get("source_job_id") != source_job
+                or not ID.fullmatch(receipt.get("source_manifest_sha256", ""))
+                or receipt.get("source_operation") != "rollback"))):
         raise Failure("backup_not_ready")
+    return job, receipt
+
+def validate_rollback_product(value: dict, restore_job: str, restore: dict,
+                              old_container_id: str, old_volume: str) -> tuple[str, dict]:
+    job = required(value, "job_id", str)
+    receipt = required(value, "receipt", dict)
+    expected = {"job_id", "state", "operation", "restore_job_id", "receipt", "failure_code"}
+    receipt_keys = {
+        "schema_version", "rollback_job_id", "rollback_manifest_sha256", "restore_job_id",
+        "restore_manifest_sha256", "backup_job_id", "backup_manifest_sha256", "new_container_id",
+        "source_pinned_image", "host_port", "restore_volume", "retained_source_container_id",
+        "retained_source_name", "evidence_sha256",
+    }
+    retired = "neoth-n8n-retired-" + job.replace("-", "")
+    if (set(value) != expected or not JOB.fullmatch(job) or job == restore_job
+            or value.get("state") != "ready" or value.get("operation") != "rollback"
+            or value.get("restore_job_id") != restore_job or value.get("failure_code") is not None
+            or set(receipt) != receipt_keys or receipt.get("schema_version") != 1
+            or receipt.get("rollback_job_id") != job or not ID.fullmatch(receipt.get("rollback_manifest_sha256", ""))
+            or receipt.get("restore_job_id") != restore_job
+            or receipt.get("restore_manifest_sha256") != restore.get("restore_manifest_sha256")
+            or receipt.get("backup_job_id") != restore.get("backup_job_id")
+            or receipt.get("backup_manifest_sha256") != restore.get("backup_manifest_sha256")
+            or not ID.fullmatch(receipt.get("new_container_id", ""))
+            or receipt.get("source_pinned_image") != IMAGE or type(receipt.get("host_port")) is not int
+            or receipt.get("host_port") < 1 or receipt.get("restore_volume") != restore.get("restore_volume")
+            or receipt.get("retained_source_container_id") != old_container_id
+            or receipt.get("retained_source_name") != retired
+            or not ID.fullmatch(receipt.get("evidence_sha256", ""))
+            or old_volume == receipt.get("restore_volume")):
+        raise Failure("rollback_not_ready")
+    return job, receipt
+
+def validate_rollback_backup_v2(value: dict, rollback_job: str, rollback_manifest: str,
+                                runtime_id: str, volume: str) -> tuple[str, dict]:
+    job, receipt = validate_backup_product(value, rollback_job, rollback_source=True)
+    required_v2 = {"source_job_id", "source_manifest_sha256", "source_operation"}
+    if (receipt.get("schema_version") != 2 or not required_v2.issubset(receipt)
+            or receipt.get("source_install_job_id") != rollback_job
+            or receipt.get("source_job_id") != rollback_job
+            or receipt.get("source_manifest_sha256") != rollback_manifest
+            or receipt.get("source_operation") != "rollback"
+            or receipt.get("source_container_id") != runtime_id
+            or receipt.get("volume_name") != volume):
+        raise Failure("rollback_backup_v2_invalid")
     return job, receipt
 
 def read_backup_completion_receipt(home: Path, backup_job: str, backup_manifest: str,
@@ -487,6 +538,88 @@ def cleanup_owned_runtime_and_volume(runtime_id: str, volume: str, job: str, por
         return exact_absent("volume", volume)
     except Exception:
         return False
+
+def cleanup_rollback_fixture(old: tuple[str, str, str, str] | None,
+                             new: tuple[str, str, str] | None,
+                             restore: tuple[str, str] | None, port: int) -> bool:
+    """Best-effort deletion of independently witnessed Rollback fixture custody.
+
+    A missing witness is deliberately unproven, never an invitation to target a
+    conventional name.  Each known resource is attempted independently so one
+    failed deletion cannot leak another disposable fixture resource.
+    """
+    results: list[bool] = []
+    old_removed = False
+    if old is None:
+        results.append(False)
+    else:
+        old_id, old_name, old_job, old_volume = old
+        try:
+            old_row = docker_inspect(old_id)
+            validate_runtime(old_row, old_job, old_volume, old_id, port)
+            if old_row.get("Name") != f"/{old_name}":
+                raise Failure("rollback_old_name_invalid")
+            run(["docker", "rm", "-f", old_id])
+            old_removed = exact_absent("container", old_id)
+        except Exception:
+            old_removed = False
+        results.append(old_removed)
+        try:
+            if not old_removed:
+                raise Failure("rollback_old_container_retained")
+            validate_retained_volume(docker_inspect(old_volume), old_job, old_volume)
+            run(["docker", "volume", "rm", old_volume])
+            results.append(exact_absent("volume", old_volume))
+        except Exception:
+            results.append(False)
+
+    new_removed = False
+    if new is None:
+        results.append(False)
+    else:
+        new_id, rollback_job, restore_volume = new
+        try:
+            validate_runtime(docker_inspect(new_id), rollback_job, restore_volume, new_id, port)
+            run(["docker", "rm", "-f", new_id])
+            new_removed = exact_absent("container", new_id)
+        except Exception:
+            new_removed = False
+        results.append(new_removed)
+        if restore is None:
+            results.append(False)
+        else:
+            restore_job, expected_restore_volume = restore
+            try:
+                if not new_removed or expected_restore_volume != restore_volume:
+                    raise Failure("rollback_restore_container_retained")
+                validate_restore_volume(docker_inspect(restore_volume), restore_job, old[3] if old else "")
+                run(["docker", "volume", "rm", restore_volume])
+                results.append(exact_absent("volume", restore_volume))
+            except Exception:
+                results.append(False)
+    return bool(results) and all(results)
+
+def capture_rollback_cleanup_custody(rollback: dict, old_id: str, old_job: str,
+                                     old_volume: str, restore_job: str,
+                                     restore_target: tuple[str, str, str],
+                                     restore_targets: list[tuple[str, str, str]]) -> tuple[
+                                         tuple[str, str, str, str], tuple[str, str, str], tuple[str, str]]:
+    """Transfer exact Ready-receipt custody before any fallible follow-up read."""
+    new_id = rollback.get("new_container_id")
+    retired_name = rollback.get("retained_source_name")
+    restore_volume = rollback.get("restore_volume")
+    if (not ID.fullmatch(old_id) or not JOB.fullmatch(old_job) or not VOLUME.fullmatch(old_volume)
+            or not ID.fullmatch(new_id or "") or not isinstance(retired_name, str)
+            or not JOB.fullmatch(rollback.get("rollback_job_id", ""))
+            or not VOLUME.fullmatch(restore_volume or "")
+            or len(restore_target) != 3 or not ID.fullmatch(restore_target[1])
+            or restore_target != (restore_job, restore_target[1], restore_volume)
+            or restore_target not in restore_targets):
+        raise Failure("rollback_cleanup_custody_invalid")
+    restore_targets.remove(restore_target)
+    return ((old_id, retired_name, old_job, old_volume),
+            (new_id, rollback["rollback_job_id"], restore_volume),
+            (restore_job, restore_volume))
 def workflow_templates(value: dict) -> tuple[tuple[str, str], ...]:
     rows = required(value, "workflows", list)
     if len(rows) != WORKFLOW_COUNT:
@@ -551,9 +684,12 @@ def observe_credential_count(port: int, key: bytes) -> int:
         raise Failure("credential_fixture_list_invalid")
     return len(rows)
 
-def create_restore_fixture_credential(port: int, key: bytes) -> None:
+def create_restore_fixture_credential(port: int, key: bytes,
+                                     name: str = RESTORE_CREDENTIAL_NAME) -> None:
+    if not 1 <= len(name) <= 128 or any(ord(character) < 32 or ord(character) == 127 for character in name):
+        raise Failure("credential_fixture_name_invalid")
     value = workflow_api_post_json(port, key, "/api/v1/credentials", {
-        "name": RESTORE_CREDENTIAL_NAME,
+        "name": name,
         "type": "httpHeaderAuth",
         "data": {"name": RESTORE_CREDENTIAL_HEADER, "value": RESTORE_CREDENTIAL_VALUE},
     })
@@ -916,6 +1052,9 @@ def observe_failed_install_job(home: Path) -> dict:
 
 def authenticated_probe(job: str, port: int) -> dict:
     key = run(["secret-tool", "lookup", "neoth-key", f"n8n-bootstrap.captured-api-key.{job}"], timeout=10).rstrip(b"\n")
+    return authenticated_probe_with_key(key, port)
+
+def authenticated_probe_with_key(key: bytes, port: int) -> dict:
     if not 8 <= len(key) <= 8192 or any(byte < 32 or byte == 127 for byte in key):
         raise Failure("captured_key_unavailable")
     try:
@@ -967,7 +1106,7 @@ def assert_no_repair_runtime_effect_events(output: str, job: str) -> None:
             raise Failure("healthy_repair_runtime_effect_event")
 
 def main() -> int:
-    parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True)
+    parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True); parser.add_argument("--rollback-only", action="store_true")
     args = parser.parse_args(); binary, home, receipt_path = Path(args.binary), Path(args.home), Path(args.receipt)
     # Reject untrusted destinations before entering any receipt/cleanup path.
     try:
@@ -976,7 +1115,7 @@ def main() -> int:
             return 2
     except Exception:
         return 2
-    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False; restore_cleanup_targets: list[tuple[str, str, str]] = []
+    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "scenario": "rollback" if args.rollback_only else "lifecycle", "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False; rollback_fixture_started = rollback_cleanup_proven = False; rollback_old_custody: tuple[str, str, str, str] | None = None; rollback_new_custody: tuple[str, str, str] | None = None; rollback_restore_custody: tuple[str, str] | None = None; restore_cleanup_targets: list[tuple[str, str, str]] = []
     try:
         receipt.update({"helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "bounded_helper_sha256": hashlib.sha256(Path(bounded.__file__).read_bytes()).hexdigest(), "workflow_sha256": hashlib.sha256((Path.cwd() / ".github/workflows/n8n-product-bootstrap.yml").read_bytes()).hexdigest(), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((Path.cwd() / "SRC/Cargo.lock").read_bytes()).hexdigest()})
         input_names = (
@@ -991,6 +1130,7 @@ def main() -> int:
             "SRC/neothd/src/integrations/n8n/managed_restore_io.rs",
             "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
             "SRC/neothd/src/integrations/n8n/managed_restore_content.rs",
+            "SRC/neothd/src/integrations/n8n/managed_rollback.rs",
             "SRC/neothd/src/integrations/n8n/managed_restore_verify.js",
             "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
             "packaging/tests/n8n_restore_content.test.cjs",
@@ -1225,255 +1365,314 @@ def main() -> int:
             "credential_decryption_proven": True, "workflow_count": WORKFLOW_COUNT,
             "restore_volume_sha256": hashlib.sha256(restore_volume.encode()).hexdigest(),
         }
-        receipt["stage"] = "managed_n8n_stopped_source_backup"
-        run(["docker", "container", "stop", runtime_id])
-        assert_runtime_running(runtime_id, False)
-        stopped_backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
-        if canonical_key in stopped_backup_raw:
-            raise Failure("backup_output_key_leak")
-        stopped_backup_job, stopped_backup_view = validate_backup_product(
-            read_json_bytes(stopped_backup_raw), job, original_running=False,
-        )
-        if stopped_backup_job == backup_job:
-            raise Failure("stopped_backup_job_reused")
-        stopped_backup_record = observe_exact_job(home, stopped_backup_job, "backup")
-        stopped_backup_record_full = observe_full_job_row(home, stopped_backup_job, "backup")
-        if (stopped_backup_view["source_container_id"] != runtime_id
-                or stopped_backup_view["volume_name"] != volume):
-            raise Failure("stopped_backup_source_custody_mismatch")
-        stopped_backup_completion = read_backup_completion_receipt(
-            home, stopped_backup_job, stopped_backup_record["manifest_sha256"],
-            stopped_backup_view, job, source_install["manifest_sha256"], runtime_id,
-            volume, original_running=False,
-        )
-        if read_backup_completion_receipt(
-                home, backup_job, backup_record["manifest_sha256"], backup_view,
-                job, source_install["manifest_sha256"], runtime_id, volume,
-        ) != backup_completion:
-            raise Failure("historical_backup_receipt_mutation")
-        stopped_archive = home / "n8n-backups" / f"{stopped_backup_job}.tar"
-        stopped_header_count = validate_archive_headers(stopped_archive)
-        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
-                or observe_exact_job(home, job, "install") != source_install
-                or observe_full_job_row(home, job, "install") != source_install_full
-                or not observe_exact_job(home, backup_job, "backup") == backup_record):
-            raise Failure("stopped_backup_history_mutation")
-        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
-        assert_runtime_running(runtime_id, False)
-        # Restore the fixture ourselves only after the backup proves that it
-        # preserved its stopped disposition, then retain the existing repair
-        # coverage unchanged.
-        run(["docker", "container", "start", runtime_id])
-        assert_runtime_running(runtime_id, True)
-        if (authenticated_probe(job, args.port) != receipt["http_probe"]
-                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or canonical_n8n_api_key() != canonical_key):
-            raise Failure("stopped_backup_api_or_workflow_persistence_unproven")
-        receipt["backup_stopped_source"] = {
-            "job_id": stopped_backup_job,
-            "job_row_sha256": stopped_backup_record["row_sha256"],
-            "full_job_row_sha256": stopped_backup_record_full,
-            "job_manifest_sha256": stopped_backup_record["manifest_sha256"],
-            "receipt_sha256": stopped_backup_completion["receipt_sha256"],
-            "receipt_bytes": stopped_backup_completion["receipt_bytes"],
-            "archive_sha256": stopped_backup_completion["archive_sha256"],
-            "archive_bytes": stopped_backup_completion["archive_bytes"],
-            "archive_path_sha256": stopped_backup_completion["archive_path_sha256"],
-            "safe_header_count": stopped_header_count,
-            "source_container_id": runtime_id, "volume": volume,
-            "original_running_state": False, "restored_running_state": False,
-            "fixture_running_state_restored_for_repair": True,
-            "api_preserved_after_manual_restore": True, "workflows_persisted": True,
-        }
-        receipt["stage"] = "healthy_n8n_repair"
-        before_ns = time.time_ns()
-        before = f"{before_ns // 1_000_000_000}.{before_ns % 1_000_000_000:09d}"
-        try:
-            healthy_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
-        finally:
-            after_ns = time.time_ns()
-            after = f"{after_ns // 1_000_000_000}.{after_ns % 1_000_000_000:09d}"
-            healthy_events = run(["docker", "events", "--since", before, "--until", after, "--format", "{{json .}}", "--filter", f"label=io.neoth.n8n-job={job}"], timeout=20).decode("utf-8", "strict")
-        if canonical_key in healthy_repair_raw:
-            raise Failure("repair_output_key_leak")
-        healthy_repair_job = validate_repair_product(read_json_bytes(healthy_repair_raw), job, "healthy")
-        healthy_repair_record = observe_exact_job(home, healthy_repair_job, "repair")
-        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", healthy_repair_job]), healthy_repair_job, args.port)
-        healthy_runtime = read_json(home / "n8n-managed-runtime.v2.json")
-        if healthy_runtime != runtime:
-            raise Failure("healthy_repair_runtime_mutation")
-        healthy_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), healthy_repair_job, healthy_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "healthy", runtime_id, runtime_id, volume, args.port, runtime)
-        validate_repair_generation(home, healthy_generation)
-        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
-        assert_runtime_running(runtime_id, True)
-        assert_no_repair_runtime_effect_events(healthy_events, job)
-        if (authenticated_probe(job, args.port) != receipt["http_probe"]
-                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or observe_exact_job(home, job, "install") != source_install
-                or observe_full_job_row(home, job, "install") != source_install_full
-                or canonical_n8n_api_key() != canonical_key):
-            raise Failure("healthy_repair_authority_or_data_mutation")
-        receipt["repair_healthy"] = {"job_id": healthy_repair_job, "job_row_sha256": healthy_repair_record["row_sha256"], "manifest_sha256": healthy_repair_record["manifest_sha256"], "generation": healthy_generation, "runtime_id": runtime_id, "volume": volume, "no_docker_effect": True, "authenticated": True, "workflows_persisted": True}
-        receipt["stage"] = "stopped_exact_id_n8n_repair"
-        run(["docker", "container", "stop", runtime_id])
-        assert_runtime_running(runtime_id, False)
-        started_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
-        if canonical_key in started_repair_raw:
-            raise Failure("repair_output_key_leak")
-        started_repair_job = validate_repair_product(read_json_bytes(started_repair_raw), job, "started")
-        if started_repair_job == healthy_repair_job:
-            raise Failure("stopped_repair_job_reused")
-        started_repair_record = observe_exact_job(home, started_repair_job, "repair")
-        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", started_repair_job]), started_repair_job, args.port)
-        started_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), started_repair_job, started_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "started", runtime_id, runtime_id, volume, args.port, runtime)
-        if started_generation <= healthy_generation:
-            raise Failure("repair_generation_not_advanced")
-        validate_repair_generation(home, started_generation)
-        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
-        assert_runtime_running(runtime_id, True)
-        if (authenticated_probe(job, args.port) != receipt["http_probe"]
-                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or observe_exact_job(home, job, "install") != source_install
-                or observe_full_job_row(home, job, "install") != source_install_full
-                or canonical_n8n_api_key() != canonical_key):
-            raise Failure("stopped_repair_authority_or_data_mutation")
-        receipt["repair_started"] = {"job_id": started_repair_job, "job_row_sha256": started_repair_record["row_sha256"], "manifest_sha256": started_repair_record["manifest_sha256"], "generation": started_generation, "runtime_id": runtime_id, "volume": volume, "exact_stopped_id_restarted": True, "authenticated": True, "workflows_persisted": True}
-        receipt["stage"] = "missing_exact_id_n8n_repair"
-        old_runtime_id = runtime_id
-        run(["docker", "rm", "-f", old_runtime_id])
-        if not exact_absent("container", old_runtime_id):
-            raise Failure("recreate_source_runtime_absence_unproven")
-        recreated_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
-        if canonical_key in recreated_repair_raw:
-            raise Failure("repair_output_key_leak")
-        recreated_repair_job = validate_repair_product(read_json_bytes(recreated_repair_raw), job, "recreated")
-        if recreated_repair_job in {healthy_repair_job, started_repair_job}:
-            raise Failure("recreated_repair_job_reused")
-        recreated_repair_record = observe_exact_job(home, recreated_repair_job, "repair")
-        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", recreated_repair_job]), recreated_repair_job, args.port)
-        repaired_runtime = read_json(home / "n8n-managed-runtime.v2.json")
-        runtime_id = required(repaired_runtime, "container_id", str)
-        recreated_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), recreated_repair_job, recreated_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "recreated", old_runtime_id, runtime_id, volume, args.port, runtime)
-        if recreated_generation <= started_generation:
-            raise Failure("repair_generation_not_advanced")
-        validate_repair_generation(home, recreated_generation)
-        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
-        assert_runtime_running(runtime_id, True)
-        if (authenticated_probe(job, args.port) != receipt["http_probe"]
-                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or observe_exact_job(home, job, "install") != source_install
-                or observe_full_job_row(home, job, "install") != source_install_full
-                or canonical_n8n_api_key() != canonical_key):
-            raise Failure("recreated_repair_authority_or_data_mutation")
-        receipt["repair_recreated"] = {"job_id": recreated_repair_job, "job_row_sha256": recreated_repair_record["row_sha256"], "manifest_sha256": recreated_repair_record["manifest_sha256"], "generation": recreated_generation, "old_runtime_id": old_runtime_id, "runtime_id": runtime_id, "reused_volume": volume, "authenticated": True, "workflows_persisted": True, "source_api_key_authority_preserved": True}
-        receipt["stage"] = "first_product_uninstall"
-        first_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
-        if canonical_key in first_uninstall_raw:
-            raise Failure("uninstall_output_key_leak")
-        uninstall_job = validate_uninstall_product(read_json_bytes(first_uninstall_raw), job)
-        uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
-        uninstall_record_full = observe_full_job_row(home, uninstall_job, "uninstall")
-        validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
-        if not exact_absent("container", runtime_id):
-            raise Failure("uninstall_runtime_absence_unproven")
-        uninstall_runtime_absent = True
-        retained_volume = docker_inspect(volume)
-        validate_retained_volume(retained_volume, job, volume)
-        if canonical_n8n_api_key() != canonical_key:
-            raise Failure("canonical_n8n_key_changed")
-        sidecar_absent(home, "n8n-managed-runtime.v2.json")
-        sidecar_absent(home, "n8n-managed-uninstall.v1.json")
-        completion = read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port)
-        receipt["stage"] = "repeat_product_uninstall"
-        repeat_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
-        if canonical_key in repeat_uninstall_raw:
-            raise Failure("uninstall_output_key_leak")
-        if repeat_uninstall_raw != first_uninstall_raw or validate_uninstall_product(read_json_bytes(repeat_uninstall_raw), job) != uninstall_job:
-            raise Failure("uninstall_repeat_changed")
-        repeat_uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
-        validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
-        if repeat_uninstall_record != uninstall_record or observe_exact_job(home, job, "install") != source_install or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
-            raise Failure("uninstall_repeat_job_mutation")
-        if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
-            raise Failure("uninstall_repeat_receipt_mutation")
-        if not exact_absent("container", runtime_id):
-            raise Failure("uninstall_repeat_runtime_absence_unproven")
-        retained_volume_repeat = docker_inspect(volume)
-        validate_retained_volume(retained_volume_repeat, job, volume)
-        if canonical_n8n_api_key() != canonical_key:
-            raise Failure("canonical_n8n_key_changed")
-        if json_sha256(retained_volume_repeat) != json_sha256(retained_volume):
-            raise Failure("uninstall_repeat_volume_mutation")
-        sidecar_absent(home, "n8n-managed-runtime.v2.json")
-        sidecar_absent(home, "n8n-managed-uninstall.v1.json")
-        uninstall_runtime_absent = True
-        receipt["uninstall"] = {"job_id": uninstall_job, "job_row_sha256": uninstall_record["row_sha256"], "full_job_row_sha256": uninstall_record_full, "job_manifest_sha256": uninstall_record["manifest_sha256"], "completion_receipt_sha256": completion["sha256"], "completion_receipt_bytes": completion["bytes"], "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "data_volume_policy": "retain", "runtime_absent": True, "volume_retained": True, "canonical_api_key_preserved": True, "repeat_read_only": True, "active_sidecars_removed": True}
-        receipt["stage"] = "retained_volume_reinstall"
-        reinstall_payload = canonical_key + b"\n"
-        reinstall_raw = run_with_payload([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_job, "--api-key-stdin"], reinstall_payload)
-        if canonical_key in reinstall_raw:
-            raise Failure("reinstall_output_key_leak")
-        reinstall_job = validate_reinstall_product(read_json_bytes(reinstall_raw), job, uninstall_job)
-        reinstall_record = observe_exact_job(home, reinstall_job, "install")
-        reinstall_record_full = observe_full_job_row(home, reinstall_job, "install")
-        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_job]), reinstall_job, args.port)
-        reinstall_runtime = read_json(home / "n8n-managed-runtime.v2.json")
-        reinstall_runtime_id = validate_reinstalled_custody(reinstall_runtime, reinstall_job, reinstall_record["manifest_sha256"], volume, runtime_id, args.port)
-        validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
-        if read_json(home / "n8n-managed-bootstrap.v2.json") != boot:
-            raise Failure("reinstall_bootstrap_custody_changed")
-        if canonical_n8n_api_key() != canonical_key:
-            raise Failure("reinstall_canonical_n8n_key_changed")
-        reinstall_workflows = observe_imported_workflows(args.port, canonical_key, templates)
-        if reinstall_workflows != first_workflows:
-            raise Failure("reinstall_workflow_persistence_unproven")
-        if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
-            raise Failure("reinstall_history_mutation")
-        if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
-            raise Failure("reinstall_original_receipt_mutation")
-        receipt["stage"] = "repeat_retained_volume_reinstall"
-        reinstall_repeat = assert_reinstall_repeat_rejected(binary, uninstall_job, reinstall_payload)
-        if observe_exact_job(home, reinstall_job, "install") != reinstall_record or observe_full_job_row(home, reinstall_job, "install") != reinstall_record_full or read_json(home / "n8n-managed-runtime.v2.json") != reinstall_runtime:
-            raise Failure("reinstall_repeat_mutation")
-        validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
-        if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
-            raise Failure("reinstall_repeat_history_mutation")
-        receipt["stage"] = "reinstall_product_uninstall"
-        reinstall_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
-        if canonical_key in reinstall_uninstall_raw:
-            raise Failure("reinstall_uninstall_output_key_leak")
-        reinstall_uninstall_job = validate_uninstall_product(read_json_bytes(reinstall_uninstall_raw), reinstall_job)
-        reinstall_uninstall_record = observe_exact_job(home, reinstall_uninstall_job, "uninstall")
-        reinstall_uninstall_record_full = observe_full_job_row(home, reinstall_uninstall_job, "uninstall")
-        validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_uninstall_job]), reinstall_uninstall_job)
-        if not exact_absent("container", reinstall_runtime_id):
-            raise Failure("reinstall_uninstall_runtime_absence_unproven")
-        validate_retained_volume(docker_inspect(volume), job, volume)
-        if canonical_n8n_api_key() != canonical_key:
-            raise Failure("reinstall_uninstall_canonical_n8n_key_changed")
-        sidecar_absent(home, "n8n-managed-runtime.v2.json")
-        sidecar_absent(home, "n8n-managed-uninstall.v1.json")
-        reinstall_completion = read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"])
-        if read_json(home / "n8n-managed-bootstrap.v2.json") != boot or observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record:
-            raise Failure("reinstall_final_history_mutation")
-        receipt["reinstall"] = {"job_id": reinstall_job, "job_row_sha256": reinstall_record["row_sha256"], "full_job_row_sha256": reinstall_record_full, "runtime_id": reinstall_runtime_id, "reused_volume": volume, "workflows_persisted": True, "canonical_api_key_preserved": True, "repeat": reinstall_repeat, "final_uninstall_job_id": reinstall_uninstall_job, "final_uninstall_row_sha256": reinstall_uninstall_record["row_sha256"], "final_uninstall_full_row_sha256": reinstall_uninstall_record_full, "final_completion_receipt_sha256": reinstall_completion["sha256"], "final_completion_receipt_bytes": reinstall_completion["bytes"], "final_runtime_absent": True, "volume_retained": True}
-        receipt["stage"] = "confirmed_retained_volume_purge"
-        plan_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job])
-        phrase = validate_purge_plan(read_json_bytes(plan_raw), reinstall_uninstall_job, volume)
-        validate_retained_volume(docker_inspect(volume), job, volume)
-        source_before = observe_full_job_row(home, job, "install"); uninstall_before = observe_full_job_row(home, uninstall_job, "uninstall"); import_before = observe_full_job_row(home, import_job, "import"); final_before = observe_full_job_row(home, reinstall_uninstall_job, "uninstall"); all_jobs_before = observe_all_job_rows(home); original_receipts_before = (completion, reinstall_completion, first_custody); purge_receipts_before = purge_artifacts_absent(home)
-        wrong = bounded.run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase + " wrong"], timeout=180)
-        if wrong.code == 0 or wrong.timed_out or wrong.overflow or b"n8n_purge_confirmation_mismatch" not in wrong.stderr: raise Failure("purge_wrong_confirmation_unproven")
-        validate_retained_volume(docker_inspect(volume), job, volume)
-        if purge_artifacts_absent(home) != purge_receipts_before or observe_all_job_rows(home) != all_jobs_before or (read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port), read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"]), observe_workflow_custody(home, import_job, first_workflows["entries"])) != original_receipts_before: raise Failure("purge_wrong_confirmation_mutated_history")
-        purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
-        purge_job = validate_purge_product(read_json_bytes(purge_raw), reinstall_uninstall_job); purge_record = observe_exact_job(home, purge_job, "purge"); purge_full = observe_full_job_row(home, purge_job, "purge")
-        if not exact_absent("volume", volume) or canonical_n8n_api_key() != canonical_key: raise Failure("purge_effect_unproven")
-        purge_completion = read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume)
-        repeat_purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
-        if repeat_purge_raw != purge_raw or validate_purge_product(read_json_bytes(repeat_purge_raw), reinstall_uninstall_job) != purge_job or observe_exact_job(home, purge_job, "purge") != purge_record or observe_full_job_row(home, purge_job, "purge") != purge_full or read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume) != purge_completion: raise Failure("purge_repeat_mutation")
-        if (observe_full_job_row(home, job, "install"), observe_full_job_row(home, uninstall_job, "uninstall"), observe_full_job_row(home, import_job, "import"), observe_full_job_row(home, reinstall_uninstall_job, "uninstall")) != (source_before, uninstall_before, import_before, final_before): raise Failure("purge_history_mutation")
-        volume_purged = True; receipt["purge"] = {"source_uninstall_job_sha256": hashlib.sha256(reinstall_uninstall_job.encode()).hexdigest(), "purge_job_sha256": hashlib.sha256(purge_job.encode()).hexdigest(), "target_sha256": hashlib.sha256(phrase.encode()).hexdigest(), "job_row_sha256": purge_record["row_sha256"], "receipt_sha256": purge_completion["sha256"], "receipt_bytes": purge_completion["bytes"], "volume_absent": True, "canonical_api_key_preserved": True, "repeat_read_only": True}
+        if args.rollback_only:
+            # This mode runs while the original bootstrap runtime and Ready
+            # Restore candidate are both live.  The captured original key is
+            # the historical key; Rollback itself has no bootstrap key alias.
+            receipt["stage"] = "historical_restore_rollback"
+            rollback_fixture_started = True
+            rollback_old_custody = (runtime_id, "neoth-n8n", job, volume)
+            create_restore_fixture_credential(args.port, credential_key, "neoth-rollback-source-before")
+            if observe_credential_count(args.port, credential_key) != 2:
+                raise Failure("rollback_source_credential_effect_unproven")
+            rollback_raw = run_with_payload(
+                [str(binary), "--output", "json", "n8n", "rollback", "--restore", restore_job, "--api-key-stdin"],
+                canonical_key + b"\n",
+            )
+            if canonical_key in rollback_raw:
+                raise Failure("rollback_output_key_leak")
+            rollback_job, rollback = validate_rollback_product(
+                read_json_bytes(rollback_raw), restore_job, restore, runtime_id, volume,
+            )
+            rollback_old_custody, rollback_new_custody, rollback_restore_custody = capture_rollback_cleanup_custody(
+                rollback, runtime_id, job, volume, restore_job,
+                (restore_job, restore["candidate_container_id"], restore_volume), restore_cleanup_targets,
+            )
+            rollback_record = observe_exact_job(home, rollback_job, "rollback")
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", rollback_job]), rollback_job, args.port)
+            rollback_id, retired_name = rollback["new_container_id"], rollback["retained_source_name"]
+            validate_runtime(docker_inspect(rollback_id), rollback_job, restore_volume, rollback_id, args.port)
+            retired = docker_inspect(runtime_id)
+            validate_runtime(retired, job, volume, runtime_id, args.port)
+            if retired.get("Name") != f"/{retired_name}" or retired.get("State", {}).get("Running") is not False:
+                raise Failure("rollback_retained_source_identity_unproven")
+            if (authenticated_probe_with_key(canonical_key, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_credential_count(args.port, credential_key) != 1):
+                raise Failure("rollback_historical_state_unproven")
+            receipt["stage"] = "repeat_historical_rollback"
+            rollback_repeat = run_with_payload(
+                [str(binary), "--output", "json", "n8n", "rollback", "--restore", restore_job, "--api-key-stdin"],
+                canonical_key + b"\n",
+            )
+            if (rollback_repeat != rollback_raw
+                    or validate_rollback_product(read_json_bytes(rollback_repeat), restore_job, restore, runtime_id, volume)[0] != rollback_job
+                    or observe_exact_job(home, rollback_job, "rollback") != rollback_record
+                    or read_json(home / "n8n-managed-runtime.v2.json").get("container_id") != rollback_id):
+                raise Failure("rollback_repeat_mutation")
+            receipt["stage"] = "rollback_backup_v2"
+            rollback_backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
+            if canonical_key in rollback_backup_raw:
+                raise Failure("rollback_backup_output_key_leak")
+            rollback_backup_job, rollback_backup = validate_rollback_backup_v2(
+                read_json_bytes(rollback_backup_raw), rollback_job,
+                rollback["rollback_manifest_sha256"], rollback_id, restore_volume,
+            )
+            if (authenticated_probe_with_key(canonical_key, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_credential_count(args.port, credential_key) != 1):
+                raise Failure("rollback_backup_historical_state_unproven")
+            receipt["rollback"] = {"job_id": rollback_job, "job_row_sha256": rollback_record["row_sha256"], "restore_job_id": restore_job, "retained_source_id_sha256": hashlib.sha256(runtime_id.encode()).hexdigest(), "retained_source_name": retired_name, "new_runtime_id_sha256": hashlib.sha256(rollback_id.encode()).hexdigest(), "restore_volume_sha256": hashlib.sha256(restore_volume.encode()).hexdigest(), "historical_key_authenticated": True, "workflows_persisted": True, "credential_count_source_before": 2, "credential_count_restored": 1, "repeat_read_only": True, "backup_v2_job_id": rollback_backup_job, "backup_v2_generation": rollback_backup["generation"], "fixture_cleanup_proven": False}
+        if not args.rollback_only:
+            receipt["stage"] = "managed_n8n_stopped_source_backup"
+            run(["docker", "container", "stop", runtime_id])
+            assert_runtime_running(runtime_id, False)
+            stopped_backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
+            if canonical_key in stopped_backup_raw:
+                raise Failure("backup_output_key_leak")
+            stopped_backup_job, stopped_backup_view = validate_backup_product(
+                read_json_bytes(stopped_backup_raw), job, original_running=False,
+            )
+            if stopped_backup_job == backup_job:
+                raise Failure("stopped_backup_job_reused")
+            stopped_backup_record = observe_exact_job(home, stopped_backup_job, "backup")
+            stopped_backup_record_full = observe_full_job_row(home, stopped_backup_job, "backup")
+            if (stopped_backup_view["source_container_id"] != runtime_id
+                    or stopped_backup_view["volume_name"] != volume):
+                raise Failure("stopped_backup_source_custody_mismatch")
+            stopped_backup_completion = read_backup_completion_receipt(
+                home, stopped_backup_job, stopped_backup_record["manifest_sha256"],
+                stopped_backup_view, job, source_install["manifest_sha256"], runtime_id,
+                volume, original_running=False,
+            )
+            if read_backup_completion_receipt(
+                    home, backup_job, backup_record["manifest_sha256"], backup_view,
+                    job, source_install["manifest_sha256"], runtime_id, volume,
+            ) != backup_completion:
+                raise Failure("historical_backup_receipt_mutation")
+            stopped_archive = home / "n8n-backups" / f"{stopped_backup_job}.tar"
+            stopped_header_count = validate_archive_headers(stopped_archive)
+            if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                    or observe_exact_job(home, job, "install") != source_install
+                    or observe_full_job_row(home, job, "install") != source_install_full
+                    or not observe_exact_job(home, backup_job, "backup") == backup_record):
+                raise Failure("stopped_backup_history_mutation")
+            validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+            assert_runtime_running(runtime_id, False)
+            # Restore the fixture ourselves only after the backup proves that it
+            # preserved its stopped disposition, then retain the existing repair
+            # coverage unchanged.
+            run(["docker", "container", "start", runtime_id])
+            assert_runtime_running(runtime_id, True)
+            if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or canonical_n8n_api_key() != canonical_key):
+                raise Failure("stopped_backup_api_or_workflow_persistence_unproven")
+            receipt["backup_stopped_source"] = {
+                "job_id": stopped_backup_job,
+                "job_row_sha256": stopped_backup_record["row_sha256"],
+                "full_job_row_sha256": stopped_backup_record_full,
+                "job_manifest_sha256": stopped_backup_record["manifest_sha256"],
+                "receipt_sha256": stopped_backup_completion["receipt_sha256"],
+                "receipt_bytes": stopped_backup_completion["receipt_bytes"],
+                "archive_sha256": stopped_backup_completion["archive_sha256"],
+                "archive_bytes": stopped_backup_completion["archive_bytes"],
+                "archive_path_sha256": stopped_backup_completion["archive_path_sha256"],
+                "safe_header_count": stopped_header_count,
+                "source_container_id": runtime_id, "volume": volume,
+                "original_running_state": False, "restored_running_state": False,
+                "fixture_running_state_restored_for_repair": True,
+                "api_preserved_after_manual_restore": True, "workflows_persisted": True,
+            }
+            receipt["stage"] = "healthy_n8n_repair"
+            before_ns = time.time_ns()
+            before = f"{before_ns // 1_000_000_000}.{before_ns % 1_000_000_000:09d}"
+            try:
+                healthy_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+            finally:
+                after_ns = time.time_ns()
+                after = f"{after_ns // 1_000_000_000}.{after_ns % 1_000_000_000:09d}"
+                healthy_events = run(["docker", "events", "--since", before, "--until", after, "--format", "{{json .}}", "--filter", f"label=io.neoth.n8n-job={job}"], timeout=20).decode("utf-8", "strict")
+            if canonical_key in healthy_repair_raw:
+                raise Failure("repair_output_key_leak")
+            healthy_repair_job = validate_repair_product(read_json_bytes(healthy_repair_raw), job, "healthy")
+            healthy_repair_record = observe_exact_job(home, healthy_repair_job, "repair")
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", healthy_repair_job]), healthy_repair_job, args.port)
+            healthy_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+            if healthy_runtime != runtime:
+                raise Failure("healthy_repair_runtime_mutation")
+            healthy_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), healthy_repair_job, healthy_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "healthy", runtime_id, runtime_id, volume, args.port, runtime)
+            validate_repair_generation(home, healthy_generation)
+            validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+            assert_runtime_running(runtime_id, True)
+            assert_no_repair_runtime_effect_events(healthy_events, job)
+            if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_exact_job(home, job, "install") != source_install
+                    or observe_full_job_row(home, job, "install") != source_install_full
+                    or canonical_n8n_api_key() != canonical_key):
+                raise Failure("healthy_repair_authority_or_data_mutation")
+            receipt["repair_healthy"] = {"job_id": healthy_repair_job, "job_row_sha256": healthy_repair_record["row_sha256"], "manifest_sha256": healthy_repair_record["manifest_sha256"], "generation": healthy_generation, "runtime_id": runtime_id, "volume": volume, "no_docker_effect": True, "authenticated": True, "workflows_persisted": True}
+            receipt["stage"] = "stopped_exact_id_n8n_repair"
+            run(["docker", "container", "stop", runtime_id])
+            assert_runtime_running(runtime_id, False)
+            started_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+            if canonical_key in started_repair_raw:
+                raise Failure("repair_output_key_leak")
+            started_repair_job = validate_repair_product(read_json_bytes(started_repair_raw), job, "started")
+            if started_repair_job == healthy_repair_job:
+                raise Failure("stopped_repair_job_reused")
+            started_repair_record = observe_exact_job(home, started_repair_job, "repair")
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", started_repair_job]), started_repair_job, args.port)
+            started_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), started_repair_job, started_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "started", runtime_id, runtime_id, volume, args.port, runtime)
+            if started_generation <= healthy_generation:
+                raise Failure("repair_generation_not_advanced")
+            validate_repair_generation(home, started_generation)
+            validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+            assert_runtime_running(runtime_id, True)
+            if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_exact_job(home, job, "install") != source_install
+                    or observe_full_job_row(home, job, "install") != source_install_full
+                    or canonical_n8n_api_key() != canonical_key):
+                raise Failure("stopped_repair_authority_or_data_mutation")
+            receipt["repair_started"] = {"job_id": started_repair_job, "job_row_sha256": started_repair_record["row_sha256"], "manifest_sha256": started_repair_record["manifest_sha256"], "generation": started_generation, "runtime_id": runtime_id, "volume": volume, "exact_stopped_id_restarted": True, "authenticated": True, "workflows_persisted": True}
+            receipt["stage"] = "missing_exact_id_n8n_repair"
+            old_runtime_id = runtime_id
+            run(["docker", "rm", "-f", old_runtime_id])
+            if not exact_absent("container", old_runtime_id):
+                raise Failure("recreate_source_runtime_absence_unproven")
+            recreated_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+            if canonical_key in recreated_repair_raw:
+                raise Failure("repair_output_key_leak")
+            recreated_repair_job = validate_repair_product(read_json_bytes(recreated_repair_raw), job, "recreated")
+            if recreated_repair_job in {healthy_repair_job, started_repair_job}:
+                raise Failure("recreated_repair_job_reused")
+            recreated_repair_record = observe_exact_job(home, recreated_repair_job, "repair")
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", recreated_repair_job]), recreated_repair_job, args.port)
+            repaired_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+            runtime_id = required(repaired_runtime, "container_id", str)
+            recreated_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), recreated_repair_job, recreated_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "recreated", old_runtime_id, runtime_id, volume, args.port, runtime)
+            if recreated_generation <= started_generation:
+                raise Failure("repair_generation_not_advanced")
+            validate_repair_generation(home, recreated_generation)
+            validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+            assert_runtime_running(runtime_id, True)
+            if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                    or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                    or observe_exact_job(home, job, "install") != source_install
+                    or observe_full_job_row(home, job, "install") != source_install_full
+                    or canonical_n8n_api_key() != canonical_key):
+                raise Failure("recreated_repair_authority_or_data_mutation")
+            receipt["repair_recreated"] = {"job_id": recreated_repair_job, "job_row_sha256": recreated_repair_record["row_sha256"], "manifest_sha256": recreated_repair_record["manifest_sha256"], "generation": recreated_generation, "old_runtime_id": old_runtime_id, "runtime_id": runtime_id, "reused_volume": volume, "authenticated": True, "workflows_persisted": True, "source_api_key_authority_preserved": True}
+            receipt["stage"] = "first_product_uninstall"
+            first_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            if canonical_key in first_uninstall_raw:
+                raise Failure("uninstall_output_key_leak")
+            uninstall_job = validate_uninstall_product(read_json_bytes(first_uninstall_raw), job)
+            uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
+            uninstall_record_full = observe_full_job_row(home, uninstall_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
+            if not exact_absent("container", runtime_id):
+                raise Failure("uninstall_runtime_absence_unproven")
+            uninstall_runtime_absent = True
+            retained_volume = docker_inspect(volume)
+            validate_retained_volume(retained_volume, job, volume)
+            if canonical_n8n_api_key() != canonical_key:
+                raise Failure("canonical_n8n_key_changed")
+            sidecar_absent(home, "n8n-managed-runtime.v2.json")
+            sidecar_absent(home, "n8n-managed-uninstall.v1.json")
+            completion = read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port)
+            receipt["stage"] = "repeat_product_uninstall"
+            repeat_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            if canonical_key in repeat_uninstall_raw:
+                raise Failure("uninstall_output_key_leak")
+            if repeat_uninstall_raw != first_uninstall_raw or validate_uninstall_product(read_json_bytes(repeat_uninstall_raw), job) != uninstall_job:
+                raise Failure("uninstall_repeat_changed")
+            repeat_uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
+            if repeat_uninstall_record != uninstall_record or observe_exact_job(home, job, "install") != source_install or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
+                raise Failure("uninstall_repeat_job_mutation")
+            if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
+                raise Failure("uninstall_repeat_receipt_mutation")
+            if not exact_absent("container", runtime_id):
+                raise Failure("uninstall_repeat_runtime_absence_unproven")
+            retained_volume_repeat = docker_inspect(volume)
+            validate_retained_volume(retained_volume_repeat, job, volume)
+            if canonical_n8n_api_key() != canonical_key:
+                raise Failure("canonical_n8n_key_changed")
+            if json_sha256(retained_volume_repeat) != json_sha256(retained_volume):
+                raise Failure("uninstall_repeat_volume_mutation")
+            sidecar_absent(home, "n8n-managed-runtime.v2.json")
+            sidecar_absent(home, "n8n-managed-uninstall.v1.json")
+            uninstall_runtime_absent = True
+            receipt["uninstall"] = {"job_id": uninstall_job, "job_row_sha256": uninstall_record["row_sha256"], "full_job_row_sha256": uninstall_record_full, "job_manifest_sha256": uninstall_record["manifest_sha256"], "completion_receipt_sha256": completion["sha256"], "completion_receipt_bytes": completion["bytes"], "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "data_volume_policy": "retain", "runtime_absent": True, "volume_retained": True, "canonical_api_key_preserved": True, "repeat_read_only": True, "active_sidecars_removed": True}
+            receipt["stage"] = "retained_volume_reinstall"
+            reinstall_payload = canonical_key + b"\n"
+            reinstall_raw = run_with_payload([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_job, "--api-key-stdin"], reinstall_payload)
+            if canonical_key in reinstall_raw:
+                raise Failure("reinstall_output_key_leak")
+            reinstall_job = validate_reinstall_product(read_json_bytes(reinstall_raw), job, uninstall_job)
+            reinstall_record = observe_exact_job(home, reinstall_job, "install")
+            reinstall_record_full = observe_full_job_row(home, reinstall_job, "install")
+            validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_job]), reinstall_job, args.port)
+            reinstall_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+            reinstall_runtime_id = validate_reinstalled_custody(reinstall_runtime, reinstall_job, reinstall_record["manifest_sha256"], volume, runtime_id, args.port)
+            validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
+            if read_json(home / "n8n-managed-bootstrap.v2.json") != boot:
+                raise Failure("reinstall_bootstrap_custody_changed")
+            if canonical_n8n_api_key() != canonical_key:
+                raise Failure("reinstall_canonical_n8n_key_changed")
+            reinstall_workflows = observe_imported_workflows(args.port, canonical_key, templates)
+            if reinstall_workflows != first_workflows:
+                raise Failure("reinstall_workflow_persistence_unproven")
+            if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
+                raise Failure("reinstall_history_mutation")
+            if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
+                raise Failure("reinstall_original_receipt_mutation")
+            receipt["stage"] = "repeat_retained_volume_reinstall"
+            reinstall_repeat = assert_reinstall_repeat_rejected(binary, uninstall_job, reinstall_payload)
+            if observe_exact_job(home, reinstall_job, "install") != reinstall_record or observe_full_job_row(home, reinstall_job, "install") != reinstall_record_full or read_json(home / "n8n-managed-runtime.v2.json") != reinstall_runtime:
+                raise Failure("reinstall_repeat_mutation")
+            validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
+            if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
+                raise Failure("reinstall_repeat_history_mutation")
+            receipt["stage"] = "reinstall_product_uninstall"
+            reinstall_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+            if canonical_key in reinstall_uninstall_raw:
+                raise Failure("reinstall_uninstall_output_key_leak")
+            reinstall_uninstall_job = validate_uninstall_product(read_json_bytes(reinstall_uninstall_raw), reinstall_job)
+            reinstall_uninstall_record = observe_exact_job(home, reinstall_uninstall_job, "uninstall")
+            reinstall_uninstall_record_full = observe_full_job_row(home, reinstall_uninstall_job, "uninstall")
+            validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_uninstall_job]), reinstall_uninstall_job)
+            if not exact_absent("container", reinstall_runtime_id):
+                raise Failure("reinstall_uninstall_runtime_absence_unproven")
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if canonical_n8n_api_key() != canonical_key:
+                raise Failure("reinstall_uninstall_canonical_n8n_key_changed")
+            sidecar_absent(home, "n8n-managed-runtime.v2.json")
+            sidecar_absent(home, "n8n-managed-uninstall.v1.json")
+            reinstall_completion = read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"])
+            if read_json(home / "n8n-managed-bootstrap.v2.json") != boot or observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record:
+                raise Failure("reinstall_final_history_mutation")
+            receipt["reinstall"] = {"job_id": reinstall_job, "job_row_sha256": reinstall_record["row_sha256"], "full_job_row_sha256": reinstall_record_full, "runtime_id": reinstall_runtime_id, "reused_volume": volume, "workflows_persisted": True, "canonical_api_key_preserved": True, "repeat": reinstall_repeat, "final_uninstall_job_id": reinstall_uninstall_job, "final_uninstall_row_sha256": reinstall_uninstall_record["row_sha256"], "final_uninstall_full_row_sha256": reinstall_uninstall_record_full, "final_completion_receipt_sha256": reinstall_completion["sha256"], "final_completion_receipt_bytes": reinstall_completion["bytes"], "final_runtime_absent": True, "volume_retained": True}
+            receipt["stage"] = "confirmed_retained_volume_purge"
+            plan_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job])
+            phrase = validate_purge_plan(read_json_bytes(plan_raw), reinstall_uninstall_job, volume)
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            source_before = observe_full_job_row(home, job, "install"); uninstall_before = observe_full_job_row(home, uninstall_job, "uninstall"); import_before = observe_full_job_row(home, import_job, "import"); final_before = observe_full_job_row(home, reinstall_uninstall_job, "uninstall"); all_jobs_before = observe_all_job_rows(home); original_receipts_before = (completion, reinstall_completion, first_custody); purge_receipts_before = purge_artifacts_absent(home)
+            wrong = bounded.run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase + " wrong"], timeout=180)
+            if wrong.code == 0 or wrong.timed_out or wrong.overflow or b"n8n_purge_confirmation_mismatch" not in wrong.stderr: raise Failure("purge_wrong_confirmation_unproven")
+            validate_retained_volume(docker_inspect(volume), job, volume)
+            if purge_artifacts_absent(home) != purge_receipts_before or observe_all_job_rows(home) != all_jobs_before or (read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port), read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"]), observe_workflow_custody(home, import_job, first_workflows["entries"])) != original_receipts_before: raise Failure("purge_wrong_confirmation_mutated_history")
+            purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
+            purge_job = validate_purge_product(read_json_bytes(purge_raw), reinstall_uninstall_job); purge_record = observe_exact_job(home, purge_job, "purge"); purge_full = observe_full_job_row(home, purge_job, "purge")
+            if not exact_absent("volume", volume) or canonical_n8n_api_key() != canonical_key: raise Failure("purge_effect_unproven")
+            purge_completion = read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume)
+            repeat_purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
+            if repeat_purge_raw != purge_raw or validate_purge_product(read_json_bytes(repeat_purge_raw), reinstall_uninstall_job) != purge_job or observe_exact_job(home, purge_job, "purge") != purge_record or observe_full_job_row(home, purge_job, "purge") != purge_full or read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume) != purge_completion: raise Failure("purge_repeat_mutation")
+            if (observe_full_job_row(home, job, "install"), observe_full_job_row(home, uninstall_job, "uninstall"), observe_full_job_row(home, import_job, "import"), observe_full_job_row(home, reinstall_uninstall_job, "uninstall")) != (source_before, uninstall_before, import_before, final_before): raise Failure("purge_history_mutation")
+            volume_purged = True; receipt["purge"] = {"source_uninstall_job_sha256": hashlib.sha256(reinstall_uninstall_job.encode()).hexdigest(), "purge_job_sha256": hashlib.sha256(purge_job.encode()).hexdigest(), "target_sha256": hashlib.sha256(phrase.encode()).hexdigest(), "job_row_sha256": purge_record["row_sha256"], "receipt_sha256": purge_completion["sha256"], "receipt_bytes": purge_completion["bytes"], "volume_absent": True, "canonical_api_key_preserved": True, "repeat_read_only": True}
         receipt.update({"manifest_sha256": boot["manifest_sha256"], "volume": volume, "bootstrap_id": bootstrap_id, "runtime_id": runtime_id, "status_ready": True, "reused_same_job": True, "no_rebootstrap_events": True})
         receipt["outcome"] = "passed"
     except Exception as error:
@@ -1498,13 +1697,20 @@ def main() -> int:
                 except Exception:
                     receipt[name] = {"exists": True, "phase": "unreadable"}
     finally:
-        # A failed product command can leave partial custody. Preserve it and
-        # report it unproven if the complete exact identities were not read.
+        # A failed Rollback command can leave a partially-created fixture.  The
+        # dispatcher consumes only progressively validated exact identities.
+        if rollback_fixture_started:
+            rollback_cleanup_proven = cleanup_rollback_fixture(
+                rollback_old_custody, rollback_new_custody, rollback_restore_custody, args.port,
+            )
+            receipt["rollback_fixture_cleanup_proven"] = rollback_cleanup_proven
+            if isinstance(receipt.get("rollback"), dict):
+                receipt["rollback"]["fixture_cleanup_proven"] = rollback_cleanup_proven
         restore_cleanup = cleanup_restore_targets(restore_cleanup_targets, volume)
         receipt["restore_cleanup_proven"] = restore_cleanup
         receipt["restore_cleanup_count"] = len(restore_cleanup_targets)
-        cleanup = False
-        if restore_cleanup and runtime_id and volume and job:
+        cleanup = restore_cleanup and rollback_cleanup_proven if rollback_fixture_started else False
+        if not rollback_fixture_started and restore_cleanup and runtime_id and volume and job:
             cleanup = cleanup_owned_runtime_and_volume(runtime_id, volume, job, args.port, uninstall_runtime_absent, volume_purged)
         receipt["docker_cleanup_proven"] = cleanup
         if not cleanup: receipt["outcome"] = "failed"

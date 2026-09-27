@@ -1,0 +1,37 @@
+{
+  "schema": "neoth-rollback-product-source-admission/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T08:30:20.8870670Z",
+  "base": "49646b1c575140a88568962a721aee51d590b430",
+  "reviewedBlobs": {
+    "packaging/tests/test_n8n_product_bootstrap_canary.py": "af2fc32d3429c96ba62a7300ebade33f2a26af37",
+    "packaging/n8n_product_bootstrap_canary.py": "d7a867df2d080ab79fe82c9c1ec92dc666159e5a",
+    ".github/workflows/n8n-product-bootstrap.yml": "90210f1bc9e37e614af32994cda2532ff014dabd"
+  },
+  "reviewReportSha256": "F0F921C1D3C0F501E166D104BA8A176D068CC54B4DA9B08B57C278565DF4FC11",
+  "productMode": "rollback_only=true",
+  "assertions": [
+    "Original bootstrap runtime transitions onto an independently verified Restore volume.",
+    "Actual source credential count2 becomes historical snapshot count1; workflows persist.",
+    "Supplied historical key authenticates; no nonexistent Rollback bootstrap-key lookup.",
+    "Exact old ID/retired name and new ID/Restore volume are receipt-bound before further observations.",
+    "Repeat Rollback preserves receipt/job identity; subsequent Backup v2 binds Rollback source.",
+    "Finally cleanup uses witnessed exact identities, attempts independent resources after failures."
+  ],
+  "baselineMode": "Default lifecycle scenario retained, skipped tail only for explicit rollback scenario.",
+  "coreCorrection": {
+    "failedRun": 36305661335,
+    "producer": "49646b1c575140a88568962a721aee51d590b430",
+    "slimProductionClippy": "passed",
+    "typecheck": "failed: three E0560 Receipt-only fields in BackupCustody test literal",
+    "repair": "Removed those three fields; valid receipt fields preserved.",
+    "logSha256": "ACBD262A71DA319776363E080D9F751A255C0615683E3CF424999B0C4B33562B"
+  },
+  "limits": [
+    "Source review is not actual product proof; hosted helper tests and compiled product run remain required.",
+    "Current downstream Restore-volume reinstall/purge changes are unpublished and excluded.",
+    "No local executable validation or roadmap closure."
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

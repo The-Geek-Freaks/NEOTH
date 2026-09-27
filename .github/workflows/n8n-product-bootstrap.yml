@@ -2,6 +2,11 @@ name: W1018 compiled product n8n bootstrap and workflow-import canary
 
 on:
   workflow_dispatch:
+    inputs:
+      rollback_only:
+        description: 'Verify live Rollback after credential Restore in an isolated fixture'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ jobs:
         shell: bash
         env:
           PYTHONDONTWRITEBYTECODE: '1'
+          ROLLBACK_ONLY: ${{ inputs.rollback_only && 'true' || 'false' }}
         run: |
           set -euo pipefail
           canary_root="$RUNNER_TEMP/w1018-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -85,7 +91,11 @@ jobs:
             test "$(timeout 15s secret-tool lookup service neoth-w1018 key preflight 2>/dev/null)" = "$dummy"
             timeout 15s secret-tool clear service neoth-w1018 key preflight 2>/dev/null
             unset dummy keyring_env
-            exec python3 packaging/n8n_product_bootstrap_canary.py --binary SRC/target/debug/neoth --home "$NEOTH_HOME" --port 5681 --receipt "$W1018_ROOT/receipt/receipt.json"
+            scenario_args=()
+            if [[ "$ROLLBACK_ONLY" == "true" ]]; then
+              scenario_args+=(--rollback-only)
+            fi
+            exec python3 packaging/n8n_product_bootstrap_canary.py --binary SRC/target/debug/neoth --home "$NEOTH_HOME" --port 5681 --receipt "$W1018_ROOT/receipt/receipt.json" "${scenario_args[@]}"
           '
       - name: Upload redacted product receipt
         if: always()

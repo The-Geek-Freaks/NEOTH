@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1558-W1559 Rollback product mode and test-typecheck fix (2026-09-27):**
+Core36305661335 at49646b1c passed slim production Clippy, then rejected three
+Receipt-only fields incorrectly placed in one BackupCustody test literal.
+Removed exactly those fields; the valid BackupReceiptView provenance remains.
+The independently reviewed product canary now has rollback_only=true: use
+the existing bootstrap runtime at Ready Restore, create a second credential,
+then verify actual historical2-to1 restoration,13 workflows, explicit-key API
+authentication, exact old/new IDs, read-only repeat and subsequent Backup v2.
+Receipt identities enter cleanup custody before later observations can fail.
+The baseline lifecycle mode remains available; neither scenario is conflated
+with the other. Core and actual Rollback product gates required on this source;
+Group1922/Windows687 still await generated CLI reference. Downstream repeated
+reinstall/Purge source remains unpublished under review. No ROAD closure or
+local runtime. Evidence: docs/verification/gold-wave1559-rollback-product-source.json.
+
 **W1555 Rollback Core compile correction (2026-09-27):**
 Core36305113248 ate14c4813 found four E0308 compensation probe arguments and
 one E0283 retired-name JobId conversion. Corrected only the endpoint field

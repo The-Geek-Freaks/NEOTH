@@ -137,6 +137,145 @@ class ProductRestoreReceiptTests(unittest.TestCase):
         )
 
 
+class RollbackReceiptTests(unittest.TestCase):
+    restore_job = "abcdef12-1234-7234-8234-123456789abc"
+    rollback_job = "fedcba98-1234-7234-8234-123456789abc"
+    old_id = "d" * 64
+    old_volume = "neoth_n8n_" + "b" * 32
+
+    def restore(self) -> dict:
+        return {
+            "restore_job_id": self.restore_job, "restore_manifest_sha256": "a" * 64,
+            "backup_job_id": "12345678-1234-7234-8234-123456789abc",
+            "backup_manifest_sha256": "c" * 64,
+            "restore_volume": canary.restore_volume_name(self.restore_job),
+        }
+
+    def output(self) -> dict:
+        receipt = {
+            "schema_version": 1, "rollback_job_id": self.rollback_job,
+            "rollback_manifest_sha256": "e" * 64, "restore_job_id": self.restore_job,
+            "restore_manifest_sha256": "a" * 64,
+            "backup_job_id": "12345678-1234-7234-8234-123456789abc",
+            "backup_manifest_sha256": "c" * 64, "new_container_id": "f" * 64,
+            "source_pinned_image": canary.IMAGE, "host_port": 5681,
+            "restore_volume": canary.restore_volume_name(self.restore_job),
+            "retained_source_container_id": self.old_id,
+            "retained_source_name": "neoth-n8n-retired-" + self.rollback_job.replace("-", ""),
+            "evidence_sha256": "0" * 64,
+        }
+        return {"job_id": self.rollback_job, "state": "ready", "operation": "rollback",
+                "restore_job_id": self.restore_job, "receipt": receipt, "failure_code": None}
+
+    @staticmethod
+    def runtime_row(identifier: str, job: str, volume: str, running: bool) -> dict:
+        ports = {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5681"}]}
+        return {
+            "Id": identifier, "Name": "/neoth-n8n",
+            "Config": {"Image": canary.IMAGE, "Labels": {
+                "io.neoth.managed": "n8n", "io.neoth.n8n-job": job,
+            }},
+            "State": {"Running": running}, "HostConfig": {"PortBindings": ports},
+            "NetworkSettings": {"Ports": ports if running else {"5678/tcp": None}},
+            "Mounts": [{"Type": "volume", "Name": volume, "Destination": "/home/node/.n8n"}],
+        }
+
+    def test_rollback_receipt_requires_retained_exact_old_identity(self) -> None:
+        value = self.output()
+        self.assertEqual(
+            canary.validate_rollback_product(value, self.restore_job, self.restore(), self.old_id, self.old_volume)[0],
+            self.rollback_job,
+        )
+        value["receipt"]["retained_source_container_id"] = "a" * 64
+        with self.assertRaisesRegex(canary.Failure, "rollback_not_ready"):
+            canary.validate_rollback_product(value, self.restore_job, self.restore(), self.old_id, self.old_volume)
+
+    def test_rollback_backup_requires_v2_source_lineage(self) -> None:
+        backup_job = "01234567-1234-7234-8234-123456789abc"
+        runtime = "e" * 64
+        volume = canary.restore_volume_name(self.restore_job)
+        receipt = {
+            "schema_version": 2, "backup_job_id": backup_job,
+            "backup_manifest_sha256": "a" * 64, "source_install_job_id": self.rollback_job,
+            "source_job_id": self.rollback_job, "source_manifest_sha256": "b" * 64,
+            "source_operation": "rollback", "source_pinned_image": canary.IMAGE,
+            "source_container_id": runtime, "volume_name": volume, "generation": 4,
+            "archive_sha256": "c" * 64, "archive_bytes": 1,
+            "original_running_state": True, "restored_running_state": True,
+        }
+        value = {"job_id": backup_job, "state": "ready", "operation": "backup", "receipt": receipt, "failure_code": None}
+        self.assertEqual(
+            canary.validate_rollback_backup_v2(value, self.rollback_job, "b" * 64, runtime, volume)[0], backup_job
+        )
+        receipt["source_operation"] = "install"
+        with self.assertRaisesRegex(canary.Failure, "backup_not_ready"):
+            canary.validate_rollback_backup_v2(value, self.rollback_job, "b" * 64, runtime, volume)
+
+    def test_partial_cleanup_never_targets_an_unwitnessed_new_runtime_by_name(self) -> None:
+        old = (self.old_id, "neoth-n8n", self.rollback_job, self.old_volume)
+        old_row = self.runtime_row(self.old_id, self.rollback_job, self.old_volume, True)
+        old_volume = {"Name": self.old_volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.rollback_job, "io.neoth.n8n-bootstrap": "v2"}}
+        with patch.object(canary, "docker_inspect", side_effect=[old_row, old_volume]), patch.object(
+            canary, "exact_absent", side_effect=[True, True]
+        ), patch.object(canary, "run") as command:
+            self.assertFalse(canary.cleanup_rollback_fixture(old, None, None, 5681))
+        self.assertEqual([call.args[0] for call in command.call_args_list], [
+            ["docker", "rm", "-f", self.old_id], ["docker", "volume", "rm", self.old_volume],
+        ])
+        self.assertNotIn("neoth-n8n", " ".join(map(str, command.call_args_list)))
+
+    def test_cleanup_attempts_later_witnessed_targets_after_old_removal_fails(self) -> None:
+        old = (self.old_id, "neoth-n8n-retired-" + self.rollback_job.replace("-", ""), self.rollback_job, self.old_volume)
+        new_id, restore_volume = "f" * 64, canary.restore_volume_name(self.restore_job)
+        old_row = self.runtime_row(self.old_id, self.rollback_job, self.old_volume, False)
+        old_row["Name"] = f"/{old[1]}"
+        new_row = self.runtime_row(new_id, self.rollback_job, restore_volume, True)
+        restore_row = {"Name": restore_volume, "Labels": {
+            "io.neoth.managed": "n8n", "io.neoth.n8n-restore": self.restore_job,
+            "io.neoth.n8n-restore-schema": "1",
+        }}
+        def remove(argv: list[str]) -> None:
+            if argv == ["docker", "rm", "-f", self.old_id]:
+                raise canary.Failure("old_remove_failed")
+        with patch.object(canary, "docker_inspect", side_effect=[old_row, new_row, restore_row]), patch.object(
+            canary, "exact_absent", side_effect=[True, True]
+        ), patch.object(canary, "run", side_effect=remove) as command:
+            self.assertFalse(canary.cleanup_rollback_fixture(old, (new_id, self.rollback_job, restore_volume), (self.restore_job, restore_volume), 5681))
+        self.assertEqual([call.args[0] for call in command.call_args_list], [
+            ["docker", "rm", "-f", self.old_id], ["docker", "rm", "-f", new_id],
+            ["docker", "volume", "rm", restore_volume],
+        ])
+
+    def test_ready_receipt_transfers_cleanup_before_a_later_observation_failure(self) -> None:
+        restore_volume = canary.restore_volume_name(self.restore_job)
+        candidate = "c" * 64
+        targets = [(self.restore_job, candidate, restore_volume)]
+        old, new, restore = canary.capture_rollback_cleanup_custody(
+            self.output()["receipt"], self.old_id, self.rollback_job, self.old_volume,
+            self.restore_job, targets[0], targets,
+        )
+        self.assertEqual(targets, [])
+        old_row = self.runtime_row(self.old_id, self.rollback_job, self.old_volume, False)
+        old_row["Name"] = f"/{old[1]}"
+        new_row = self.runtime_row(new[0], self.rollback_job, restore_volume, True)
+        old_volume = {"Name": self.old_volume, "Labels": {
+            "io.neoth.managed": "n8n", "io.neoth.n8n-job": self.rollback_job,
+            "io.neoth.n8n-bootstrap": "v2",
+        }}
+        restore_row = {"Name": restore_volume, "Labels": {
+            "io.neoth.managed": "n8n", "io.neoth.n8n-restore": self.restore_job,
+            "io.neoth.n8n-restore-schema": "1",
+        }}
+        with patch.object(canary, "docker_inspect", side_effect=[old_row, old_volume, new_row, restore_row]), patch.object(
+            canary, "exact_absent", side_effect=[True, True, True, True]
+        ), patch.object(canary, "run") as command:
+            self.assertTrue(canary.cleanup_rollback_fixture(old, new, restore, 5681))
+        self.assertEqual([call.args[0] for call in command.call_args_list], [
+            ["docker", "rm", "-f", self.old_id], ["docker", "volume", "rm", self.old_volume],
+            ["docker", "rm", "-f", new[0]], ["docker", "volume", "rm", restore_volume],
+        ])
+
+
 class RestoreCredentialKeyTests(unittest.TestCase):
     job = "12345678-1234-7234-8234-123456789abc"
     runtime = "a" * 64
