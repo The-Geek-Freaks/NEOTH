@@ -1,0 +1,23 @@
+{
+  "schema": "neoth-n8n-update-target-evidence-source/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "candidateVersion": "2.40.7",
+  "canonicalSubject": "oci://ghcr.io/n8n-io/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+  "sourceCommit": "09b3ce6f9889c889e13cf3747f6f6c68eebdeeb6",
+  "sourceRef": "refs/heads/release/2.40.7",
+  "reviewSha256": "DB4C2401E9A98214BABC8B76ECCBBCEC71A4C2368B64E301D1C40F9B623EFE05",
+  "reviewedBlobs": {
+    ".github/workflows/n8n-update-target-evidence.yml": "f094bf1983c1553c8f30fe5fe2384ac10b32a48e",
+    "packaging/n8n_update_target_evidence.py": "9d6f722031d95b35cb742ddae064d9159b652257",
+    "packaging/tests/test_n8n_update_target_evidence.py": "80341187fe3d834f95cec4e6d48265ca52d993c8"
+  },
+  "scope": "Fixed signed subject, versioned GitHub release/source and immutable cross-registry index bytes/platform metadata",
+  "excludedClaims": [
+    "Mutable registry tag resolution",
+    "Docker pull/platform runtime identity",
+    "Isolated-volume migration or authenticated update",
+    "Installer pin change or admitted Update capability"
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1577/W1580 Next Update target evidence gate source reviewed (2026-09-27):**
+Discovery identifies final n8n2.40.7 as a candidate after2.40.5; newer2.41.3 is
+prerelease and excluded. A separate fixed-target hosted verifier now checks
+standard GitHub/Sigstore signed subject, exact versioned release/ref/commit,
+and immutable GHCR/Docker Hub index bytes/digest/platform descriptors.
+Independent review required binding and running the stdlib regression suite;
+that is now enforced with producer/test/workflow hashes and failure receipts.
+This batch changes no installed pin or runtime. Mutable registry tags, image
+pull/runtime identity, isolated-volume migration and Update admission remain
+outside this metadata gate and still need proof. No ROAD closure or local
+runtime; only bounded public metadata/source work. Hosted execution pending.
+Evidence: docs/verification/gold-wave1580-update-target-evidence-source.json
+ and docs/n8n-update-target-evidence.md.
 **W1582 Compensated reentry observation regression corrected (2026-09-27):**
 One old native failure counted the three required exact/name/readiness reads
 as repeated effects (27 versus30 calls). Source review confirms no repeated

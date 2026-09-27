@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T09:45:48.8409377Z",
-  "validationStatus": "SOURCE_REVIEWED_REPEAT_REPAIR_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T09:53:07.8989120Z",
+  "validationStatus": "SOURCE_REVIEWED_TARGET_METADATA_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -75,6 +75,11 @@
       "path": ".github/workflows/n8n-product-bootstrap.yml",
       "bytes": 5153,
       "sha256": "C58D37FC7C6ABB57F42198F3504367E97002E2BD7E05528B148EED4189C1AFA3"
+    },
+    {
+      "path": ".github/workflows/n8n-update-target-evidence.yml",
+      "bytes": 4837,
+      "sha256": "3F24519A038A84C45ADF8929F6471A3098BAD40E0A02C7F3FE7F5467D8DEA920"
     },
     {
       "path": ".github/workflows/n8n-upstream-provenance.yml",
@@ -1292,6 +1297,11 @@
       "sha256": "323751917AAF157184DD25CE4FC505A8241D60BCC3987EB6C07BFCAF5364D3E1"
     },
     {
+      "path": "docs/n8n-update-target-evidence.md",
+      "bytes": 1721,
+      "sha256": "6B8240602485044BEEEEB3C06B904F08601063DF67E828C51894B702E6008053"
+    },
+    {
       "path": "docs/n8n-weekly-obsidian-sync.md",
       "bytes": 3836,
       "sha256": "EFE94D158693FD0CBB5BAE88E3CA4FD36248451A04047899140C26F7CAF59CA0"
@@ -2297,6 +2307,11 @@
       "sha256": "DA2D91331F0DB3AB1597B479C4E5FEFBE394B0662AB5032040D466209650CF23"
     },
     {
+      "path": "docs/verification/gold-wave1580-update-target-evidence-source.json",
+      "bytes": 1191,
+      "sha256": "2BBD36DC88F85DD206B0CCCC5BB6725065AE0AF00A5CBC4357298491AE061EF4"
+    },
+    {
       "path": "docs/verification/gold-wave1582-compensation-reentry-regression.json",
       "bytes": 1005,
       "sha256": "2FBF0A3CE44CFF611947F36BFB7EEFF09231F36971311075D993A8FDEB55DC77"
@@ -3167,6 +3182,11 @@
       "sha256": "F4DAADCF06541F980C713E9D9FB6BEA58AF318FF8FBEA44D616CB3F007F3C3A9"
     },
     {
+      "path": "packaging/n8n_update_target_evidence.py",
+      "bytes": 11125,
+      "sha256": "9843EFA4D8F0DAD881C07F8B74A5218BFB6B66AA58E169753503DB8EC5387066"
+    },
+    {
       "path": "packaging/paperless_product_canary.py",
       "bytes": 67042,
       "sha256": "5ABC30CFB144CF67A6EDB6CFC8C3AC9110DFD7C93E5D4EB2C2D68728C756473F"
@@ -3205,6 +3225,11 @@
       "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
       "bytes": 77744,
       "sha256": "C05524946E2F368C8100E4D0ACFB70D9056C5201D91390C3C74756D212977506"
+    },
+    {
+      "path": "packaging/tests/test_n8n_update_target_evidence.py",
+      "bytes": 2511,
+      "sha256": "841B13A0D10033010983AAD6724AD2EA8A18EEE819E44A3BE075F421B1399B3B"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3263,18 +3288,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 434589,
-      "sha256": "729652160BE67BE1CF632AAE52CFE2C2B154ACB28A20DF5CF8BF2DA80511F4C8"
+      "bytes": 435550,
+      "sha256": "098F9D501257858BBC51AA027E49DD5C0E298CFAB825AD44F2FAD89C0CA2E148"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1453520,
-      "sha256": "8AF1C8F74024C684579CF86F625111771D15DD024BBEA9B867E69E1E6083A881"
+      "bytes": 1454481,
+      "sha256": "D6826BF7B85BF15CCA4C98DFEEE620D901AC21460FFD197792212A3152D54021"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2064043,
-      "sha256": "2F917F676C06E80E02F2A36C9DA14F50784C5C113449111AD9EDBFFFB3545D0D"
+      "bytes": 2065004,
+      "sha256": "676D45A4F67594E6C52F9F5B500B15C24C465FC5D2CEFE8879879067482E1816"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

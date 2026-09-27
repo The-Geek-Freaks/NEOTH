@@ -1,0 +1,85 @@
+name: W1580 n8n update target metadata evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n8n-update-target-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Capture fixed target public evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          readonly receipt_dir="$RUNNER_TEMP/n8n-update-target-evidence"
+          readonly source_file='SRC/neothd/src/installers/n8n.rs'
+          readonly verifier='packaging/n8n_update_target_evidence.py'
+          readonly test_file='packaging/tests/test_n8n_update_target_evidence.py'
+          readonly workflow='.github/workflows/n8n-update-target-evidence.yml'
+          readonly subject='oci://ghcr.io/n8n-io/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34'
+          mkdir -p "$receipt_dir"
+          set +e
+          git rev-parse HEAD > "$receipt_dir/producer-head.txt" 2>&1; producer_head_exit=$?
+          sha256sum "$source_file" > "$receipt_dir/source-file.sha256" 2>&1; source_hash_exit=$?
+          sha256sum "$verifier" > "$receipt_dir/verifier.sha256" 2>&1; verifier_hash_exit=$?
+          sha256sum "$test_file" > "$receipt_dir/test-file.sha256" 2>&1; test_hash_exit=$?
+          sha256sum "$workflow" > "$receipt_dir/workflow.sha256" 2>&1; workflow_hash_exit=$?
+          python3 -m unittest discover -s packaging/tests -p 'test_n8n_update_target_evidence.py' > "$receipt_dir/regression-tests.stdout" 2> "$receipt_dir/regression-tests.stderr"; regression_exit=$?
+          gh --version > "$receipt_dir/gh-version.txt" 2>&1; gh_version_exit=$?
+          gh attestation verify "$subject" --repo n8n-io/n8n --signer-workflow n8n-io/n8n/.github/workflows/docker-build-push.yml --source-ref refs/heads/release/2.40.7 --source-digest 09b3ce6f9889c889e13cf3747f6f6c68eebdeeb6 --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners --format json > "$receipt_dir/github-attestation.json" 2> "$receipt_dir/github-attestation.stderr"; attestation_exit=$?
+          python3 "$verifier" --receipt-dir "$receipt_dir" > "$receipt_dir/registry-release.stdout" 2> "$receipt_dir/registry-release.stderr"; registry_release_exit=$?
+          set -e
+          printf 'producer_head_exit=%s\nsource_hash_exit=%s\nverifier_hash_exit=%s\ntest_hash_exit=%s\nworkflow_hash_exit=%s\nregression_exit=%s\ngh_version_exit=%s\nattestation_exit=%s\nregistry_release_exit=%s\n' "$producer_head_exit" "$source_hash_exit" "$verifier_hash_exit" "$test_hash_exit" "$workflow_hash_exit" "$regression_exit" "$gh_version_exit" "$attestation_exit" "$registry_release_exit" > "$receipt_dir/capture-result.txt"
+
+      - name: Finalize evidence receipt
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          readonly receipt_dir="$RUNNER_TEMP/n8n-update-target-evidence"
+          mkdir -p "$receipt_dir"
+          set +e
+          ( cd "$receipt_dir" && find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'receipt-finalization*' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum --check SHA256SUMS ) > "$receipt_dir/receipt-finalization.stdout" 2> "$receipt_dir/receipt-finalization.stderr"
+          status=$?
+          set -e
+          printf 'exit_code=%s\n' "$status" > "$receipt_dir/receipt-finalization-result.txt"
+
+      - name: Enforce recorded gate outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly receipt_dir="$RUNNER_TEMP/n8n-update-target-evidence"
+          test -f "$receipt_dir/capture-result.txt"
+          test -f "$receipt_dir/receipt-finalization-result.txt"
+          test "$(sed -n 's/^exit_code=//p' "$receipt_dir/receipt-finalization-result.txt")" = 0
+          for name in producer_head_exit source_hash_exit verifier_hash_exit test_hash_exit workflow_hash_exit regression_exit gh_version_exit attestation_exit registry_release_exit; do
+            value="$(sed -n "s/^${name}=//p" "$receipt_dir/capture-result.txt")"
+            test "$value" = 0 || { echo "failed evidence gate: $name" >&2; exit 1; }
+          done
+
+      - name: Upload public evidence receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: n8n-update-target-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/n8n-update-target-evidence
+          if-no-files-found: warn
+          retention-days: 14
