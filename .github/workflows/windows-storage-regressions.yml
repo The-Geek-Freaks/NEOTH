@@ -70,6 +70,18 @@ jobs:
           test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
 
           cat > "$evidence/selection.tsv" <<'EOF'
+          cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection	neothd/src/cli/init/first_install_identity.rs
+          cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key	neothd/src/cli/init/first_install_identity.rs
           daemon::audit_rpc::tests::token_replaces_a_prior_boot_token_atomically	neothd/src/daemon/audit_rpc/tests.rs
           daemon::audit_rpc::tests::token_replaces_a_corrupt_stale_token_before_a_successor_boot	neothd/src/daemon/audit_rpc/tests.rs
           tools::managed_browser::tests::controlled_install_publishes_marker_resolves_and_is_idempotent	neothd/src/tools/managed_browser.rs
@@ -873,7 +885,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 779 ]]; then
+          if [[ "$expected" -ne 791 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

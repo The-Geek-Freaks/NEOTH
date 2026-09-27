@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1758 Custody48 and W1759 actual provisioned ArchiveBridge lifecycle admitted at f3a7adef; native2014/779 pending",
+  "status": "W1757 CLI first-use identity source reviewed; init-only product and native2027/791 pending; W1761 prior Linux2014/Windows779 admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 257336,
-    "sha256": "0C7C816CA2484ADECB055143AC6FBA29194E128AC268EC869D007DBF9EB925DA"
+    "bytes": 257929,
+    "sha256": "9B82CEDFA11EA803CADE263087AF0C386426CBEE383BA8734D0815BA7D763975"
   },
-  "sourceInputs": 1430,
+  "sourceInputs": 1433,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3894,7 +3894,7 @@
     {
       "test": "cli::init::tests::daemon_prepared_hash_mismatch_keeps_gui_transaction_resumable",
       "sourcePath": "SRC/neothd/src/cli/init.rs",
-      "sourceSha256": "40D0F6CFA68C8588FE5D3BE4968E40E7EB3700B8235243A2707D325BB6F220C8",
+      "sourceSha256": "15FC761AD51BF6EF838670EF27B2E14823CE8D91C76C1AE4191A7DC8D3AF44AD",
       "junitClass": "neoth"
     },
     {
@@ -13376,6 +13376,78 @@
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
       "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -15684,6 +15756,12 @@
         "sourcePath": "SRC/neothd/src/installers/paperless_operation_lock.rs",
         "sourceSha256": "532925C1408AE87D1C88017FD754C617CA56B0C3CFD7814E9D02781BB86A4F78",
         "junitClass": "neoth"
+      },
+      {
+        "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
+        "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+        "junitClass": "neoth"
       }
     ],
     "macOS": [
@@ -16075,6 +16153,12 @@
         "test": "installers::paperless_lifecycle::paperless_operation_lock::tests::symlink_lock_leaf_is_rejected_without_touching_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_operation_lock.rs",
         "sourceSha256": "532925C1408AE87D1C88017FD754C617CA56B0C3CFD7814E9D02781BB86A4F78",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
+        "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
         "junitClass": "neoth"
       }
     ]
@@ -54078,6 +54162,117 @@
       }
     ],
     "note": "Original API artifact digests, raw producer bindings, all10 product stages and7 cleanup flags confirmed. Native Obsidian desktop/fresh setup/full relink not admitted; no ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1757CliFirstUseIdentity": {
+    "requiredTests": [
+      "cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity",
+      "cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused",
+      "cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key",
+      "cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement",
+      "cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates",
+      "cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused",
+      "cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection",
+      "cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key",
+      "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
+      "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
+      "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
+      "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
+      "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity"
+    ],
+    "status": "independent_source_review_pass_hosted_pending",
+    "note": "CLI-only fresh initialization; retained identity cannot be regenerated; GUI and real desktop acceptance remain separate."
+  },
+  "wave1761LinuxNativeAdmission": {
+    "status": "accepted",
+    "producer": "f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "runId": 36358085716,
+    "evidence": "docs/verification/gold-wave1761-linux-group2014-admission.json",
+    "exactTests": 2014,
+    "uniqueProducerPaths": 310,
+    "localExecutableValidationRan": false
+  },
+  "wave1761WindowsNativeAdmission": {
+    "status": "accepted",
+    "producer": "f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "runId": 36358087377,
+    "evidence": "docs/verification/gold-wave1761-windows779-admission.json",
+    "exactTests": 779,
+    "uniqueProducerPaths": 107,
+    "localExecutableValidationRan": false
+  },
+  "wave1757ReviewedCliFirstUse": {
+    "base": "c1a766be444fe83b22b8f4652b069cf7a835f18f",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29286,
+        "sha256": "D2CC6CC871BC4317DB3625E162F3F2B955A260B5A9DA2CCC4AC51FC2720C3683",
+        "blob": "7bd54c4ee6b0d4c133eaf025726b8af4ef485aa5"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 137699,
+        "sha256": "4F6F55ADDF957487E1E5D767639618E603C4C8A68F2A2C5234E4C112C563255A",
+        "blob": "7be9d06b1ec3867c431edea1548c7dfb49447bae"
+      },
+      {
+        "path": "docs/obsidian-archive-bridge.md",
+        "bytes": 7555,
+        "sha256": "107352D6DA6603CE00608FEBBAF60D96AC5F4CC77D9FDC5B220DB21B09FE0C08",
+        "blob": "08fd650ff4629788adaf58f649acab83639d37b8"
+      },
+      {
+        "path": "docs/verification/gold-wave1761-linux-group2014-admission.json",
+        "bytes": 1299,
+        "sha256": "8FFDB3A88C6A4F9D6FB68D7D28C0FF6316B9A8FF3E5DA0C3E812E7BB82A04613",
+        "blob": "5a38817ecbdf2871ed9cee3fdac8ab11b91bac0f"
+      },
+      {
+        "path": "docs/verification/gold-wave1761-windows779-admission.json",
+        "bytes": 989,
+        "sha256": "69C8D0478B8F3144AEA8182624FB697EE55207C3F78C8C95E8F1467B2D14406F",
+        "blob": "a1f8de6da4c2b8930c62997a2eed872d14d4ca2e"
+      },
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 32424,
+        "sha256": "E5D32DD43A472C223A9D13EC52FE0C5A953B49D7247AFF9074E87E77663F86EA",
+        "blob": "183e4a47d2375a71ee8b04de4367441c05081e20"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 13196,
+        "sha256": "0A58E22263F90F7D180A227826E6E7D7ABE81041721AB5CED4447EB3F820E883",
+        "blob": "c0cf0273a1421b5a6e8c081f64688cdc0379108d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1517427,
+        "sha256": "07C3938986941EAD51D9DD95002EF8A5EAC70DCA0A220415C5B39AF9757D449A",
+        "blob": "f2e4922f1014f8555f1041f66d76f38a0ae19c96"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2127950,
+        "sha256": "0C95E8E2077BF10E57C255A2AC501770720478B5E9D7E2B00A4043A75F00E482",
+        "blob": "18b2fbac941e3255e7a7e79ffc161a2abe27d73b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init.rs",
+        "bytes": 136767,
+        "sha256": "15FC761AD51BF6EF838670EF27B2E14823CE8D91C76C1AE4191A7DC8D3AF44AD",
+        "blob": "3dd0b0fd2720c5e6f568da70f6b305c54907e480"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "bytes": 28456,
+        "sha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+        "blob": "4c768cb2182ac656952462678db01c049e5ac9ce"
+      }
+    ],
+    "note": "CLI identity capture before wizard, explicit-license provisioning, retained state never regenerates, capability-bound private create-new and parent durability;13 regressions. Canary removes fixture recovery seed and requires init identity through lifecycle. GUI separate. Local executable validation prohibited and not run.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

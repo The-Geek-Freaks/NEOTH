@@ -1,0 +1,11 @@
+{
+  "schema":"neoth-native-windows-admission/v1",
+  "decision":"accepted",
+  "scope":"Windows779 native regression evidence only; local W1757 source WIP excluded.",
+  "run":{"id":36358087377,"producer_commit":"f3a7adef40d54be74edadfdda0e6bca37cbf22e6","status":"completed","conclusion":"success"},
+  "original_artifact":{"id":10945815282,"sha256":"007cde1328688b6a21c82c12fbf695048bb64b5a46a028ab6d43db043189a188","api_digest_matches_download":true},
+  "receipt":{"expected":779,"selected":779,"listed":779,"passed":779,"failed":0,"missing":0,"compile_status":0,"source_head_matches_producer":true},
+  "execution":{"result_identity_count":779,"passed_result_count":779,"failed_result_count":0,"all_numbered_test_log_hashes_match_artifact_manifest":true},
+  "producer_bindings":{"binding_count":779,"unique_source_paths":107,"all_raw_producer_git_blob_hashes_match_artifact_bindings":true},
+  "limits":["No local executable validation.","No product lifecycle or parent-road acceptance."]
+}

@@ -148,36 +148,43 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
                     self.assertNotIn("never-persist", encoded)
                     self.assertNotIn("File exists", encoded)
 
-    def test_disposable_master_key_uses_public_restore_and_cleanup_removes_raw_seed(self) -> None:
+    def test_first_setup_requires_init_to_create_private_identity_without_restore(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()
-            calls: list[tuple[list[str], dict[str, str]]] = []
-            state: dict = {"master_key_seed": None}
+            home = Path(directory)
+            calls: list[list[str]] = []
             def fake_run(argv: list[str], env: dict[str, str], timeout: int = 45) -> bytes:
-                calls.append((argv, env)); return b"master-key restored"
-            with mock.patch.object(canary, "run", side_effect=fake_run), mock.patch.object(canary.secrets, "token_bytes", return_value=b"k" * 32):
-                seed = canary.provision_disposable_master_key(Path("/product/neoth"), home, {"NEOTH_HOME": str(home)}, root, state)
-            self.assertEqual(seed.read_bytes(), b"k" * 32)
-            self.assertEqual(state["master_key_seed"], seed)
-            self.assertEqual(calls, [(["/product/neoth", "security", "restore-master-key", "--source", str(seed), "--home", str(home)], {"NEOTH_HOME": str(home)})])
-            cleanup = canary.cleanup_owned(root, home, root / "vault", root / "host-home", root / "pairing.json", [], [], seed)
-            self.assertTrue(all(cleanup.values()), cleanup)
-            self.assertTrue(cleanup["master_key_seed_removed"])
-            self.assertFalse(seed.exists())
+                calls.append(argv)
+                (home / "wal").mkdir()
+                key = home / "wal" / "master.key"
+                key.write_bytes(b"k" * 32); key.chmod(0o600)
+                return b"initialized"
+            with mock.patch.object(canary, "run", side_effect=fake_run):
+                identity = canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+            self.assertEqual(identity, b"k" * 32)
+            self.assertEqual(calls, [["/product/neoth", "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"]])
 
-    def test_rejected_master_key_restore_still_leaves_seed_in_cleanup_custody(self) -> None:
+    def test_first_setup_rejects_preexisting_state_and_missing_init_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()
-            state: dict = {"master_key_seed": None}
-            with mock.patch.object(canary, "run", side_effect=canary.Failure("command_failed")), mock.patch.object(canary.secrets, "token_bytes", return_value=b"k" * 32):
-                with self.assertRaisesRegex(canary.Failure, "master_key_restore_failed"):
-                    canary.provision_disposable_master_key(Path("/product/neoth"), home, {}, root, state)
-            seed = state["master_key_seed"]
-            self.assertIsInstance(seed, Path)
-            self.assertTrue(seed.exists())
-            cleanup = canary.cleanup_owned(root, home, root / "vault", root / "host-home", root / "pairing.json", [], [], seed)
-            self.assertTrue(all(cleanup.values()), cleanup)
-            self.assertTrue(cleanup["master_key_seed_removed"])
-            self.assertFalse(seed.exists())
+            home = Path(directory)
+            (home / "freedom.yaml").write_bytes(b"prior")
+            with mock.patch.object(canary, "run") as command:
+                with self.assertRaisesRegex(canary.Failure, "init_home_not_fresh"):
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+                command.assert_not_called()
+            (home / "freedom.yaml").unlink()
+            with mock.patch.object(canary, "run", return_value=b"success without key"):
+                with self.assertRaisesRegex(canary.Failure, "init_identity_invalid"):
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+
+    def test_first_setup_rejects_malformed_or_public_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); (home / "wal").mkdir()
+            key = home / "wal" / "master.key"
+            key.write_bytes(b"malformed"); key.chmod(0o600)
+            with self.assertRaisesRegex(canary.Failure, "init_identity_invalid"):
+                canary.observe_init_identity(home)
+            key.write_bytes(b"k" * 32); key.chmod(0o644)
+            with self.assertRaisesRegex(canary.Failure, "init_identity_invalid"):
+                canary.observe_init_identity(home)
 
 if __name__ == "__main__": unittest.main()

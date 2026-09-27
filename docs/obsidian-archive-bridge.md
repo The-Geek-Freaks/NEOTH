@@ -33,21 +33,28 @@ all ten lifecycle stages passed and all seven cleanup flags were true. Original
 artifact digests and 24 raw producer-source bindings were verified. The binary
 digest is the runner's recorded value; it was not independently rebuilt locally.
 
-The disposable hosted fixture provisions its own fresh WAL/config AEAD identity
-before starting the daemon through the public `neoth security restore-master-key`
-command. Its 32-byte raw recovery input exists only in the isolated runner root,
-is never included in the receipt, and cleanup must remove it. This exercises the
-supported recovery/binding contract; it does not write `wal/master.key` directly
-or weaken the bridge owner's load-only key check. It is fixture setup only, not
-an operator recovery instruction or a claim about an existing installation.
+The admitted historical run above provisioned its disposable WAL/config AEAD
+identity through `neoth security restore-master-key`. Its raw recovery input
+was confined to the runner and removed by cleanup; that run did not prove
+first-use initialization.
+
+The current canary starts with an empty home and requires the public
+`neoth init --non-interactive --cli --accept-license --provider skip` path to
+create the private identity itself. It supplies no recovery seed, verifies the
+identity survives the complete lifecycle, and records only the setup method
+and success flags, never key bytes or a key hash. Its receipt has eleven stages
+including `init` and six cleanup flags. This new first-use gate awaits hosted
+execution; the earlier ten-stage/seven-cleanup receipt retains its original
+meaning. GUI onboarding and native Obsidian desktop execution remain separate.
 
 ## Prerequisites
 
 The instance needs an existing WAL/config AEAD master key in its own home.
 Bridge startup loads that identity and fails if it is absent or invalid; it
 never generates a replacement for an existing installation. The disposable
-fixture provisioning above does not establish a first-use setup flow for a
-new operator installation.
+historical fixture does not establish first use. Fresh CLI initialization is
+being validated by the new gate described above; existing homes with a missing
+key continue to require deliberate recovery.
 
 Run a compatible NEOTH daemon for the same user. Configure all of these in
 `freedom.yaml` before pairing:

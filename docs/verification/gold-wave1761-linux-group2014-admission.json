@@ -1,0 +1,15 @@
+{
+  "schema":"neoth-native-group-admission/v1",
+  "decision":"accepted",
+  "scope":"Linux Group2014 only; OpenClaw custody sibling is excluded because W1758 admits it separately.",
+  "run":{"id":36358085716,"producer_commit":"f3a7adef40d54be74edadfdda0e6bca37cbf22e6","status":"completed","conclusion":"success"},
+  "original_artifacts":[
+    {"id":10945765150,"kind":"source","sha256":"59b907c5c85d747e6b1da5f386482fccc6d86c052a17fd18aae4ebbc8db7e08d","api_digest_matches_download":true},
+    {"id":10945026871,"kind":"receipt","sha256":"db7b43123cd3eb72fb27327c0c45e4bcb144b78f5b71e39a0af1f9ec468e99d7","api_digest_matches_download":true},
+    {"id":10944778349,"kind":"log","sha256":"c5ba1d81d607e834a47315144c75fc060c5183beeb247fc5540e41c5a0e55a73","api_digest_matches_download":true}
+  ],
+  "receipt":{"required":2014,"selected":2014,"executed":2014,"failed_fixtures":[],"source_head_matches_producer":true},
+  "log_terminals":{"discovered":2014,"executed":2014,"single_pass":2014,"failure_markers":0},
+  "producer_bindings":{"fixture_identity_count":2014,"unique_source_paths":310,"all_raw_git_blob_hashes_match_source_artifact":true,"source":"producer Git blobs only; local W1757 source WIP excluded"},
+  "limits":["No Windows admission in this record.","No custody-sibling double count."]
+}

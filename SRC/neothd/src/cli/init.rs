@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info};
 
 mod catalog;
+mod first_install_identity;
 mod io;
 mod steps_autonomy;
 mod steps_channel;
@@ -45,6 +46,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         );
         return Ok(());
     }
+
     if args.complete_from_gui {
         let token = read_gui_completion_token_from_stdin()?;
         let acknowledgement = complete_initialized_home_from_gui(&neoth_dir, &token)?;
@@ -65,6 +67,13 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         );
         return Ok(());
     }
+
+    // Capture the fresh-install boundary before the normal wizard can persist
+    // its checkpoint, interface preference, credentials, or configuration.
+    // The GUI transaction protocol above is deliberately read-only for this
+    // identity: its own commit path remains separate from `neoth init`.
+    let first_install_identity =
+        first_install_identity::inspect_before_init(&neoth_dir)?;
 
     let interactive = is_interactive(&args);
     debug!(interactive, force = args.force, "neoth init starting");
@@ -120,6 +129,11 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         );
     }
     step1_license(&args, interactive, &mut state)?;
+    first_install_identity::provision_after_license(
+        &neoth_dir,
+        first_install_identity.as_ref(),
+        args.dry_run,
+    )?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step1b_detect_environment(&args, interactive, &neoth_dir).await;
     step1c_experience_level(&args, interactive, &mut state)?;

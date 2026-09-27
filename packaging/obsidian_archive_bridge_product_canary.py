@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 import re
-import secrets
+import stat
 import shutil
 import signal
 import sqlite3
@@ -63,40 +63,28 @@ def write_bridge_config(home: Path, vault: Path) -> None:
     # JSON is valid YAML; avoid a parser dependency in the acceptance helper.
     (home / "freedom.yaml").write_text(json.dumps(value), encoding="utf-8")
 
-def provision_disposable_master_key(binary: Path, home: Path, env: dict[str, str], root: Path, state: dict) -> Path:
-    """Install a fresh hosted-fixture key through the public recovery command.
-
-    `serve` intentionally has a load-only bridge-owner path. The product
-    fixture therefore creates no `wal/master.key` itself: it supplies a
-    disposable raw 32-byte recovery input to the existing `security
-    restore-master-key` CLI, which validates and binds that key for this
-    isolated runner user. The raw input is never recorded in the receipt and
-    is removed by cleanup.
-    """
-    seed = root / "bridge-canary-master-key.raw"
-    if seed.exists() or seed.is_symlink() or seed.parent.resolve() != root.resolve():
-        raise Failure("master_key_seed_target_invalid")
+def observe_init_identity(home: Path) -> bytes:
+    """Inspect only the runner-owned Linux identity; never publish its bytes/hash."""
+    wal, key = home / "wal", home / "wal" / "master.key"
+    if not wal.is_dir() or wal.is_symlink() or key.is_symlink():
+        raise Failure("init_identity_invalid")
     try:
-        raw = secrets.token_bytes(32)
-        if len(raw) != 32: raise Failure("master_key_seed_invalid")
-        descriptor = os.open(seed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        # Register as soon as the exclusive file exists. This also retains
-        # cleanup custody for a partial write failure.
-        state["master_key_seed"] = seed
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(raw)
+        metadata = key.stat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != 32 or metadata.st_mode & 0o077:
+            raise Failure("init_identity_invalid")
+        raw = key.read_bytes()
     except OSError as error:
-        raise Failure("master_key_seed_write_failed") from error
-    # It is already registered before the external CLI invocation, so a
-    # rejected restore also has explicit seed cleanup custody.
-    try:
-        run(
-            [str(binary), "security", "restore-master-key", "--source", str(seed), "--home", str(home)],
-            env,
-        )
-    except Failure as error:
-        raise Failure("master_key_restore_failed") from error
-    return seed
+        raise Failure("init_identity_invalid") from error
+    if len(raw) != 32: raise Failure("init_identity_invalid")
+    return raw
+
+
+def initialize_fresh_home(binary: Path, home: Path, env: dict[str, str]) -> bytes:
+    # No fixture key, restore operation or prior state may satisfy first use.
+    if not home.is_dir() or home.is_symlink() or any(home.iterdir()):
+        raise Failure("init_home_not_fresh")
+    run([str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"], env)
+    return observe_init_identity(home)
 
 def redacted_daemon_diagnostic(reason: str, returncode: int | None, raw: bytes) -> dict:
     if reason not in {"daemon_exited_early", "daemon_not_ready"}: raise Failure("daemon_diagnostic_reason_invalid")
@@ -263,7 +251,7 @@ def validate_post_sync_settings(raw: bytes) -> None:
     if not isinstance(value, dict) or value.get("operator") is not True or value.get("unknown") != 7 or value.get("enabled") is not True or not isinstance(value.get("pairingSecret"), str) or not isinstance(value.get("pairingGeneration"), int) or not isinstance(value.get("endpoint"), str) or not isinstance(value.get("pending"), list):
         raise Failure("retained_settings_invalid")
 
-def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing: Path, artifacts: list[Path], daemons: list[subprocess.Popen[bytes]], master_key_seed: Path | None = None) -> dict[str, bool]:
+def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing: Path, artifacts: list[Path], daemons: list[subprocess.Popen[bytes]]) -> dict[str, bool]:
     flags: dict[str, bool] = {}
     # Reap every process before removing any of its instance files or IPC
     # directories. A stopped process is not assumed merely because a later
@@ -289,14 +277,6 @@ def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing:
         if pairing.exists(): pairing.unlink()
         flags["pairing_removed"] = not pairing.exists()
     except Exception: flags["pairing_removed"] = False
-    if master_key_seed is None:
-        flags["master_key_seed_removed"] = True
-    else:
-        try:
-            if master_key_seed.parent.resolve() != root.resolve() or master_key_seed.is_symlink(): raise Failure("master_key_seed_cleanup_target_invalid")
-            if master_key_seed.exists(): master_key_seed.unlink()
-            flags["master_key_seed_removed"] = not master_key_seed.exists()
-        except Exception: flags["master_key_seed_removed"] = False
     artifacts_removed = True
     for artifact in artifacts:
         try:
@@ -309,6 +289,8 @@ def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing:
 
 def bindings(asset: Path, driver_path: Path, workflow: Path) -> dict[str, str]:
     paths = {
+        "init": Path("SRC/neothd/src/cli/init.rs"), "init_identity": Path("SRC/neothd/src/cli/init/first_install_identity.rs"), "init_io": Path("SRC/neothd/src/cli/init/io.rs"), "master_key": Path("SRC/neothd/src/wal/master_key.rs"),
+        "private_store": Path("SRC/neothd/src/skills/store.rs"), "key_crypto": Path("SRC/neothd/src/wal/crypto.rs"),
         "audit_token": Path("SRC/neothd/src/daemon/audit_rpc/token.rs"),
         "key_storage": Path("SRC/neothd/src/wal/compaction.rs"),
         "atomic_write": Path("SRC/neothd/src/util/atomic_write.rs"),
@@ -328,8 +310,7 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
     env = dict(os.environ); env["NEOTH_HOME"] = str(home); env["HOME"] = str(host_home)
     # Initialize the product's own home/key material, then write the narrow
     # explicit archive-bridge configuration used by serve.
-    state["stage"] = "init"; run([str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"], env)
-    state["stage"] = "provision_master_key"; provision_disposable_master_key(binary, home, env, root, state)
+    state["stage"] = "init"; initial_identity = initialize_fresh_home(binary, home, env)
     write_bridge_config(home, vault)
     note = vault / "NEOTH-sessions" / "fixture.md"; note.parent.mkdir(); note.write_text("---\nsource: neoth-archive-bridge\n---\nfixture", encoding="utf-8")
     plugin_dir = vault / ".obsidian" / "plugins" / "neoth-archive-bridge"
@@ -402,18 +383,19 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
     if (plugin_dir / "data.json").read_bytes() != post_sync_settings or (plugin_dir / "operator.extra").read_bytes() != unknown: raise Failure("retained_plugin_data_changed")
     state["stage"] = "uninstall"; uninstall = json_command([str(binary), "--output", "json", "obsidian", "bridge", "uninstall", "--vault", str(vault)], env)
     if uninstall.get("status") != "residual" or (plugin_dir / "main.js").exists() or (plugin_dir / "manifest.json").exists() or not (plugin_dir / "ownership.json").is_file() or (plugin_dir / "ownership.json").read_bytes() != ownership_bytes(asset) or (plugin_dir / "data.json").read_bytes() != post_sync_settings or (plugin_dir / "operator.extra").read_bytes() != unknown or note.read_text(encoding="utf-8") != "---\nsource: neoth-archive-bridge\n---\nold generation": raise Failure("uninstall_retention_invalid")
+    if observe_init_identity(home) != initial_identity: raise Failure("init_identity_changed")
     pairing_file.unlink()
-    return {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui", "stages": ["install", "pair", "offline_queue", "daemon_ipc_accept", "dedup", "stale", "unpair", "update", "repair", "uninstall"], "sha256": {"binary": digest(binary), **installed_hashes, **bindings(asset, driver_path, workflow)}}
+    return {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui", "initial_setup": {"method": "neoth_init_provider_skip", "created_without_restore": True, "retained_through_lifecycle": True}, "stages": ["init", "install", "pair", "offline_queue", "daemon_ipc_accept", "dedup", "stale", "unpair", "update", "repair", "uninstall"], "sha256": {"binary": digest(binary), **installed_hashes, **bindings(asset, driver_path, workflow)}}
 
 def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--root", required=True); parser.add_argument("--home", required=True); parser.add_argument("--vault", required=True); parser.add_argument("--receipt", required=True); parser.add_argument("--node", default="node"); parser.add_argument("--workflow", required=True); args = parser.parse_args()
     binary, root, home, vault, receipt, workflow = Path(args.binary).resolve(), Path(args.root).resolve(), Path(args.home).resolve(), Path(args.vault).resolve(), Path(args.receipt).resolve(), Path(args.workflow).resolve()
     require_hosted(root, home, vault, receipt); receipt.parent.mkdir(parents=True, exist_ok=True)
-    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "master_key_seed": None, "artifacts": [], "daemons": [], "daemon_diagnostics": []}; outcome: dict | None = None; error = None
+    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "artifacts": [], "daemons": [], "daemon_diagnostics": []}; outcome: dict | None = None; error = None
     try: outcome = execute(binary, root, home, vault, workflow, args.node, state)
     except Failure as caught: error = str(caught)
     except Exception: error = "unexpected_failure"
-    cleanup = cleanup_owned(root, home, vault, state["host_home"], state["pairing"], state["artifacts"], state["daemons"], state["master_key_seed"])
+    cleanup = cleanup_owned(root, home, vault, state["host_home"], state["pairing"], state["artifacts"], state["daemons"])
     result = {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "outcome": "passed" if outcome is not None and all(cleanup.values()) else "failed", "stage": "cleanup" if outcome is not None else state["stage"], "failure": error, "cleanup": cleanup, "daemon_start_diagnostics": state["daemon_diagnostics"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui"}
     if outcome is not None: result.update(outcome)
     receipt.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")

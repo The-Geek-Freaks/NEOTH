@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T23:24:31.7038453Z",
-  "validationStatus": "W1758 Custody48 and W1759 actual provisioned ArchiveBridge lifecycle admitted at f3a7adef; native2014/779 pending",
+  "capturedUtc": "2026-09-27T23:48:58.5183972Z",
+  "validationStatus": "W1757 CLI first-use identity source reviewed; init-only product and native2027/791 pending; W1761 prior Linux2014/Windows779 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29237,
-      "sha256": "60C922BA85EB3CEF85627DFED4AB862B549A904EB2412578AA80A7E3663F7433"
+      "bytes": 29286,
+      "sha256": "D2CC6CC871BC4317DB3625E162F3F2B955A260B5A9DA2CCC4AC51FC2720C3683"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 135847,
-      "sha256": "B29E8C3D2AA425D369ADE44B4F7B03F582A74B08F836B023DCA7B4B6C89F17F0"
+      "bytes": 137699,
+      "sha256": "4F6F55ADDF957487E1E5D767639618E603C4C8A68F2A2C5234E4C112C563255A"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1333,8 +1333,8 @@
     },
     {
       "path": "docs/obsidian-archive-bridge.md",
-      "bytes": 7147,
-      "sha256": "B68326AEAC2AA3CC2234D5D0AC40BF713FD378D98A27A71CE965383999C05FBD"
+      "bytes": 7555,
+      "sha256": "107352D6DA6603CE00608FEBBAF60D96AC5F4CC77D9FDC5B220DB21B09FE0C08"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -2627,6 +2627,16 @@
       "sha256": "C26CE50C15790427BD1AFE01DC531DDB8226FD7A37431C3CFCFFC0B77A28CDB6"
     },
     {
+      "path": "docs/verification/gold-wave1761-linux-group2014-admission.json",
+      "bytes": 1299,
+      "sha256": "8FFDB3A88C6A4F9D6FB68D7D28C0FF6316B9A8FF3E5DA0C3E812E7BB82A04613"
+    },
+    {
+      "path": "docs/verification/gold-wave1761-windows779-admission.json",
+      "bytes": 989,
+      "sha256": "69C8D0478B8F3144AEA8182624FB697EE55207C3F78C8C95E8F1467B2D14406F"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3513,8 +3523,8 @@
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_canary.py",
-      "bytes": 33164,
-      "sha256": "C8C7DF347EAAFB13DBE7A4AED48D31DE73657429A80170670991C3BD3A7D61FC"
+      "bytes": 32424,
+      "sha256": "E5D32DD43A472C223A9D13EC52FE0C5A953B49D7247AFF9074E87E77663F86EA"
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
@@ -3593,8 +3603,8 @@
     },
     {
       "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
-      "bytes": 13313,
-      "sha256": "8AE9578A58B461DB84074C1E2269A20A0DD85DC8BF08D4F009FE0B52086378DE"
+      "bytes": 13196,
+      "sha256": "0A58E22263F90F7D180A227826E6E7D7ABE81041721AB5CED4447EB3F820E883"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3663,13 +3673,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1515593,
-      "sha256": "2651788575969C4F9516B5328EC646147A30BA3732678EC005CBCFF695FDB517"
+      "bytes": 1517427,
+      "sha256": "07C3938986941EAD51D9DD95002EF8A5EAC70DCA0A220415C5B39AF9757D449A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2126116,
-      "sha256": "F8325E06D985BFEEC2897FC9AA02D60735A8A840D1B505492D9E1765B1664C53"
+      "bytes": 2127950,
+      "sha256": "0C95E8E2077BF10E57C255A2AC501770720478B5E9D7E2B00A4043A75F00E482"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4678,8 +4688,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",
-      "bytes": 136189,
-      "sha256": "40D0F6CFA68C8588FE5D3BE4968E40E7EB3700B8235243A2707D325BB6F220C8"
+      "bytes": 136767,
+      "sha256": "15FC761AD51BF6EF838670EF27B2E14823CE8D91C76C1AE4191A7DC8D3AF44AD"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "bytes": 28456,
+      "sha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A"
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",

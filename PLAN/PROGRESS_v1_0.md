@@ -2,6 +2,30 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1757 CLI first-use identity / W1761 native follow-up (2026-09-28):**
+Fresh normal CLI initialization now provisions a private WAL/config identity
+after explicit license acceptance and before its first checkpoint/config write.
+Configured homes and --force reconfiguration cannot create a missing key.
+A retained interrupted-init identity is bound to the original inspected key;
+missing, substituted, malformed or unexpected state must fail without replacing
+it. Independent backend and canary source reviews PASS after retained-state,
+bound namespace, checkpoint-resume and directory-durability corrections.
+New executable validation remains pending.
+The Archive Bridge canary now starts from an empty home through real public
+init --provider skip, without the historical fixture recovery seed. It checks
+the same private identity through all eleven stages and six cleanup flags.
+The historical W1759 ten-stage/seven-cleanup admission remains valid for its
+original provisioned fixture. GUI onboarding and native Obsidian desktop are
+separate open acceptance paths. New inventory: Portable2240 / Group2027 /
+Windows791 (twelve portable plus one Unix first-init regressions).
+Previous Group2014run36358085716 atf3a7adef is admitted: three original
+API-digest artifacts, all2014 exact PASS terminals and310 raw producer paths
+verified. Evidence: docs/verification/gold-wave1761-linux-group2014-admission.json.
+The separate Custody48 admission is not counted twice. Windows779run36358087377
+on that producer is also admitted: original artifact10945815282, all779 exact
+PASS terminals/log hashes and107 raw producer-source paths verified. Evidence:
+docs/verification/gold-wave1761-windows779-admission.json. No duplicate old-gate dispatch. ROAD1324/1077/245/2
+unchanged. No local compiler, formatter, parser, test or product execution.
 **W1758 / W1759 Custody and Archive Bridge product admitted (2026-09-28):**
 ArchiveBridge36358083834 atf3a7adef is successful. Original artifact10944434686
 ZIP7f68bff56219abb2942db9659bcf91a2d891b3fa4c40a386d80340acc55041eb
