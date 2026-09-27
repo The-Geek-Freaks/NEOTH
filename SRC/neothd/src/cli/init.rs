@@ -72,8 +72,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // its checkpoint, interface preference, credentials, or configuration.
     // The GUI transaction protocol above is deliberately read-only for this
     // identity: its own commit path remains separate from `neoth init`.
-    let first_install_identity =
-        first_install_identity::inspect_before_init(&neoth_dir)?;
+    let first_install_identity = first_install_identity::inspect_before_init(&neoth_dir)?;
 
     let interactive = is_interactive(&args);
     debug!(interactive, force = args.force, "neoth init starting");

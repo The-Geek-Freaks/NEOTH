@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1757 CLI first-use identity source reviewed; init-only product and native2027/791 pending; W1761 prior Linux2014/Windows779 admitted",
+  "status": "W1757 reviewed CLI-first-use source and authenticated hosted format; product/native gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 257929,
-    "sha256": "9B82CEDFA11EA803CADE263087AF0C386426CBEE383BA8734D0815BA7D763975"
+    "bytes": 257893,
+    "sha256": "B336FAB4E322584C6B3DB62731D6D17BF4787EA7F1FF18137569BC9717B0B20A"
   },
   "sourceInputs": 1433,
   "requiredNativeTests": [
@@ -3894,7 +3894,7 @@
     {
       "test": "cli::init::tests::daemon_prepared_hash_mismatch_keeps_gui_transaction_resumable",
       "sourcePath": "SRC/neothd/src/cli/init.rs",
-      "sourceSha256": "15FC761AD51BF6EF838670EF27B2E14823CE8D91C76C1AE4191A7DC8D3AF44AD",
+      "sourceSha256": "37D32AFDD9A5741DFADA40EB3C62E3615A63BEB87D7153D708F7FFA6A2955277",
       "junitClass": "neoth"
     },
     {
@@ -13380,73 +13380,73 @@
     {
       "test": "cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
       "junitClass": "neoth"
     }
   ],
@@ -15760,7 +15760,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+        "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
         "junitClass": "neoth"
       }
     ],
@@ -16158,7 +16158,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A",
+        "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
         "junitClass": "neoth"
       }
     ]
@@ -54273,6 +54273,26 @@
       }
     ],
     "note": "CLI identity capture before wizard, explicit-license provisioning, retained state never regenerates, capability-bound private create-new and parent durability;13 regressions. Canary removes fixture recovery seed and requires init identity through lifecycle. GUI separate. Local executable validation prohibited and not run.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1757AuthenticatedHostedFormat": {
+    "base": "b3bec830f37d40d4d5993228e51c971e6fad08ee",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/init.rs",
+        "bytes": 136759,
+        "sha256": "37D32AFDD9A5741DFADA40EB3C62E3615A63BEB87D7153D708F7FFA6A2955277",
+        "blob": "19b94663f34755bba0560b74c79c54396b8c0658"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "bytes": 29457,
+        "sha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+        "blob": "cdba52f35788ee9e2b85aa6c952d67e084843ab9"
+      }
+    ],
+    "note": "Preflight36360089564@b3bec830 failed formatting only. Original artifact10945162863 ZIP0a4588328cefa5631c36472892ae5607d386996791b38b626083d07650e66abc matches API digest, internal hashes and source-head. Imported two exact rustfmt postimages; no local formatter executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

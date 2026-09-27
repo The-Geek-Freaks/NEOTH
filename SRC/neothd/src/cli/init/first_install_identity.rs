@@ -12,7 +12,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use sha2::{Digest as _, Sha256};
 
-
 const CONFIG_FILE: &str = "freedom.yaml";
 const CREDENTIALS_FILE: &str = "credentials.yaml";
 const INITIALIZED_MARKER: &str = ".initialized";
@@ -127,7 +126,9 @@ fn inspect_recognised_fresh_home_after_create_if_absent(
             // through an explicit trusted anchor and bound parent handles.
             Ok(InitialIdentityState::Fresh)
         }
-        Err(error) => Err(error).with_context(|| format!("reinspect NEOTH home {}", home.display())),
+        Err(error) => {
+            Err(error).with_context(|| format!("reinspect NEOTH home {}", home.display()))
+        }
     }
 }
 
@@ -139,8 +140,11 @@ fn inspect_recognised_fresh_home(home: &Path) -> Result<InitialIdentityState> {
     }
 
     let mut identity = InitialIdentityState::Fresh;
-    for entry in fs::read_dir(home).with_context(|| format!("list NEOTH home {}", home.display()))? {
-        let entry = entry.with_context(|| format!("read NEOTH home entry in {}", home.display()))?;
+    for entry in
+        fs::read_dir(home).with_context(|| format!("list NEOTH home {}", home.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("read NEOTH home entry in {}", home.display()))?;
         let name = entry.file_name();
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
@@ -169,8 +173,8 @@ fn inspect_recognised_fresh_home(home: &Path) -> Result<InitialIdentityState> {
 
 fn inspect_gui_pending_dir(path: &Path, metadata: &fs::Metadata) -> Result<()> {
     require_real_directory(path, metadata)?;
-    let mut entries = fs::read_dir(path)
-        .with_context(|| format!("list GUI init residue {}", path.display()))?;
+    let mut entries =
+        fs::read_dir(path).with_context(|| format!("list GUI init residue {}", path.display()))?;
     let Some(entry) = entries.next() else {
         return Ok(());
     };
@@ -197,13 +201,19 @@ fn inspect_retained_wal(
     let mut entries = fs::read_dir(path)
         .with_context(|| format!("list retained WAL directory {}", path.display()))?;
     let Some(entry) = entries.next() else {
-        anyhow::bail!("retained WAL directory is missing its master key: {}", path.display());
+        anyhow::bail!(
+            "retained WAL directory is missing its master key: {}",
+            path.display()
+        );
     };
     let entry = entry.with_context(|| format!("read retained WAL entry in {}", path.display()))?;
     if entry.file_name().as_os_str() != std::ffi::OsStr::new(MASTER_KEY_FILE)
         || entries.next().is_some()
     {
-        anyhow::bail!("retained WAL directory has unexpected state: {}", path.display());
+        anyhow::bail!(
+            "retained WAL directory has unexpected state: {}",
+            path.display()
+        );
     }
     let key_path = entry.path();
     require_real_file(
@@ -261,13 +271,17 @@ fn open_private_first_install_home(home: &Path) -> Result<crate::skills::store::
 fn inspect_bound_fresh_home_before_wal_create(
     home: &crate::skills::store::BoundDirectory,
 ) -> Result<()> {
-    for entry in home
-        .dir
-        .entries()
-        .with_context(|| format!("list bound first-install home {}", home.display_path.display()))?
-    {
+    for entry in home.dir.entries().with_context(|| {
+        format!(
+            "list bound first-install home {}",
+            home.display_path.display()
+        )
+    })? {
         let entry = entry.with_context(|| {
-            format!("read bound first-install home entry in {}", home.display_path.display())
+            format!(
+                "read bound first-install home entry in {}",
+                home.display_path.display()
+            )
         })?;
         let name = entry.file_name();
         if !inspect_bound_init_transient(home, &name)? {
@@ -291,7 +305,9 @@ fn create_private_bound_wal_directory(
             wal_path.display()
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| format!("open WAL directory {}", wal_path.display())),
+        Err(error) => {
+            return Err(error).with_context(|| format!("open WAL directory {}", wal_path.display()));
+        }
     }
     #[cfg(unix)]
     let builder = {
@@ -305,12 +321,24 @@ fn create_private_bound_wal_directory(
     match home.dir.create_dir_with(name, &builder) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            anyhow::bail!("WAL directory appeared during first-install creation: {}", wal_path.display());
+            anyhow::bail!(
+                "WAL directory appeared during first-install creation: {}",
+                wal_path.display()
+            );
         }
-        Err(error) => return Err(error).with_context(|| format!("create WAL directory {}", wal_path.display())),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("create WAL directory {}", wal_path.display()));
+        }
     }
-    crate::skills::store::sync_parent_directory(&home.dir, &home.display_path)
-        .with_context(|| format!("sync first-install home after creating {}", wal_path.display()))?;
+    crate::skills::store::sync_parent_directory(&home.dir, &home.display_path).with_context(
+        || {
+            format!(
+                "sync first-install home after creating {}",
+                wal_path.display()
+            )
+        },
+    )?;
     let wal = home
         .dir
         .open_dir_nofollow(name)
@@ -327,17 +355,25 @@ fn inspect_bound_fresh_home_before_key_publish(
     wal: &cap_std::fs::Dir,
 ) -> Result<()> {
     for entry in home.dir.entries().with_context(|| {
-        format!("relist bound first-install home {}", home.display_path.display())
+        format!(
+            "relist bound first-install home {}",
+            home.display_path.display()
+        )
     })? {
         let entry = entry.with_context(|| {
-            format!("read bound first-install home entry in {}", home.display_path.display())
+            format!(
+                "read bound first-install home entry in {}",
+                home.display_path.display()
+            )
         })?;
         let name = entry.file_name();
         if inspect_bound_init_transient(home, &name)? {
             continue;
         }
         if name.as_os_str() == OsStr::new(WAL_DIR) {
-            let metadata = wal.dir_metadata().context("inspect bound fresh WAL directory")?;
+            let metadata = wal
+                .dir_metadata()
+                .context("inspect bound fresh WAL directory")?;
             if !metadata.is_dir() || crate::skills::store::cap_metadata_is_link_like(&metadata) {
                 anyhow::bail!("fresh WAL directory is not a real directory");
             }
@@ -371,7 +407,10 @@ fn inspect_bound_init_transient(
             .symlink_metadata(name)
             .with_context(|| format!("inspect bound init transient {}", display.display()))?;
         if !metadata.is_file() || crate::skills::store::cap_metadata_is_link_like(&metadata) {
-            anyhow::bail!("init transient is not a real regular file: {}", display.display());
+            anyhow::bail!(
+                "init transient is not a real regular file: {}",
+                display.display()
+            );
         }
         return Ok(true);
     }
@@ -387,7 +426,10 @@ fn inspect_bound_init_transient(
         .dir_metadata()
         .with_context(|| format!("inspect bound GUI init transient {}", display.display()))?;
     if !metadata.is_dir() || crate::skills::store::cap_metadata_is_link_like(&metadata) {
-        anyhow::bail!("GUI init transient is not a real directory: {}", display.display());
+        anyhow::bail!(
+            "GUI init transient is not a real directory: {}",
+            display.display()
+        );
     }
     let mut entries = pending_dir.entries()?;
     let Some(entry) = entries.next() else {
@@ -401,8 +443,13 @@ fn inspect_bound_init_transient(
     let pending_metadata = pending_dir
         .symlink_metadata(&pending_name)
         .with_context(|| format!("inspect GUI pending transient {}", display.display()))?;
-    if !pending_metadata.is_file() || crate::skills::store::cap_metadata_is_link_like(&pending_metadata) {
-        anyhow::bail!("GUI pending transient is not a real regular file: {}", display.display());
+    if !pending_metadata.is_file()
+        || crate::skills::store::cap_metadata_is_link_like(&pending_metadata)
+    {
+        anyhow::bail!(
+            "GUI pending transient is not a real regular file: {}",
+            display.display()
+        );
     }
     Ok(true)
 }
@@ -414,9 +461,9 @@ fn harden_private_bound_directory(directory: &cap_std::fs::Dir, display_path: &P
         directory
             .set_permissions(".", cap_std::fs::Permissions::from_mode(0o700))
             .with_context(|| format!("set owner-private directory {}", display_path.display()))?;
-        let metadata = directory
-            .dir_metadata()
-            .with_context(|| format!("inspect owner-private directory {}", display_path.display()))?;
+        let metadata = directory.dir_metadata().with_context(|| {
+            format!("inspect owner-private directory {}", display_path.display())
+        })?;
         anyhow::ensure!(
             metadata.is_dir() && metadata.mode() & 0o7777 == 0o700,
             "first-install directory is not owner-private mode 0700: {}",
@@ -431,8 +478,11 @@ fn harden_private_bound_directory(directory: &cap_std::fs::Dir, display_path: &P
     }
     #[cfg(windows)]
     {
-        crate::wal::win_native::set_private_current_user_directory_dacl_bound(display_path, directory)
-            .with_context(|| format!("set owner-private DACL on {}", display_path.display()))?;
+        crate::wal::win_native::set_private_current_user_directory_dacl_bound(
+            display_path,
+            directory,
+        )
+        .with_context(|| format!("set owner-private DACL on {}", display_path.display()))?;
         crate::wal::win_native::verify_private_directory_handle_dacl(directory)
             .with_context(|| format!("verify owner-private DACL on {}", display_path.display()))?;
     }
@@ -450,14 +500,20 @@ fn master_key_fingerprint(key: &[u8; 32]) -> [u8; 32] {
 
 fn require_real_directory(path: &Path, metadata: &fs::Metadata) -> Result<()> {
     if !is_real_directory(metadata) {
-        anyhow::bail!("{} must be a real directory, not a link or reparse point", path.display());
+        anyhow::bail!(
+            "{} must be a real directory, not a link or reparse point",
+            path.display()
+        );
     }
     Ok(())
 }
 
 fn require_real_file(path: &Path, metadata: &fs::Metadata) -> Result<()> {
     if metadata.file_type().is_symlink() || !metadata.is_file() || is_windows_reparse(metadata) {
-        anyhow::bail!("{} must be a real regular file, not a link or reparse point", path.display());
+        anyhow::bail!(
+            "{} must be a real regular file, not a link or reparse point",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -469,7 +525,9 @@ fn is_real_directory(metadata: &fs::Metadata) -> bool {
 #[cfg(windows)]
 fn is_windows_reparse(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt as _;
-    metadata.file_attributes() & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT != 0
+    metadata.file_attributes()
+        & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+        != 0
 }
 
 #[cfg(not(windows))]
@@ -495,7 +553,10 @@ mod tests {
 
         let candidate = inspect(&home);
         provision_after_license(&home, Some(&candidate), false).unwrap();
-        assert_eq!(first, fs::read(crate::wal::master_key::master_key_path(&home)).unwrap());
+        assert_eq!(
+            first,
+            fs::read(crate::wal::master_key::master_key_path(&home)).unwrap()
+        );
     }
 
     #[test]
@@ -505,13 +566,20 @@ mod tests {
             &crate::wal::master_key::master_key_path(home.path()),
         )
         .unwrap();
-        fs::write(home.path().join(crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME), b"{}").unwrap();
+        fs::write(
+            home.path()
+                .join(crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME),
+            b"{}",
+        )
+        .unwrap();
 
         let candidate = inspect(home.path());
         provision_after_license(home.path(), Some(&candidate), false).unwrap();
         assert_eq!(
             first.expose(),
-            crate::wal::master_key::load_existing_master_key_at(home.path()).unwrap().expose()
+            crate::wal::master_key::load_existing_master_key_at(home.path())
+                .unwrap()
+                .expose()
         );
     }
 
@@ -519,7 +587,8 @@ mod tests {
     fn fresh_checkpoint_resume_provisions_the_initial_identity() {
         let home = tempfile::tempdir().unwrap();
         fs::write(
-            home.path().join(crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME),
+            home.path()
+                .join(crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME),
             b"{}",
         )
         .unwrap();
@@ -536,7 +605,12 @@ mod tests {
         assert!(inspect_before_init(configured.path()).unwrap().is_none());
         assert!(!crate::wal::master_key::master_key_path(configured.path()).exists());
 
-        for name in [CREDENTIALS_FILE, INITIALIZED_MARKER, FIRST_TOUR_MARKER, "unknown"] {
+        for name in [
+            CREDENTIALS_FILE,
+            INITIALIZED_MARKER,
+            FIRST_TOUR_MARKER,
+            "unknown",
+        ] {
             let home = tempfile::tempdir().unwrap();
             fs::write(home.path().join(name), b"state").unwrap();
             assert!(inspect_before_init(home.path()).is_err());
@@ -569,7 +643,10 @@ mod tests {
         fs::remove_file(&key_path).unwrap();
 
         assert!(provision_after_license(home.path(), Some(&candidate), false).is_err());
-        assert!(!key_path.exists(), "a retained identity must never be replaced");
+        assert!(
+            !key_path.exists(),
+            "a retained identity must never be replaced"
+        );
     }
 
     #[test]
@@ -672,7 +749,11 @@ mod tests {
         let home = root.path().join("home");
         fs::create_dir(&home).unwrap();
         fs::create_dir(home.join(WAL_DIR)).unwrap();
-        symlink(target.join("key-target"), home.join(WAL_DIR).join(MASTER_KEY_FILE)).unwrap();
+        symlink(
+            target.join("key-target"),
+            home.join(WAL_DIR).join(MASTER_KEY_FILE),
+        )
+        .unwrap();
         assert!(inspect_before_init(&home).is_err());
     }
 }

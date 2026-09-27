@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T23:48:58.5183972Z",
-  "validationStatus": "W1757 CLI first-use identity source reviewed; init-only product and native2027/791 pending; W1761 prior Linux2014/Windows779 admitted",
+  "capturedUtc": "2026-09-27T23:52:50.2650007Z",
+  "validationStatus": "W1757 reviewed CLI-first-use source and authenticated hosted format; product/native gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4688,13 +4688,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",
-      "bytes": 136767,
-      "sha256": "15FC761AD51BF6EF838670EF27B2E14823CE8D91C76C1AE4191A7DC8D3AF44AD"
+      "bytes": 136759,
+      "sha256": "37D32AFDD9A5741DFADA40EB3C62E3615A63BEB87D7153D708F7FFA6A2955277"
     },
     {
       "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "bytes": 28456,
-      "sha256": "42B0BEB83F395947420317CAB26A78C30E8539845A83AACBDB90E6EA18DB5F2A"
+      "bytes": 29457,
+      "sha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54"
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",
