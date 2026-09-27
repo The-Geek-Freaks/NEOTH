@@ -349,6 +349,9 @@ async fn copy_dispatch_crash_restores_source_without_second_copy_after_reopen() 
         backup_job_id: queued.job_id.as_str().into(),
         backup_manifest_sha256: queued.manifest_sha256.as_str().into(),
         source_install_job_id: source.job_id.as_str().into(),
+        source_job_id: None,
+        source_manifest_sha256: None,
+        source_operation: None,
         source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
         generation,
         container_id: binding.container_id.clone().unwrap(),
@@ -560,6 +563,9 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
         backup_job_id: queued.job_id.as_str().into(),
         backup_manifest_sha256: queued.manifest_sha256.as_str().into(),
         source_install_job_id: source.job_id.as_str().into(),
+        source_job_id: None,
+        source_manifest_sha256: None,
+        source_operation: None,
         source_pinned_image: historical_image.clone(),
         source_container_id: binding.container_id.clone().unwrap(),
         volume_name: binding.volume.clone(),
@@ -569,6 +575,16 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
         original_running_state: true,
         restored_running_state: true,
     };
+    let serialized = serde_json::to_value(&receipt).unwrap();
+    assert!(!serialized.as_object().unwrap().contains_key("source_job_id"));
+    assert!(!serialized
+        .as_object()
+        .unwrap()
+        .contains_key("source_manifest_sha256"));
+    assert!(!serialized
+        .as_object()
+        .unwrap()
+        .contains_key("source_operation"));
     write_receipt(home.path(), &receipt).unwrap();
     let contract = active.evidence_contract.as_ref().unwrap();
     let ready = service
@@ -654,6 +670,9 @@ async fn completed_custody_and_prepublished_receipt_finalize_ready_after_reopen(
             backup_job_id: custody.backup_job_id.clone(),
             backup_manifest_sha256: custody.backup_manifest_sha256.clone(),
             source_install_job_id: custody.source_install_job_id.clone(),
+            source_job_id: None,
+            source_manifest_sha256: None,
+            source_operation: None,
             source_pinned_image: custody.image.clone(),
             source_container_id: custody.container_id.clone(),
             volume_name: custody.volume.clone(),
@@ -775,4 +794,17 @@ async fn malformed_custody_and_final_destination_collision_leave_no_active_or_so
     assert_eq!(calls(&state, "create"), 0);
     assert_eq!(calls(&state, "remove:"), 0);
     assert!(!custody_path(home.path()).exists());
+}
+
+#[tokio::test]
+async fn pending_rollback_custody_blocks_backup_before_any_docker_call() {
+    let (home, mut runner, state, _) = fixture().await;
+    std::fs::write(
+        home.path().join("n8n-managed-rollback.v1.json"),
+        br#"{"schema_version":1,"phase":"intent_persisted","rollback_job_id":"x","rollback_manifest_sha256":"x","restore_job_id":"x","restore_manifest_sha256":"x","backup_job_id":"x","backup_manifest_sha256":"x","image":"x","restore_volume":"x","old_container_id":"x","old_image":"x","old_volume":"x","host_port":1,"old_was_running":false,"retired_name":"x","original_binding_sha256":"x","original_binding":[],"new_container_id":null}"#,
+    )
+    .unwrap();
+    assert!(backup_managed_at_with(home.path(), &mut runner).await.is_err());
+    assert_eq!(calls(&state, "stop:"), 0);
+    assert_eq!(calls(&state, "archive:"), 0);
 }

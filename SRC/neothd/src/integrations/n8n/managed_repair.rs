@@ -234,7 +234,7 @@ fn restart_binding_commit_proven(
         return false;
     };
     if job.operation != JobOperation::Repair
-        || source.operation != JobOperation::Install
+        || !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
         || source.state != JobState::Ready
         || !is_managed_job(&source)
         || validate_custody(custody, job, &source).is_err()
@@ -350,8 +350,7 @@ fn source_ready(
         })
         .ok_or_else(|| anyhow::anyhow!("no_matching_managed_runtime"))?;
     validate_binding(&binding, &source).map_err(anyhow::Error::msg)?;
-    if source.operation != JobOperation::Install
-        || source.state != JobState::Ready
+    if !super::is_active_runtime_source(home, &binding, &source)
         || !is_managed_job(&source)
         || binding.phase != RuntimePhase::Ready
         || binding.container_id.is_none()
@@ -451,6 +450,7 @@ pub(in crate::integrations) async fn repair_managed_at_with<
     .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     if super::managed_uninstall::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::super::managed_purge::repair_has_pending_custody(home)
             .map_err(anyhow::Error::msg)?
@@ -532,6 +532,8 @@ pub(in crate::integrations) async fn repair_managed_at_with<
                 })
                 .ok_or_else(|| anyhow::anyhow!("n8n_repair_source_missing"))?;
             validate_binding(&custody.old_binding, &source).map_err(anyhow::Error::msg)?;
+            super::validate_active_runtime_lineage(home, &custody.old_binding, &source)
+                .map_err(anyhow::Error::msg)?;
             (custody.old_binding.clone(), source)
         }
         None => source_ready(&service, home)?,
@@ -802,13 +804,13 @@ pub(crate) async fn repair_managed_at(home: &Path) -> Result<IntegrationJob> {
     let binding = read_binding(home)
         .map_err(anyhow::Error::msg)?
         .ok_or_else(|| anyhow::anyhow!("no_matching_managed_runtime"))?;
-    let endpoint = super::ManagedN8nRequest::new_with_volume(
-        binding.host_port,
-        crate::installers::n8n::N8N_OCI_REFERENCE,
-        binding.volume.clone(),
-    )
-    .map_err(anyhow::Error::msg)?
-    .endpoint();
+    let source = service
+        .iter()
+        .find(|job| job.job_id.as_str() == binding.job_id)
+        .ok_or_else(|| anyhow::anyhow!("n8n_repair_config_custody_mismatch"))?;
+    let endpoint = validate_binding(&binding, source)
+        .map_err(anyhow::Error::msg)?
+        .endpoint();
     if configured.endpoint != endpoint
         || !service
             .iter()
@@ -900,7 +902,7 @@ fn completed_authority(
     validate_custody(custody, &repair, &source)?;
     let expected = custody.new_binding.as_ref().unwrap_or(&custody.old_binding);
     let current = read_binding(home)?.ok_or("n8n_repair_binding_missing")?;
-    if source.operation != JobOperation::Install
+    if !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
         || source.state != JobState::Ready
         || !is_managed_job(&source)
         || current != *expected

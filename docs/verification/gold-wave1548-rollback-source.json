@@ -1,0 +1,25 @@
+{
+  "schema": "neoth-managed-rollback-source-review/v1",
+  "decision": "source-reviewed-hosted-pending",
+  "capturedUtc": "2026-09-27T08:02:00Z",
+  "base": "71f55d603fb599466fa5a4b2a299b3a936c16fbe",
+  "scope": "Live rename-first Rollback, schema v7, RuntimeBinding v3, Backup v2 and lifecycle custody fences",
+  "independentReview": {
+    "reportSha256": "99C95A8F2DE4EE9853098C7F5A10C9742261C5D079DF4ED45584431AC32D23A8",
+    "coordinatorSha256": "F2EBB03744D5AEA121604ABB53EA67CAC9B258A5BC0785B7F1ABF057505BB303",
+    "testsSha256": "F8230C50E9510214CFA18DAB55C8DD50B0FD1BBEBBA2E6FC3C112E20C1B05335",
+    "result": "No remaining concrete source blocker; executable verification required"
+  },
+  "addedTests": 16,
+  "portableRequiredTests": 2132,
+  "groupedRequiredTests": 1922,
+  "windowsSelectedTests": 687,
+  "limitations": [
+    "Source review is not compile, native test, actual product or release acceptance.",
+    "Generated CLI reference and rustfmt must come from original hosted artifacts before full native cohort dispatch.",
+    "Restore-volume downstream Reinstall/Purge and actual Rollback product proof remain open.",
+    "Retained old container and old volume are not deleted by Rollback."
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

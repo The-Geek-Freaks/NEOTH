@@ -91,6 +91,15 @@ pub struct BackupReceiptView {
     pub backup_job_id: String,
     pub backup_manifest_sha256: String,
     pub source_install_job_id: String,
+    /// v1 names this field after the original Install-only implementation.
+    /// v2 carries these neutral fields whenever the active source is Rollback,
+    /// so a historical backup never represents a Rollback as an Install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_operation: Option<String>,
     pub source_pinned_image: String,
     pub source_container_id: String,
     pub volume_name: String,
@@ -354,8 +363,7 @@ fn source_ready(
         })
         .ok_or_else(|| anyhow::anyhow!("no_matching_managed_runtime"))?;
     validate_binding(&binding, &source).map_err(anyhow::Error::msg)?;
-    if source.operation != JobOperation::Install
-        || source.state != JobState::Ready
+    if !super::is_active_runtime_source(home, &binding, &source)
         || !is_managed_job(&source)
         || binding.phase != RuntimePhase::Ready
         || binding.container_id.is_none()
@@ -380,7 +388,7 @@ fn validate_custody(
         || c.source_install_manifest_sha256 != source.manifest_sha256.as_str()
         || !super::valid_container_id(&c.container_id)
         || !super::valid_volume_name(&c.volume)
-        || c.image != crate::installers::n8n::N8N_OCI_REFERENCE
+        || !super::valid_historical_n8n_image(&c.image)
         || c.archive_path
             != archive_path(home, &c.backup_job_id)
                 .map_err(|_| "n8n_backup_custody_mismatch")?
@@ -388,7 +396,7 @@ fn validate_custody(
     {
         return Err("n8n_backup_custody_mismatch");
     }
-    if source.operation != JobOperation::Install
+    if !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
         || source.state != JobState::Ready
         || !is_managed_job(source)
         || !is_managed_job(job)
@@ -653,7 +661,7 @@ impl RestartValidator for ExplicitBackupRestartValidator {
                 candidate.job_id.as_str() == custody.source_install_job_id
                     && candidate.manifest_sha256.as_str() == custody.source_install_manifest_sha256
             })
-            && source.operation == JobOperation::Install
+            && matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
             && source.state == JobState::Ready
             && let Some(binding) = read_binding(&self.home).ok().flatten()
             && binding.container_id.as_deref() == Some(custody.container_id.as_str())
@@ -707,6 +715,7 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
     runner: &mut R,
 ) -> Result<IntegrationJob> {
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
         &super::operation_lock_path(home),
         "n8n managed runtime operation",
@@ -735,6 +744,8 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
                 .map_err(anyhow::Error::msg)?
                 .ok_or_else(|| anyhow::anyhow!("n8n_backup_binding_missing"))?;
             validate_binding(&binding, &source).map_err(anyhow::Error::msg)?;
+            super::validate_active_runtime_lineage(home, &binding, &source)
+                .map_err(anyhow::Error::msg)?;
             if binding.container_id.as_deref() != Some(c.container_id.as_str())
                 || binding.image != c.image
                 || binding.volume != c.volume
@@ -949,11 +960,16 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
                 custody.archive_bytes.unwrap_or(0),
             )?;
         }
+        let rollback_source = source.operation == JobOperation::Rollback;
         let receipt = BackupReceiptView {
-            schema_version: 1,
+            schema_version: if rollback_source { 2 } else { 1 },
             backup_job_id: custody.backup_job_id.clone(),
             backup_manifest_sha256: custody.backup_manifest_sha256.clone(),
             source_install_job_id: custody.source_install_job_id.clone(),
+            source_job_id: rollback_source.then(|| source.job_id.as_str().into()),
+            source_manifest_sha256: rollback_source
+                .then(|| source.manifest_sha256.as_str().into()),
+            source_operation: rollback_source.then(|| source.operation.as_str().into()),
             source_pinned_image: custody.image.clone(),
             source_container_id: custody.container_id.clone(),
             volume_name: custody.volume.clone(),
@@ -1037,10 +1053,21 @@ pub(crate) fn completed_receipt_at(
         .iter()
         .find(|candidate| candidate.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_backup_source_missing")?;
-    if receipt.schema_version != 1
+    let source_receipt_matches = match receipt.schema_version {
+        1 => source.operation == JobOperation::Install
+            && receipt.source_job_id.is_none()
+            && receipt.source_manifest_sha256.is_none()
+            && receipt.source_operation.is_none(),
+        2 => source.operation == JobOperation::Rollback
+            && receipt.source_job_id.as_deref() == Some(source.job_id.as_str())
+            && receipt.source_manifest_sha256.as_deref()
+                == Some(source.manifest_sha256.as_str())
+            && receipt.source_operation.as_deref() == Some("rollback"),
+        _ => false,
+    };
+    if !source_receipt_matches
         || receipt.backup_job_id != job.job_id.as_str()
         || receipt.backup_manifest_sha256 != job.manifest_sha256.as_str()
-        || source.operation != JobOperation::Install
         || source.state != JobState::Ready
         || !is_managed_job(source)
         || !super::valid_container_id(&receipt.source_container_id)

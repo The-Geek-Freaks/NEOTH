@@ -30,7 +30,8 @@ use super::state::{
 };
 
 const COMPONENT: &str = "integrations";
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION_V6: i64 = 6;
 const SCHEMA_VERSION_V5: i64 = 5;
 const SCHEMA_VERSION_V4: i64 = 4;
 const SCHEMA_VERSION_V3: i64 = 3;
@@ -258,7 +259,7 @@ const CREATE_INTEGRATION_JOBS_TABLE_V5: &str =
               progress_evidence_json IS NOT NULL OR state IN ('failed','cancelled'))
      );";
 
-const CREATE_INTEGRATION_JOBS_TABLE: &str =
+const CREATE_INTEGRATION_JOBS_TABLE_V6: &str =
     "CREATE TABLE integration_jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
         capability_id TEXT NOT NULL,
@@ -297,6 +298,13 @@ const CREATE_INTEGRATION_JOBS_TABLE: &str =
         CHECK((completed_steps = 0 AND bytes_done = 0) OR
               progress_evidence_json IS NOT NULL OR state IN ('failed','cancelled'))
      );";
+
+fn create_integration_jobs_table_v7() -> String {
+    CREATE_INTEGRATION_JOBS_TABLE_V6.replace(
+        "'backup','restore','uninstall','purge'",
+        "'backup','restore','rollback','uninstall','purge'",
+    )
+}
 
 const CREATE_ACTIVE_CAPABILITY_INDEX: &str =
     "CREATE UNIQUE INDEX integration_jobs_one_active_capability
@@ -1310,24 +1318,32 @@ fn apply_schema(connection: &mut Connection) -> Result<(), JobServiceError> {
             migrate_v1_to_v3(connection)?;
             migrate_v3_to_v4(connection)?;
             migrate_v4_to_v5(connection)?;
-            return migrate_v5_to_v6(connection);
+            migrate_v5_to_v6(connection)?;
+            return migrate_v6_to_v7(connection);
         }
         Some(2) => {
             migrate_v2_to_v3(connection)?;
             migrate_v3_to_v4(connection)?;
             migrate_v4_to_v5(connection)?;
-            return migrate_v5_to_v6(connection);
+            migrate_v5_to_v6(connection)?;
+            return migrate_v6_to_v7(connection);
         }
         Some(SCHEMA_VERSION_V3) => {
             migrate_v3_to_v4(connection)?;
             migrate_v4_to_v5(connection)?;
-            return migrate_v5_to_v6(connection);
+            migrate_v5_to_v6(connection)?;
+            return migrate_v6_to_v7(connection);
         }
         Some(SCHEMA_VERSION_V4) => {
             migrate_v4_to_v5(connection)?;
-            return migrate_v5_to_v6(connection);
+            migrate_v5_to_v6(connection)?;
+            return migrate_v6_to_v7(connection);
         }
-        Some(SCHEMA_VERSION_V5) => return migrate_v5_to_v6(connection),
+        Some(SCHEMA_VERSION_V5) => {
+            migrate_v5_to_v6(connection)?;
+            return migrate_v6_to_v7(connection);
+        }
+        Some(SCHEMA_VERSION_V6) => return migrate_v6_to_v7(connection),
         Some(found) => {
             return Err(JobServiceError::UnsupportedSchema {
                 found,
@@ -1338,7 +1354,7 @@ fn apply_schema(connection: &mut Connection) -> Result<(), JobServiceError> {
     }
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(CREATE_INTEGRATION_JOBS_TABLE)?;
+    transaction.execute_batch(&create_integration_jobs_table_v7())?;
     create_integration_job_indexes(&transaction)?;
     transaction.execute(
         "INSERT INTO setup_component_schema(component, version) VALUES (?1, ?2)",
@@ -1547,7 +1563,7 @@ fn migrate_v5_to_v6(connection: &mut Connection) -> Result<(), JobServiceError> 
              DROP INDEX IF EXISTS integration_jobs_one_retry_child;
              DROP INDEX IF EXISTS integration_jobs_updated;",
         )?;
-        transaction.execute_batch(CREATE_INTEGRATION_JOBS_TABLE)?;
+        transaction.execute_batch(CREATE_INTEGRATION_JOBS_TABLE_V6)?;
         transaction.execute(
             &format!(
                 "INSERT INTO integration_jobs ({JOB_COLUMNS}) \
@@ -1559,8 +1575,36 @@ fn migrate_v5_to_v6(connection: &mut Connection) -> Result<(), JobServiceError> 
         create_integration_job_indexes(&transaction)?;
         transaction.execute(
             "UPDATE setup_component_schema SET version=?2 WHERE component=?1",
-            params![COMPONENT, SCHEMA_VERSION],
+            params![COMPONENT, SCHEMA_VERSION_V6],
         )?;
+        validate_v6_schema(&transaction)?;
+        transaction.commit()?;
+        Ok(())
+    })();
+    let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", "ON");
+    migration?;
+    restore_foreign_keys?;
+    validate_foreign_key_integrity(connection)
+}
+fn migrate_v6_to_v7(connection: &mut Connection) -> Result<(), JobServiceError> {
+    validate_v6_schema(connection)?;
+    connection.pragma_update(None, "foreign_keys", "OFF")?;
+    let migration = (|| -> Result<(), JobServiceError> {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "ALTER TABLE integration_jobs RENAME TO integration_jobs_v6;
+             DROP INDEX IF EXISTS integration_jobs_one_active_capability;
+             DROP INDEX IF EXISTS integration_jobs_one_retry_child;
+             DROP INDEX IF EXISTS integration_jobs_updated;",
+        )?;
+        transaction.execute_batch(&create_integration_jobs_table_v7())?;
+        transaction.execute(
+            &format!("INSERT INTO integration_jobs ({JOB_COLUMNS}) SELECT {JOB_COLUMNS} FROM integration_jobs_v6"),
+            [],
+        )?;
+        transaction.execute_batch("DROP TABLE integration_jobs_v6;")?;
+        create_integration_job_indexes(&transaction)?;
+        transaction.execute("UPDATE setup_component_schema SET version=?2 WHERE component=?1", params![COMPONENT, SCHEMA_VERSION])?;
         validate_schema(&transaction)?;
         transaction.commit()?;
         Ok(())
@@ -1603,7 +1647,7 @@ fn validate_schema(connection: &Connection) -> Result<(), JobServiceError> {
         connection,
         "table",
         "integration_jobs",
-        CREATE_INTEGRATION_JOBS_TABLE,
+        &create_integration_jobs_table_v7(),
     )?;
     validate_index_contract(
         connection,
@@ -1643,6 +1687,7 @@ fn validate_read_only_schema(connection: &Connection) -> Result<(), JobServiceEr
     )?;
     match version {
         SCHEMA_VERSION => validate_schema(connection),
+        SCHEMA_VERSION_V6 => validate_v6_schema(connection),
         SCHEMA_VERSION_V5 => validate_v5_schema(connection),
         SCHEMA_VERSION_V4 => validate_v4_schema(connection),
         SCHEMA_VERSION_V3 => validate_v3_schema(connection),
@@ -1807,6 +1852,20 @@ fn validate_v5_schema(connection: &Connection) -> Result<(), JobServiceError> {
         false,
         &["updated_at", "job_id"],
     )?;
+    validate_retry_foreign_key(connection)?;
+    validate_foreign_key_integrity(connection)?;
+    validate_all_jobs(connection)?;
+    Ok(())
+}
+
+fn validate_v6_schema(connection: &Connection) -> Result<(), JobServiceError> {
+    if integration_job_columns(connection)? != EXPECTED_JOB_COLUMNS {
+        return Err(JobServiceError::CorruptSchema);
+    }
+    validate_schema_sql(connection, "table", "integration_jobs", CREATE_INTEGRATION_JOBS_TABLE_V6)?;
+    validate_index_contract(connection, "integration_jobs_one_active_capability", CREATE_ACTIVE_CAPABILITY_INDEX, true, true, &["capability_id"])?;
+    validate_index_contract(connection, "integration_jobs_one_retry_child", CREATE_RETRY_CHILD_INDEX, true, true, &["retry_of"])?;
+    validate_index_contract(connection, "integration_jobs_updated", CREATE_UPDATED_INDEX, false, false, &["updated_at", "job_id"])?;
     validate_retry_foreign_key(connection)?;
     validate_foreign_key_integrity(connection)?;
     validate_all_jobs(connection)?;
@@ -2502,6 +2561,26 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(CREATE_INTEGRATION_JOBS_TABLE_V5)
+            .unwrap();
+        create_integration_job_indexes(&connection).unwrap();
+        connection
+    }
+
+    fn v6_connection(home: &Path) -> Connection {
+        std::fs::create_dir_all(home).unwrap();
+        let connection = Connection::open(home.join(DB_FILE_NAME)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE setup_component_schema (
+                   component TEXT PRIMARY KEY NOT NULL,
+                   version INTEGER NOT NULL CHECK(version > 0)
+                 );
+                 INSERT INTO setup_component_schema(component, version)
+                   VALUES ('integrations', 6);",
+            )
+            .unwrap();
+        connection
+            .execute_batch(CREATE_INTEGRATION_JOBS_TABLE_V6)
             .unwrap();
         create_integration_job_indexes(&connection).unwrap();
         connection
@@ -3862,7 +3941,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let queued = fetch_job(&connection, &queued_id).unwrap().unwrap();
         assert_eq!(queued.operation, JobOperation::Install);
         assert_eq!(queued.state, JobState::Queued);
@@ -3965,7 +4044,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let parent = fetch_job(&connection, &parent_id).unwrap().unwrap();
         assert_eq!(parent.operation, JobOperation::Import);
         assert_eq!(parent.release_version, "3.0.0");
@@ -4016,7 +4095,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v6() {
+    fn read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v7() {
         let root = tempfile::tempdir().unwrap();
         let home = home(&root);
         let database = home.join(DB_FILE_NAME);
@@ -4110,7 +4189,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version_after_migration, 6);
+        assert_eq!(version_after_migration, 7);
     }
 
     #[test]
@@ -4163,7 +4242,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         assert_eq!(
             fetch_job(&connection, &parent_id)
                 .unwrap()
@@ -4244,7 +4323,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         assert_eq!(
             fetch_job(&connection, &backup_id)
                 .unwrap()
@@ -4272,10 +4351,21 @@ mod tests {
             reopened.get(&restored.job_id).unwrap().unwrap().operation,
             JobOperation::Restore
         );
+        let mut rollback = request("qwen-model");
+        rollback.operation = JobOperation::Rollback;
+        rollback.release_version = "7.0.0".into();
+        let rolled_back = reopened.enqueue(rollback).unwrap().job;
+        assert_eq!(rolled_back.operation, JobOperation::Rollback);
+        drop(reopened);
+        let reopened = IntegrationJobService::open(&home, catalog(), &validator).unwrap();
+        assert_eq!(
+            reopened.get(&rolled_back.job_id).unwrap().unwrap().operation,
+            JobOperation::Rollback
+        );
     }
 
     #[test]
-    fn read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v6()
+    fn read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v7()
      {
         let root = tempfile::tempdir().unwrap();
         let home = home(&root);
@@ -4332,7 +4422,88 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version_after_migration, 6);
+        assert_eq!(version_after_migration, 7);
+    }
+
+    #[test]
+    fn read_only_snapshot_reads_v6_restore_history_without_schema_writes_then_owned_open_migrates_v7()
+    {
+        let root = tempfile::tempdir().unwrap();
+        let home = home(&root);
+        let database = home.join(DB_FILE_NAME);
+        let connection = v6_connection(&home);
+        let restore_id = JobId::new();
+        connection
+            .execute(
+                "INSERT INTO integration_jobs (
+                   job_id, capability_id, operation, release_version, manifest_sha256, state,
+                   state_revision, current_step, completed_steps, total_steps, bytes_done,
+                   bytes_total, created_at, started_at, updated_at, terminal_at, error_code,
+                   redacted_error, ready_evidence_json, retry_of, requested_by, cancel_requested,
+                   evidence_contract_json, progress_evidence_json
+                 ) VALUES (
+                   ?1,'qwen-model','restore','6.0.0',?2,'failed',2,NULL,0,3,0,100,
+                   100,NULL,101,101,'offline','Offline.',NULL,NULL,'doctor',0,NULL,NULL
+                 )",
+                params![restore_id.as_str(), digest('a').as_str()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let bytes_before = std::fs::read(&database).unwrap();
+        let snapshot = IntegrationJobService::read_only_snapshot(&home).unwrap();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].job_id, restore_id);
+        assert_eq!(snapshot[0].operation, JobOperation::Restore);
+        assert_eq!(snapshot[0].release_version, "6.0.0");
+        assert_eq!(std::fs::read(&database).unwrap(), bytes_before);
+
+        let connection = Connection::open(&database).unwrap();
+        let version_after_snapshot: i64 = connection
+            .query_row(
+                "SELECT version FROM setup_component_schema WHERE component='integrations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let schema_after_snapshot: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='integration_jobs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        assert_eq!(version_after_snapshot, 6);
+        assert_eq!(
+            normalized_schema_sql(&schema_after_snapshot),
+            normalized_schema_sql(CREATE_INTEGRATION_JOBS_TABLE_V6)
+        );
+
+        let validator = |job: &IntegrationJob| resume_decision(job, 'f');
+        let service = IntegrationJobService::open(&home, catalog(), &validator).unwrap();
+        assert_eq!(
+            service.get(&restore_id).unwrap().unwrap().operation,
+            JobOperation::Restore
+        );
+        drop(service);
+        let connection = open_connection(&database, false).unwrap();
+        let version_after_migration: i64 = connection
+            .query_row(
+                "SELECT version FROM setup_component_schema WHERE component='integrations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version_after_migration, 7);
+        assert_eq!(
+            fetch_job(&connection, &restore_id)
+                .unwrap()
+                .unwrap()
+                .operation,
+            JobOperation::Restore
+        );
+        validate_schema(&connection).unwrap();
     }
 
     #[test]
@@ -4630,7 +4801,7 @@ mod tests {
                  ALTER TABLE integration_jobs RENAME TO integration_jobs_old;",
             )
             .unwrap();
-        let without_retry_fk = CREATE_INTEGRATION_JOBS_TABLE.replace(
+        let without_retry_fk = create_integration_jobs_table_v7().replace(
             "retry_of TEXT REFERENCES integration_jobs(job_id)",
             "retry_of TEXT",
         );

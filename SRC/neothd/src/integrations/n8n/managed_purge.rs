@@ -528,6 +528,8 @@ pub(crate) async fn purge_retained_volume_at_with<R: ManagedDockerRunner>(
         .map_err(anyhow::Error::msg)?;
     super::managed_runtime::managed_restore::reject_pending_restore(home)
         .map_err(anyhow::Error::msg)?;
+    super::managed_runtime::managed_rollback::reject_pending_rollback(home)
+        .map_err(anyhow::Error::msg)?;
     if super::managed_runtime::managed_repair::repair_has_pending_custody(home)
         .map_err(anyhow::Error::msg)?
     {

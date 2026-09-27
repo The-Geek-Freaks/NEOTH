@@ -613,7 +613,7 @@ jobs:
           installers::paperless_lifecycle::tests::safe_uninstall_accepts_only_exact_64_hex_container_ids	neothd/src/installers/paperless_lifecycle.rs
           integrations::n8n::managed_runtime::tests::volume_listing_matches_proves_only_an_exact_empty_or_single_name_result	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::jobs::tests::schema_v3_migrates_representative_history_and_round_trips_purge_jobs	neothd/src/integrations/jobs.rs
-          integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v6	neothd/src/integrations/jobs.rs
+          integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v7	neothd/src/integrations/jobs.rs
           integrations::jobs::tests::schema_v3_corrupt_index_refuses_before_v4_migration	neothd/src/integrations/jobs.rs
           cli::n8n::tests::purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation	neothd/src/cli/n8n.rs
           integrations::n8n::managed_purge::tests::purge_ready_uninstall_removes_only_the_label_proven_volume_and_repeats_read_only	neothd/src/integrations/n8n/managed_purge_tests.rs
@@ -738,9 +738,25 @@ jobs:
           integrations::n8n::managed_runtime::managed_restore_content::tests::content_proof_distinguishes_empty_credentials_from_verified_decryption	neothd/src/integrations/n8n/managed_restore_content.rs
           integrations::n8n::managed_runtime::managed_restore_content::tests::content_proof_rejects_modified_counts_and_unexpected_payloads	neothd/src/integrations/n8n/managed_restore_content.rs
           integrations::jobs::tests::schema_v5_migrates_backup_history_preserves_foreign_key_indexes_and_round_trips_restore_jobs	neothd/src/integrations/jobs.rs
-          integrations::jobs::tests::read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v6	neothd/src/integrations/jobs.rs
+          integrations::jobs::tests::read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v7	neothd/src/integrations/jobs.rs
           cli::n8n::tests::n8n_restore_cli_accepts_only_a_canonical_backup_uuid_without_overrides	neothd/src/cli/n8n.rs
           integrations::n8n::managed_runtime::managed_backup::tests::verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismatched_pin	neothd/src/integrations/n8n/managed_backup_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::ready_success_keeps_same_old_id_and_reentry_has_no_effect	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::rollback_active_runtime_produces_backup_v2_bound_to_rollback	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::lost_create_id_holds_without_replay_or_adoption	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::rename_receipt_loss_is_observed_without_second_rename	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::foreign_identity_blocks_before_rename	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::known_publish_failure_restores_same_id_and_exact_binding	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::failed_compensated_reentry_retires_only_custody	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::remove_receipt_loss_is_observed_without_duplicate_compensation_remove	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::new_runtime_readiness_timeout_compensates_same_old_id_without_create_replay	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::originally_stopped_source_stays_stopped_after_prepublication_failure	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::restart_validator_holds_uncertain_dispatch	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::jobs::tests::read_only_snapshot_reads_v6_restore_history_without_schema_writes_then_owned_open_migrates_v7	neothd/src/integrations/jobs.rs
+          cli::n8n::tests::n8n_rollback_cli_requires_stdin_key_and_exact_restore_identity_without_overrides	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_runtime::tests::legacy_binding_without_lineage_decodes_as_install_lineage	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::rollback_retired_name_is_deterministic_and_rejects_non_uuid	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::managed_backup::tests::pending_rollback_custody_blocks_backup_before_any_docker_call	neothd/src/integrations/n8n/managed_backup_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -765,7 +781,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 671 ]]; then
+          if [[ "$expected" -ne 687 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

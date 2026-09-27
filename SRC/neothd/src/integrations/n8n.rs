@@ -310,6 +310,7 @@ pub struct N8nJobStatusView {
     pub config_cleanup: Option<&'static str>,
     pub backup: Option<managed_runtime::managed_backup::BackupReceiptView>,
     pub restore: Option<managed_runtime::managed_restore::RestoreReceiptView>,
+    pub rollback: Option<managed_runtime::managed_rollback::RollbackReceiptView>,
     pub current_step: Option<String>,
     pub completed_steps: u32,
     pub total_steps: u32,
@@ -333,6 +334,7 @@ impl From<&IntegrationJob> for N8nJobStatusView {
             config_cleanup: None,
             backup: None,
             restore: None,
+            rollback: None,
             current_step: job.current_step.clone(),
             completed_steps: job.progress.completed_steps,
             total_steps: job.progress.total_steps,
@@ -480,6 +482,15 @@ impl RestartValidator for N8nRestartValidator {
                 failure: JobFailure::new(
                     "n8n_restore_reconciliation_required",
                     "The interrupted restore retains isolated candidate custody; rerun n8n restore to inspect it without replaying an uncertain archive extraction.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
+        if job.operation == JobOperation::Rollback {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_rollback_reconciliation_required",
+                    "The interrupted rollback retains exact runtime and binding custody; rerun n8n rollback to reconcile it without replaying an uncertain cutover.",
                 )
                 .expect("static failure is valid"),
             };
@@ -676,6 +687,15 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
             .expect("static failure is valid"),
         }
     })?;
+    managed_runtime::managed_rollback::reject_pending_rollback(home).map_err(|_| {
+        JobServiceError::RecoveryHold {
+            failure: JobFailure::new(
+                "n8n_rollback_reconciliation_required",
+                "Rollback custody requires explicit reconciliation before another n8n operation.",
+            )
+            .expect("static failure is valid"),
+        }
+    })?;
     // A Ready row is immutable evidence of a completed publication. If the
     // best-effort custody-file removal was interrupted after Ready, retry only
     // that removal on the next owned adapter open. Failure intentionally leaves
@@ -695,7 +715,7 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
         }
         if matches!(
             job.operation,
-            JobOperation::Purge | JobOperation::Backup | JobOperation::Restore
+            JobOperation::Purge | JobOperation::Backup | JobOperation::Restore | JobOperation::Rollback
         ) {
             continue;
         }
@@ -1107,6 +1127,18 @@ pub(crate) fn status_at(
                 }
                 view.disposition = Some(if view.restore.is_some() {
                     "candidate_validated_live_unchanged"
+                } else {
+                    "reconciliation_required"
+                });
+            }
+            if job.operation == JobOperation::Rollback {
+                view.rollback = managed_runtime::managed_rollback::completed_receipt_at(home, job)
+                    .map_err(anyhow::Error::msg)?;
+                if job.state == JobState::Ready && view.rollback.is_none() {
+                    anyhow::bail!("n8n rollback has no verified completion receipt");
+                }
+                view.disposition = Some(if view.rollback.is_some() {
+                    "historical_rollback_verified"
                 } else {
                     "reconciliation_required"
                 });

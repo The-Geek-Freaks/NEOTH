@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1548 managed n8n Rollback source batch (2026-09-27):**
+Independent final source review passed for schema v7, RuntimeBinding v3,
+Backup v2 and rename-first Rollback. The command consumes a Ready Restore and
+an explicitly piped historical API key; it retains the exact old container ID,
+verifies the new runtime before publication, and holds uncertain create or
+publish effects without replay. Durable compensation restores the same old ID
+and prior running state. Competing lifecycle entrypoints fence pending custody.
+Added16 exact tests, including stateful compensation, lost-effect receipts,
+auth/readiness timeout, stopped source and Rollback-to-Backup v2; two schema
+migration test identities now name v7. Portable2132/Group1922/Windows687 are
+selected, not passed. Core/CLI and hosted formatting precede the native cohorts;
+actual Rollback product and Restore-owned-volume Reinstall/Purge remain open.
+ROAD1324/1077done/245open/2partial unchanged. No local executable validation.
+Evidence: docs/verification/gold-wave1548-rollback-source.json and
+ docs/n8n-managed-rollback.md.
+
 **W1545-W1547 Restore hosted acceptance (2026-09-27):**
 Group36302995899 and Windows36302997586 at00aa8660 are admitted from original
 artifacts:1906/1906 and671/671 passed, with ordered identities, log hashes and

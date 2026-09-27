@@ -29,6 +29,8 @@ pub(crate) mod managed_backup;
 pub(crate) mod managed_repair;
 #[path = "managed_restore.rs"]
 pub(crate) mod managed_restore;
+#[path = "managed_rollback.rs"]
+pub(crate) mod managed_rollback;
 #[path = "managed_restore_candidate.rs"]
 pub(crate) mod managed_restore_candidate;
 #[path = "managed_restore_content.rs"]
@@ -63,7 +65,7 @@ pub(super) fn is_managed_job(job: &IntegrationJob) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ManagedN8nRequest {
     port: u16,
-    image: &'static str,
+    image: String,
     volume: String,
     prepared_job: Option<IntegrationJob>,
     retained_reinstall: Option<RetainedReinstallSource>,
@@ -84,13 +86,13 @@ pub(crate) struct RetainedReinstallSource {
     pub volume_owner_install_job_id: String,
 }
 impl ManagedN8nRequest {
-    pub(crate) fn new(port: u16, image: &'static str) -> Result<Self, &'static str> {
+    pub(crate) fn new(port: u16, image: &str) -> Result<Self, &'static str> {
         if port == 0 || image != N8N_OCI_REFERENCE || !image.contains("@sha256:") {
             Err("managed n8n requires reviewed immutable OCI and nonzero loopback port")
         } else {
             Ok(Self {
                 port,
-                image,
+                image: image.into(),
                 volume: DEFAULT_VOLUME.into(),
                 prepared_job: None,
                 retained_reinstall: None,
@@ -101,7 +103,7 @@ impl ManagedN8nRequest {
     /// installation deliberately retains the historical volume name.
     pub(crate) fn new_with_volume(
         port: u16,
-        image: &'static str,
+        image: &str,
         volume: String,
     ) -> Result<Self, &'static str> {
         let mut request = Self::new(port, image)?;
@@ -110,6 +112,25 @@ impl ManagedN8nRequest {
         }
         request.volume = volume;
         Ok(request)
+    }
+    /// Rollback is the only lifecycle that can replay an already verified
+    /// historical immutable n8n digest.  Normal installs remain pinned to the
+    /// reviewed current digest through `new`.
+    pub(super) fn historical_rollback(
+        port: u16,
+        image: String,
+        volume: String,
+    ) -> Result<Self, &'static str> {
+        if port == 0 || !valid_historical_n8n_image(&image) || !valid_volume_name(&volume) {
+            return Err("n8n_rollback_historical_runtime_invalid");
+        }
+        Ok(Self {
+            port,
+            image,
+            volume,
+            prepared_job: None,
+            retained_reinstall: None,
+        })
     }
     pub(crate) fn volume(&self) -> &str {
         &self.volume
@@ -148,7 +169,7 @@ impl ManagedN8nRequest {
             format!("{}:/home/node/.n8n", self.volume),
             "--restart".into(),
             "unless-stopped".into(),
-            self.image.into(),
+            self.image.clone(),
         ]
     }
 }
@@ -261,6 +282,42 @@ pub(crate) trait ManagedDockerRunner: Send {
     /// `inspect_exact`, so a renamed/recreated container cannot prove absence.
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str>;
     async fn inspect_exact(&mut self, id: &str) -> Result<InspectOutcome, &'static str>;
+    /// Exact-name discovery is deliberately separate from the legacy managed
+    /// name lookup.  Existing runners remain fail-closed until they opt in.
+    async fn inspect_name(&mut self, name: &str) -> Result<InspectOutcome, &'static str> {
+        if name == MANAGED_CONTAINER_NAME {
+            self.inspect_named().await
+        } else {
+            Err("n8n_managed_name_inspection_unavailable")
+        }
+    }
+    /// Both observations must agree on the same exact id.  A name match on
+    /// its own is discovery only and a renamed/recreated container can never
+    /// satisfy this operation.
+    async fn inspect_exact_named(
+        &mut self,
+        id: &str,
+        expected_name: &str,
+    ) -> Result<InspectOutcome, &'static str> {
+        if !valid_container_id(id) || !valid_container_name(expected_name) {
+            return Err("n8n_managed_named_inspection_invalid_input");
+        }
+        match (self.inspect_exact(id).await?, self.inspect_name(expected_name).await?) {
+            (InspectOutcome::Found(exact), InspectOutcome::Found(named))
+                if exact.id == id && named.id == id => Ok(InspectOutcome::Found(exact)),
+            (InspectOutcome::Absent, InspectOutcome::Absent) => Ok(InspectOutcome::Absent),
+            _ => Ok(InspectOutcome::Unknown),
+        }
+    }
+    /// Rename only an exact Docker id.  Implementations which have not
+    /// explicitly opted in cannot mutate a container through this method.
+    async fn rename_exact(
+        &mut self,
+        _id: &str,
+        _destination: &str,
+    ) -> Result<ManagedCommandReceipt, &'static str> {
+        Err("n8n_managed_rename_unavailable")
+    }
     /// State is deliberately separate from identity inspection so existing
     /// test runners stay conservative until a repair test opts in.
     async fn running_exact(&mut self, _id: &str) -> Result<bool, &'static str> {
@@ -346,6 +403,25 @@ pub(super) enum RuntimePhase {
     Ready,
     AbsentVerified,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum RuntimeLineage {
+    #[default]
+    Install,
+    Rollback(RollbackRuntimeLineage),
+}
+/// Non-secret active-generation provenance.  The Rollback coordinator binds
+/// these values to its separate immutable receipt/custody before it publishes
+/// a v3 binding.  Keeping this shallow avoids recursive receipt validation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RollbackRuntimeLineage {
+    pub(super) restore_job_id: String,
+    pub(super) backup_job_id: String,
+    pub(super) restore_volume_owner_job_id: String,
+    pub(super) retained_source_container_id: String,
+    pub(super) retained_source_name: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RuntimeBinding {
@@ -364,6 +440,10 @@ pub(super) struct RuntimeBinding {
     /// carry this same immutable owner through `retained_reinstall` instead.
     #[serde(default)]
     pub(super) bootstrap_volume_owner_job_id: Option<String>,
+    /// v1/v2 bindings deserialize as install lineage.  v3 is reserved for a
+    /// Rollback-published active generation.
+    #[serde(default)]
+    pub(super) lineage: RuntimeLineage,
 }
 fn binding_path(home: &Path) -> PathBuf {
     home.join(BINDING_FILE)
@@ -426,6 +506,42 @@ pub(super) fn write_binding(home: &Path, value: &RuntimeBinding) -> Result<(), &
         &serde_json::to_vec(value).map_err(|_| "n8n_runtime_binding_serialize_failed")?,
     )
     .map_err(|_| "n8n_runtime_binding_write_failed")
+}
+/// Restore a previously witnessed raw binding generation after Rollback
+/// compensation.  The exact bytes, rather than a reserialized projection,
+/// preserve the original binding identity.  This is intentionally narrower
+/// than `write_binding`: callers must already have durable byte custody.
+pub(super) fn restore_binding_bytes(home: &Path, bytes: &[u8]) -> Result<(), &'static str> {
+    if bytes.is_empty() || bytes.len() > 16 * 1024 {
+        return Err("n8n_runtime_binding_restore_invalid");
+    }
+    let binding: RuntimeBinding =
+        serde_json::from_slice(bytes).map_err(|_| "n8n_runtime_binding_restore_invalid")?;
+    let structurally_valid = match &binding.lineage {
+        RuntimeLineage::Install => binding.schema_version == 2,
+        RuntimeLineage::Rollback(lineage) => {
+            binding.schema_version == 3
+                && super::JobId::parse(lineage.restore_job_id.clone()).is_ok()
+                && super::JobId::parse(lineage.backup_job_id.clone()).is_ok()
+                && lineage.restore_volume_owner_job_id == lineage.restore_job_id
+                && valid_container_id(&lineage.retained_source_container_id)
+                && valid_retired_container_name(&lineage.retained_source_name)
+        }
+    };
+    if !structurally_valid
+        || binding.container_name != MANAGED_CONTAINER_NAME
+        || !valid_historical_n8n_image(&binding.image)
+        || !valid_volume_name(&binding.volume)
+        || binding.host_port == 0
+        || binding
+            .container_id
+            .as_deref()
+            .is_some_and(|id| !valid_container_id(id))
+    {
+        return Err("n8n_runtime_binding_restore_invalid");
+    }
+    crate::util::atomic_write::atomic_write_private(&binding_path(home), bytes)
+        .map_err(|_| "n8n_runtime_binding_restore_failed")
 }
 #[cfg(test)]
 pub(super) fn mark_bootstrap_volume_owner_for_test(
@@ -494,7 +610,8 @@ pub(super) fn validate_existing_identity(
         _ => binding.container_id.as_deref() == Some(observed.id.as_str()),
     };
     if !valid_container_id(&observed.id)
-        || binding.schema_version != 2
+        || !(binding.schema_version == 2
+            || (binding.schema_version == 3 && matches!(&binding.lineage, RuntimeLineage::Rollback(_))))
         || binding.job_id != job.job_id.as_str()
         || binding.manifest_sha256 != job.manifest_sha256.as_str()
         || binding.container_name != MANAGED_CONTAINER_NAME
@@ -565,7 +682,7 @@ pub(super) fn managed_manifest(request: &ManagedN8nRequest) -> super::Sha256Dige
     let port = request.port.to_string();
     let mut parts = vec![
         "n8n-managed-runtime-v4",
-        request.image,
+        request.image.as_str(),
         MANAGED_CONTAINER_NAME,
         &port,
         request.volume(),
@@ -593,11 +710,18 @@ pub(super) fn validate_binding(
     binding: &RuntimeBinding,
     job: &IntegrationJob,
 ) -> Result<ManagedN8nRequest, &'static str> {
-    let mut request = ManagedN8nRequest::new_with_volume(
-        binding.host_port,
-        N8N_OCI_REFERENCE,
-        binding.volume.clone(),
-    )?;
+    let mut request = match &binding.lineage {
+        RuntimeLineage::Install => ManagedN8nRequest::new_with_volume(
+            binding.host_port,
+            N8N_OCI_REFERENCE,
+            binding.volume.clone(),
+        )?,
+        RuntimeLineage::Rollback(_) => ManagedN8nRequest::historical_rollback(
+            binding.host_port,
+            binding.image.clone(),
+            binding.volume.clone(),
+        )?,
+    };
     if let Some(source) = binding.retained_reinstall.clone() {
         request = request.with_retained_reinstall(source);
     }
@@ -623,11 +747,23 @@ pub(super) fn validate_binding(
         (None, Some(owner)) => owner == &binding.job_id && binding.volume != DEFAULT_VOLUME,
         (None, None) => true,
     };
+    let valid_lineage = match &binding.lineage {
+        RuntimeLineage::Install => binding.schema_version == 2 && job.operation == JobOperation::Install,
+        RuntimeLineage::Rollback(lineage) => {
+            binding.schema_version == 3
+                && job.operation == JobOperation::Rollback
+                && super::JobId::parse(lineage.restore_job_id.clone()).is_ok()
+                && super::JobId::parse(lineage.backup_job_id.clone()).is_ok()
+                && lineage.restore_volume_owner_job_id == lineage.restore_job_id
+                && valid_container_id(&lineage.retained_source_container_id)
+                && valid_retired_container_name(&lineage.retained_source_name)
+        }
+    };
     if !is_managed_job(job)
-        || binding.schema_version != 2
+        || !valid_lineage
         || binding.job_id != job.job_id.as_str()
         || binding.manifest_sha256 != job.manifest_sha256.as_str()
-        || job.manifest_sha256 != expected
+        || (matches!(&binding.lineage, RuntimeLineage::Install) && job.manifest_sha256 != expected)
         || binding.container_name != MANAGED_CONTAINER_NAME
         || binding.image != request.image
         || binding.volume != request.volume
@@ -645,11 +781,62 @@ pub(super) fn validate_binding(
     Ok(request)
 }
 
+pub(super) fn validate_active_runtime_lineage(
+    home: &Path,
+    binding: &RuntimeBinding,
+    job: &IntegrationJob,
+) -> Result<(), &'static str> {
+    validate_binding(binding, job)?;
+    if job.state != super::JobState::Ready
+        || binding.phase != RuntimePhase::Ready
+        || binding.container_id.is_none()
+    {
+        return Err("n8n_active_runtime_not_ready");
+    }
+    let RuntimeLineage::Rollback(lineage) = &binding.lineage else {
+        return Ok(());
+    };
+    // The Rollback resolver verifies its own immutable Ready receipt plus the
+    // Restore/Backup chain.  It deliberately never reads this binding, which
+    // keeps this downstream comparison non-recursive.
+    let receipt = managed_rollback::resolve_ready_receipt_at(home, job)?
+        .ok_or("n8n_rollback_receipt_missing")?;
+    if receipt.rollback_job_id != binding.job_id
+        || receipt.rollback_manifest_sha256 != binding.manifest_sha256
+        || receipt.restore_job_id != lineage.restore_job_id
+        || receipt.backup_job_id != lineage.backup_job_id
+        || receipt.new_container_id != binding.container_id.as_deref().unwrap_or("")
+        || receipt.source_pinned_image != binding.image
+        || receipt.host_port != binding.host_port
+        || receipt.restore_volume != binding.volume
+        || receipt.retained_source_container_id != lineage.retained_source_container_id
+        || receipt.retained_source_name != lineage.retained_source_name
+        || lineage.restore_volume_owner_job_id != receipt.restore_job_id
+    {
+        return Err("n8n_rollback_runtime_lineage_mismatch");
+    }
+    Ok(())
+}
+
+pub(super) fn is_active_runtime_source(
+    home: &Path,
+    binding: &RuntimeBinding,
+    job: &IntegrationJob,
+) -> bool {
+    validate_active_runtime_lineage(home, binding, job).is_ok()
+}
+
 pub(crate) fn valid_manifest_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(crate) fn valid_historical_n8n_image(image: &str) -> bool {
+    image
+        .strip_prefix("docker.io/n8nio/n8n@sha256:")
+        .is_some_and(valid_manifest_sha256)
 }
 
 pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) -> bool {
@@ -666,6 +853,38 @@ pub(crate) fn valid_container_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(crate) fn valid_container_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
+pub(crate) fn retired_container_name(rollback_job_id: &str) -> Result<String, &'static str> {
+    let job = super::JobId::parse(rollback_job_id.into())
+        .map_err(|_| "n8n_rollback_retired_name_invalid_job")?;
+    let compact: String = job
+        .as_str()
+        .bytes()
+        .filter(u8::is_ascii_hexdigit)
+        .map(char::from)
+        .collect();
+    let name = format!("{MANAGED_CONTAINER_NAME}-retired-{compact}");
+    if valid_retired_container_name(&name) {
+        Ok(name)
+    } else {
+        Err("n8n_rollback_retired_name_invalid_job")
+    }
+}
+
+pub(crate) fn valid_retired_container_name(name: &str) -> bool {
+    name
+        .strip_prefix("neoth-n8n-retired-")
+        .is_some_and(|compact| compact.len() == 32 && compact.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && valid_container_name(name)
 }
 
 pub(crate) fn valid_volume_name(name: &str) -> bool {
@@ -806,6 +1025,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     let service = super::open_n8n_job_service(home)?;
     install_managed_in_service_with(
         &service, home, request, api_key, runner, readiness, probe, cancel,
@@ -894,6 +1114,7 @@ pub(in crate::integrations) async fn install_retained_at_with<
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     let service = super::open_n8n_job_service(home)?;
     if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
         anyhow::bail!("n8n_retained_reinstall_already_active");
@@ -963,11 +1184,12 @@ async fn install_managed_in_service_with<
         manifest_sha256: queued.manifest_sha256.as_str().into(),
         container_name: MANAGED_CONTAINER_NAME.into(),
         container_id: None,
-        image: request.image.into(),
+        image: request.image.clone(),
         host_port: request.port,
         volume: request.volume.clone(),
         retained_reinstall: request.retained_reinstall.clone(),
         bootstrap_volume_owner_job_id,
+        lineage: RuntimeLineage::Install,
     };
     if persist_create_intent(home, &binding).map_err(anyhow::Error::msg)?
         == CreateIntentWrite::Uncertain
@@ -1182,6 +1404,7 @@ pub(crate) async fn install_prepared_managed_in_service(
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     install_managed_in_service_with(
         service,
         home,
@@ -1979,6 +2202,12 @@ fn volume_listing_matches(name: &str, output: &str) -> Result<(), InspectVolumeO
 #[async_trait]
 impl ManagedDockerRunner for DockerManagedRunner {
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str> {
+        self.inspect_name(MANAGED_CONTAINER_NAME).await
+    }
+    async fn inspect_name(&mut self, name: &str) -> Result<InspectOutcome, &'static str> {
+        if !valid_container_name(name) {
+            return Err("n8n_managed_name_inspection_invalid_input");
+        }
         let (ok, ids, _) = docker(&[
             "docker".into(),
             "container".into(),
@@ -1986,7 +2215,7 @@ impl ManagedDockerRunner for DockerManagedRunner {
             "-a".into(),
             "--no-trunc".into(),
             "--filter".into(),
-            format!("name=^/{MANAGED_CONTAINER_NAME}$"),
+            format!("name=^/{name}$"),
             "--format".into(),
             "{{.ID}}".into(),
         ])
@@ -2036,6 +2265,24 @@ impl ManagedDockerRunner for DockerManagedRunner {
             InspectOutcome::Found(found) if found.id == id => Ok(InspectOutcome::Found(found)),
             _ => Ok(InspectOutcome::Unknown),
         }
+    }
+    async fn rename_exact(
+        &mut self,
+        id: &str,
+        destination: &str,
+    ) -> Result<ManagedCommandReceipt, &'static str> {
+        if !valid_container_id(id) || !valid_container_name(destination) {
+            return Err("n8n_managed_rename_invalid_input");
+        }
+        let (_, _, receipt) = docker(&[
+            "docker".into(),
+            "container".into(),
+            "rename".into(),
+            id.into(),
+            destination.into(),
+        ])
+        .await?;
+        Ok(receipt)
     }
     async fn running_exact(&mut self, id: &str) -> Result<bool, &'static str> {
         if !valid_container_id(id) {

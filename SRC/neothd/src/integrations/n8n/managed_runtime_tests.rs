@@ -584,6 +584,7 @@ fn runtime_sidecar_denies_unknown_fields() {
         volume: DEFAULT_VOLUME.into(),
         retained_reinstall: None,
         bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
     };
     write_binding(home.path(), &binding).unwrap();
     let mut raw: serde_json::Value =
@@ -596,6 +597,37 @@ fn runtime_sidecar_denies_unknown_fields() {
         read_binding(home.path()),
         Err("n8n_runtime_binding_invalid")
     );
+}
+
+#[test]
+fn legacy_binding_without_lineage_decodes_as_install_lineage() {
+    let binding = RuntimeBinding {
+        schema_version: 2,
+        phase: RuntimePhase::Ready,
+        job_id: "job-a".into(),
+        manifest_sha256: "a".repeat(64),
+        container_name: MANAGED_CONTAINER_NAME.into(),
+        container_id: Some("c".repeat(64)),
+        image: N8N_OCI_REFERENCE.into(),
+        host_port: 5678,
+        volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
+    };
+    let mut value = serde_json::to_value(binding).unwrap();
+    value.as_object_mut().unwrap().remove("lineage");
+    let decoded: RuntimeBinding = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.lineage, RuntimeLineage::Install);
+}
+
+#[test]
+fn rollback_retired_name_is_deterministic_and_rejects_non_uuid() {
+    let id = "018f0c00-0000-7000-8000-000000000001";
+    let name = retired_container_name(id).unwrap();
+    assert_eq!(name, "neoth-n8n-retired-018f0c00000070008000000000000001");
+    assert!(valid_retired_container_name(&name));
+    assert!(retired_container_name("not-a-job").is_err());
 }
 
 struct FakeRecovery(Arc<Mutex<RunnerState>>);
@@ -662,6 +694,7 @@ fn bound_binding(job: &super::super::IntegrationJob, id: String) -> RuntimeBindi
         volume: DEFAULT_VOLUME.into(),
         retained_reinstall: None,
         bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
     }
 }
 
@@ -820,6 +853,7 @@ async fn foreign_ready_binding_is_unchanged_and_blocks_a_second_queued_job() {
         volume: DEFAULT_VOLUME.into(),
         retained_reinstall: None,
         bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
     };
     write_binding(home.path(), &binding).unwrap();
     let before = std::fs::read(binding_path(home.path())).unwrap();
@@ -933,6 +967,7 @@ fn create_intent_restart_discovers_exact_owned_container_then_removes_it() {
             volume: DEFAULT_VOLUME.into(),
             retained_reinstall: None,
             bootstrap_volume_owner_job_id: None,
+            lineage: RuntimeLineage::Install,
         },
     )
     .unwrap();
@@ -981,6 +1016,7 @@ fn create_intent_restart_unknown_named_inspection_retains_custody_without_remova
             volume: DEFAULT_VOLUME.into(),
             retained_reinstall: None,
             bootstrap_volume_owner_job_id: None,
+            lineage: RuntimeLineage::Install,
         },
     )
     .unwrap();
@@ -1045,6 +1081,7 @@ fn postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker() {
         volume: DEFAULT_VOLUME.into(),
         retained_reinstall: None,
         bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
     };
     let outcome = persist_create_intent_with(home.path(), &intent, |path, bytes| {
         std::fs::write(path, bytes).map_err(|_| "fixture_write_failed")?;
@@ -1087,6 +1124,7 @@ fn queued_foreign_create_intent_stays_fail_closed_without_docker_inspection() {
         volume: DEFAULT_VOLUME.into(),
         retained_reinstall: None,
         bootstrap_volume_owner_job_id: None,
+        lineage: RuntimeLineage::Install,
     };
     write_binding(home.path(), &foreign).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {

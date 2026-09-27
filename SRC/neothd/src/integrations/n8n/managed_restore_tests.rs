@@ -412,6 +412,28 @@ async fn fixture() -> (tempfile::TempDir, Runner, Arc<Mutex<State>>, Integration
     (home, runner, state, backup)
 }
 
+/// Reuse the real Install/Backup/Restore job and receipt chain for Rollback tests.
+pub(in crate::integrations::n8n::managed_runtime) async fn rollback_fixture() -> (
+    tempfile::TempDir,
+    super::super::ObservedContainer,
+    super::super::ObservedVolume,
+    IntegrationJob,
+) {
+    let (home, mut runner, state, backup) = fixture().await;
+    let restored = restore_managed_at_with(home.path(), &backup.job_id, &mut runner)
+        .await
+        .expect("ready Restore fixture");
+    assert_eq!(restored.state, JobState::Ready);
+    let (original, volume) = {
+        let state = state.lock().unwrap();
+        (
+            state.original.clone().expect("original live container"),
+            state.volume.clone().expect("retained Restore volume"),
+        )
+    };
+    (home, original, volume, restored)
+}
+
 #[tokio::test]
 async fn ready_backup_restores_nonempty_content_to_exact_candidate_then_retires_it() {
     let (home, mut runner, state, backup) = fixture().await;

@@ -298,6 +298,13 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
         .into_iter()
         .find(|job| job.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_retained_reinstall_source_missing")?;
+    // A rollback's Restore-owned volume has distinct provenance and must not
+    // be coerced into the bootstrap retained-reinstall contract below. Until
+    // that dedicated receipt format exists, fail before constructing a false
+    // Install-shaped request.
+    if source.operation == JobOperation::Rollback {
+        return Err("n8n_restore_volume_reinstall_unsupported");
+    }
     if source.operation != JobOperation::Install
         || source.state != JobState::Ready
         || !is_managed_job(&source)
@@ -438,8 +445,7 @@ fn source_ready_binding(
         .find(|job| job.job_id.as_str() == binding.job_id.as_str())
         .ok_or_else(|| anyhow::anyhow!("n8n_uninstall_source_job_missing"))?;
     validate_binding(&binding, &source).map_err(anyhow::Error::msg)?;
-    if source.operation != JobOperation::Install
-        || source.state != super::super::JobState::Ready
+    if !super::super::managed_runtime::is_active_runtime_source(home, &binding, &source)
         || !is_managed_job(&source)
         || binding.phase != RuntimePhase::Ready
         || binding.container_id.is_none()
@@ -684,6 +690,7 @@ async fn uninstall_managed_at_with_restart_inspector<
     .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)? {
         anyhow::bail!("n8n_uninstall_repair_custody_pending");
     }

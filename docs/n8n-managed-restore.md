@@ -36,6 +36,6 @@ be proved, reconciliation holds and other managed n8n operations remain blocked.
 An interrupted container creation without a durably recorded container ID
 requires operator reconciliation; NEOTH does not guess ownership from a name.
 
-The integration job store upgrades to schema v6 while preserving earlier
+The integration job store upgrades to schema v7 while preserving earlier
 install, repair, backup and removal history. There are no caller overrides for
 the archive path, container, image, volume or host port.
