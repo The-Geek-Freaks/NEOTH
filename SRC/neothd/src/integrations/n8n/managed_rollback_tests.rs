@@ -336,6 +336,19 @@ async fn ready_success_keeps_same_old_id_and_reentry_has_no_effect() {
     .await
     .unwrap();
     assert_eq!(ready.state, JobState::Ready);
+    let endpoint = crate::config::LoopbackHttpEndpoint::parse(format!(
+        "http://127.0.0.1:{}",
+        state.lock().unwrap().old.host_port
+    ))
+    .unwrap();
+    assert_eq!(
+        ready
+            .evidence_contract
+            .as_ref()
+            .unwrap()
+            .authenticated_probe_sha256(),
+        &super::super::expected_authenticated_probe_sha256(&endpoint)
+    );
     let r = completed_receipt_at(home.path(), &ready).unwrap().unwrap();
     assert_eq!(r.retained_source_container_id, old);
     assert_eq!(state.lock().unwrap().old_name, r.retained_source_name);

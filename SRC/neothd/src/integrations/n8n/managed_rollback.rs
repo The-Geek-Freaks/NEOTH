@@ -208,6 +208,7 @@ fn manifest(
 fn contract(
     manifest: crate::integrations::state::Sha256Digest,
     restore: &super::managed_restore::RestoreReceiptView,
+    endpoint: &crate::config::LoopbackHttpEndpoint,
 ) -> JobEvidenceContract {
     JobEvidenceContract::verified(
         manifest,
@@ -216,7 +217,7 @@ fn contract(
             &restore.restore_job_id,
             &restore.restore_volume,
         ]),
-        sha256_parts(&["n8n-managed-rollback-historical-key-stdin"]),
+        super::super::expected_authenticated_probe_sha256(endpoint),
         sha256_parts(&STEPS),
     )
 }
@@ -498,17 +499,20 @@ pub(in crate::integrations) async fn rollback_managed_at_with_readiness<
             .get(&JobId::parse(c.rollback_job_id.clone()).map_err(anyhow::Error::msg)?)?
             .ok_or_else(|| anyhow::anyhow!("n8n_rollback_job_missing"))?
     } else {
-        let value = manifest(
-            &restore,
-            &original.as_ref().expect("new rollback has active source").0,
-        );
+        let source = &original.as_ref().expect("new rollback has active source").0;
+        let endpoint = crate::config::LoopbackHttpEndpoint::parse(format!(
+            "http://127.0.0.1:{}",
+            source.host_port
+        ))
+        .map_err(anyhow::Error::msg)?;
+        let value = manifest(&restore, source);
         service
             .enqueue(EnqueueIntegrationJob {
                 capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static"),
                 operation: JobOperation::Rollback,
                 release_version: "1.4.0".into(),
                 manifest_sha256: value.clone(),
-                evidence_contract: contract(value, &restore),
+                evidence_contract: contract(value, &restore, &endpoint),
                 requested_by: JobRequester::Cli,
                 total_steps: STEPS.len() as u32,
                 bytes_total: None,
