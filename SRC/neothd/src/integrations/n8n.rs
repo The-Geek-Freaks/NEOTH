@@ -715,7 +715,10 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
         }
         if matches!(
             job.operation,
-            JobOperation::Purge | JobOperation::Backup | JobOperation::Restore | JobOperation::Rollback
+            JobOperation::Purge
+                | JobOperation::Backup
+                | JobOperation::Restore
+                | JobOperation::Rollback
         ) {
             continue;
         }

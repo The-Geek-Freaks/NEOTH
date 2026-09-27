@@ -396,8 +396,10 @@ fn validate_custody(
     {
         return Err("n8n_backup_custody_mismatch");
     }
-    if !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
-        || source.state != JobState::Ready
+    if !matches!(
+        source.operation,
+        JobOperation::Install | JobOperation::Rollback
+    ) || source.state != JobState::Ready
         || !is_managed_job(source)
         || !is_managed_job(job)
         || job.progress.total_steps != STEPS.len() as u32
@@ -661,7 +663,10 @@ impl RestartValidator for ExplicitBackupRestartValidator {
                 candidate.job_id.as_str() == custody.source_install_job_id
                     && candidate.manifest_sha256.as_str() == custody.source_install_manifest_sha256
             })
-            && matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
+            && matches!(
+                source.operation,
+                JobOperation::Install | JobOperation::Rollback
+            )
             && source.state == JobState::Ready
             && let Some(binding) = read_binding(&self.home).ok().flatten()
             && binding.container_id.as_deref() == Some(custody.container_id.as_str())
@@ -967,8 +972,7 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
             backup_manifest_sha256: custody.backup_manifest_sha256.clone(),
             source_install_job_id: custody.source_install_job_id.clone(),
             source_job_id: rollback_source.then(|| source.job_id.as_str().into()),
-            source_manifest_sha256: rollback_source
-                .then(|| source.manifest_sha256.as_str().into()),
+            source_manifest_sha256: rollback_source.then(|| source.manifest_sha256.as_str().into()),
             source_operation: rollback_source.then(|| source.operation.as_str().into()),
             source_pinned_image: custody.image.clone(),
             source_container_id: custody.container_id.clone(),
@@ -1054,15 +1058,19 @@ pub(crate) fn completed_receipt_at(
         .find(|candidate| candidate.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_backup_source_missing")?;
     let source_receipt_matches = match receipt.schema_version {
-        1 => source.operation == JobOperation::Install
-            && receipt.source_job_id.is_none()
-            && receipt.source_manifest_sha256.is_none()
-            && receipt.source_operation.is_none(),
-        2 => source.operation == JobOperation::Rollback
-            && receipt.source_job_id.as_deref() == Some(source.job_id.as_str())
-            && receipt.source_manifest_sha256.as_deref()
-                == Some(source.manifest_sha256.as_str())
-            && receipt.source_operation.as_deref() == Some("rollback"),
+        1 => {
+            source.operation == JobOperation::Install
+                && receipt.source_job_id.is_none()
+                && receipt.source_manifest_sha256.is_none()
+                && receipt.source_operation.is_none()
+        }
+        2 => {
+            source.operation == JobOperation::Rollback
+                && receipt.source_job_id.as_deref() == Some(source.job_id.as_str())
+                && receipt.source_manifest_sha256.as_deref()
+                    == Some(source.manifest_sha256.as_str())
+                && receipt.source_operation.as_deref() == Some("rollback")
+        }
         _ => false,
     };
     if !source_receipt_matches

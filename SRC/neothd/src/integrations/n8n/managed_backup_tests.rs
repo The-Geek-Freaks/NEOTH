@@ -576,15 +576,24 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
         restored_running_state: true,
     };
     let serialized = serde_json::to_value(&receipt).unwrap();
-    assert!(!serialized.as_object().unwrap().contains_key("source_job_id"));
-    assert!(!serialized
-        .as_object()
-        .unwrap()
-        .contains_key("source_manifest_sha256"));
-    assert!(!serialized
-        .as_object()
-        .unwrap()
-        .contains_key("source_operation"));
+    assert!(
+        !serialized
+            .as_object()
+            .unwrap()
+            .contains_key("source_job_id")
+    );
+    assert!(
+        !serialized
+            .as_object()
+            .unwrap()
+            .contains_key("source_manifest_sha256")
+    );
+    assert!(
+        !serialized
+            .as_object()
+            .unwrap()
+            .contains_key("source_operation")
+    );
     write_receipt(home.path(), &receipt).unwrap();
     let contract = active.evidence_contract.as_ref().unwrap();
     let ready = service
@@ -804,7 +813,11 @@ async fn pending_rollback_custody_blocks_backup_before_any_docker_call() {
         br#"{"schema_version":1,"phase":"intent_persisted","rollback_job_id":"x","rollback_manifest_sha256":"x","restore_job_id":"x","restore_manifest_sha256":"x","backup_job_id":"x","backup_manifest_sha256":"x","image":"x","restore_volume":"x","old_container_id":"x","old_image":"x","old_volume":"x","host_port":1,"old_was_running":false,"retired_name":"x","original_binding_sha256":"x","original_binding":[],"new_container_id":null}"#,
     )
     .unwrap();
-    assert!(backup_managed_at_with(home.path(), &mut runner).await.is_err());
+    assert!(
+        backup_managed_at_with(home.path(), &mut runner)
+            .await
+            .is_err()
+    );
     assert_eq!(calls(&state, "stop:"), 0);
     assert_eq!(calls(&state, "archive:"), 0);
 }

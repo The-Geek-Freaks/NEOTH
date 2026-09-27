@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-hosted-format-admission/v1",
+  "status": "HOSTED_FORMAT_IMPORTED",
+  "run": 36305078380,
+  "producer": "e14c4813812cc2eceb380978acd454653201c41f",
+  "artifact": 10927265187,
+  "zipSha256": "6ab302d418cd3a0563d8fa7b146760f0503c13fcdb4ca4d472dab5b92d0495dc",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "preimage": "eb56679297d376074a39ad0a73f3d78172c05f40",
+      "postimage": "d30df44e1be3a915e8c0c0ba062880507b1a3cdc"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "preimage": "c19d6c4310d91c8bf80ba68a5c5d9ded4a8c8237",
+      "postimage": "f1db5c0321dafee0fc477cb8acdc4457cd05d060"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "preimage": "cc39c16e185b5528076cdc06d9dd357f58ff502f",
+      "postimage": "46056dfd30f7fa1efd74774611285abce8b0fd22"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+      "preimage": "ac566a04ed67b8e6a6896854cd2597fe9bb8b25a",
+      "postimage": "ebab8d543eb8642786c6de778569363d34a298a6"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "preimage": "0d990abac4b729295ddd4be1fb7f5be8a18e87d2",
+      "postimage": "8b2d57413c51a89555064dd60f67632e9a5bcd8c"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+      "preimage": "812df980d9a81df00f2ab1960734452a16fa798e",
+      "postimage": "eb1464ad60945b8b7c7c382d505ae47892edc6ac"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_rollback.rs",
+      "preimage": "42072dc69c7b18b8639db555f956b42030523e62",
+      "postimage": "6c1518b1e90d0eafa24753c094f14374489c5865"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+      "preimage": "1f1e5bdb1173a298dcb628693c6dc6f494602ef9",
+      "postimage": "e4e8d19023ecfa97d6d75f1d3e4e9d903b5a26d1"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "preimage": "b45474f9489a4c212d8969171b1e6e14e080ea6a",
+      "postimage": "4626a4ba19aac67a75b7321a5e98676e8e896a25"
+    }
+  ],
+  "internalHashesVerified": true,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

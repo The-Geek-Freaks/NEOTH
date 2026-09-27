@@ -234,7 +234,10 @@ fn restart_binding_commit_proven(
         return false;
     };
     if job.operation != JobOperation::Repair
-        || !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
+        || !matches!(
+            source.operation,
+            JobOperation::Install | JobOperation::Rollback
+        )
         || source.state != JobState::Ready
         || !is_managed_job(&source)
         || validate_custody(custody, job, &source).is_err()
@@ -902,8 +905,10 @@ fn completed_authority(
     validate_custody(custody, &repair, &source)?;
     let expected = custody.new_binding.as_ref().unwrap_or(&custody.old_binding);
     let current = read_binding(home)?.ok_or("n8n_repair_binding_missing")?;
-    if !matches!(source.operation, JobOperation::Install | JobOperation::Rollback)
-        || source.state != JobState::Ready
+    if !matches!(
+        source.operation,
+        JobOperation::Install | JobOperation::Rollback
+    ) || source.state != JobState::Ready
         || !is_managed_job(&source)
         || current != *expected
     {

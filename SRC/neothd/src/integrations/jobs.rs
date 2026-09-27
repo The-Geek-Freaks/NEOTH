@@ -1604,7 +1604,10 @@ fn migrate_v6_to_v7(connection: &mut Connection) -> Result<(), JobServiceError> 
         )?;
         transaction.execute_batch("DROP TABLE integration_jobs_v6;")?;
         create_integration_job_indexes(&transaction)?;
-        transaction.execute("UPDATE setup_component_schema SET version=?2 WHERE component=?1", params![COMPONENT, SCHEMA_VERSION])?;
+        transaction.execute(
+            "UPDATE setup_component_schema SET version=?2 WHERE component=?1",
+            params![COMPONENT, SCHEMA_VERSION],
+        )?;
         validate_schema(&transaction)?;
         transaction.commit()?;
         Ok(())
@@ -1862,10 +1865,36 @@ fn validate_v6_schema(connection: &Connection) -> Result<(), JobServiceError> {
     if integration_job_columns(connection)? != EXPECTED_JOB_COLUMNS {
         return Err(JobServiceError::CorruptSchema);
     }
-    validate_schema_sql(connection, "table", "integration_jobs", CREATE_INTEGRATION_JOBS_TABLE_V6)?;
-    validate_index_contract(connection, "integration_jobs_one_active_capability", CREATE_ACTIVE_CAPABILITY_INDEX, true, true, &["capability_id"])?;
-    validate_index_contract(connection, "integration_jobs_one_retry_child", CREATE_RETRY_CHILD_INDEX, true, true, &["retry_of"])?;
-    validate_index_contract(connection, "integration_jobs_updated", CREATE_UPDATED_INDEX, false, false, &["updated_at", "job_id"])?;
+    validate_schema_sql(
+        connection,
+        "table",
+        "integration_jobs",
+        CREATE_INTEGRATION_JOBS_TABLE_V6,
+    )?;
+    validate_index_contract(
+        connection,
+        "integration_jobs_one_active_capability",
+        CREATE_ACTIVE_CAPABILITY_INDEX,
+        true,
+        true,
+        &["capability_id"],
+    )?;
+    validate_index_contract(
+        connection,
+        "integration_jobs_one_retry_child",
+        CREATE_RETRY_CHILD_INDEX,
+        true,
+        true,
+        &["retry_of"],
+    )?;
+    validate_index_contract(
+        connection,
+        "integration_jobs_updated",
+        CREATE_UPDATED_INDEX,
+        false,
+        false,
+        &["updated_at", "job_id"],
+    )?;
     validate_retry_foreign_key(connection)?;
     validate_foreign_key_integrity(connection)?;
     validate_all_jobs(connection)?;
@@ -4359,7 +4388,11 @@ mod tests {
         drop(reopened);
         let reopened = IntegrationJobService::open(&home, catalog(), &validator).unwrap();
         assert_eq!(
-            reopened.get(&rolled_back.job_id).unwrap().unwrap().operation,
+            reopened
+                .get(&rolled_back.job_id)
+                .unwrap()
+                .unwrap()
+                .operation,
             JobOperation::Rollback
         );
     }
@@ -4427,7 +4460,7 @@ mod tests {
 
     #[test]
     fn read_only_snapshot_reads_v6_restore_history_without_schema_writes_then_owned_open_migrates_v7()
-    {
+     {
         let root = tempfile::tempdir().unwrap();
         let home = home(&root);
         let database = home.join(DB_FILE_NAME);

@@ -29,14 +29,14 @@ pub(crate) mod managed_backup;
 pub(crate) mod managed_repair;
 #[path = "managed_restore.rs"]
 pub(crate) mod managed_restore;
-#[path = "managed_rollback.rs"]
-pub(crate) mod managed_rollback;
 #[path = "managed_restore_candidate.rs"]
 pub(crate) mod managed_restore_candidate;
 #[path = "managed_restore_content.rs"]
 mod managed_restore_content;
 #[path = "managed_restore_io.rs"]
 mod managed_restore_io;
+#[path = "managed_rollback.rs"]
+pub(crate) mod managed_rollback;
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
 
@@ -302,9 +302,15 @@ pub(crate) trait ManagedDockerRunner: Send {
         if !valid_container_id(id) || !valid_container_name(expected_name) {
             return Err("n8n_managed_named_inspection_invalid_input");
         }
-        match (self.inspect_exact(id).await?, self.inspect_name(expected_name).await?) {
+        match (
+            self.inspect_exact(id).await?,
+            self.inspect_name(expected_name).await?,
+        ) {
             (InspectOutcome::Found(exact), InspectOutcome::Found(named))
-                if exact.id == id && named.id == id => Ok(InspectOutcome::Found(exact)),
+                if exact.id == id && named.id == id =>
+            {
+                Ok(InspectOutcome::Found(exact))
+            }
             (InspectOutcome::Absent, InspectOutcome::Absent) => Ok(InspectOutcome::Absent),
             _ => Ok(InspectOutcome::Unknown),
         }
@@ -611,7 +617,8 @@ pub(super) fn validate_existing_identity(
     };
     if !valid_container_id(&observed.id)
         || !(binding.schema_version == 2
-            || (binding.schema_version == 3 && matches!(&binding.lineage, RuntimeLineage::Rollback(_))))
+            || (binding.schema_version == 3
+                && matches!(&binding.lineage, RuntimeLineage::Rollback(_))))
         || binding.job_id != job.job_id.as_str()
         || binding.manifest_sha256 != job.manifest_sha256.as_str()
         || binding.container_name != MANAGED_CONTAINER_NAME
@@ -748,7 +755,9 @@ pub(super) fn validate_binding(
         (None, None) => true,
     };
     let valid_lineage = match &binding.lineage {
-        RuntimeLineage::Install => binding.schema_version == 2 && job.operation == JobOperation::Install,
+        RuntimeLineage::Install => {
+            binding.schema_version == 2 && job.operation == JobOperation::Install
+        }
         RuntimeLineage::Rollback(lineage) => {
             binding.schema_version == 3
                 && job.operation == JobOperation::Rollback
@@ -881,9 +890,10 @@ pub(crate) fn retired_container_name(rollback_job_id: &str) -> Result<String, &'
 }
 
 pub(crate) fn valid_retired_container_name(name: &str) -> bool {
-    name
-        .strip_prefix("neoth-n8n-retired-")
-        .is_some_and(|compact| compact.len() == 32 && compact.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    name.strip_prefix("neoth-n8n-retired-")
+        .is_some_and(|compact| {
+            compact.len() == 32 && compact.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
         && valid_container_name(name)
 }
 

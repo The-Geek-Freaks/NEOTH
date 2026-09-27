@@ -248,10 +248,11 @@ async fn run_rollback(restore: &str, api_key_stdin: bool, output: OutputFormat) 
         &home, &restore, api_key,
     )
     .await?;
-    let receipt = crate::integrations::n8n::managed_runtime::managed_rollback::completed_receipt_at(
-        &home, &job,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let receipt =
+        crate::integrations::n8n::managed_runtime::managed_rollback::completed_receipt_at(
+            &home, &job,
+        )
+        .map_err(anyhow::Error::msg)?;
     if job.state == crate::integrations::JobState::Ready && receipt.is_none() {
         return Err(anyhow!("n8n rollback has no verified completion receipt"));
     }

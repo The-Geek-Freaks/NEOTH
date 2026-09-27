@@ -1,0 +1,68 @@
+{
+  "schema": "neoth-wave1551-restore-core-admission/v1",
+  "decision": "admitted",
+  "scope": "Restore producer core Clippy, test typecheck, public CLI build, and Linux workspace Clippy",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36302999480,
+    "job_id": 108574093060,
+    "head_sha": "00aa8660a36938e69ac816ca8dfaa240835f3d32",
+    "source_ref": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36302999480"
+  },
+  "gates": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success",
+      "terminal": "Finished dev profile in 2m 33s"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success",
+      "terminal": "Finished dev profile in 4m 55s"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success",
+      "terminal": "Finished dev profile in 4m 14s"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success",
+      "terminal": "Finished dev profile in 27m 46s"
+    }
+  ],
+  "artifact": {
+    "id": 10926259406,
+    "name": "generated-cli-reference",
+    "api_digest": "sha256:e5b9cb16948541acd74d3cf2461a953f6719583986ba1d6cdf4089c64fcb7860",
+    "zip_sha256": "e5b9cb16948541acd74d3cf2461a953f6719583986ba1d6cdf4089c64fcb7860",
+    "api_digest_matches_original_zip": true,
+    "producer_head_verified": true,
+    "safe_entries": 3,
+    "unsafe_entries": 0,
+    "internal_hashes_verified": true,
+    "reference_sha256": "017032cfefe7de0d48638a6f0ae5d907cc7f262955e36543adc9861c68469487",
+    "retained": true,
+    "imported": false
+  },
+  "workflow": {
+    "path": ".github/workflows/cli-reference.yml",
+    "blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+    "hash_object_matches_blob": true,
+    "sha256": "0b971561dcb33d02fc5943f1ad3f37cfe22ffa0bcc8229704d9d7e395695403b"
+  },
+  "log": {
+    "sha256": "793077b7bfa9f70c284d72f5353bc28b2dea2bdb241addbff8b21b0b452a1c90",
+    "compile_success_terminals": 4
+  },
+  "limits": [
+    "Producer 00aa8660 only; does not validate later changes or published Rollback source.",
+    "Test typecheck is not test execution; native and product admissions remain separate.",
+    "The generated CLI reference is retained as evidence but not imported: Rollback CLI work requires a newer reference run.",
+    "No local executable validation, roadmap closure, deployment, or release acceptance."
+  ],
+  "local_executable_validation_ran": false
+}

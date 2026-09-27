@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1551-W1552 Restore Core accepted; Rollback formatting (2026-09-27):**
+Restore Core36302999480 at00aa8660 passed all four gates, including full Linux
+workspace Clippy. Original artifact10926259406, internal generated-reference
+hash, exact workflow blob and four actual compiler terminals verify. Together
+with W1545-W1547 this completes the recorded Restore component gates at their
+explicit producer boundaries. Its older CLI reference is retained as evidence.
+Rollback e14c4813 is published and Core/CLI36305113248 is running. Imported
+only original hosted rustfmt artifact10927265187 from Preflight36305078380:
+nine exact pre/post Git blobs plus ZIP/API/internal hashes verified. No local
+formatter ran. Group1922/Windows687 wait for generated Rollback CLI reference.
+Actual Rollback product and downstream Restore-volume lifecycle remain open;
+ROAD counts unchanged; no release or whole P2-20 acceptance.
+Evidence: docs/verification/gold-wave1551-restore-core-accepted.json and
+ docs/verification/gold-wave1552-rollback-format.json.
+
 **W1548 managed n8n Rollback source batch (2026-09-27):**
 Independent final source review passed for schema v7, RuntimeBinding v3,
 Backup v2 and rename-first Rollback. The command consumes a Ready Restore and
