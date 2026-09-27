@@ -1,0 +1,60 @@
+{
+  "schema": "neoth-gold-reviewed-lifecycle-batch/v1",
+  "batch": "W1649-W1656",
+  "capturedUtc": "2026-09-27T14:51:42.7458372Z",
+  "base": "2dd7efa8e47d9c18b07b3ad7a87d2c037f09b9aa",
+  "paperless": {
+    "operation": "paperless.backup",
+    "archives": 6,
+    "perArchiveByteLimit": 8589934592,
+    "totalByteLimit": 25769803776,
+    "newNativeTests": 17,
+    "review": "W1649 backend and W1650 product approved static; Root historical custody correction independently reviewed",
+    "hosted": "pending",
+    "sourceScope": "stop exact source; private bounded streams; full readback; exact state restore; immutable receipts; historical generation binding; uncertain effects not replayed"
+  },
+  "n8n": {
+    "failureRun": 36325173252,
+    "artifact": 10933878699,
+    "artifactZipSha256": "076ced1d2d9306f9cc48df505517f8f5eedf89b6ec0839c12b14e06af382ce48",
+    "producerBindings": 30,
+    "failureLocation": "first retained install in update_downstream",
+    "sourceDefect": "initial Update uninstall manifest omitted volume owner while reinstall resolver bound Update job ID",
+    "repair": "manifest producer derives owner from Update lineage; existing mismatched receipts remain refused",
+    "newNativeTests": 2,
+    "review": "W1655 static approval; W1656 diagnostic allowlist approval",
+    "hosted": "pending"
+  },
+  "priorGroup": {
+    "run": 36325174895,
+    "source": "2dd7efa8e47d9c18b07b3ad7a87d2c037f09b9aa",
+    "passed": 1955,
+    "sourceBindings": 318,
+    "originalArtifactDigestsVerified": true,
+    "admission": "work/gold-20260906/wave1654-group1955/ADMISSION.json"
+  },
+  "priorCore": {
+    "run": 36324048254,
+    "source": "2a80e6520c0a51f67c5b44f0dacb8b3b4a715dcd",
+    "slimClippy": "passed",
+    "testTypecheck": "passed",
+    "publicCliBuild": "passed",
+    "workspaceClippy": "passed",
+    "logSha256": "D7AAAC73F11B93CE233D929B07334A7ACB890D42445216D2CAC7C20C0DAC7234"
+  },
+  "priorWindows": {
+    "run": 36325177742,
+    "source": "2dd7efa8e47d9c18b07b3ad7a87d2c037f09b9aa",
+    "job": "success",
+    "admission": "source-admitted pass; original ZIP verified",
+    "passed": 720,
+    "sourceBindings": 116
+  },
+  "inventories": {
+    "portable": 2184,
+    "group": 1974,
+    "windows": 739
+  },
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

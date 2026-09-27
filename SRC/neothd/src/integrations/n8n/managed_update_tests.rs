@@ -738,6 +738,107 @@ async fn ready_update_is_a_valid_source_for_the_real_backup_coordinator() {
 }
 
 #[tokio::test]
+async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
+    let (home, mut runner, state, _source) = fixture(true).await;
+    let update = update_managed_at_with(
+        home.path(),
+        "n8n-2.40.7",
+        "linux/amd64",
+        SecretString::from("update-key"),
+        &mut runner,
+        &Reader,
+        &Ready,
+        &Probe,
+    )
+    .await
+    .unwrap();
+    let update_volume = super::super::read_binding(home.path())
+        .unwrap()
+        .unwrap()
+        .volume;
+
+    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
+        home.path(),
+        &mut runner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(uninstall.state, JobState::Ready);
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    let reinstall = super::super::install_retained_at_with(
+        home.path(),
+        &uninstall.job_id,
+        SecretString::from("update-key"),
+        &mut runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(reinstall.state, JobState::Ready);
+    let binding = super::super::read_binding(home.path()).unwrap().unwrap();
+    assert_eq!(binding.volume, update_volume);
+    assert_eq!(
+        binding
+            .retained_reinstall
+            .as_ref()
+            .and_then(|source| source.update.as_ref())
+            .map(|source| source.update_job_id.as_str()),
+        Some(update.job_id.as_str())
+    );
+    assert!(state.lock().unwrap().live.is_some());
+}
+
+#[tokio::test]
+async fn update_uninstall_manifest_tampering_blocks_retained_reinstall_before_effects() {
+    let (home, mut runner, state, _source) = fixture(true).await;
+    update_managed_at_with(
+        home.path(),
+        "n8n-2.40.7",
+        "linux/amd64",
+        SecretString::from("update-key"),
+        &mut runner,
+        &Reader,
+        &Ready,
+        &Probe,
+    )
+    .await
+    .unwrap();
+    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
+        home.path(),
+        &mut runner,
+    )
+    .await
+    .unwrap();
+    let path = home
+        .path()
+        .join(format!("n8n-uninstall-{}.receipt.json", uninstall.job_id));
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    receipt["uninstall_manifest_sha256"] = serde_json::Value::String("0".repeat(64));
+    std::fs::write(path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+
+    let before = state.lock().unwrap().calls.clone();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    assert!(
+        super::super::install_retained_at_with(
+            home.path(),
+            &uninstall.job_id,
+            SecretString::from("update-key"),
+            &mut runner,
+            &Ready,
+            &Probe,
+            &mut cancel,
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(state.lock().unwrap().calls, before);
+}
+
+#[tokio::test]
 async fn known_content_mismatch_compensates_running_source_to_exact_prior_binding() {
     let (home, mut runner, state, _source) = fixture(true).await;
     let before = super::super::read_binding_bytes(home.path())

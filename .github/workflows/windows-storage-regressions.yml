@@ -790,6 +790,25 @@ jobs:
           integrations::n8n::managed_runtime::managed_repair::tests::replacement_history_requires_ready_job_and_exact_binding_transition	neothd/src/integrations/n8n/managed_repair_tests.rs
           cli::n8n::tests::n8n_update_cli_requires_target_platform_and_piped_key_without_resource_overrides	neothd/src/cli/n8n.rs
           integrations::n8n::managed_runtime::managed_update::tests::invalid_persisted_content_proof_holds_before_recovery_effects	neothd/src/integrations/n8n/managed_update_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::coordinator_copies_the_exact_six_archives_and_restores_running_source	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::all_stopped_and_mixed_sources_are_returned_to_their_exact_original_state	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::exit_zero_stop_or_start_that_did_not_change_state_blocks_copy_or_receipt	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::ambiguous_copy_is_durably_held_and_reentry_never_dispatches_a_second_copy	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::corrupt_receipt_is_rejected_before_effects_and_readback_mismatch_restores_state	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::corrupt_volume_set_snapshot_is_rejected_before_stop_copy_or_start	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::lock_and_failed_readiness_fence_receipt_and_effects	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::valid_complete_backup_uses_a_fresh_job_while_committed_receipt_reentry_does_not_recopy	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::tampered_committed_archive_and_incomplete_custody_hold_before_new_effects	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::custody_traversal_or_foreign_archive_binding_is_rejected_before_a_new_effect	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::pending_start_crash_is_observed_without_replaying_the_uncertain_start	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_six_archives_and_missing_receipt_commits_same_job_without_effect_replay	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_partial_archives_cannot_commit_a_receipt	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::historical_complete_repair_with_different_active_receipt_allows_backup	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::arbitrary_complete_repair_json_rejects_before_backup_effects	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::completed_backup_accepts_changed_active_receipt_and_preserves_first_immutable_receipt	neothd/src/installers/paperless_backup_tests.rs
+          cli::paperless::tests::paperless_backup_cli_has_no_target_or_archive_overrides	neothd/src/cli/paperless.rs
+          integrations::n8n::managed_runtime::managed_update::tests::update_volume_reinstalls_after_uninstall_with_its_lineage_owner	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::update_uninstall_manifest_tampering_blocks_retained_reinstall_before_effects	neothd/src/integrations/n8n/managed_update_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -814,7 +833,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 720 ]]; then
+          if [[ "$expected" -ne 739 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

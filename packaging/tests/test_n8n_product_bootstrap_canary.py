@@ -871,6 +871,16 @@ class CustodyBoundaryTests(unittest.TestCase):
         self.assertEqual(failure.diagnostic["exit_code"], 1)
         self.assertEqual(failure.diagnostic["known_error_categories"], ["n8n_bootstrap_docker_failed"])
 
+    def test_retained_update_diagnosis_emits_only_fixed_source_categories(self) -> None:
+        secret = "private-key-and-server-response"
+        self.assertIn("n8n_update_volume_uninstall_manifest_mismatch", canary.UPDATE_RETAINED_FAILURE_CODES)
+        for code in canary.UPDATE_RETAINED_FAILURE_CODES:
+            with self.subTest(code=code):
+                result = canary.bounded.Result(1, secret.encode(), f"Error: {code}: {secret}".encode(), False, False)
+                failure = canary.CommandFailure(["neoth", "--output", "json", "n8n", "install", secret], result)
+                self.assertEqual(failure.diagnostic["known_error_categories"], [code])
+                self.assertNotIn(secret, json.dumps(failure.diagnostic))
+
     def test_rollback_command_diagnosis_projects_allowlisted_failed_job_output(self) -> None:
         secret = "must-never-appear-in-rollback-diagnosis"
         stdout = json.dumps({

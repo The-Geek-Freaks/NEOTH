@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1649-W1656 Paperless Backup and retained Update lifecycle (2026-09-27):**
+Paperless now has a flag-free same-instance six-volume Backup command with
+private bounded streams, per-archive readback, exact original source-state
+restoration and immutable receipts. Crash recovery distinguishes dispatched,
+stopped, copied and restored states; uncertain effects are never repeated.
+Completed Backup and Repair custody validate their own historical source bytes,
+so later valid lifecycle changes do not poison a new backup. Independent backend
+and real-product-canary reviews passed;17 native cases are registered.
+The first n8n Update uninstall hashed an empty volume owner while retained
+reinstall required its Update job ID. The producer now binds that lineage owner;
+two real coordinator/tamper regressions and23 fixed redacted diagnostic markers
+are added and reviewed. Failed old receipts remain refused. Product36325173252
+and all30 source bindings are authenticated; that failed run proves no complete
+product lifecycle or cleanup. Fresh hosted validation is required for this batch.
+Prior Group1955run36325174895 at2dd7efa8 passed1955/1955 with318 raw source
+bindings and authenticated original artifacts. Core36324048254 at2a80e652
+passed slim/test-source/public-CLI/workspace-Clippy gates. Windows36325177742
+passed720/720; original ZIP,720 terminal logs and116 raw source bindings verify.
+New inventories:
+Portable2184/Group1974/Windows739. ROAD remains1324/1077/245/2; no box closure,
+Paperless restore/update claim or local executable validation.
+Evidence: docs/verification/gold-wave1649-1656-backup-and-update.json.
 **W1645-W1648 Exact CLI reference and Update canary continuation (2026-09-27):**
 Core36324048254 at2a80e652 passed slim Clippy, test-target typecheck and public
 CLI build/export; workspace Clippy is still running. Original artifact

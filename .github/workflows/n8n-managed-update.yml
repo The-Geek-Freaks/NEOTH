@@ -16,6 +16,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with: {toolchain: '1.91.0'}
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools python3-yaml sqlite3
+      - run: python3 -m unittest discover -s packaging/tests -p test_n8n_product_bootstrap_canary.py
       - run: python3 -m unittest discover -s packaging/tests -p test_n8n_managed_update_canary.py
       - run: python3 -m unittest discover -s packaging/tests -p test_n8n_update_content.py
       - run: python3 -m unittest discover -s packaging/tests -p test_n8n_update_migration_canary.py

@@ -786,12 +786,19 @@ fn update_reinstall_request(
 }
 
 fn uninstall_manifest(binding: &RuntimeBinding) -> super::super::Sha256Digest {
-    let owner = binding
-        .retained_reinstall
-        .as_ref()
-        .map(|source| source.volume_owner_install_job_id.as_str())
-        .or(binding.bootstrap_volume_owner_job_id.as_deref())
-        .unwrap_or("");
+    // An Update owns its dedicated volume through its v4 lineage before the
+    // first retained reinstall exists. Later retained installs carry that
+    // same owner in `retained_reinstall`; both forms must bind the identical
+    // uninstall identity used by the reinstall resolver.
+    let owner = match &binding.lineage {
+        super::RuntimeLineage::Update(lineage) => lineage.update_volume_owner_job_id.as_str(),
+        _ => binding
+            .retained_reinstall
+            .as_ref()
+            .map(|source| source.volume_owner_install_job_id.as_str())
+            .or(binding.bootstrap_volume_owner_job_id.as_deref())
+            .unwrap_or(""),
+    };
     uninstall_manifest_from_identity(
         binding.job_id.as_str(),
         binding.manifest_sha256.as_str(),

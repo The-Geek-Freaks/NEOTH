@@ -14,7 +14,9 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.parse
@@ -45,7 +47,10 @@ RETIRED_AUTHORITY_ROLES = (
 API_LIMIT = 32 * 1024
 CONFIG_LIMIT = 256 * 1024
 DOWNLOAD_LIMIT = 2 * 1024 * 1024
+BACKUP_ARCHIVE_LIMIT = 2 * 1024 * 1024 * 1024
 TASK_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+BACKUP_JOB_ID = re.compile(r"paperless-backup-[0-9a-f]{64}")
+PAPERLESS_CONTRACT_ID = "paperless-oci-v1-3c8cabbaae8b77ae"
 MARKER_TITLE = "NEOTH Paperless retained-data canary"
 # A deterministic, minimal, one-page PDF. PDF is handled by the pinned
 # Paperless image without relying on a separately configured text parser.
@@ -81,7 +86,7 @@ class CommandFailure(Failure):
         program = Path(argv[0]).name
         command = "docker" if program == "docker" else "other"
         if program == "neoth" and argv[1:4] == ["--output", "json", "paperless"]:
-            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status", "repair": "product_repair", "uninstall": "product_uninstall", "purge": "product_purge"}.get(argv[4], "other")
+            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status", "backup": "product_backup", "repair": "product_repair", "uninstall": "product_uninstall", "purge": "product_purge"}.get(argv[4], "other")
         elif program == "neoth" and argv[1:2] == ["init"]:
             command = "product_init"
         markers = (
@@ -111,6 +116,10 @@ class CommandFailure(Failure):
             "paperless_repair_start_id_missing", "paperless_repair_start_outcome_ambiguous",
             "paperless_repair_token_required", "paperless_repair_uninstall_present",
             "paperless_repair_version_drift", "paperless_generation_auth_binding_changed",
+            "paperless_backup_peer_custody_present", "paperless_backup_effect_outcome_ambiguous",
+            "paperless_backup_copy_outcome_ambiguous", "paperless_backup_stream_limit",
+            "paperless_backup_archive_readback_mismatch", "paperless_backup_readiness_failed",
+            "paperless_backup_start_outcome_ambiguous", "paperless_backup_stop_failed",
             "paperless_generation_auth_config_invalid", "paperless_generation_auth_keychain",
             "paperless_generation_auth_new_token_changed", "paperless_generation_auth_new_token_unbound",
             "paperless_generation_auth_old_token_missing", "paperless_generation_auth_persist",
@@ -297,7 +306,7 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
 
 
 def admitted_images() -> dict[str, tuple[str, str]]:
-    path = Path.cwd() / "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json"
+    path = Path.cwd() / "docs/verification/paperless-oci-v1-3c8cabbaae8b77ae/recursive-blob-receipt.json"
     try:
         receipt = json.loads(path.read_bytes())
     except Exception as error:
@@ -496,6 +505,11 @@ def marker_metadata(port: int, token: str, document_id: int) -> tuple[int, str, 
     return document_id, MARKER_TITLE, digest
 
 
+def marker_metadata_matches(port: int, token: str, document_id: int, baseline: tuple[int, str, str]) -> None:
+    if marker_metadata(port, token, document_id) != baseline:
+        raise Failure("marker_metadata_changed")
+
+
 def persisted_receipt_bytes(home: Path, name: str, code: str) -> bytes:
     path = home / "paperless" / "state" / name
     if path.is_symlink() or not path.is_file() or path.stat().st_size > CONFIG_LIMIT:
@@ -620,6 +634,112 @@ def persisted_volume_set_snapshot(home: Path, project: str, volume_set_id: str) 
     return raw
 
 
+def private_path(path: Path, directory: bool, code: str) -> None:
+    try:
+        metadata = os.lstat(path)
+    except OSError as error:
+        raise Failure(code) from error
+    kind_ok = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
+    if stat.S_ISLNK(metadata.st_mode) or not kind_ok or metadata.st_mode & 0o077:
+        raise Failure(code)
+
+
+def backup_root(home: Path, job_id: str) -> Path:
+    if not BACKUP_JOB_ID.fullmatch(job_id):
+        raise Failure("backup_job_id_invalid")
+    root = home
+    for component in ("paperless", "state", "backups", job_id):
+        private_path(root, True, "backup_root_invalid")
+        root = root / component
+    private_path(root, True, "backup_root_invalid")
+    return root
+
+
+def backup_archive_path(home: Path, job_id: str, logical_name: str, archive_path: object) -> Path:
+    if logical_name not in {logical for logical, _, _ in VOLUMES} or not isinstance(archive_path, str):
+        raise Failure("backup_archive_path_invalid")
+    expected = f"state/backups/{job_id}/{logical_name}.tar"
+    if archive_path != expected:
+        raise Failure("backup_archive_path_invalid")
+    root = backup_root(home, job_id)
+    path = home / "paperless" / archive_path
+    if path.parent != root or path.name != f"{logical_name}.tar":
+        raise Failure("backup_archive_path_invalid")
+    private_path(path, False, "backup_archive_path_invalid")
+    return path
+
+
+def archive_digest(path: Path, expected_bytes: object, expected_sha256: object) -> None:
+    if type(expected_bytes) is not int or expected_bytes <= 0 or expected_bytes > BACKUP_ARCHIVE_LIMIT or not isinstance(expected_sha256, str) or not SHA256.fullmatch(expected_sha256):
+        raise Failure("backup_archive_digest_invalid")
+    private_path(path, False, "backup_archive_digest_invalid")
+    before = os.lstat(path)
+    if before.st_size != expected_bytes:
+        raise Failure("backup_archive_digest_invalid")
+    hasher = hashlib.sha256()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise Failure("backup_archive_digest_invalid") from error
+    with os.fdopen(descriptor, "rb") as source:
+        total = 0
+        while block := source.read(64 * 1024):
+            total += len(block)
+            if total > expected_bytes or total > BACKUP_ARCHIVE_LIMIT:
+                raise Failure("backup_archive_digest_invalid")
+            hasher.update(block)
+        opened = os.fstat(source.fileno())
+    digest = hasher.hexdigest()
+    after = os.lstat(path)
+    if total != expected_bytes or opened.st_size != expected_bytes or after.st_size != expected_bytes or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino) or digest != expected_sha256:
+        raise Failure("backup_archive_digest_invalid")
+
+
+def media_archive_contains_marker(path: Path) -> None:
+    try:
+        with tarfile.open(path, "r:*") as archive:
+            matched = False
+            count = declared = 0
+            while member := archive.next():
+                count += 1
+                declared += member.size
+                if count > 4096 or declared > BACKUP_ARCHIVE_LIMIT:
+                    raise Failure("backup_media_archive_invalid")
+                if not member.isfile() or member.size != len(MARKER_PDF) or member.size > DOWNLOAD_LIMIT:
+                    continue
+                source = archive.extractfile(member)
+                if source is not None and hashlib.sha256(source.read(len(MARKER_PDF) + 1)).hexdigest() == hashlib.sha256(MARKER_PDF).hexdigest():
+                    matched = True
+            if count == 0 or not matched:
+                raise Failure("backup_media_marker_absent")
+    except (tarfile.TarError, OSError) as error:
+        raise Failure("backup_media_archive_invalid") from error
+
+
+def validate_backup(value: dict, home: Path, project: str, config_ids: dict[str, str], identities: tuple[str, ...], volume_set_id: str, install_receipt_bytes: bytes, volume_set_snapshot_bytes: bytes, expected_running: bool) -> tuple[str, tuple[Path, ...]]:
+    required = {"schema_version", "operation", "job_id", "contract_id", "project", "install_receipt_sha256", "volume_set_id", "volume_set_snapshot_sha256", "archives", "original_running", "restored_running", "authenticated_api_ready"}
+    if set(value) != required or value.get("schema_version") != 1 or value.get("operation") != "paperless.backup" or not isinstance(value.get("job_id"), str) or not BACKUP_JOB_ID.fullmatch(value["job_id"]) or value.get("contract_id") != PAPERLESS_CONTRACT_ID or value.get("project") != project or value.get("install_receipt_sha256") != hashlib.sha256(install_receipt_bytes).hexdigest() or value.get("volume_set_id") != volume_set_id or value.get("volume_set_snapshot_sha256") != hashlib.sha256(volume_set_snapshot_bytes).hexdigest() or value.get("authenticated_api_ready") is not expected_running:
+        raise Failure("backup_receipt_invalid")
+    expected_states = [{"service": service, "running": expected_running} for service in IMAGES]
+    if value.get("original_running") != expected_states or value.get("restored_running") != expected_states or not isinstance(value.get("archives"), list) or len(value["archives"]) != len(VOLUMES):
+        raise Failure("backup_receipt_invalid")
+    paths: list[Path] = []
+    for item, (logical, service, mount), container_id in zip(value["archives"], VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True):
+        if not isinstance(item, dict) or set(item) != {"logical_name", "service", "container_id", "image_id", "mounted_source", "archive_path", "bytes", "sha256"} or item.get("logical_name") != logical or item.get("service") != service or item.get("container_id") != container_id or item.get("image_id") != config_ids[service] or item.get("mounted_source") != mount:
+            raise Failure("backup_receipt_invalid")
+        path = backup_archive_path(home, value["job_id"], logical, item.get("archive_path")); archive_digest(path, item.get("bytes"), item.get("sha256")); paths.append(path)
+        if logical == "paperless_media": media_archive_contains_marker(path)
+    receipt_path = backup_root(home, value["job_id"]) / "receipt.v1.json"
+    try:
+        private_path(receipt_path, False, "backup_receipt_file_invalid")
+    except Failure:
+        raise
+    if receipt_path.stat().st_size > CONFIG_LIMIT or read_json_bytes(receipt_path.read_bytes(), "backup_receipt_file_invalid") != value:
+        raise Failure("backup_receipt_file_invalid")
+    return value["job_id"], tuple(paths)
+
+
 def json_sha256(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -657,17 +777,27 @@ def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...
                 continue
             if validate_volume(docker_json(name, volume=True), project, logical, volume_set_id) != name:
                 raise Failure("volume_identity_invalid")
+        deletion_failed = False
+        # Ownership has already been proven for every target above.  Each
+        # deletion is independent: a failure on one exact resource must not
+        # suppress cleanup attempts for later, equally proven resources.
         for identifier in container_ids:
             if identifier in retired_container_ids:
                 continue
-            run(["docker", "rm", "-f", identifier], timeout=45)
-            bounded.prove_absent("container", identifier)
+            try:
+                run(["docker", "rm", "-f", identifier], timeout=45)
+                bounded.prove_absent("container", identifier)
+            except Exception:
+                deletion_failed = True
         for name in volume_names:
             if volumes_already_absent:
                 continue
-            run(["docker", "volume", "rm", name], timeout=45)
-            bounded.prove_absent("volume", name)
-        return True, None
+            try:
+                run(["docker", "volume", "rm", name], timeout=45)
+                bounded.prove_absent("volume", name)
+            except Exception:
+                deletion_failed = True
+        return (False, "cleanup_command_failed") if deletion_failed else (True, None)
     except CommandFailure:
         return False, "cleanup_command_failed"
     except Failure:
@@ -680,6 +810,7 @@ def source_hashes() -> dict[str, str]:
     names = (
         "packaging/tests/test_paperless_product_canary.py", "SRC/neothd/src/cli/paperless.rs",
         "SRC/neothd/src/installers/paperless_staging.rs", "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "SRC/neothd/src/installers/paperless_backup.rs", "SRC/neothd/src/installers/paperless_backup_tests.rs",
         "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_purge_tests.rs",
         "SRC/neothd/src/installers/paperless_generation_rotation.rs", "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
         "SRC/neothd/src/installers/paperless_repair.rs", "SRC/neothd/src/installers/paperless_repair_tests.rs",
@@ -688,7 +819,7 @@ def source_hashes() -> dict[str, str]:
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
         "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/updater/process_containment.rs",
-        "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
+        "docs/verification/paperless-oci-v1-3c8cabbaae8b77ae/recursive-blob-receipt.json",
     )
     return {name: hashlib.sha256((Path.cwd() / name).read_bytes()).hexdigest() for name in names}
 
@@ -737,7 +868,42 @@ def main() -> int:
         receipt["repeat_api"] = verify_api(args.port, configured_token(home))
         token = configured_token(home)
         document_id, task_polls = task_document_id(args.port, token, upload_marker(args.port, token))
-        baseline_id, baseline_title, baseline_sha256 = marker_metadata(args.port, token, document_id)
+        baseline_marker = marker_metadata(args.port, token, document_id)
+        baseline_id, baseline_title, baseline_sha256 = baseline_marker
+        # Backup operates only over the verified install generation.  Exercise
+        # both admissible source states before any lifecycle mutation removes
+        # this precise source authority.
+        backup_history = (install_receipt_bytes, volume_set_snapshot_bytes, tuple(json_sha256(docker_json(name, volume=True)) for name in identities[3:]))
+        running_backup = read_json_bytes(run([str(binary), "--output", "json", "paperless", "backup"], timeout=900), "backup_json_invalid")
+        running_backup_id, running_archives = validate_backup(running_backup, home, project, config_ids, identities, volume_set_id, install_receipt_bytes, volume_set_snapshot_bytes, True)
+        if len(running_archives) != len(VOLUMES) or backup_history != (persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_volume_set_snapshot(home, project, volume_set_id), tuple(json_sha256(docker_json(name, volume=True)) for name in identities[3:])):
+            raise Failure("running_backup_mutated_source")
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
+        for identifier in identities[:3]:
+            run(["docker", "container", "stop", identifier], timeout=45)
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            diagnostic = stopped_container_diagnostic(docker_json(identifier), identifier, project, service, args.port)
+            if diagnostic["running"] is not False:
+                raise Failure("backup_stopped_source_not_stopped")
+        stopped_backup = read_json_bytes(run([str(binary), "--output", "json", "paperless", "backup"], timeout=900), "backup_json_invalid")
+        stopped_backup_id, stopped_archives = validate_backup(stopped_backup, home, project, config_ids, identities, volume_set_id, install_receipt_bytes, volume_set_snapshot_bytes, False)
+        if stopped_backup_id == running_backup_id or len(stopped_archives) != len(VOLUMES) or backup_history != (persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_volume_set_snapshot(home, project, volume_set_id), tuple(json_sha256(docker_json(name, volume=True)) for name in identities[3:])):
+            raise Failure("stopped_backup_mutated_source")
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            if stopped_container_diagnostic(docker_json(identifier), identifier, project, service, args.port)["running"] is not False:
+                raise Failure("backup_stopped_source_not_retained")
+        # The established Repair coordinator is the controlled recovery path;
+        # it must retain the exact IDs and all retained marker bytes.
+        resumed_backup_source = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "backup_recovery_repair_invalid")
+        validate_repair(resumed_backup_source, project, volume_set_id, tuple((service, "started", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
+        receipt["backup"] = {"running_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "stopped_job_sha256": hashlib.sha256(stopped_backup_id.encode()).hexdigest(), "archives_per_backup": len(VOLUMES), "running_source_restored": True, "stopped_source_retained": True, "media_marker_in_archives": True, "source_identity_preserved": True, "recovered_by_repair": True}
         credentials_before_repair = (home / "credentials.yaml").read_bytes()
         repair_volume_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         receipt["repair_progress"] = {"phase": "healthy", "witness": "before_product_repair"}
@@ -746,7 +912,7 @@ def main() -> int:
         if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
             raise Failure("repair_healthy_mutated_history")
         retained_volumes(project, identities[3:], volume_set_id)
-        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
         webserver_id = identities[0]
         receipt["repair_progress"] = {"phase": "started", "witness": "before_stop_exact_receipt_id"}
         run(["docker", "container", "stop", webserver_id], timeout=45)
@@ -758,7 +924,7 @@ def main() -> int:
         if persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
             raise Failure("repair_started_mutated_history")
         retained_volumes(project, identities[3:], volume_set_id)
-        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
         receipt["repair_progress"] = {"phase": "recreated", "witness": "before_stop_exact_receipt_id"}
         run(["docker", "container", "stop", webserver_id], timeout=45)
         receipt["repair_progress"] = {"phase": "recreated", "witness": "before_remove_exact_receipt_id"}
@@ -783,14 +949,14 @@ def main() -> int:
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         retained_volumes(project, identities[3:], volume_set_id)
-        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
         receipt["repair_progress"] = {"phase": "repeat", "witness": "before_product_repair"}
         repair_repeat = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(repair_repeat, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
         if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
             raise Failure("repair_repeat_mutated_history")
         retained_volumes(project, identities[3:], volume_set_id)
-        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
         receipt["repair_progress"] = {"phase": "complete", "witness": "repeat_verified"}
         receipt["repair"] = {"healthy_noop": True, "started_same_id": True, "recreated_new_id": True, "credentials_preserved": True, "volumes_preserved": True, "marker_preserved": True}
         removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")

@@ -15,11 +15,13 @@ use std::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command};
 use zeroize::Zeroizing;
 
 #[path = "paperless_operation_lock.rs"]
 mod paperless_operation_lock;
+#[path = "paperless_backup.rs"]
+pub(crate) mod paperless_backup;
 
 #[cfg(windows)]
 use crate::connectors::local_import::{
@@ -99,6 +101,14 @@ const VOLUME_LIST_TEMPLATE: &str = "{{.Name}}";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
     pub stdout: String,
+}
+/// Result of a bounded binary Docker stream written directly into an already
+/// capability-validated private file.  Archive bytes never enter a String or
+/// an unbounded in-memory buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamedArchive {
+    pub(crate) bytes: u64,
+    pub(crate) sha256: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleError {
@@ -367,6 +377,20 @@ struct DockerVolume {
 #[async_trait]
 pub trait ComposeExecutor: Send {
     async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError>;
+
+    /// The Backup coordinator supplies a pre-opened private file handle
+    /// beneath the owned lifecycle root. Implementations must fail before
+    /// overwrite, bound the whole stream, and return a digest of exactly the
+    /// bytes that reached durable storage.
+    async fn run_stream_to_file(
+        &mut self,
+        _argv: &[String],
+        _cwd: &Path,
+        _output: std::fs::File,
+        _limit: u64,
+    ) -> Result<StreamedArchive, LifecycleError> {
+        Err(LifecycleError::Command("paperless_backup_stream_unsupported"))
+    }
 }
 #[async_trait]
 trait RetainedComposeExecutor: ComposeExecutor {
@@ -448,6 +472,76 @@ impl ComposeExecutor for DockerExecutor {
         })
         .await
         .map_err(|_| LifecycleError::Command("paperless_command_timeout"))?
+    }
+
+    async fn run_stream_to_file(
+        &mut self,
+        argv: &[String],
+        cwd: &Path,
+        output: std::fs::File,
+        limit: u64,
+    ) -> Result<StreamedArchive, LifecycleError> {
+        let (program, args) = argv
+            .split_first()
+            .ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let mut command = configured_docker_command(program, args, cwd);
+        let mut child = command
+            .spawn()
+            .map_err(|_| LifecycleError::Command("paperless_backup_stream_spawn_failed"))?;
+        let mut stdout = child.stdout.take().ok_or(LifecycleError::Command("paperless_backup_stream_capture_failed"))?;
+        let mut stderr = child.stderr.take().ok_or(LifecycleError::Command("paperless_backup_stream_capture_failed"))?;
+        let mut file = tokio::fs::File::from_std(output);
+        // Keep both pipes draining independently.  Do not use `join!` here:
+        // a failed writer can otherwise stop stdout consumption while Docker is
+        // blocked trying to write it, leaving the child unreaped forever.
+        let mut copy = tokio::spawn(async move {
+                let mut hasher = Sha256::new(); let mut total = 0u64; let mut buf = [0u8; 16 * 1024];
+                loop { let n = stdout.read(&mut buf).await.map_err(|_| LifecycleError::Command("paperless_backup_stream_read_failed"))?;
+                    if n == 0 { break; } total = total.checked_add(n as u64).ok_or(LifecycleError::Command("paperless_backup_stream_limit"))?;
+                    if total > limit { return Err(LifecycleError::Command("paperless_backup_stream_limit")); }
+                    file.write_all(&buf[..n]).await.map_err(|_| LifecycleError::Io)?; hasher.update(&buf[..n]); }
+                file.sync_all().await.map_err(|_| LifecycleError::Io)?;
+                Ok::<_, LifecycleError>(StreamedArchive { bytes: total, sha256: format!("{:x}", hasher.finalize()) })
+        });
+        let mut stderr = tokio::spawn(async move { read_bounded(&mut stderr).await });
+        let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
+            let mut stream = None;
+            let mut stderr_done = false;
+            loop {
+                tokio::select! {
+                    value = &mut copy, if stream.is_none() => {
+                        stream = Some(value.map_err(|_| LifecycleError::Command("paperless_backup_stream_capture_failed"))??);
+                    }
+                    value = &mut stderr, if !stderr_done => {
+                        value.map_err(|_| LifecycleError::Command("paperless_backup_stream_capture_failed"))??;
+                        stderr_done = true;
+                    }
+                    status = child.wait() => {
+                        let status = status.map_err(|_| LifecycleError::Command("paperless_backup_stream_wait_failed"))?;
+                        let stream = match stream {
+                            Some(value) => value,
+                            None => (&mut copy).await.map_err(|_| LifecycleError::Command("paperless_backup_stream_capture_failed"))??,
+                        };
+                        if !stderr_done { (&mut stderr).await.map_err(|_| LifecycleError::Command("paperless_backup_stream_capture_failed"))??; }
+                        if !status.success() { return Err(LifecycleError::Command("paperless_backup_stream_failed")); }
+                        return Ok(stream);
+                    }
+                }
+            }
+        }).await;
+        match result {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(error)) => {
+                copy.abort(); stderr.abort();
+                let _ = child.kill().await; let _ = child.wait().await;
+                Err(error)
+            }
+            Err(_) => {
+                copy.abort(); stderr.abort();
+                let _ = child.kill().await; let _ = child.wait().await;
+                Err(LifecycleError::Command("paperless_backup_stream_timeout"))
+            }
+        }
     }
 }
 #[async_trait]
@@ -609,6 +703,9 @@ async fn install_at_with_readiness_and_bootstrap<
     let _operation_lock =
         paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME))
             .map_err(map_operation_lock_error)?;
+    if paperless_backup::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
     if let Some(custody) = read_uninstall_receipt(&owned)?
         && custody.phase != PaperlessUninstallPhase::Complete
     {
@@ -880,6 +977,9 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
     let _operation_lock =
         paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME))
             .map_err(map_operation_lock_error)?;
+    if paperless_backup::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
     let (installed_bytes, installed) = read_install_receipt_with_bytes(&owned)?;
     validate_install_receipt(&installed, &root_path)?;
     let install_receipt_sha256 = format!("{:x}", Sha256::digest(&installed_bytes));
@@ -2814,7 +2914,7 @@ mod tests {
                     .join(",");
                 return Ok(CommandOutput {
                     stdout: format!(
-                        r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"NetworkSettings":{{"Ports":{ports}}},"Mounts":[{mounts}]}}"#,
+                        r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"HostConfig":{{"PortBindings":{ports}}},"NetworkSettings":{{"Ports":{ports}}},"Mounts":[{mounts}]}}"#,
                         project_name(cwd)
                     ),
                 });
@@ -2822,6 +2922,22 @@ mod tests {
             Ok(CommandOutput {
                 stdout: String::new(),
             })
+        }
+
+        async fn run_stream_to_file(
+            &mut self,
+            argv: &[String],
+            _cwd: &Path,
+            mut output: std::fs::File,
+            limit: u64,
+        ) -> Result<StreamedArchive, LifecycleError> {
+            self.commands.push(argv.to_vec());
+            let bytes = b"paperless-volume-fixture";
+            if bytes.len() as u64 > limit { return Err(LifecycleError::Command("fake_stream_limit")); }
+            use std::io::Write as _;
+            output.write_all(bytes).map_err(|_| LifecycleError::Io)?;
+            output.sync_all().map_err(|_| LifecycleError::Io)?;
+            Ok(StreamedArchive { bytes: bytes.len() as u64, sha256: format!("{:x}", Sha256::digest(bytes)) })
         }
     }
 

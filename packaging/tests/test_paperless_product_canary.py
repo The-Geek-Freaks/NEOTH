@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sys
 import tempfile
+import tarfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -384,3 +386,119 @@ class CustodyTests(unittest.TestCase):
             self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, old_ids + volume_names, 18001, old_ids), (True, None))
         self.assertEqual(command.call_count, len(volume_names))
         self.assertTrue(all(call.args[0][:3] == ["docker", "volume", "rm"] for call in command.call_args_list))
+
+    def test_backup_receipt_requires_owned_six_archives_source_bindings_and_media_marker(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        install = install_receipt(2, generation); install_raw = json.dumps(install, sort_keys=True).encode()
+        _, configs, identities, _ = canary.validate_install(install, 18001)
+        snapshot_raw = json.dumps({"schema_version": 1, "project": project, "volume_set_id": generation, "logical_volumes": [logical for logical, _, _ in canary.VOLUMES]}, sort_keys=True).encode()
+        job_id = "paperless-backup-" + "a" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); root = home / "paperless" / "state" / "backups" / job_id; root.mkdir(parents=True)
+            for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            archives = []
+            for index, ((logical, service, mount), container_id) in enumerate(zip(canary.VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True)):
+                path = root / f"{logical}.tar"
+                payload = canary.MARKER_PDF if logical == "paperless_media" else f"archive-{index}".encode()
+                with tarfile.open(path, "w") as archive:
+                    info = tarfile.TarInfo("marker.pdf" if logical == "paperless_media" else "state.txt"); info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+                os.chmod(path, 0o600)
+                raw = path.read_bytes()
+                archives.append({"logical_name": logical, "service": service, "container_id": container_id, "image_id": configs[service], "mounted_source": mount, "archive_path": f"state/backups/{job_id}/{logical}.tar", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+            receipt = {"schema_version": 1, "operation": "paperless.backup", "job_id": job_id, "contract_id": "paperless-oci-v1-3c8cabbaae8b77ae", "project": project, "install_receipt_sha256": hashlib.sha256(install_raw).hexdigest(), "volume_set_id": generation, "volume_set_snapshot_sha256": hashlib.sha256(snapshot_raw).hexdigest(), "archives": archives, "original_running": [{"service": service, "running": True} for service in canary.IMAGES], "restored_running": [{"service": service, "running": True} for service in canary.IMAGES], "authenticated_api_ready": True}
+            (root / "receipt.v1.json").write_text(json.dumps(receipt), encoding="utf-8"); os.chmod(root / "receipt.v1.json", 0o600)
+            self.assertEqual(canary.validate_backup(receipt, home, project, configs, identities, generation, install_raw, snapshot_raw, True)[0], job_id)
+            for mutate in (
+                lambda value: value["archives"][0].update({"archive_path": "../escape.tar"}),
+                lambda value: value["archives"][0].update({"sha256": "0" * 64}),
+                lambda value: value["archives"][0].update({"container_id": "f" * 64}),
+                lambda value: value.__setitem__("contract_id", "foreign-contract"),
+                lambda value: value.__setitem__("authenticated_api_ready", False),
+            ):
+                invalid = json.loads(json.dumps(receipt)); mutate(invalid)
+                with self.subTest(mutate=mutate), self.assertRaises(canary.Failure):
+                    canary.validate_backup(invalid, home, project, configs, identities, generation, install_raw, snapshot_raw, True)
+
+    def test_backup_receipt_rejects_missing_or_foreign_disk_receipt_and_stopped_state_lie(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        install = install_receipt(2, generation); install_raw = json.dumps(install, sort_keys=True).encode(); _, configs, identities, _ = canary.validate_install(install, 18001)
+        snapshot_raw = b'{"snapshot":"bound"}'; job_id = "paperless-backup-" + "b" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); root = home / "paperless" / "state" / "backups" / job_id; root.mkdir(parents=True)
+            for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            archives = []
+            for index, ((logical, service, mount), container_id) in enumerate(zip(canary.VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True)):
+                path = root / f"{logical}.tar"; payload = canary.MARKER_PDF if logical == "paperless_media" else f"archive-{index}".encode()
+                with tarfile.open(path, "w") as archive:
+                    info = tarfile.TarInfo("marker.pdf" if logical == "paperless_media" else "state.txt"); info.size = len(payload); archive.addfile(info, io.BytesIO(payload))
+                os.chmod(path, 0o600)
+                raw = path.read_bytes(); archives.append({"logical_name": logical, "service": service, "container_id": container_id, "image_id": configs[service], "mounted_source": mount, "archive_path": f"state/backups/{job_id}/{logical}.tar", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+            receipt = {"schema_version": 1, "operation": "paperless.backup", "job_id": job_id, "contract_id": canary.PAPERLESS_CONTRACT_ID, "project": project, "install_receipt_sha256": hashlib.sha256(install_raw).hexdigest(), "volume_set_id": generation, "volume_set_snapshot_sha256": hashlib.sha256(snapshot_raw).hexdigest(), "archives": archives, "original_running": [{"service": service, "running": False} for service in canary.IMAGES], "restored_running": [{"service": service, "running": False} for service in canary.IMAGES], "authenticated_api_ready": False}
+            with self.assertRaises(canary.Failure):
+                canary.validate_backup(receipt, home, project, configs, identities, generation, install_raw, snapshot_raw, False)
+            (root / "receipt.v1.json").write_text(json.dumps(receipt), encoding="utf-8"); os.chmod(root / "receipt.v1.json", 0o600)
+            canary.validate_backup(receipt, home, project, configs, identities, generation, install_raw, snapshot_raw, False)
+            (root / "receipt.v1.json").write_text("{}", encoding="utf-8"); os.chmod(root / "receipt.v1.json", 0o600)
+            with self.assertRaises(canary.Failure):
+                canary.validate_backup(receipt, home, project, configs, identities, generation, install_raw, snapshot_raw, False)
+
+    def test_backup_path_rejects_final_and_ancestor_symlinks_before_resolution(self) -> None:
+        job_id = "paperless-backup-" + "c" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            root = home / "paperless" / "state" / "backups" / job_id; root.mkdir(parents=True)
+            for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            archive = root / "paperless_data.tar"; archive.write_bytes(b"archive"); os.chmod(archive, 0o600)
+            archive.unlink(); os.symlink(home / "elsewhere", archive)
+            with self.assertRaises(canary.Failure):
+                canary.backup_archive_path(home, job_id, "paperless_data", f"state/backups/{job_id}/paperless_data.tar")
+            archive.unlink(); archive.write_bytes(b"archive"); os.chmod(archive, 0o600)
+            (home / "paperless" / "state" / "backups").rename(home / "backups-real")
+            os.symlink(home / "backups-real", home / "paperless" / "state" / "backups")
+            with self.assertRaises(canary.Failure):
+                canary.backup_archive_path(home, job_id, "paperless_data", f"state/backups/{job_id}/paperless_data.tar")
+
+    def test_backup_digest_stream_cap_and_media_member_cap_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); os.chmod(root, 0o700)
+            path = root / "archive.tar"; path.write_bytes(b"abcdef"); os.chmod(path, 0o600)
+            with self.assertRaises(canary.Failure):
+                canary.archive_digest(path, 3, hashlib.sha256(b"abc").hexdigest())
+            with tarfile.open(path, "w") as archive:
+                for index in range(4097):
+                    info = tarfile.TarInfo(f"entry-{index}"); info.size = 0; archive.addfile(info, io.BytesIO())
+            with self.assertRaises(canary.Failure): canary.media_archive_contains_marker(path)
+
+    def test_backup_digest_rejects_a_stream_that_grows_after_initial_metadata(self) -> None:
+        class Growing(io.BytesIO):
+            def fileno(self) -> int: return 99
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); os.chmod(root, 0o700)
+            path = root / "archive.tar"; path.write_bytes(b"abc"); os.chmod(path, 0o600)
+            metadata = os.lstat(path)
+            with patch.object(canary.os, "open", return_value=99), patch.object(canary.os, "fdopen", return_value=Growing(b"abcdef")), patch.object(canary.os, "fstat", return_value=metadata):
+                with self.assertRaises(canary.Failure):
+                    canary.archive_digest(path, 3, hashlib.sha256(b"abc").hexdigest())
+
+    def test_backup_contract_and_marker_tuple_are_exact(self) -> None:
+        self.assertEqual(canary.PAPERLESS_CONTRACT_ID, "paperless-oci-v1-3c8cabbaae8b77ae")
+        baseline = (42, canary.MARKER_TITLE, hashlib.sha256(canary.MARKER_PDF).hexdigest())
+        with patch.object(canary, "marker_metadata", return_value=baseline):
+            self.assertIsNone(canary.marker_metadata_matches(18001, "token", 42, baseline))
+        with patch.object(canary, "marker_metadata", return_value=(43, canary.MARKER_TITLE, baseline[2])):
+            with self.assertRaises(canary.Failure): canary.marker_metadata_matches(18001, "token", 42, baseline)
+        with patch.object(canary, "marker_metadata", return_value=(42, "mutated title", baseline[2])):
+            with self.assertRaises(canary.Failure): canary.marker_metadata_matches(18001, "token", 42, baseline)
+
+    def test_cleanup_attempts_every_prevalidated_resource_after_first_delete_failure(self) -> None:
+        project = "neoth-paperless-abcdef123456"; ids = ("a" * 64, "b" * 64, "c" * 64)
+        volumes = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+        calls: list[list[str]] = []
+        def delete(argv: list[str], timeout: int = 45) -> bytes:
+            calls.append(argv)
+            if len(calls) == 1: raise canary.CommandFailure(argv, canary.bounded.Result(1, b"", b"paperless_command_failed", False, False))
+            return b""
+        with patch.object(canary, "docker_json", return_value={}), patch.object(canary, "validate_container"), patch.object(canary, "validate_volume", side_effect=lambda *_: "owned"), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
+            self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, ids + volumes, 18001), (False, "cleanup_command_failed"))
+        self.assertEqual(len(calls), len(ids) + len(volumes))

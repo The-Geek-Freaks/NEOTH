@@ -143,6 +143,9 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
     let _operation_lock =
         paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME))
             .map_err(map_operation_lock_error)?;
+    if paperless_backup::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
     let resolved = resolve_purge_chain(&owned, &root_path)?;
     if confirmation != confirmation_for(&resolved) {
         return Err(LifecycleError::Command(

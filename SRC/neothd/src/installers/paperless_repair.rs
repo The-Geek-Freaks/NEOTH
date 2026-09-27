@@ -733,6 +733,9 @@ async fn require_ready<R: ReadinessVerifier>(
     wait_for_readiness(home, &current, readiness, root, binding).await
 }
 fn refuse_repair_custody(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> {
+    if paperless_backup::blocks_peer_operation(root)? {
+        return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
     if read_uninstall_receipt(root)?.is_some() {
         return Err(LifecycleError::Command(
             "paperless_repair_uninstall_present",
@@ -782,6 +785,19 @@ fn read_repair_journal(
             .map_err(|_| LifecycleError::Receipt),
         None => Ok(None),
     }
+}
+/// Backup may coexist only with a fully authenticated, committed repair
+/// journal.  A JSON `phase` string is never sufficient authority.
+pub(super) fn completed_repair_journal_is_valid(root: &OwnedPaperlessRoot) -> Result<bool, LifecycleError> {
+    let Some(journal) = read_repair_journal(root)? else { return Ok(true); };
+    if journal.phase != RepairPhase::Complete { return Ok(false); }
+    // A completed journal is historical: later reinstall may legitimately
+    // replace the active receipt. Validate its own before/after chain instead.
+    let current = journal.after_receipt_bytes.as_deref().ok_or(LifecycleError::Receipt)?;
+    let receipt: StoredPaperlessInstallReceipt = serde_json::from_slice(current).map_err(|_| LifecycleError::Receipt)?;
+    validate_install_receipt(&receipt, &root.display)?;
+    validate_repair_journal(&journal, &receipt, current, &root.display)?;
+    Ok(true)
 }
 fn validate_repair_journal(
     journal: &PaperlessRepairJournal,

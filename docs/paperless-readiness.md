@@ -204,3 +204,25 @@ BuildKit provenance statements without embedded signatures. See
 `docs/verification/gold-wave1414-paperless-upstream-provenance.json`.
 The independently verified source-tag signature is a separate fact and does
 not authenticate either OCI image.
+
+## Same-instance volume backup
+
+`neoth --output json paperless backup` captures the six existing managed
+volumes under the instance's private `paperless/state/backups/<job>/` directory.
+It stops webserver, broker and database in that order, streams each exact
+container mount into a bounded archive, verifies its byte count and SHA-256,
+and restores the original running, stopped or mixed service state. A fully
+running source must also pass authenticated API readiness before completion.
+The JSON receipt names all six archives and binds their exact source generation.
+Limits are 8 GiB per archive and 24 GiB across the six archives.
+
+A fresh deliberate invocation creates a new job. Interrupted copies or uncertain
+starts remain held and are not replayed. A committed receipt can be recovered
+without copying again. Completed historical receipts remain bound to their
+original source even after later repair or reinstall changes the active receipt.
+This command accepts no target, image, container, credential or archive override.
+
+This is a same-instance physical backup tied to the exact images and retained
+configuration; it does not export credentials or implement cross-instance
+restore, database migration or Paperless update. Source and product-canary code
+have been statically reviewed; new hosted Backup acceptance is still pending.
