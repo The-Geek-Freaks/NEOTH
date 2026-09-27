@@ -1,0 +1,61 @@
+{
+  "schema": "neoth-openclaw-custody-admission/v1",
+  "decision": "accepted",
+  "scope": "Completed OpenClaw source custody job only",
+  "repository": "The-Geek-Freaks/NEOTH",
+  "run": {
+    "id": 36358085716,
+    "producer_commit": "f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "overall_status_at_admission": "in_progress",
+    "overall_conclusion_at_admission": null,
+    "pending_sibling_job": "Research and loop lifecycle quality"
+  },
+  "job": {
+    "id": 108729695016,
+    "name": "OpenClaw source custody and converted relink selection",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10944274906,
+    "name": "openclaw-custody-f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "api_zip_sha256": "d50f42b3833dc2fbf610c65cf776e6e8259f41d15c9f771e9635e34ae99a651e",
+    "downloaded_original_zip_sha256": "d50f42b3833dc2fbf610c65cf776e6e8259f41d15c9f771e9635e34ae99a651e",
+    "api_digest_matches_download": true,
+    "safe_extraction_reparse_point_count": 0
+  },
+  "registered_identities": [
+    "tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
+    "tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
+    "tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
+    "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family"
+  ],
+  "terminal_evidence": {
+    "registered_identity_count": 4,
+    "discovered_identity_count": 4,
+    "executed_and_passed_identity_count": 4,
+    "whole_crate_discovery_terminal": "48 tests, 0 benchmarks",
+    "whole_crate_pass_terminal": "48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+    "failure_terminal_present": false
+  },
+  "source_records": [
+    {"path":"SRC/neoth-openclaw-custody/src/lib.rs","git_blob":"fbeaf6adc96c262a5682732f4d3b9d9606faf929","sha256":"422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c"},
+    {"path":"SRC/neoth-openclaw-custody/src/pinned_inventory.rs","git_blob":"78ff2192aef15038b2a5ecbf9ec2667e7f6dda13","sha256":"24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2"},
+    {"path":"SRC/neoth-openclaw-custody/src/pinned_schema.rs","git_blob":"4bf85ff9bc115afb4921a73e0ac244cc43568df8","sha256":"b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd"},
+    {"path":"SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json","git_blob":"b695cf8e1bbedf82025441e54227f080060d42a3","sha256":"a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f"},
+    {"path":"SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json","git_blob":"139ecaf877f9756d3095fab0d1f04745235c0fc2","sha256":"a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b"},
+    {"path":"SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json","git_blob":"8119f09318695dd97bb4f051f28e42294105b51e","sha256":"54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9"},
+    {"path":"SRC/neoth-openclaw-custody/Cargo.toml","git_blob":"86b02711188fd588fc598a578f3b8d7a1567bafa","sha256":"8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817"},
+    {"path":"SRC/Cargo.toml","git_blob":"7ade02339da8aa72549fec7b0f5e4e4019d1e657","sha256":"df95718cf41e64a978132f997db8fc36333890c4d10705d127b771e3a5d6fd96"},
+    {"path":"SRC/Cargo.lock","git_blob":"f89a0cdee009703aeb423562fefea56dcf467ee6","sha256":"eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56"},
+    {"path":".github/workflows/research-lifecycle.yml","git_blob":"35b14218413a280c8ae6f6a15a96beb6a6103950","sha256":"60c922ba85eb3cef85627dfed4ab862b549a904eb2412578aa80a7e3663f7433"}
+  ],
+  "raw_producer_blob_verification": {
+    "binding_count": 10,
+    "all_sha256_values_match": true
+  },
+  "limitations": [
+    "This accepts only completed job 108729695016.",
+    "The run's Group2014 sibling job was still active at the time of this admission."
+  ]
+}

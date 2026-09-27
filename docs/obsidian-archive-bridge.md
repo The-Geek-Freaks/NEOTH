@@ -8,9 +8,12 @@ approved vault and reads the selected note again before any import.
 ## Release state
 
 The source tree contains plugin version `0.2.0` and the daemon/CLI pairing
-surface. This is not yet a release acceptance claim: hosted plugin
-`typecheck`, build, contract tests, and native daemon acceptance remain
-pending. Do not treat a source checkout as an installed or accepted plugin.
+surface. The combined hosted lifecycle passed on source `f3a7adef40d54be74edadfdda0e6bca37cbf22e6`
+in [run 36358083834](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36358083834),
+including the locked plugin typecheck, build, contract tests and compiled
+daemon/CLI lifecycle. This accepts the installed bundle under the host adapter
+described below. Native Obsidian desktop execution and release acceptance
+remain separate open checks.
 
 ## Hosted lifecycle verification
 
@@ -25,7 +28,10 @@ The adapter supplies Obsidian host methods; it does not prove execution in the
 native Obsidian desktop application. Receipts distinguish source and installed
 artifact hashes, product outcomes, and cleanup. A submitted workflow or a
 source review alone does not establish a passed lifecycle. This combined
-gate has not yet passed its hosted lifecycle.
+gate is admitted in `docs/verification/gold-wave1759-archive-bridge-admission.json`:
+all ten lifecycle stages passed and all seven cleanup flags were true. Original
+artifact digests and 24 raw producer-source bindings were verified. The binary
+digest is the runner's recorded value; it was not independently rebuilt locally.
 
 The disposable hosted fixture provisions its own fresh WAL/config AEAD identity
 before starting the daemon through the public `neoth security restore-master-key`

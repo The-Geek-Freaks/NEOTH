@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1758 / W1759 Custody and Archive Bridge product admitted (2026-09-28):**
+ArchiveBridge36358083834 atf3a7adef is successful. Original artifact10944434686
+ZIP7f68bff56219abb2942db9659bcf91a2d891b3fa4c40a386d80340acc55041eb
+and24 raw producer-source bindings verified. All10 stages pass: install, pair,
+offline queue, real daemon IPC acceptance, dedup, stale revision, unpair,
+update, repair and uninstall. All7 cleanup flags true, diagnostics empty.
+Installed bundle/manifest and source-owned ownership contract match exactly.
+Evidence: docs/verification/gold-wave1759-archive-bridge-admission.json.
+This admits the provisioned hosted Node-host-adapter lifecycle only; native
+Obsidian desktop and fresh operator identity setup remain distinct open work.
+Custody job108729695016 in36358085716 atf3a7adef is also admitted: all48 crate
+tests pass, including the4 new exact registered cases; original artifact
+10944274906 ZIPd50f42b3833dc2fbf610c65cf776e6e8259f41d15c9f771e9635e34ae99a651e
+and10 producer-source bindings verified. Evidence:
+docs/verification/gold-wave1758-custody-admission.json. The Group2014 sibling
+and Windows779run36358087377 remain active, not admitted. W1757 first-use
+identity is being implemented separately; no source acceptance yet. ROAD
+1324/1077/245/2 unchanged; local BSOD hold respected.
 **W1754 / W1756 Relink source custody and daemon token restart (2026-09-28):**
 The converted-relink selector now binds an explicitly named iMessage or Google
 Chat source account to the pinned schema/inventory and exact source set. Raw

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1754/W1756 source reviewed; exact authenticated hosted format imported; hosted runtime pending",
+  "status": "W1758 Custody48 and W1759 actual provisioned ArchiveBridge lifecycle admitted at f3a7adef; native2014/779 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 256933,
-    "sha256": "61876F63C3789DEC6AC7E1C02F0452766F7100FEAC1019200B590ABCB731C204"
+    "bytes": 257336,
+    "sha256": "0C7C816CA2484ADECB055143AC6FBA29194E128AC268EC869D007DBF9EB925DA"
   },
-  "sourceInputs": 1428,
+  "sourceInputs": 1430,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -54034,6 +54034,50 @@
       }
     ],
     "note": "Preflight36357927404 original artifact10944119847 ZIP7c01358db3ef14f7787149d44695296ce16d72b79766221a5e74159fc22460ad and internal checksums verified; both raw Git postimages exact. No local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1759ActualBridgeProductAdmission": {
+    "base": "f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "sources": [
+      {
+        "path": "docs/obsidian-archive-bridge.md",
+        "bytes": 7147,
+        "sha256": "B68326AEAC2AA3CC2234D5D0AC40BF713FD378D98A27A71CE965383999C05FBD",
+        "blob": "5f34b2575f38b6514a062916cf995a040d618b5c"
+      },
+      {
+        "path": "docs/verification/gold-wave1758-custody-admission.json",
+        "bytes": 3987,
+        "sha256": "11A9DB47B18A8B8369CD252F1017E29766E566892DBF275AE347A1AE0AE885C8",
+        "blob": "b19be5261873f1977ce8069360ebbf6a511f01ca"
+      },
+      {
+        "path": "docs/verification/gold-wave1759-archive-bridge-admission.json",
+        "bytes": 7890,
+        "sha256": "C26CE50C15790427BD1AFE01DC531DDB8226FD7A37431C3CFCFFC0B77A28CDB6",
+        "blob": "8cde533598e02e7efb6c0eccc2814cd8de0fb84e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 496077,
+        "sha256": "106D4F91F566E7E1B4C125657DFBD6738427FCC4B2FB8A8C765820A3A5638BED",
+        "blob": "b9ab676dd557f6ba702dfaebdb298961258aece7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1515593,
+        "sha256": "2651788575969C4F9516B5328EC646147A30BA3732678EC005CBCFF695FDB517",
+        "blob": "3836855b247f9309c2b63fcc4f4ca4a4e977e8bc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2126116,
+        "sha256": "F8325E06D985BFEEC2897FC9AA02D60735A8A840D1B505492D9E1765B1664C53",
+        "blob": "8fe36c7c61baf42f5f992db1e616bf217759166a"
+      }
+    ],
+    "note": "Original API artifact digests, raw producer bindings, all10 product stages and7 cleanup flags confirmed. Native Obsidian desktop/fresh setup/full relink not admitted; no ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

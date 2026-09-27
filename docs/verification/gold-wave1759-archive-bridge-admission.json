@@ -1,0 +1,207 @@
+{
+  "schema": "neoth-obsidian-bridge-product-admission/v1",
+  "decision": "accepted_with_declared_scope_limits",
+  "run": {
+    "id": 36358083834,
+    "producer_commit": "f3a7adef40d54be74edadfdda0e6bca37cbf22e6",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10944434686,
+    "zip_sha256": "7f68bff56219abb2942db9659bcf91a2d891b3fa4c40a386d80340acc55041eb",
+    "api_digest_matches_download": true
+  },
+  "original_receipt": {
+    "outcome": "passed",
+    "failure": null,
+    "stage": "cleanup",
+    "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui",
+    "stages": [
+      "install",
+      "pair",
+      "offline_queue",
+      "daemon_ipc_accept",
+      "dedup",
+      "stale",
+      "unpair",
+      "update",
+      "repair",
+      "uninstall"
+    ],
+    "daemon_start_diagnostics": [],
+    "cleanup": {
+      "daemons_reaped": true,
+      "driver_artifacts_removed": true,
+      "home_removed": true,
+      "host_home_removed": true,
+      "master_key_seed_removed": true,
+      "pairing_removed": true,
+      "vault_removed": true
+    }
+  },
+  "producer_records": [
+    {
+      "key": "audit_token",
+      "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",
+      "git_blob": "386934dc256960c3ea0e1efa2f0fcf1bfa1ed7ca",
+      "sha256": "508047ebd9f4014c926044d15ff044e7ccb6a4f4306428fcacf459e4300ad194"
+    },
+    {
+      "key": "key_storage",
+      "path": "SRC/neothd/src/wal/compaction.rs",
+      "git_blob": "52f15bafbc1c5464fba8cdbdfe272c9dc17d8009",
+      "sha256": "7519ca68f23bc0592445fd2b07f03799a32ec80daaa8721b1bf98925859ec619"
+    },
+    {
+      "key": "atomic_write",
+      "path": "SRC/neothd/src/util/atomic_write.rs",
+      "git_blob": "c994ea06cb3584dcd0995aff6cb449bc10ff1467",
+      "sha256": "f7ca9146292ed68fbe51593799ac73a93e177bb268064bcb37e17ae5581a2d72"
+    },
+    {
+      "key": "bundle_main",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+      "git_blob": "94cb428327a286caeda6031baabc1d5fc1e719da",
+      "sha256": "b1dc532bc781057ba6d3a95eb2a29d559c53ffa9aed5cbeb87b0679899c9cad2"
+    },
+    {
+      "key": "bundle_manifest",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "git_blob": "4a2bc9086159bd4d2b26bb54522d0089042767d6",
+      "sha256": "aaba42de965a53568b9c7365a663d54e98861ecd87f750debea8047b4a867a7e"
+    },
+    {
+      "key": "bundle_lock",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+      "git_blob": "087e96a0dea9320c6bc6c845f559227fadacf4d2",
+      "sha256": "bca0336cfb5a60b2eb8af1a0625fdc4fd4b63fc0603340702fa7a73d3c6d999b"
+    },
+    {
+      "key": "bundle_source",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
+      "git_blob": "24601f0471fe6ec210a9a87458f3e06d01b288f0",
+      "sha256": "d67c5275dce46604f24e7aed9c472589b48fd75d29e4f986576f884fa2cef366"
+    },
+    {
+      "key": "bundle_contract",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
+      "git_blob": "30027a488589dd2bb76c600eafabee70cbc7af50",
+      "sha256": "7b938504c844ec19e9ae0fc64dfd21d91d46c5c9039330cc4911ad7d59cd593f"
+    },
+    {
+      "key": "predecessor_main",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/main.js",
+      "git_blob": "589dda36e4a6d387cd7a0ccf4bbdc6540c7d1d1f",
+      "sha256": "0d7e20c5b9b0bca2162d1a2e99fa3c97b06380b7861652e5b83f5f31c1d642d1"
+    },
+    {
+      "key": "predecessor_manifest",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/manifest.json",
+      "git_blob": "81e3fc31819ceb597077da3ba03ad199aebf378c",
+      "sha256": "4fe077ef4c077fb0a8ada6bc0eb688e508e32257edc80fc3b4ee9f6de9bdd2d4"
+    },
+    {
+      "key": "predecessor_ownership",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/ownership.json",
+      "git_blob": "12623d0f533a6a8b921eabd7f89114a061631a73",
+      "sha256": "14d540061743d63f471338278e77d35f905eb9e01b00088b787dc48e56b24e35"
+    },
+    {
+      "key": "cli",
+      "path": "SRC/neothd/src/cli/obsidian.rs",
+      "git_blob": "1d01b302ec276c2b5923c2b1ed4b97077442be3a",
+      "sha256": "f6497c0ac18fe8e10b8204d932b5a42e788751c344c37712221045d443936445"
+    },
+    {
+      "key": "serve",
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "git_blob": "374572f329f230c5b738a4874dab1b6c20c86d9e",
+      "sha256": "f27b1ac9c6960eef9a1ebc7864811eea5cc558156a80f5ec8b4a4a0c14b4deb7"
+    },
+    {
+      "key": "installer",
+      "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "git_blob": "33db4f8a96fc81d6e9238873162ffd0297fec76b",
+      "sha256": "1f69e09f57735e69dc0d018ed98f5f22bfc35b4a0a8164fec66f47f170a8a523"
+    },
+    {
+      "key": "owner",
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_owner.rs",
+      "git_blob": "f3b376efde4b1816809e30cecd4fe1ea5c679f0b",
+      "sha256": "7ede2894463813d9b881c983686d2b6a61b75e0a45633d529900298b604b8315"
+    },
+    {
+      "key": "ipc",
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_ipc.rs",
+      "git_blob": "d04ac6f1746b0244ebadf947b3a04f28dd1fadad",
+      "sha256": "244f3d64a67ab562a7829e1d1268b05d7ac9a35eb94d406a4735b1d4758889d0"
+    },
+    {
+      "key": "reader",
+      "path": "SRC/neothd/src/daemon/obsidian_vault_reader_cron.rs",
+      "git_blob": "bd133af591c88a86674932b52aff5e0a4e92f52f",
+      "sha256": "78fd58fd231f8a87ff78fd43f693ab4ae3b032f492dd4cb26310be56857d6060"
+    },
+    {
+      "key": "memory_store",
+      "path": "SRC/neothd/src/memory/store.rs",
+      "git_blob": "b3ec7a044a17c0f828a6665585b63961cbf76e4e",
+      "sha256": "3c9d68ff61fccff2e0f1f00c38270541fed99df4cbd48386816244772385693d"
+    },
+    {
+      "key": "groundtruth",
+      "path": "SRC/neothd/src/memory/groundtruth.rs",
+      "git_blob": "c8c13f99ba54a610fd9f56eece6587797969e63f",
+      "sha256": "9edaf16d7cf3689d12a9547031d007fbedb9c2ee050f5ac98f9b9db2775c5a2f"
+    },
+    {
+      "key": "connector",
+      "path": "SRC/neothd/src/connectors/obsidian.rs",
+      "git_blob": "8798477a6f6e44adc09257280beefa5b1d08b080",
+      "sha256": "2ba27b7e12ffa032ed259fe04ad79089231ea28dbc7a9a8bd969f7e141864022"
+    },
+    {
+      "key": "config",
+      "path": "SRC/neothd/src/config/mod.rs",
+      "git_blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+      "sha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072"
+    },
+    {
+      "key": "canary",
+      "path": "packaging/obsidian_archive_bridge_product_canary.py",
+      "git_blob": "5f8303c6b93b840fa2a12e6fd06ac72956c267a8",
+      "sha256": "c8c7df347eaafb13dbe7a4aed48d31de73657429a80170670991c3bd3a7d61fc"
+    },
+    {
+      "key": "driver",
+      "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
+      "git_blob": "17d4a677eabc8162e795e946073b7688832127e5",
+      "sha256": "36a64d910feff3fea7f8f451cbff143d5f82ac738c165850b1e9b2119540fe6f"
+    },
+    {
+      "key": "workflow",
+      "path": ".github/workflows/obsidian-bridge-product.yml",
+      "git_blob": "b912269ff5f6e45789cb0d25535889df04dac2c7",
+      "sha256": "95dc305bd7e289494eab37784cac44f3a39e057ae6e70b53d77f1f013637ad35"
+    }
+  ],
+  "binding_verification": {
+    "record_count": 24,
+    "all_raw_producer_blobs_match_receipt_hashes": true,
+    "installed_main_matches_bundle_main": true,
+    "installed_manifest_matches_bundle_manifest": true,
+    "installed_ownership_sha256": "6c4742df19b84583aa5cde65604fcfcc167f1f00cf8a70848fdfa5b33adea11a",
+    "installed_ownership_matches_source_owned_contract": true
+  },
+  "binary": {
+    "receipt_reported_sha256": "a270a367f83ac947efe32a1c9a0f06358af1de9f8da461e0b9ae22e9b99cb6f8",
+    "independently_rebuilt": false
+  },
+  "limits": [
+    "No live provider acceptance.",
+    "No native Obsidian UI acceptance.",
+    "No full fresh setup or parent-road acceptance."
+  ],
+  "localExecutableValidationRan": false
+}
