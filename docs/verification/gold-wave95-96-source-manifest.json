@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T22:39:13.9429867Z",
-  "validationStatus": "W1751 bridge key fixture source-reviewed hosted-pending; W1747 authentic hosted format; Linux2012 admitted",
+  "capturedUtc": "2026-09-27T22:42:10.9955847Z",
+  "validationStatus": "Native Rollback2012/777 at8b434951 admitted; later channel16/ArchiveBridge atca2ad7f2 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2607,6 +2607,11 @@
       "sha256": "054B54E1B2CCC087BB31AE5EAFAD8C45BECB3964AA6FB26A241A311C554AF226"
     },
     {
+      "path": "docs/verification/gold-wave1746-windows777-admission.json",
+      "bytes": 1784,
+      "sha256": "1C109E0C11E0A18608B4B9950E4D4F0027BF37E1FCE89878D60C0484623A3D1E"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3638,18 +3643,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 491155,
-      "sha256": "0E8E46395E0B136CA72F1857296E39381EB3F5B5BB054E697AECDFD1EAAF3692"
+      "bytes": 492090,
+      "sha256": "0B2083DFD9D82F2F6E87C48FDEBD64E69E667B9140C47F30B612D4B16A32BFF0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1510671,
-      "sha256": "1AD326831645D853B8F02DD890EAAB3861FAC2AA82E4FED3727115CF45FD4C7D"
+      "bytes": 1511606,
+      "sha256": "C2A915680DBB4AB9CF8BADA34DADD5EE10FB5DBFFF9EAB9B1018FF45BEF5F753"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2121194,
-      "sha256": "1F390F7A8FE4927CCE0EBBA970BBBF3F90F50F22608F89F283A454F3EBF93B6F"
+      "bytes": 2122129,
+      "sha256": "7DA2FD9340B0A98047BC7071944AB6861FD383558C216A2454A71DAED2833F8D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

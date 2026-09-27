@@ -1,0 +1,48 @@
+{
+  "schema": "neoth-native-windows-admission/v1",
+  "decision": "accepted",
+  "scope": "Windows777 native regression evidence only",
+  "repository": "The-Geek-Freaks/NEOTH",
+  "run": {
+    "id": 36353589543,
+    "workflow": "Windows storage regressions",
+    "status": "completed",
+    "conclusion": "success",
+    "producer_commit": "8b434951497195713b8f3e12dc24628f568a5392"
+  },
+  "original_artifact": {
+    "id": 10944415191,
+    "api_zip_sha256": "cef49f0d4c46db2dfe32dd99a98a48a878f58e3d7f06dac007f9d12159348f6f",
+    "downloaded_original_zip_sha256": "cef49f0d4c46db2dfe32dd99a98a48a878f58e3d7f06dac007f9d12159348f6f",
+    "api_digest_matches_download": true
+  },
+  "selection_and_results": {
+    "expected": 777,
+    "selected": 777,
+    "listed": 777,
+    "passed": 777,
+    "failed": 0,
+    "missing": 0,
+    "compile_status": 0,
+    "selection_result_identity_mismatch_count": 0,
+    "per_test_log_terminal_mismatch_count": 0,
+    "per_test_log_hash_failure_count": 0
+  },
+  "producer_source_binding": {
+    "binding_count": 777,
+    "unique_source_path_count": 106,
+    "all_raw_git_blob_sha256_values_match_artifact_bindings": true
+  },
+  "formerly_failed_rollback_tests": [
+    "rollback_stateful_base_restores_exact_prior_files_and_removes_absent_pointer",
+    "rollback_stateful_readiness_failure_compensates_without_removing_retained_generations",
+    "rollback_stateful_ambiguous_stop_holds_and_blocks_replay_or_peer_restore",
+    "rollback_stateful_preserves_partial_or_stopped_old_runtime_without_readiness_claim"
+  ],
+  "formerly_failed_rollback_tests_all_passed": true,
+  "limitations": [
+    "This admits only native Windows777 regression evidence.",
+    "It is not a product lifecycle admission.",
+    "Linux Group2012 evidence is admitted separately."
+  ]
+}

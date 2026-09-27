@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1746 Native Rollback cohorts admitted (2026-09-28):**
+LinuxGroup2012run36353588150 and Windows777run36353589543 at8b434951 are
+fully admitted from original API-digest ZIPs and raw producer-source bindings.
+Linux:2012 exact discovery/list/run/single-PASS identities,310 bound source
+paths. Windows:777 exact selected/listed/PASS identities,777 log hashes and
+106 bound source paths. Both have zero failures/missing cases; all four former
+Rollback failures now pass. Production validator assertions remain unchanged.
+Evidence: docs/verification/gold-wave1746-linux-group2012-admission.json and
+docs/verification/gold-wave1746-windows777-admission.json.
+This closes the native retry for the immutable-volume fixture repair only.
+ArchiveBridge36356194992 and focusedChannel16run36356198071 atca2ad7f2 are
+active; neither is admitted yet. Preflight atca2ad7f2 passed. ROAD counts remain
+1324/1077/245/2; no local executable validation.
+
 **W1751-W1752 Bridge key provisioning and hosted channel format (2026-09-28):**
 The authenticated ArchiveBridge failure occurs after BOOT because its load-only
 owner needs an existing WAL/config AEAD identity; `init --provider skip` did
