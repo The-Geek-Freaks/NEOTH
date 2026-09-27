@@ -332,6 +332,37 @@ impl BlueBubblesChannel {
         Ok("BlueBubbles server authenticated and reachable".to_string())
     }
 
+    /// Verify an exact configured outbound chat without sending a message.
+    /// BlueBubbles exposes `GET /api/v1/chat/:guid`; its response carries the
+    /// canonical chat GUID in `data.guid`.  The path is built as a URL segment
+    /// so a malformed routing value cannot alter the requested endpoint.
+    pub async fn probe_chat_target(&self, chat_guid: &str) -> Result<String> {
+        if chat_guid.trim().is_empty()
+            || chat_guid != chat_guid.trim()
+            || matches!(chat_guid, "." | "..")
+            || chat_guid
+                .chars()
+                .any(|character| character.is_control() || character == '/')
+        {
+            anyhow::bail!("BlueBubbles chat target is not a valid chat GUID");
+        }
+        let mut url = self.api_url("chat");
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("BlueBubbles chat target URL is not hierarchical"))?
+            .push(chat_guid);
+        let response = self
+            .http
+            .get(url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .timeout(super::readiness::PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("BlueBubbles chat target request failed"))?;
+        let (status, body) =
+            super::readiness::bounded_body(response, "BlueBubbles chat target probe").await?;
+        parse_chat_target_probe(status, &body, chat_guid)
+    }
+
     /// Drain every `POST /api/v1/message/query` page for one fixed cursor.
     /// Advancing the cursor remains the caller's job and happens only after
     /// this returns the complete window.
@@ -436,6 +467,41 @@ impl BlueBubblesChannel {
             .to_string();
         Ok(MessageId(guid))
     }
+}
+
+fn parse_chat_target_probe(
+    status: reqwest::StatusCode,
+    body: &[u8],
+    expected_guid: &str,
+) -> Result<String> {
+    if matches!(status.as_u16(), 401 | 403) {
+        anyhow::bail!("BlueBubbles rejected the server password");
+    }
+    if !status.is_success() {
+        anyhow::bail!(
+            "BlueBubbles chat target probe returned HTTP {}",
+            status.as_u16()
+        );
+    }
+    let value: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| anyhow::anyhow!("BlueBubbles chat target probe returned malformed JSON"))?;
+    let envelope_status = value
+        .get("status")
+        .and_then(serde_json::Value::as_u64)
+        .context("BlueBubbles chat target probe omitted numeric status")?;
+    if envelope_status != 200 {
+        anyhow::bail!(
+            "BlueBubbles chat target probe envelope reported status {envelope_status}"
+        );
+    }
+    let actual_guid = value
+        .pointer("/data/guid")
+        .and_then(serde_json::Value::as_str)
+        .context("BlueBubbles chat target probe response omitted data.guid")?;
+    if actual_guid != expected_guid {
+        anyhow::bail!("BlueBubbles chat target probe returned a different chat GUID");
+    }
+    Ok("BlueBubbles authenticated and can read the configured chat target".to_string())
 }
 
 /// Map BlueBubbles HTTP status → [`ChannelError`]. BB uses standard HTTP
@@ -917,6 +983,56 @@ mod tests {
         .unwrap();
         let error = bad.probe_readiness().await.unwrap_err().to_string();
         assert!(!error.contains("bb&?super#secret"));
+    }
+
+    #[tokio::test]
+    async fn chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/chat/iMessage;-;+14155551234"))
+            .and(query_param("password", "bb&?target-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200,
+                "data": {"guid": "iMessage;-;+14155551234"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let channel = BlueBubblesChannel::new(
+            server.uri(),
+            SecretString::from("bb&?target-secret"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(channel
+            .probe_chat_target("iMessage;-;+14155551234")
+            .await
+            .unwrap()
+            .contains("configured chat target"));
+
+        for (status, body) in [
+            (reqwest::StatusCode::OK, br#"{"status":200,"data":{"guid":"other"}}"#.as_slice()),
+            (reqwest::StatusCode::OK, b"not-json-bb&?target-secret".as_slice()),
+            (reqwest::StatusCode::UNAUTHORIZED, b"bb&?target-secret".as_slice()),
+        ] {
+            let error = parse_chat_target_probe(status, body, "iMessage;-;+14155551234")
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("bb&?target-secret"), "{error}");
+            let error = parse_chat_target_probe(status, body, "iMessage;-;+14155551234")
+                .unwrap_err();
+            assert!(
+                !format!("{error:#}").contains("bb&?target-secret"),
+                "full error chain leaked the server password"
+            );
+        }
+        for invalid in [".", "..", "a/b", " route"] {
+            assert!(channel.probe_chat_target(invalid).await.is_err(), "{invalid}");
+        }
     }
 
     #[tokio::test]

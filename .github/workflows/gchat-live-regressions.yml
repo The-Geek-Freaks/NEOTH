@@ -54,6 +54,11 @@ jobs:
           mkdir -p "$W548_ROOT"/{source,log,receipt}
           git -C SRC rev-parse HEAD > "$W548_ROOT/source/head.txt"
           sha256sum \
+            SRC/neothd/src/cli/channel.rs \
+            SRC/neothd/src/channels/imessage_bluebubbles.rs \
+            SRC/neothd/src/channels/gchat.rs \
+            SRC/neothd/src/channels/readiness.rs \
+            SRC/neothd/src/channels/routing.rs \
             SRC/neothd/src/cli/serve_tasks.rs \
             SRC/neothd/src/daemon/channel_live_registry.rs \
             SRC/neothd/src/daemon/proactive_dispatcher.rs \
@@ -68,7 +73,7 @@ jobs:
           : > "$W548_ROOT/receipt/failed.txt"
           : > "$W548_ROOT/receipt/executed.txt"
 
-      - name: Run focused GChat regressions
+      - name: Run focused channel and exact-target regressions
         working-directory: SRC
         run: |
           set -euo pipefail
@@ -122,9 +127,15 @@ jobs:
           run_case 10 lib daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch --lib
           run_case 11 lib daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue --lib
 
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 11
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 11
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 11
+          run_case 12 lib channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space --lib
+          run_case 13 lib channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password --lib
+          run_case 14 lib cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files --lib
+          run_case 15 lib cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files --lib
+          run_case 16 lib cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior --lib
+
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 16
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 16
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 16
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Save Cargo cache

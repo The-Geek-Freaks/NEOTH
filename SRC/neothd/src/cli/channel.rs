@@ -735,7 +735,25 @@ pub(crate) async fn test_channel_at_with_account(
     {
         return Ok(result);
     }
-    test_channel_candidate_for_id(channel_id, &pair.config, &pair.credentials).await
+    let outbound_target = match channel_id {
+        ChannelId::IMessageBlueBubbles | ChannelId::GoogleChat => {
+            let routing_path = home.join(crate::channels::routing::CHANNEL_ROUTING_FILE);
+            let routing = crate::channels::routing::ChannelRouting::load_from(&routing_path)
+                .with_context(|| format!("load channel routing {}", routing_path.display()))?;
+            routing
+                .destinations
+                .for_channel(channel_id.as_str())
+                .map(str::to_owned)
+        }
+        _ => None,
+    };
+    test_channel_candidate_for_id(
+        channel_id,
+        &pair.config,
+        &pair.credentials,
+        outbound_target.as_deref(),
+    )
+    .await
 }
 
 /// Account-aware test dispatch shared by the production CLI and focused tests.
@@ -952,6 +970,7 @@ async fn test_channel_candidate_for_id(
     channel_id: ChannelId,
     cfg: &FreedomConfig,
     creds: &Credentials,
+    outbound_target: Option<&str>,
 ) -> Result<ChannelTestResult> {
     let chan = channel_id.as_str().to_string();
     let result = match plan_channel_test_for_id(channel_id, cfg, creds) {
@@ -1041,7 +1060,13 @@ async fn test_channel_candidate_for_id(
             )
             .context("build BlueBubbles channel for readiness probe")?;
             match channel.probe_readiness().await {
-                Ok(detail) => ok(chan, detail),
+                Ok(detail) => match outbound_target {
+                    Some(target) => match channel.probe_chat_target(target).await {
+                        Ok(target_detail) => ok(chan, format!("{detail}; {target_detail}")),
+                        Err(error) => fail(chan, error.to_string()),
+                    },
+                    None => ok(chan, detail),
+                },
                 Err(error) => fail(chan, error.to_string()),
             }
         }
@@ -1074,7 +1099,13 @@ async fn test_channel_candidate_for_id(
                     .expect("plan guarantees configured");
                 match crate::channels::gchat::GChatChannel::new(path, subscription) {
                     Ok(channel) => match channel.probe_subscription().await {
-                        Ok(detail) => ok(chan, detail),
+                        Ok(detail) => match outbound_target {
+                            Some(target) => match channel.probe_space_target(target).await {
+                                Ok(target_detail) => ok(chan, format!("{detail}; {target_detail}")),
+                                Err(error) => fail(chan, error.to_string()),
+                            },
+                            None => ok(chan, detail),
+                        },
                         Err(error) => fail(chan, error.to_string()),
                     },
                     Err(error) => fail(chan, error.to_string()),
@@ -3587,6 +3618,7 @@ pub(crate) async fn test_prepared_channel(
         prepared.channel_id,
         &prepared.candidate_config,
         &prepared.candidate_credentials,
+        None,
     )
     .await
 }
@@ -8162,6 +8194,176 @@ mod tests {
                 .contains("load coherent config and effective credentials")
         );
         assert_eq!(std::fs::read(path).unwrap(), malformed);
+    }
+
+    #[tokio::test]
+    async fn channel_test_imessage_reads_the_routed_target_without_writing_files() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/ping"))
+            .and(query_param("password", "w1747-bb-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/chat/iMessage;-;+14155551234"))
+            .and(query_param("password", "w1747-bb-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200,
+                "data": {"guid": "iMessage;-;+14155551234"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Credentials {
+            bluebubbles_url: Some(server.uri()),
+            bluebubbles_password: Some(SecretString::from("w1747-bb-secret")),
+            ..Default::default()
+        }
+        .write(&home.path().join("credentials.yaml"))
+        .unwrap();
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.imessage_chat_guid = Some("iMessage;-;+14155551234".to_string());
+        let routing_path = home
+            .path()
+            .join(crate::channels::routing::CHANNEL_ROUTING_FILE);
+        routing.save_to(&routing_path).unwrap();
+        let before = [
+            std::fs::read(home.path().join("freedom.yaml")).unwrap(),
+            std::fs::read(home.path().join("credentials.yaml")).unwrap(),
+            std::fs::read(&routing_path).unwrap(),
+        ];
+
+        let result = test_channel_at(home.path(), "imessage").await.unwrap();
+
+        assert_eq!(result.status, "ok");
+        assert!(result.detail.contains("configured chat target"));
+        assert_eq!(
+            before,
+            [
+                std::fs::read(home.path().join("freedom.yaml")).unwrap(),
+                std::fs::read(home.path().join("credentials.yaml")).unwrap(),
+                std::fs::read(&routing_path).unwrap(),
+            ],
+            "channel test must not rewrite config, credentials, or routing"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_test_imessage_wrong_routed_target_fails_without_writing_files() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let server = MockServer::start().await;
+        for (route, body) in [
+            ("/api/v1/ping", serde_json::json!({"status": 200})),
+            (
+                "/api/v1/chat/iMessage;-;+14155551234",
+                serde_json::json!({"status": 200, "data": {"guid": "iMessage;-;+wrong"}}),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .and(query_param("password", "w1747-bb-secret"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Credentials {
+            bluebubbles_url: Some(server.uri()),
+            bluebubbles_password: Some(SecretString::from("w1747-bb-secret")),
+            ..Default::default()
+        }
+        .write(&home.path().join("credentials.yaml"))
+        .unwrap();
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.imessage_chat_guid = Some("iMessage;-;+14155551234".to_string());
+        let routing_path = home
+            .path()
+            .join(crate::channels::routing::CHANNEL_ROUTING_FILE);
+        routing.save_to(&routing_path).unwrap();
+        let before = [
+            std::fs::read(home.path().join("freedom.yaml")).unwrap(),
+            std::fs::read(home.path().join("credentials.yaml")).unwrap(),
+            std::fs::read(&routing_path).unwrap(),
+        ];
+
+        let result = test_channel_at(home.path(), "imessage").await.unwrap();
+
+        assert_eq!(result.status, "fail");
+        assert!(result.detail.contains("different chat GUID"));
+        assert_eq!(
+            before,
+            [
+                std::fs::read(home.path().join("freedom.yaml")).unwrap(),
+                std::fs::read(home.path().join("credentials.yaml")).unwrap(),
+                std::fs::read(&routing_path).unwrap(),
+            ],
+            "failed channel test must not rewrite config, credentials, or routing"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_test_imessage_without_a_route_keeps_transport_only_behavior() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/ping"))
+            .and(query_param("password", "w1747-bb-secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": 200
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Credentials {
+            bluebubbles_url: Some(server.uri()),
+            bluebubbles_password: Some(SecretString::from("w1747-bb-secret")),
+            ..Default::default()
+        }
+        .write(&home.path().join("credentials.yaml"))
+        .unwrap();
+        let freedom_path = home.path().join("freedom.yaml");
+        let credentials_path = home.path().join("credentials.yaml");
+        let before = [
+            std::fs::read(&freedom_path).unwrap(),
+            std::fs::read(&credentials_path).unwrap(),
+        ];
+
+        let result = test_channel_at(home.path(), "imessage").await.unwrap();
+
+        assert_eq!(result.status, "ok");
+        assert!(!result.detail.contains("configured chat target"));
+        assert!(
+            !home
+                .path()
+                .join(crate::channels::routing::CHANNEL_ROUTING_FILE)
+                .exists(),
+            "missing routing config must not be created by channel test"
+        );
+        assert_eq!(
+            before,
+            [
+                std::fs::read(freedom_path).unwrap(),
+                std::fs::read(credentials_path).unwrap(),
+            ],
+            "transport-only channel test must not rewrite config or credentials"
+        );
     }
 
     #[tokio::test]

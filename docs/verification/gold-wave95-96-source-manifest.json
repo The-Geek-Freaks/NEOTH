@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T22:13:05.9950246Z",
-  "validationStatus": "W1745 ArchiveBridge diagnostic source reviewed; hosted execution pending; W1746 old native failures authenticated",
+  "capturedUtc": "2026-09-27T22:24:00.9466967Z",
+  "validationStatus": "W1747 exact channel target probes source-reviewed; focused16 hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 8705,
-      "sha256": "54EE18DF389D25D04C9150590D338FDDB95CCD9D726F6BF6C4E39DC237028573"
+      "bytes": 10060,
+      "sha256": "8648CF808303904B27E55E4BE65447F98501C7E9B0D632FF0BDAD8C95CEDE5E8"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -213,8 +213,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 44688,
-      "sha256": "EE8A50487F6DACEECA61C0ADDE9AE7250A40414204503FF62930ECB6DC62C1F5"
+      "bytes": 45222,
+      "sha256": "C308C5A8AFB41B2ECB9A80A32C73747BD2D500CD0A67322A56A6AC0CBD7A7B81"
     },
     {
       "path": "docs/cli-commands.md",
@@ -3633,18 +3633,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 488628,
-      "sha256": "FCF6D82B727267E8C56A96EAB1D3652C666F7CD205E6E8E7093E248BDC618C00"
+      "bytes": 489827,
+      "sha256": "7DC7CA3153A8904F741E2416A05D23D7E4E560FCD05117F13F812F871C8C4825"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1508144,
-      "sha256": "10FFFF61C74BD3A303C3716362EFB6AB616AEF2AB5D0B946E510F5FF744F105B"
+      "bytes": 1509343,
+      "sha256": "216171151E8C769A6C90BAAAC7F1DE8906A8FEAE7831A31E6BA6793260DD30FF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2118667,
-      "sha256": "91CE1999FE73A522AA5798ED55F14CA0E15FA29CF48AF563171C4D033BCE5B2A"
+      "bytes": 2119866,
+      "sha256": "A14161802984C4CCFE8FE8EE3F1A94E8EEBD9F20C3458A38271A33BB11069D63"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4347,9 +4347,19 @@
       "sha256": "875BE7CD129470C960268CB156C2A4DDFAB1DA45968F1AFBFFFFB9E402A14C5C"
     },
     {
+      "path": "SRC/neothd/src/channels/gchat.rs",
+      "bytes": 33208,
+      "sha256": "7A5E5E3C1A5B88658CFD4EB627ABE6DC1DBC663DC748A5180C520021CF0BE46A"
+    },
+    {
       "path": "SRC/neothd/src/channels/identity.rs",
       "bytes": 31435,
       "sha256": "B3818C0FE378E29B90D7BAEA51CF8E1F5CAF67F6652A188DD859B4817205D222"
+    },
+    {
+      "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+      "bytes": 45103,
+      "sha256": "03259806C2CADAA3327AF4BE63564C311D2DD2B45616033423F864EA8129D37D"
     },
     {
       "path": "SRC/neothd/src/channels/irc.rs",
@@ -4468,8 +4478,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 352891,
-      "sha256": "0B8F8F4CBF1466984A3D006ED699A4BEDA415013BE361677A4A0C3698A4E5461"
+      "bytes": 361147,
+      "sha256": "5BB7F67C76AD70FD7CE3A22E1AF0A279A46ABDD206923A8E375CD7CC1DF26F07"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",

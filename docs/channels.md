@@ -336,6 +336,13 @@ neoth channel remove telegram      # clear token + sender policy
   signal-cli registered accounts, LINE bot identity, BlueBubbles ping,
   Mattermost current user, Google Pub/Sub subscription access, Matrix
   `/account/whoami`, Twitch OAuth identity/scopes, and Nostr relay connection.
+  When `channel_routing.json` contains an iMessage chat GUID or Google Chat
+  space, `test imessage` and `test gchat` additionally read that exact target
+  through authenticated BlueBubbles `GET /api/v1/chat/:guid` or Google Chat
+  `spaces.get`. The returned GUID/resource name must match the configured
+  destination. A rejected or different target fails the test even when the
+  transport probe succeeds. Without an outbound destination the result remains
+  transport-only; testing never creates a routing file or a relink receipt.
   It sends no chat, consumes no inbound queue, and publishes no relay event.
   IRC returns the typed `unavailable` verdict because registering the configured
   nick is stateful and could collide with the live adapter. Matrix password-only

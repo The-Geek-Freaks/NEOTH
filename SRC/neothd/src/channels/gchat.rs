@@ -77,6 +77,12 @@ struct SubscriptionResponse {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SpaceResponse {
+    #[serde(default)]
+    name: String,
+}
+
 pub(crate) fn validate_subscription_resource(subscription: &str) -> Result<String> {
     let value = subscription.trim();
     let parts: Vec<_> = value.split('/').collect();
@@ -117,6 +123,20 @@ pub(crate) fn validate_space_resource(space: &str) -> Result<String> {
         anyhow::bail!("gchat space must be the canonical `spaces/<space>` resource name");
     }
     Ok(value.to_string())
+}
+
+/// Target probes turn the resource name into a URL path.  Retain the general
+/// routing grammar above, but reject path-normalizing or percent-encoded IDs
+/// before a bearer token is minted or an HTTP request is made.
+fn validate_space_target_resource(space: &str) -> Result<String> {
+    let space = validate_space_resource(space)?;
+    let space_id = space
+        .strip_prefix("spaces/")
+        .expect("validated Google Chat space has its canonical prefix");
+    if matches!(space_id, "." | "..") || space_id.contains('%') {
+        anyhow::bail!("gchat space target contains an unsafe path identity");
+    }
+    Ok(space)
 }
 
 /// Validate the exact Google-asserted sender resource used for the inbound
@@ -317,6 +337,38 @@ impl GChatChannel {
         parse_subscription_probe(status, &body, &self.subscription)
     }
 
+    /// Verify the exact configured outbound Chat space with the documented
+    /// read-only `spaces.get` API.  This does not list spaces, send a message,
+    /// pull Pub/Sub traffic, or acknowledge anything.  The returned resource
+    /// name must equal the configured `spaces/<id>` identity.
+    pub async fn probe_space_target(&self, space: &str) -> Result<String> {
+        let space = validate_space_target_resource(space)?;
+        let bearer = self.bearer().await?;
+        let mut endpoint =
+            url::Url::parse("https://chat.googleapis.com").expect("static Google Chat URL");
+        endpoint.set_path(&format!("/v1/{space}"));
+        self.probe_space_target_at(endpoint, &space, &bearer).await
+    }
+
+    async fn probe_space_target_at(
+        &self,
+        endpoint: url::Url,
+        expected: &str,
+        bearer: &str,
+    ) -> Result<String> {
+        let response = self
+            .http
+            .get(endpoint)
+            .bearer_auth(bearer)
+            .timeout(super::readiness::PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("gchat space target probe failed"))?;
+        let (status, body) =
+            super::readiness::bounded_body(response, "gchat space target probe").await?;
+        parse_space_target_probe(status, &body, expected)
+    }
+
     /// One `:pull` round trip. Empty vec on no traffic. Without the
     /// deprecated `returnImmediately` flag the server long-polls ("may wait
     /// for a bounded amount of time until at least one message is available"
@@ -432,6 +484,28 @@ fn parse_subscription_probe(
     Ok(format!(
         "service account can read Pub/Sub subscription {expected}"
     ))
+}
+
+fn parse_space_target_probe(
+    status: reqwest::StatusCode,
+    body: &[u8],
+    expected: &str,
+) -> Result<String> {
+    if matches!(status.as_u16(), 401 | 403) {
+        anyhow::bail!("Google Chat service account cannot read the configured space");
+    }
+    if !status.is_success() {
+        anyhow::bail!(
+            "Google Chat space target probe returned HTTP {}",
+            status.as_u16()
+        );
+    }
+    let response: SpaceResponse = serde_json::from_slice(body)
+        .map_err(|_| anyhow::anyhow!("Google Chat space target probe returned malformed JSON"))?;
+    if response.name != expected {
+        anyhow::bail!("Google Chat space target probe returned a different space");
+    }
+    Ok("service account can read the configured Google Chat space target".to_string())
 }
 
 #[async_trait]
@@ -678,6 +752,59 @@ mod tests {
                 validate_allowed_sender_resource(invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn space_target_probe_reads_only_the_exact_configured_space() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let directory = tempfile::tempdir().unwrap();
+        let key = directory.path().join("sa.json");
+        std::fs::write(
+            &key,
+            r#"{"client_email":"bot@p.iam.gserviceaccount.com","private_key":"not-used","token_uri":"https://oauth2.googleapis.com/token"}"#,
+        )
+        .unwrap();
+        let channel = GChatChannel::new(&key, "projects/p/subscriptions/s").unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/spaces/AAAA"))
+            .and(header("authorization", "Bearer test-bearer"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "name": "spaces/AAAA"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(channel
+            .probe_space_target_at(
+                url::Url::parse(&format!("{}/v1/spaces/AAAA", server.uri())).unwrap(),
+                "spaces/AAAA",
+                "test-bearer",
+            )
+            .await
+            .unwrap()
+            .contains("configured Google Chat space target"));
+
+        for (status, body) in [
+            (reqwest::StatusCode::OK, br#"{"name":"spaces/OTHER"}"#.as_slice()),
+            (reqwest::StatusCode::OK, b"not-json-test-bearer".as_slice()),
+            (reqwest::StatusCode::FORBIDDEN, b"test-bearer".as_slice()),
+        ] {
+            let error = parse_space_target_probe(status, body, "spaces/AAAA")
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("test-bearer"), "{error}");
+            let error = parse_space_target_probe(status, body, "spaces/AAAA").unwrap_err();
+            assert!(
+                !format!("{error:#}").contains("test-bearer"),
+                "full error chain leaked bearer material"
+            );
+        }
+        for invalid in ["spaces/.", "spaces/..", "spaces/%2e", "spaces/%2F"] {
+            assert!(validate_space_target_resource(invalid).is_err(), "{invalid}");
         }
     }
 

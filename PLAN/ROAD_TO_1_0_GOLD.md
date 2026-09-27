@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1747/W1750 Exact channel target probes (2026-09-28):**
+`channel test imessage` and `channel test gchat` now add a read-only,
+authenticated lookup of the configured outbound chat GUID / Google Chat space.
+A successful transport probe with a wrong target fails; absent routing keeps
+the existing transport-only result. The target response must match exactly,
+path-normalizing inputs are rejected before request/token creation, and new
+parse errors never retain provider-body text. CLI-home mocks check routing,
+wrong-target failures and unchanged config/credentials/routing bytes.
+Independent Rust source review PASS; five new cases join the focused16-case
+feature lane. No actual-provider, full relink/import or parent ROAD acceptance.
+Separately, Group36353588150 at8b434951 is successful; original admission is
+pending, Windows36353589543 still active. ArchiveBridge36354671629 failed with
+source-bound `wal_master_key_missing` after `boot_wal_persisted`; original
+artifact10943985107 ZIPe2a7f8e4b7d0edb7ea1aa61b5d86af76008356895227caedd4ea028ab95b8c90
+verified, all cleanup true. W1751 investigates supported key provisioning.
+No local executable validation.1324/1077/245/2 remains unchanged.
+
 **W1744-W1746 Archive Bridge startup evidence and native comparison (2026-09-28):**
 ArchiveBridge36353049554 atfd141bf4 failed before initial pairing with
 `daemon_exited_early`, rc1, and an unclassified1731-byte startup log. Original
