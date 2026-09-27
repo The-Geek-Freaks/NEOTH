@@ -25,7 +25,7 @@ use crate::integrations::{
     jobs::RestartValidator,
     state::{
         JobId, JobProgress, JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence,
-        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence,
+        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence, Sha256Digest,
     },
 };
 
@@ -658,6 +658,8 @@ fn update_reinstall_request(
     update: &UpdateRetention,
     jobs: Vec<IntegrationJob>,
 ) -> Result<ManagedN8nRequest, &'static str> {
+    let update_manifest_sha256 = Sha256Digest::parse(update.update_manifest_sha256.clone())
+        .map_err(|_| "n8n_update_volume_receipt_mismatch")?;
     let update_job = jobs
         .iter()
         .find(|job| job.job_id.as_str() == update.update_job_id)
@@ -668,7 +670,7 @@ fn update_reinstall_request(
         .ok_or("n8n_update_volume_source_missing")?;
     if update_job.operation != JobOperation::Update
         || update_job.state != JobState::Ready
-        || update_job.manifest_sha256.as_str() != update.update_manifest_sha256
+        || update_job.manifest_sha256 != update_manifest_sha256
         || receipt.source_volume.as_deref() != Some(update.update_volume.as_str())
         || receipt.source_image.as_deref() != Some(update.runtime_image.as_str())
         || !matches!(receipt.source_container_id.as_deref(), Some(id) if super::valid_container_id(id))
@@ -735,7 +737,7 @@ fn update_reinstall_request(
     };
     match immediate.operation {
         JobOperation::Update if immediate.job_id == update_job.job_id => {
-            if immediate.manifest_sha256 != update.update_manifest_sha256 {
+            if immediate.manifest_sha256 != update_manifest_sha256 {
                 return Err("n8n_update_volume_source_mismatch");
             }
         }

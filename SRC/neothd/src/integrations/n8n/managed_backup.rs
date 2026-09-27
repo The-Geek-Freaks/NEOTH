@@ -16,8 +16,7 @@ use sha2::{Digest, Sha256};
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, RuntimeBinding, RuntimePhase,
-    is_managed_job, read_binding, read_binding_bytes, sha256_parts, validate_binding,
-    validate_existing_identity,
+    is_managed_job, read_binding, sha256_parts, validate_binding, validate_existing_identity,
 };
 use crate::integrations::{
     catalog::CapabilityId,

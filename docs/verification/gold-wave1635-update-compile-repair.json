@@ -1,0 +1,30 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1635",
+  "capturedUtc": "2026-09-27T13:30:59.9702455Z",
+  "producer": "8b7012568b19fffac867955a442bdd122ee32e57",
+  "status": "COMPILE_DIAGNOSTICS_REPAIRED_HOSTED_PENDING",
+  "runs": {
+    "product": 36322373346,
+    "core": 36322371346,
+    "preflight": 36322347157,
+    "codeql": 36322346794
+  },
+  "helperTests": {
+    "updateCanary": 14,
+    "updateContent": 2,
+    "updateMigration": 9,
+    "failed": 0
+  },
+  "diagnostics": [
+    "E0308 managed_uninstall.rs:738 Sha256Digest versus String",
+    "unused import read_binding_bytes managed_backup.rs:19"
+  ],
+  "fixes": [
+    "Parse retained manifest with Sha256Digest and compare validated digests",
+    "Remove unused Backup import"
+  ],
+  "productExecuted": false,
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

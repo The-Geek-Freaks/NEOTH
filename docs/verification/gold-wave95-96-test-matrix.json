@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "format-imported-helper-repair-hosted-pending",
+  "status": "compile-repair-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 247126,
-    "sha256": "24483C7D68D9CA318F83330899A55E657BAD7DFF8C517393DC22C30B254A2594"
+    "bytes": 247303,
+    "sha256": "939780AF86415D8D3C6AF0AADC1D9EE3BE3D85483CBD2DBB2C9F57CD9FB766FC"
   },
-  "sourceInputs": 1377,
+  "sourceInputs": 1378,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -51063,6 +51063,50 @@
       }
     ],
     "note": "Exact original producer-bound hosted rustfmt applied; Update helper import and snake_case lineage corrected. No local executable validation or product acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1635UpdateCompileRepair": {
+    "base": "8b7012568b19fffac867955a442bdd122ee32e57",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1635-update-compile-repair.json",
+        "bytes": 840,
+        "sha256": "89398742C9CDEEB49FBB60BB3CF5C2C236253425E82927E914C834ED62B19E28",
+        "blob": "defd3662e9df118f2f05d9e5a75bf7ce0b285e6c"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 449532,
+        "sha256": "2143A03E951FE98D54E4F4B7C9E4530894A547FFCA3AA342652BD60FB8F22530",
+        "blob": "05aa7f1045a26aec9b96d398ca8f976cdd07e866"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1468463,
+        "sha256": "8CC58AA6481B6F69D21DE059D4602B61A9551C4A5AA5AF997D5294987817CBEE",
+        "blob": "2d9372c915178cc113b8777b874858b25bd56965"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2078986,
+        "sha256": "83359A5D5FE1768F2EC18D801F3F849B60A57411FE5CAEC97AE06A6955F63438",
+        "blob": "239fe940a599723e657411d409eea6ed702fd177"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+        "bytes": 47041,
+        "sha256": "C29344C939CF8D06215335DF5C7346F06B6F8340C2D2351278838CCD13BC60B9",
+        "blob": "740b1bf88e6d3b8c7a91b4ea8fe401ad581f21d9"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+        "bytes": 57161,
+        "sha256": "577AF88B0F63CE9B9CD921FC0F56AB4F90E72396B26C02C59579BF2E414455E8",
+        "blob": "05a94b81e956c38e8dc0106a499da113fc2c604c"
+      }
+    ],
+    "note": "25 hosted helper tests passed on prior producer; digest type mismatch and unused import corrected. Product not executed. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

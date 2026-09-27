@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1635 Hosted Update helper suites passed; compile repair (2026-09-27):**
+At8b701256, product36322373346 passed14 Update-canary,2 full-content and9
+migration-helper tests. The Rust build then failed E0308 in retained Update
+reinstall (Sha256Digest compared with String); Core36322371346 additionally
+rejected an unused Backup import. The stored digest is now parsed through
+Sha256Digest and compared as a digest; the unused import is removed. Root
+reviewed the narrow diff. New hosted compilation and product checks are
+required; no product flow, native cohort or release acceptance is inferred.
+Preflight36322347157 and CodeQL36322346794 passed the preceding producer.
+No local execution or ROAD closure;1324/1077/245/2 remains unchanged.
+Evidence: docs/verification/gold-wave1635-update-compile-repair.json.
 **W1633 Hosted formatting and Update helper corrections (2026-09-27):**
 Preflight36321902122 atc28ecba1 failed Rust formatting. Its original artifact
 10932633354 matches the GitHub API SHA256; the exact producer-bound patch
