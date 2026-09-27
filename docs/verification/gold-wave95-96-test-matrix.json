@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1710 exact hosted readiness formatting imported; Core/product pending",
+  "status": "W1712 Core accepted; W1711 byte-custody canary repair pending actual product",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 251588,
-    "sha256": "1F17B98AFFC10C592EDB101644E3B44D508AA6F1C1502119F1EA92324FBD0D2B"
+    "bytes": 251795,
+    "sha256": "CA9E43982E00C2238DB783CE8BDDFCF9EBB931FCEDC51C9D9B5ACDFAF457B95E"
   },
-  "sourceInputs": 1400,
+  "sourceInputs": 1401,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -52871,6 +52871,50 @@
       }
     ],
     "note": "Original Preflight36341427063 artifact10938239787 verified; one pattern formatting only. Core/product atd0bc24f2 continue.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1711RestoreCustodyCanary": {
+    "base": "c6fab6ac3b691d7c64543e2d7fdc5f2b93582679",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1711-restore-custody-canary-repair.json",
+        "bytes": 1624,
+        "sha256": "2128FE1483582005373B38064B0145665AF0835A45A35E2C46448C120AB0AA48",
+        "blob": "2848916118d165c9eeae30b950f11e1378e2c57e"
+      },
+      {
+        "path": "packaging/paperless_product_canary.py",
+        "bytes": 101103,
+        "sha256": "3B3FE28AF48100A6EAE071E75416C3E4456F91D47CEFBD2C516D6F057B31F653",
+        "blob": "f8d7ff997684cc56257c9c5f48606daf3d156647"
+      },
+      {
+        "path": "packaging/tests/test_paperless_product_canary.py",
+        "bytes": 61195,
+        "sha256": "CEB732B90877B2323F4DAF1C40DFFA7F6017BB725EA58C82C6EC8238C49137D5",
+        "blob": "fb326579f31e9fd6d4388555d74572bc238e76bc"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 472978,
+        "sha256": "63AEC91EBD64D370A41A984E4DA2155B389B8F2AADF6E1AB31A767A546D90127",
+        "blob": "c5ad43f08714c49505c1d2eef16aae9cfdad0368"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1491909,
+        "sha256": "1526ED793CB472CB0B6391D92BF8E40182C52F6768500CE723B6D6C7E4FFF2D8",
+        "blob": "f0a4c7d9d4cf8fc63976ef3c47c8f646f33c45e7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2102432,
+        "sha256": "121797CEEED100E815B5B1574935FA681F834015B3562F9EAA38CF37CAC8EC3E",
+        "blob": "20290bf0b782887475ac5eaaecbdba3ea910b71d"
+      }
+    ],
+    "note": "Core36341427568 accepted atd0bc24f2; authenticated CLI unchanged. Product committed Restore then unexpected, raw/parsed-byte caller bug fixed. Existing native2005/770 runs continue; no duplicate Core.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

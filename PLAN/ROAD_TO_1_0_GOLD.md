@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1711-W1712 Restore proof binding and Core accepted (2026-09-27):**
+Core36341427568 atd0bc24f2 passed slim Clippy, test-target typecheck and CLI
+build/export. Original artifact10938938927 ZIP2f78bdca85b83e06b1f617bb209d9aa505280f16258b9c3479cb4f7a3b22977d
+verified; generated reference is byte-identical to the imported version.
+Product36341429567 reached committed Restore and the before-repeat checkpoint,
+then failed unexpectedly; original artifact and29 producer bindings verified.
+Source inspection found the canary passed a parsed dict into the byte-hash
+custody validator. The caller now preserves exact persisted bytes; a focused
+regression requires the fixed error for a parsed input. No custody check was
+relaxed. The next product run is required for full lifecycle acceptance.
+Group2005run36342050755 and Windows770run36342052916 continue atc6fab6ac;
+Rust source unchanged by this canary fix, so no duplicate native/Core run.
+ROAD1324/1077/245/2 unchanged; no local executable validation.
+Evidence: docs/verification/gold-wave1711-restore-custody-canary-repair.json.
+
 **W1710 Hosted readiness-test formatting (2026-09-27):** Exact single-pattern
 rustfmt patch imported from Preflight36341427063 atd0bc24f2. Original
 artifact10938239787 ZIP3247828dc752c7e1f3955ffe6b98fbf4cef6fa221b9f6d9abfebf1be5be13619,

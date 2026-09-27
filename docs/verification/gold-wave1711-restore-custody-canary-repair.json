@@ -1,0 +1,45 @@
+{
+  "schema": "neoth-restore-custody-canary-repair/v1",
+  "capturedUtc": "2026-09-27T18:55:14.9989708Z",
+  "producer": "d0bc24f2b734ffb89226ee7e68a3c4ba9a108d51",
+  "core": {
+    "run": 36341427568,
+    "conclusion": "success",
+    "slimClippy": true,
+    "testTypecheck": true,
+    "cliBuild": true,
+    "artifact": 10938938927,
+    "zipSha256": "2f78bdca85b83e06b1f617bb209d9aa505280f16258b9c3479cb4f7a3b22977d",
+    "referenceSha256": "426f52b933889be22fceac3098e67d46e20606e80b1a7a11a82dbb513e160b65",
+    "referenceUnchanged": true,
+    "logSha256": "E5CC753D6D6741E245567335E3E97856306031702ED0EC307D0B253D53312B22",
+    "workspaceClippy": "not requested"
+  },
+  "product": {
+    "run": 36341429567,
+    "artifact": 10938739827,
+    "zipSha256": "abaaa58c9181cf5c40398a1252f7f7fdd89178f51b25fa81ed364f52784a320b",
+    "verifiedSourceBindings": 29,
+    "outcome": "failed",
+    "journal": "committed",
+    "progress": "before_restore_repeat",
+    "fullLifecycleAccepted": false
+  },
+  "repair": "Preserve persisted restored-install bytes for exact custody hash; parsed dict only for field validation; explicit wrong-type rejection with focused regression",
+  "sources": [
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "3B3FE28AF48100A6EAE071E75416C3E4456F91D47CEFBD2C516D6F057B31F653"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "CEB732B90877B2323F4DAF1C40DFFA7F6017BB725EA58C82C6EC8238C49137D5"
+    }
+  ],
+  "nativeRunsContinue": [
+    36342050755,
+    36342052916
+  ],
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

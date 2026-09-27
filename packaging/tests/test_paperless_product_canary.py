@@ -592,6 +592,8 @@ class CustodyTests(unittest.TestCase):
             write(state / ".neoth-paperless-restore-active.v1.json", pointer); write(state / ".neoth-paperless-restore-history.v1.json", history)
             with patch.object(canary, "project_name", return_value=project):
                 canary.validate_restore_authority(home, restore, source_raw, snapshot_raw, active_raw, source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
+            with patch.object(canary, "project_name", return_value=project), self.assertRaisesRegex(canary.Failure, "^restore_custody_invalid$"):
+                canary.validate_restore_authority(home, restore, source_raw, snapshot_raw, json.loads(active_raw), source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
             for path, mutate in ((state / name, lambda value: value.__setitem__("backup_job_id", "paperless-backup-" + "b" * 64)), (state / name, lambda value: value.__setitem__("base_project", "foreign-base")), (state / ".neoth-paperless-restore-active.v1.json", lambda value: value.__setitem__("custody_sha256", "f" * 64)), (state / ".neoth-paperless-restore-history.v1.json", lambda value: value["authorized_volume_set_ids"].__setitem__(name, [source_generation]))):
                 original = json.loads(path.read_text()); changed = json.loads(path.read_text()); mutate(changed); write(path, changed)
                 with self.subTest(path=path.name), patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):

@@ -835,6 +835,8 @@ def restore_journal_observation(home: Path) -> dict[str, object]:
 
 
 def validate_restore_authority(home: Path, restore: dict, source_install: bytes, source_snapshot: bytes, restored_install: bytes, source_ids: tuple[str, ...], restored_ids: tuple[str, ...], config_ids: dict[str, str], port: int) -> None:
+    if not isinstance(source_install, bytes) or not isinstance(source_snapshot, bytes) or not isinstance(restored_install, bytes):
+        raise Failure("restore_custody_invalid")
     name, restore_job_id = restore["rollback_custody_ref"], restore["restore_job_id"]
     if name != f".neoth-paperless-restore-{restore_job_id}.v1.json":
         raise Failure("restore_custody_invalid")
@@ -1082,11 +1084,12 @@ def main() -> int:
         repeated_restore = read_json_bytes(run([str(binary), "--output", "json", "paperless", "restore", running_backup_id], timeout=900), "restore_json_invalid")
         if repeated_restore != restored:
             raise Failure("restore_repeat_mutation")
-        restored_install = read_json_bytes(persisted_receipt_bytes(home, ".neoth-paperless-lifecycle-receipt.v1.json", "restore_install_receipt_invalid"), "restore_install_receipt_invalid")
+        restored_install_bytes = persisted_receipt_bytes(home, ".neoth-paperless-lifecycle-receipt.v1.json", "restore_install_receipt_invalid")
+        restored_install = read_json_bytes(restored_install_bytes, "restore_install_receipt_invalid")
         project, restored_configs, identities, volume_set_id = validate_install(restored_install, args.port)
         if restored_install.get("schema_version") != 3 or project != restore_project or restored_configs != config_ids or volume_set_id != restored_volume_set_id:
             raise Failure("restore_install_receipt_invalid")
-        validate_restore_authority(home, restored, restore_source_install, volume_set_snapshot_bytes, restored_install, restore_source_ids, identities, config_ids, args.port)
+        validate_restore_authority(home, restored, restore_source_install, volume_set_snapshot_bytes, restored_install_bytes, restore_source_ids, identities, config_ids, args.port)
         volume_set_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
