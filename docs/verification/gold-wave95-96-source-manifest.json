@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T11:44:45.7418691Z",
-  "validationStatus": "LINUX_AMD64_ISOLATED_MIGRATION_ACCEPTED_MANAGED_UPDATE_SOURCE_IN_PROGRESS",
+  "capturedUtc": "2026-09-27T11:58:31.8489608Z",
+  "validationStatus": "historical-group1932-core-accepted-managed-update-wip",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2407,6 +2407,11 @@
       "sha256": "0B277A689E368E33576A81409820C932CB2BD245CC1855FB24D082C5304394D0"
     },
     {
+      "path": "docs/verification/gold-wave1616-1617-native-core-accepted.json",
+      "bytes": 2701,
+      "sha256": "9A3B83F8188B911F33414BA63DB50F0E00DEABB5C47101C78155E01373CA77CD"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3398,18 +3403,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 445825,
-      "sha256": "6732843CD9C7F45A5DD235F8A73012A8E6416FC47E2667C75B925B50F1FCF4EB"
+      "bytes": 446726,
+      "sha256": "C2A0F05D776FE1F4CAE7A9859B5B1BEF5B60B67C157BA1EC1D7CED5902DE1B17"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1464756,
-      "sha256": "C267F29AEB5C71A5FC29FBB89AADAE8E32A19DCB6769E3AA6720AB27FEB04790"
+      "bytes": 1465657,
+      "sha256": "C65B482A4788BCA29228BCEBB7C7C89A237317774EA678C52AAE785E2C8F4917"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2075279,
-      "sha256": "4505BCC1FA7C3C8400C0AA245507B33BCB5220BB0FC190DE7348FBB574BE05CF"
+      "bytes": 2076180,
+      "sha256": "506742DA1069A7856A268B93942BF55C97AEA04A6856C43ED68DCE52FB26D129"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

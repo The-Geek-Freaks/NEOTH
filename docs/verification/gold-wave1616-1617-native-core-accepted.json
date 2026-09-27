@@ -1,0 +1,77 @@
+{
+  "schema": "neoth-gold-hosted-gate-admission/v1",
+  "capturedUtc": "2026-09-27T11:57:48.2143893Z",
+  "group": {
+    "run": 36315962039,
+    "producer": "d04d1cd64e0743b7ec948ee50ea8abb7be72fa4f",
+    "conclusion": "success",
+    "selected": 1932,
+    "executed": 1932,
+    "failed": 0,
+    "producerInputsMatched": 10,
+    "artifacts": [
+      {
+        "id": 10931470268,
+        "name": "w190-research-lifecycle-receipt-d04d1cd64e0743b7ec948ee50ea8abb7be72fa4f",
+        "digest": "sha256:4dc1f1d2c01524049f38562d6ddddf59a6c62930e969e5af59b3dab736d224a3",
+        "size_in_bytes": 1140
+      },
+      {
+        "id": 10931301058,
+        "name": "w190-research-lifecycle-source-d04d1cd64e0743b7ec948ee50ea8abb7be72fa4f",
+        "digest": "sha256:67e5b9190a89f4726e80ff152b683dd376ac8e55961836539daf80c30185ee56",
+        "size_in_bytes": 117471
+      },
+      {
+        "id": 10931126739,
+        "name": "w190-research-lifecycle-log-d04d1cd64e0743b7ec948ee50ea8abb7be72fa4f",
+        "digest": "sha256:8c4bb2ecbf604fabccd39586fa70eb586c0aa8257dc2db505b2539a2ff90bff8",
+        "size_in_bytes": 129768
+      }
+    ],
+    "report": "work/gold-20260906/wave1616-group1932-intake/REPORT.md"
+  },
+  "core": {
+    "run": 36314693354,
+    "producer": "d9f70cab9db7b8989515b74c031a2bf574fe8d06",
+    "conclusion": "success",
+    "job": 108607068950,
+    "gates": [
+      {
+        "name": "Check exact-source slim-core production Clippy",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:10:30Z"
+      },
+      {
+        "name": "Type-check core test targets before native validation",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:15:29Z"
+      },
+      {
+        "name": "Build current public CLI",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:19:45Z"
+      },
+      {
+        "name": "Export generated reference",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:19:45Z"
+      },
+      {
+        "name": "Upload generated reference",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:19:46Z"
+      },
+      {
+        "name": "Check exact Linux-quality workspace Clippy",
+        "conclusion": "success",
+        "completedAt": "2026-09-27T11:51:00Z"
+      }
+    ],
+    "cliArtifact": 10930786393,
+    "cliPayloadSha256": "ea5d13ce3de8d9b7289b8175ac6268cea294f64c376e0ce6ed0c4428edf6d0b6",
+    "report": "work/gold-20260906/wave1617-core-final-intake/REPORT.md"
+  },
+  "boundary": "Exact historical producers only. Core test-target check is typechecking. Unpublished managed Update has no gate/product acceptance. No ROAD checkbox closure.",
+  "localExecutableValidationRan": false
+}

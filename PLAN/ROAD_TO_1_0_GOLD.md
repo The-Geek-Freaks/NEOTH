@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1616-W1617 Linux Group and remaining Core gates accepted (2026-09-27):**
+Group36315962039 atd04d1cd6 executed all1932 selected cases with zero failures.
+Its original receipt/source/log artifacts match the GitHub API digests; all10
+declared producer inputs match raw blobs. Core36314693354 atd9f70cab is now
+fully successful, including workspace Clippy. Its test-target gate remains a
+typecheck; native execution is established by Group1932 and prior Windows697.
+The exact CLI reference was already imported atd04d1cd6. These results do not
+validate the unpublished Update changes. W1620 implements the coordinator,
+W1619 the before/after content proof, W1621 downstream lifecycle; Root owns
+CLI, peer fences, PLAN, Git and hosted acceptance. No local executable checks,
+ROAD closure or product Update completion is claimed.
+Evidence: docs/verification/gold-wave1616-1617-native-core-accepted.json.
 **W1615 Actual isolated n8n migration accepted (2026-09-27):**
 Hosted36316090902 atfcb8d030 passed the real Linux-amd64 migration fixture:
 2.40.7 started on the copied volume; both historical API keys authenticated,
