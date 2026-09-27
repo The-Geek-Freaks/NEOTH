@@ -306,7 +306,8 @@ fn create_private_bound_wal_directory(
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
-            return Err(error).with_context(|| format!("open WAL directory {}", wal_path.display()));
+            return Err(error)
+                .with_context(|| format!("open WAL directory {}", wal_path.display()));
         }
     }
     #[cfg(unix)]

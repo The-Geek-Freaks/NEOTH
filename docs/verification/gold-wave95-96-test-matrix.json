@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1757 reviewed CLI-first-use source and authenticated hosted format; product/native gates pending",
+  "status": "W1757 source published; product36360291623/native36360293343/36360295078 active at e38161cf; one additional authenticated rustfmt line wrap imported",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 257893,
-    "sha256": "B336FAB4E322584C6B3DB62731D6D17BF4787EA7F1FF18137569BC9717B0B20A"
+    "bytes": 257944,
+    "sha256": "5CD017243F6E964903AFD415B8C9D3C565CA2C9C68DDFCA61FAE321A29CDC162"
   },
   "sourceInputs": 1433,
   "requiredNativeTests": [
@@ -13380,73 +13380,73 @@
     {
       "test": "cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+      "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
       "junitClass": "neoth"
     }
   ],
@@ -15760,7 +15760,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+        "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
         "junitClass": "neoth"
       }
     ],
@@ -16158,7 +16158,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54",
+        "sourceSha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
         "junitClass": "neoth"
       }
     ]
@@ -54293,6 +54293,32 @@
       }
     ],
     "note": "Preflight36360089564@b3bec830 failed formatting only. Original artifact10945162863 ZIP0a4588328cefa5631c36472892ae5607d386996791b38b626083d07650e66abc matches API digest, internal hashes and source-head. Imported two exact rustfmt postimages; no local formatter executed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1757HostedFormatSecondPass": {
+    "base": "e38161cfa1b27957331f23227b06dd53a438a2e7",
+    "sources": [
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1517756,
+        "sha256": "B23839A3D6A7196A79B88844D300A5E60C839ABFC444AC1D0CBFD72B5D8E99FC",
+        "blob": "67f0b072925450df36eda2ffcbec86cd9f815c5d"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2128279,
+        "sha256": "685A8D37FB4759F4556360F5BE15104C6B96872A52F48CC126F344E8461D6799",
+        "blob": "0ceb853929c2c8dc7524d27c9282732c5046b4ef"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "bytes": 29474,
+        "sha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3",
+        "blob": "dd4efc22b44599f2929a518c044ef8e37201e806"
+      }
+    ],
+    "note": "Preflight36360271273 original artifact10945386686 ZIPf3b3a5de45bd09be74cfec7f9699af3c724a85a2a58cdcf41cc6f029775d2735 API/internal/source-head authenticated. One continuation-line wrap only; no rerun of active product/native gates, no local rustfmt.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

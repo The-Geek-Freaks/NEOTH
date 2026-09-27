@@ -16,7 +16,11 @@ A retained interrupted-init identity is bound to the original inspected key;
 missing, substituted, malformed or unexpected state must fail without replacing
 it. Independent backend and canary source reviews PASS after retained-state,
 bound namespace, checkpoint-resume and directory-durability corrections.
-New executable validation remains pending.
+Source published b3bec830; authenticated hosted format imported at e38161cf.
+GitHub-only product36360291623, Group2027run36360293343 and Windows791run
+36360295078 were dispatched once at e38161cf. Runtime acceptance is pending.
+Its Preflight requested one additional formatting-only line wrap; original
+artifact10945386686 and exact postimage were verified before import.
 The Archive Bridge canary now starts from an empty home through real public
 init --provider skip, without the historical fixture recovery seed. It checks
 the same private identity through all eleven stages and six cleanup flags.

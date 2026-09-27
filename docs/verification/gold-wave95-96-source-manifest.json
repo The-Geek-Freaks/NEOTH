@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T23:52:50.2650007Z",
-  "validationStatus": "W1757 reviewed CLI-first-use source and authenticated hosted format; product/native gates pending",
+  "capturedUtc": "2026-09-27T23:57:23.5500773Z",
+  "validationStatus": "W1757 source published; product36360291623/native36360293343/36360295078 active at e38161cf; one additional authenticated rustfmt line wrap imported",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3673,13 +3673,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1517427,
-      "sha256": "07C3938986941EAD51D9DD95002EF8A5EAC70DCA0A220415C5B39AF9757D449A"
+      "bytes": 1517756,
+      "sha256": "B23839A3D6A7196A79B88844D300A5E60C839ABFC444AC1D0CBFD72B5D8E99FC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2127950,
-      "sha256": "0C95E8E2077BF10E57C255A2AC501770720478B5E9D7E2B00A4043A75F00E482"
+      "bytes": 2128279,
+      "sha256": "685A8D37FB4759F4556360F5BE15104C6B96872A52F48CC126F344E8461D6799"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4693,8 +4693,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "bytes": 29457,
-      "sha256": "E5D895401B88BC26C8C1890E7CDE8C4F38E6E35FE979038F777608F78FAD0F54"
+      "bytes": 29474,
+      "sha256": "DD2B350C67A7BE826760A362AFD952AAB00BFF620CABE48959E2358CE802BDF3"
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",
