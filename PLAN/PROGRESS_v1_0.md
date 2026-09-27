@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1753 restart diagnosis / W1755 Channel16 admitted (2026-09-28):**
+FocusedChannel16run36356198071 atca2ad7f2 is successful and admitted from
+three original API-digest ZIPs,13 raw producer-source bindings and all16 exact
+discovery/execution/single-PASS terminals. No failed case. Evidence:
+docs/verification/gold-wave1755-channel16-admission.json. This is fixture
+regression acceptance, not live external-provider or full relink acceptance.
+ArchiveBridge36356194992 atca2ad7f2 reaches first startup, pairing and offline
+queue but fails the successor at daemon_start_for_accept after BOOT. Original
+artifact10944465739 ZIP09705e1705ef2528c3051c5b330e807839428c4ae9d6922e7fc0072e234420d1
+is authenticated; all seven cleanup flags pass. Its outer membership RPC
+classification cannot identify the inner cause. The reviewed canary now gives
+13 fixed inner RPC contexts precedence over both wrappers without exposing
+raw log text, paths or secrets. The source also shows a crash-restart token
+create-new mismatch; it remains a candidate cause for this particular run.
+W1754 source-selection work is not yet published or admitted. No ROAD closure;
+1324/1077/245/2 unchanged. Strict local BSOD hold; executable checks hosted only.
 **W1746 Native Rollback cohorts admitted (2026-09-28):**
 LinuxGroup2012run36353588150 and Windows777run36353589543 at8b434951 are
 fully admitted from original API-digest ZIPs and raw producer-source bindings.

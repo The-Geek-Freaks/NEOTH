@@ -120,6 +120,33 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
         )
         self.assertEqual(full_start["last_milestone"], "obsidian_reader_started")
 
+    def test_daemon_diagnostic_prefers_inner_rpc_failures_without_retaining_error_text(self) -> None:
+        cases = (
+            (b"mint mandatory daemon internal-RPC token: write audit-RPC token /private/token: File exists", "audit_rpc_token_write_failed"),
+            (b"mint mandatory daemon internal-RPC token: OS RNG unavailable", "audit_rpc_token_mint_failed"),
+            (b"bind mandatory daemon internal-RPC listener: create exclusive audit-RPC runtime directory /private/socket", "audit_rpc_runtime_create_failed"),
+            (b"bind mandatory daemon internal-RPC listener: create private audit-RPC runtime root /private/root", "audit_rpc_root_create_failed"),
+            (b"bind mandatory daemon internal-RPC listener: create private audit-RPC home namespace /private/home", "audit_rpc_namespace_create_failed"),
+            (b"bind mandatory daemon internal-RPC listener: scan private audit-RPC home namespace /private/home", "audit_rpc_stale_scan_failed"),
+            (b"bind mandatory daemon internal-RPC listener: verify audit-RPC runtime directory /private/runtime", "audit_rpc_runtime_verify_failed"),
+            (b"bind mandatory daemon internal-RPC listener: bind audit-RPC Unix socket /private/socket", "audit_rpc_socket_bind_failed"),
+            (b"bind mandatory daemon internal-RPC listener: set audit-RPC socket mode 0600 on /private/socket", "audit_rpc_socket_mode_failed"),
+            (b"bind mandatory daemon internal-RPC listener: verify audit-RPC socket /private/socket", "audit_rpc_socket_verify_failed"),
+            (b"bind mandatory daemon internal-RPC listener: unknown reason", "audit_rpc_listener_bind_failed"),
+            (b"write mandatory daemon internal-RPC discovery sidecar: unknown reason", "audit_rpc_sidecar_write_failed"),
+            (b"commit daemon internal-RPC endpoint to PID lock: unknown reason", "audit_rpc_pid_commit_failed"),
+        )
+        for outer in (b"start daemon membership/audit RPC", b"start mandatory daemon audit RPC"):
+            for inner, expected in cases:
+                with self.subTest(outer=outer, expected=expected):
+                    raw = outer + b": " + inner + b" password=never-persist\n"
+                    value = canary.redacted_daemon_diagnostic("daemon_exited_early", 1, raw)
+                    self.assertEqual(value["classification"], expected)
+                    encoded = __import__("json").dumps(value)
+                    self.assertNotIn("/private", encoded)
+                    self.assertNotIn("never-persist", encoded)
+                    self.assertNotIn("File exists", encoded)
+
     def test_disposable_master_key_uses_public_restore_and_cleanup_removes_raw_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()

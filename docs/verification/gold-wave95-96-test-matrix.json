@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Native Rollback2012/777 at8b434951 admitted; later channel16/ArchiveBridge atca2ad7f2 pending",
+  "status": "W1753 diagnostic source reviewed; W1755 Channel16 originals admitted; next hosted bridge result pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 256563,
-    "sha256": "85E2D6074776FB4017A340B1FD51FD55C0A6D79DA76FC5FE4FC181D9591961DF"
+    "bytes": 256765,
+    "sha256": "07E6FA67D0FAB6083C096F6BCF16206E69E2A13E183F3CED8A1C4FBEFED99BE1"
   },
-  "sourceInputs": 1426,
+  "sourceInputs": 1427,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -53835,6 +53835,50 @@
       }
     ],
     "note": "Original ZIP/API hashes, raw producer source hashes and all exact discovery/run/pass identities verified. Linux2012 with310 source paths; Windows777 with106source paths and777 log hashes. No changed production validation, no new parent ROAD closure, strict local BSOD hold.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1753InnerRpcDiagnostics": {
+    "base": "b978d41409d8fef39796c52eff6bd63de33df297",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1755-channel16-admission.json",
+        "bytes": 14050,
+        "sha256": "2D80A395D9E5B2A84420F46A17904F8866846A0A3C8D42716FA93B2779073EC7",
+        "blob": "f3e87f64682cd7942523e1ce37115d86bf115da3"
+      },
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 32876,
+        "sha256": "27E101955E2E171979991997E5523E5E043B610689FF74CB29422B9AB0F65CF9",
+        "blob": "4de0bc60356f3ede256a9c04de0638f22eb09b05"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 13163,
+        "sha256": "633B66C6A3CE083A3DC503A8E061D6AA00BB5DDFA8FA084FBBF21704A63B84D1",
+        "blob": "15644745df2049950a2b857d6c1358511adff203"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 493315,
+        "sha256": "2E185DF881A7B83F96723D8E94DA83F0BF5430108E9FDF360A0AD63598AE5D2A",
+        "blob": "5778eca87aedafdbb484c2909848ad2fa899b0be"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1512831,
+        "sha256": "82E9F2BA27E23BF4A7339B1132B5F60DF07E4A7C55141579329E933D636242FE",
+        "blob": "1d74f626ecce1c6961c504a4a63c5416bfe86020"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2123354,
+        "sha256": "6994C57C9A66A03BE76C38DE12D74C058D15A095135F89CA78C80D70A7433F81",
+        "blob": "13c8436ea0d7ca9f24a1bf938463ddf26aa45b55"
+      }
+    ],
+    "note": "13 inner audit RPC contexts with fixed redacted categories; no startup guard weakened. Channel16 accepted at ca2ad7f2 with original hashes/13 producer bindings/16 exact terminals. Source-only restart cause investigation remains distinct.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

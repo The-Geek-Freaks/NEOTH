@@ -1,0 +1,283 @@
+{
+  "schema": "neoth-channel-regression-admission/v1",
+  "decision": "accepted",
+  "scope": "Focused Channel16 native CI evidence only",
+  "repository": "The-Geek-Freaks/NEOTH",
+  "run": {
+    "id": 36356198071,
+    "workflow": "Connection-bound channel regressions",
+    "status": "completed",
+    "conclusion": "success",
+    "producer_commit": "ca2ad7f22d580d5f1874179c81c80d3e73eec529"
+  },
+  "original_artifacts": [
+    {
+      "id": 10944357717,
+      "kind": "source provenance",
+      "sha256": "3bdcd045d383e1e4105d98bbb0acd30b529f444810f66e384aca0f7fc69fe245",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10944576492,
+      "kind": "regression logs",
+      "sha256": "27f7ee4c6b2c818a7006344198198d135c39c1f0c131f113be0791315c7308ab",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10944606406,
+      "kind": "regression receipt",
+      "sha256": "e53c4cdb0d86699e7bd445ef0e37720bed6d183c22ee8ee2f2bc876c3414cb9b",
+      "api_digest_matches_download": true
+    }
+  ],
+  "artifact_extraction": {
+    "all_original_zips_extracted_after_digest_verification": true,
+    "reparse_point_count": 0,
+    "all_extracted_paths_remain_under_owned_original_root": true,
+    "source_head_matches_producer": true,
+    "log_file_count": 32
+  },
+  "source_binding": {
+    "binding_count": 13,
+    "includes_workflow": ".github/workflows/gchat-live-regressions.yml",
+    "all_raw_producer_git_blob_sha256_values_match_source_artifact": true
+  },
+  "exact_terminal_proof": {
+    "selected": 16,
+    "discovered": 16,
+    "executed": 16,
+    "passed": 16,
+    "failed": 0,
+    "exact_discovery_logs": 16,
+    "exact_actual_logs": 16,
+    "one_pass_zero_fail_terminals": 16
+  },
+  "limitations": [
+    "This admits the focused Channel16 CI regression run, not a live external Google Chat or BlueBubbles service session.",
+    "The historical Channel11 template was used only as a structural reference; its 11-case count was not reused."
+  ],
+  "cases": [
+    {
+      "ordinal": 1,
+      "case_id": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "test_name": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "passed": true,
+      "discovery_sha256": "93e1c40d507d5316f5d49534a6da47f5d89db10671c7609247d3e8070a5c1760",
+      "actual_sha256": "f6b74e009737961bf22eba42f1c8ff3240fa424129ee70e4d9ca38bce01f5617"
+    },
+    {
+      "ordinal": 2,
+      "case_id": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "test_name": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "passed": true,
+      "discovery_sha256": "f6784060b34bbefe3fbf362dd3078752bd990a96bd8b5e44cc49e0ea70616d28",
+      "actual_sha256": "06d4457f04338c7c2878d1f594f20888e05fef7c88a5506c6d25322a25746281"
+    },
+    {
+      "ordinal": 3,
+      "case_id": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "test_name": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "passed": true,
+      "discovery_sha256": "4ec3d6fc7d547c679541d4c24f2da32f0e02906725f741d2ae33279e7bce08dd",
+      "actual_sha256": "d8ffcbe67db0942934f9a011062dd695eb1951a11cf0e0a664c72d43fa1ff0e0"
+    },
+    {
+      "ordinal": 4,
+      "case_id": "proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance",
+      "test_name": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "passed": true,
+      "discovery_sha256": "45492f9ba39403085a180651ea35257bd4fe7c60f5bc50bb470557e4453a18d6",
+      "actual_sha256": "1c2df4ce556e32b8d1ae033ed9846777a68d01e310347feaa37ed2d552f48afb"
+    },
+    {
+      "ordinal": 5,
+      "case_id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "test_name": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "passed": true,
+      "discovery_sha256": "b2d3070a8164e467f256d9b1060818379ea6fcc380a39b35b219fa09c7bd5638",
+      "actual_sha256": "8dfa92c9f4ff280a52f946341483aece32096725e6a6fc9b39c2297493ea2736"
+    },
+    {
+      "ordinal": 6,
+      "case_id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "test_name": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "passed": true,
+      "discovery_sha256": "94a897de0e12312db0dce5885d51e0e80d202e1cac3eb30b9322b02455c64c16",
+      "actual_sha256": "4e5313fbd9a46336b16df96f5b6b5b29197d10a2ee4c63e38ac7c94b75579c42"
+    },
+    {
+      "ordinal": 7,
+      "case_id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "test_name": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "passed": true,
+      "discovery_sha256": "f0d53b47dacbe1210d19cc80b427debf0fd07182c1784baf630307324fd19070",
+      "actual_sha256": "0774fdbef59ca64755f08d94caf4c342fc5f4643c7c16f697c7bb36d189c8ebe"
+    },
+    {
+      "ordinal": 8,
+      "case_id": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
+      "test_name": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
+      "passed": true,
+      "discovery_sha256": "e8113261864781fd66031de76abd0bffd8ae5976a55cc33265b0ac94c66415af",
+      "actual_sha256": "1a0a2dee21e121ccf66df00ddac4e8ab7752a7f143ed59ed869a563f0078dfcc"
+    },
+    {
+      "ordinal": 9,
+      "case_id": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
+      "test_name": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
+      "passed": true,
+      "discovery_sha256": "8d1cfdde8f998b0a73299aa8003f00a5a4ea9636f0feb36bb31971dc98fa8bf0",
+      "actual_sha256": "7ba78bebadb67a6e50fe19a2a6ffc434194fe3645c91ad9677b8d87508a0f0b8"
+    },
+    {
+      "ordinal": 10,
+      "case_id": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "test_name": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "passed": true,
+      "discovery_sha256": "1df5cc54f4bb73b3b3847679fb4af02bea046557eb74133b622ac90dc8ffbe62",
+      "actual_sha256": "e59b2ccaa838e26e759e5d53881458010f89df4444c4f24e84dd0d309dd0da5b"
+    },
+    {
+      "ordinal": 11,
+      "case_id": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "test_name": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "passed": true,
+      "discovery_sha256": "dff9e10e1cac6cbc7679252c43b50cc5708caf80e29eafe10c427d7b47688bb9",
+      "actual_sha256": "31e0c58d074eec1313a852684363d3d31fc31976810cc54b1a0becb10b48edf5"
+    },
+    {
+      "ordinal": 12,
+      "case_id": "channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space",
+      "test_name": "channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space",
+      "passed": true,
+      "discovery_sha256": "60dc41ba0a1e4abdd31ad5169fdf7f2bf477dcffdcdad0ac3d4140be96550ba1",
+      "actual_sha256": "81806aa9238653b715045bf1a818625756d4c97f3d41c00d4db4b89cf22ff620"
+    },
+    {
+      "ordinal": 13,
+      "case_id": "channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password",
+      "test_name": "channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password",
+      "passed": true,
+      "discovery_sha256": "17304b2f3df0d35a0cef905e3808dde96b3293a692bab31acdf9667267e4ca50",
+      "actual_sha256": "79f06803847ceb2b5a77313e77f611133fc7a209b181a2dba0e956a3dd2f6ccc"
+    },
+    {
+      "ordinal": 14,
+      "case_id": "cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files",
+      "test_name": "cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files",
+      "passed": true,
+      "discovery_sha256": "b617811757a460992f555dc14cefc4a95d5160838193d932060ba902c3d70cbb",
+      "actual_sha256": "aac6dfcd3e809cc5a441072d080e5492ec5ed23c97665ed194dd0746f26c1c1f"
+    },
+    {
+      "ordinal": 15,
+      "case_id": "cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files",
+      "test_name": "cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files",
+      "passed": true,
+      "discovery_sha256": "518adb8e3e821c730396f4f161bf418892c078c4c3795835788be1e79e949f99",
+      "actual_sha256": "3d9d800f0a2ab94dadade96bdd08c26da32cd33342527506981b93638a56da15"
+    },
+    {
+      "ordinal": 16,
+      "case_id": "cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior",
+      "test_name": "cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior",
+      "passed": true,
+      "discovery_sha256": "c37e787b72eaab342d62af030bf6d53d1eaec44d8b954efdfeb5f2b89b126f88",
+      "actual_sha256": "caaa638389b1caa24c7816ed0c4c57dafbe35fd262fb1e993353c37395d50bf0"
+    }
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "gitBlob": "8eb0c0e087008e824470e3a4827e69ab7c388a9c",
+      "expectedSha256": "5bb7f67c76ad70fd7ce3a22e1af0a279a46abdd206923a8e375cd7cc1df26f07",
+      "sha256": "5bb7f67c76ad70fd7ce3a22e1af0a279a46abdd206923a8e375cd7cc1df26f07",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+      "gitBlob": "664678368a6f21332253924f6cb09e40445cdd20",
+      "expectedSha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/channels/gchat.rs",
+      "gitBlob": "5762ace8c3311f9f1b07002034939b1a7915939c",
+      "expectedSha256": "22e952f89c39284aa4ad7ed9acb3f3e4f6e0a883a4f7477325f8145892071f13",
+      "sha256": "22e952f89c39284aa4ad7ed9acb3f3e4f6e0a883a4f7477325f8145892071f13",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/channels/readiness.rs",
+      "gitBlob": "2967d3fe2db55b280c87013a3003d839908dd623",
+      "expectedSha256": "fdea04b1e19e724b8b8704d48b4325d90f1e9219361deefd017cebe4678f2d93",
+      "sha256": "fdea04b1e19e724b8b8704d48b4325d90f1e9219361deefd017cebe4678f2d93",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/channels/routing.rs",
+      "gitBlob": "76aaee9e33a952fb440952ab4a1d0063023fd586",
+      "expectedSha256": "e92f07941ec704485d35fd65aa449effa6c6a066a6826f074d8d9ea5abd06bfc",
+      "sha256": "e92f07941ec704485d35fd65aa449effa6c6a066a6826f074d8d9ea5abd06bfc",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "gitBlob": "0aa7600321d8720bed2083b7767fad03d680d373",
+      "expectedSha256": "c238cb3d864b2016a6e74ea10a383a1677c7233bf4f1e2d82a769a7115793db8",
+      "sha256": "c238cb3d864b2016a6e74ea10a383a1677c7233bf4f1e2d82a769a7115793db8",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "gitBlob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496",
+      "expectedSha256": "27f381ddb9ebd7f0a49dc5f986e312931019ae239c7bfd960387cb1f96cc6e49",
+      "sha256": "27f381ddb9ebd7f0a49dc5f986e312931019ae239c7bfd960387cb1f96cc6e49",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "gitBlob": "5c8dc7a7e73068c0fe4bff3b7ece03cd7ee0d68d",
+      "expectedSha256": "e1cf3a224477570b5aa82359ef3f1900f3ab7fa53f0f29e72f212e466e3dbbaf",
+      "sha256": "e1cf3a224477570b5aa82359ef3f1900f3ab7fa53f0f29e72f212e466e3dbbaf",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "gitBlob": "2f70adfdb5b0efcb42961d879844c7b72be14ab9",
+      "expectedSha256": "029098d7abd6944e461f44f44cd73476b1de1c7b0aca394e4a96f80748682736",
+      "sha256": "029098d7abd6944e461f44f44cd73476b1de1c7b0aca394e4a96f80748682736",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "gitBlob": "219e564be5201c75c9ee3b7ee805003c9a118591",
+      "expectedSha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+      "sha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "gitBlob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+      "expectedSha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "matches": true
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "gitBlob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "expectedSha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "matches": true
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "gitBlob": "08febac0671a3891eb7ab7879f41fabb2f39ce77",
+      "expectedSha256": "8648cf808303904b27e55e4be65447f98501c7e9b0d632ff0bdad8c95cede5e8",
+      "sha256": "8648cf808303904b27e55e4be65447f98501c7e9b0d632ff0bdad8c95cede5e8",
+      "matches": true
+    }
+  ],
+  "localExecutableValidationRan": false
+}
