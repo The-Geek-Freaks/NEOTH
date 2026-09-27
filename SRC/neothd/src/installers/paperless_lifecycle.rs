@@ -396,6 +396,21 @@ pub trait ComposeExecutor: Send {
             "paperless_backup_stream_unsupported",
         ))
     }
+    /// Bounded secret/config stdin for a fixed Docker command. The caller owns
+    /// exact bytes and must never place a credential in argv or environment.
+    async fn run_with_stdin(
+        &mut self, _argv: &[String], _root: &OwnedPaperlessRoot, _stdin: Zeroizing<Vec<u8>>,
+    ) -> Result<CommandOutput, LifecycleError> {
+        Err(LifecycleError::Command("paperless_stdin_unsupported"))
+    }
+    /// Stream a capability-opened archive into a fixed Docker stdin consumer.
+    /// Success requires the exact expected byte count and digest.
+    async fn run_stream_from_file(
+        &mut self, _argv: &[String], _root: &OwnedPaperlessRoot, _input: std::fs::File,
+        _expected_bytes: u64, _expected_sha256: &str,
+    ) -> Result<(), LifecycleError> {
+        Err(LifecycleError::Command("paperless_archive_input_unsupported"))
+    }
 }
 #[async_trait]
 trait RetainedComposeExecutor: ComposeExecutor {
@@ -404,6 +419,10 @@ trait RetainedComposeExecutor: ComposeExecutor {
         argv: &[String],
         root: &OwnedPaperlessRoot,
         binding: &EnvBinding,
+    ) -> Result<CommandOutput, LifecycleError>;
+    async fn run_retained_with_compose(
+        &mut self, argv: &[String], root: &OwnedPaperlessRoot, binding: &EnvBinding,
+        compose_input: Vec<u8>,
     ) -> Result<CommandOutput, LifecycleError>;
 }
 pub struct DockerExecutor;
@@ -576,6 +595,40 @@ impl ComposeExecutor for DockerExecutor {
             }
         }
     }
+
+    async fn run_with_stdin(&mut self, argv: &[String], root: &OwnedPaperlessRoot, stdin: Zeroizing<Vec<u8>>) -> Result<CommandOutput, LifecycleError> {
+        if stdin.len() > ENV_LIMIT { return Err(LifecycleError::Command("paperless_stdin_limit")); }
+        let (program,args)=argv.split_first().ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let command = configured_docker_command(program,args,&root.display);
+        let mut child = crate::updater::process_containment::ContainedChild::spawn_in_retained_directory_with_zeroizing_stdin(command, &root.root, &root.display, stdin, OUTPUT_LIMIT).await.map_err(|_|LifecycleError::Command("paperless_stdin_spawn_failed"))?;
+        let output = match child.wait_until(std::time::Instant::now() + COMMAND_TIMEOUT).await {
+            Ok(output) => output,
+            Err(crate::updater::process_containment::ContainedChildError::DeadlineElapsed) => {
+                child.terminate_and_reap().await.map_err(|_|LifecycleError::Command("paperless_stdin_reap_failed"))?;
+                return Err(LifecycleError::Command("paperless_stdin_timeout"));
+            }
+            Err(_) => return Err(LifecycleError::Command("paperless_stdin_failed")),
+        };
+        if !output.status.success() { return Err(LifecycleError::Command("paperless_stdin_failed")); }
+        String::from_utf8(output.stdout).map(|stdout|CommandOutput{stdout}).map_err(|_|LifecycleError::Command("paperless_command_non_utf8"))
+    }
+
+    async fn run_stream_from_file(&mut self, argv:&[String], root:&OwnedPaperlessRoot, input:std::fs::File, expected_bytes:u64, expected_sha256:&str)->Result<(),LifecycleError>{
+        if expected_sha256.len()!=64||!expected_sha256.bytes().all(|b|b.is_ascii_hexdigit()){return Err(LifecycleError::Receipt)}
+        let (program,args)=argv.split_first().ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let command = configured_docker_command(program,args,&root.display);
+        let mut child = crate::updater::process_containment::ContainedChild::spawn_in_retained_directory_with_file_stdin(command, &root.root, &root.display, input, expected_bytes, expected_sha256.to_owned(), OUTPUT_LIMIT).await.map_err(|_|LifecycleError::Command("paperless_archive_input_spawn_failed"))?;
+        let output = match child.wait_until(std::time::Instant::now() + COMMAND_TIMEOUT).await {
+            Ok(output) => output,
+            Err(crate::updater::process_containment::ContainedChildError::DeadlineElapsed) => {
+                child.terminate_and_reap().await.map_err(|_|LifecycleError::Command("paperless_archive_input_reap_failed"))?;
+                return Err(LifecycleError::Command("paperless_archive_input_timeout"));
+            }
+            Err(crate::updater::process_containment::ContainedChildError::StdinIntegrity) => return Err(LifecycleError::Receipt),
+            Err(_) => return Err(LifecycleError::Command("paperless_archive_input_failed")),
+        };
+        output.status.success().then_some(()).ok_or(LifecycleError::Command("paperless_archive_input_failed"))
+    }
 }
 #[async_trait]
 impl RetainedComposeExecutor for DockerExecutor {
@@ -585,7 +638,10 @@ impl RetainedComposeExecutor for DockerExecutor {
         root: &OwnedPaperlessRoot,
         binding: &EnvBinding,
     ) -> Result<CommandOutput, LifecycleError> {
-        self.run_retained_owned(argv, root, binding).await
+        self.run_retained_owned(argv, root, binding, None).await
+    }
+    async fn run_retained_with_compose(&mut self, argv:&[String], root:&OwnedPaperlessRoot, binding:&EnvBinding, compose_input:Vec<u8>)->Result<CommandOutput,LifecycleError>{
+        self.run_retained_owned(argv,root,binding,Some(compose_input)).await
     }
 }
 
@@ -595,6 +651,7 @@ impl DockerExecutor {
         argv: &[String],
         root: &OwnedPaperlessRoot,
         binding: &EnvBinding,
+        supplied_compose: Option<Vec<u8>>,
     ) -> Result<CommandOutput, LifecycleError> {
         let (program, args) = argv
             .split_first()
@@ -603,13 +660,15 @@ impl DockerExecutor {
         for (name, value) in compose_environment(binding)? {
             command.env(name, value);
         }
-        let compose_input = match binding.volume_set_id.as_deref() {
+        let compose_input = match supplied_compose {
+            Some(bytes) => bytes,
+            None => match binding.volume_set_id.as_deref() {
             Some(volume_set_id) => {
                 paperless_staging::render_compose_with_volume_set_id(volume_set_id)
                     .ok_or(LifecycleError::LaunchBinding)?
             }
             None => paperless_staging::legacy_compose_bytes().to_vec(),
-        };
+        }};
         let mut child =
             crate::updater::process_containment::ContainedChild::spawn_in_retained_directory(
                 command,
@@ -739,6 +798,9 @@ async fn install_at_with_readiness_and_bootstrap<
     if paperless_backup::blocks_peer_operation(&owned)? {
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
     }
+    if paperless_restore::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
+    }
     if let Some(custody) = read_uninstall_receipt(&owned)?
         && custody.phase != PaperlessUninstallPhase::Complete
     {
@@ -749,12 +811,21 @@ async fn install_at_with_readiness_and_bootstrap<
         .then(|| configured_backend(home))
         .transpose()?;
     let expected = expected_images()?;
-    let project = project_name(&root_path);
+    // Reinstall remains in the active generation's namespace.  A schema-3
+    // Restore receipt is already custody-authorized by read_install_receipt;
+    // deriving the base name here would otherwise create an empty sibling.
+    let active_receipt = read_install_receipt(&owned)?;
+    let active_project = active_receipt.as_ref().map(|receipt| receipt.project.clone());
+    let active_schema = active_receipt.as_ref().map(|receipt| receipt.schema_version);
     let engine = select_local_engine(executor, &owned).await?;
     paperless_generation_rotation::rotate_completed_purge_generation_at(
         executor, &engine, &owned, &binding,
     )
     .await?;
+    let project = active_project
+        .clone()
+        .or(paperless_generation_auth::pending_generation_project(&owned)?)
+        .unwrap_or_else(|| project_name(&root_path));
     let fresh_credentials = if paperless_generation_auth::has_pending_marker(&owned)? {
         let current =
             Credentials::load_effective(&home.join("credentials.yaml"), configured_backend(home)?)
@@ -945,7 +1016,9 @@ async fn install_at_with_readiness_and_bootstrap<
     }
     ensure_stage(&owned, &binding)?;
     let receipt = PaperlessLifecycleReceipt {
-        schema_version: if binding.volume_set_id.is_some() {
+        schema_version: if active_schema == Some(3) {
+            3
+        } else if binding.volume_set_id.is_some() {
             2
         } else {
             1
@@ -1013,16 +1086,15 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
     if paperless_backup::blocks_peer_operation(&owned)? {
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
     }
+    if paperless_restore::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
+    }
     let (installed_bytes, installed) = read_install_receipt_with_bytes(&owned)?;
     validate_install_receipt(&installed, &root_path)?;
     let install_receipt_sha256 = format!("{:x}", Sha256::digest(&installed_bytes));
     let mut custody =
         read_uninstall_receipt(&owned)?.unwrap_or_else(|| PaperlessUninstallReceipt {
-            schema_version: if installed.volume_set_id.is_some() {
-                2
-            } else {
-                1
-            },
+            schema_version: installed.schema_version,
             operation: "paperless.safe_uninstall".to_owned(),
             project: installed.project.clone(),
             phase: PaperlessUninstallPhase::Prepared,
@@ -1081,11 +1153,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
             return Err(LifecycleError::UnownedOrMismatch);
         }
         custody = PaperlessUninstallReceipt {
-            schema_version: if installed.volume_set_id.is_some() {
-                2
-            } else {
-                1
-            },
+            schema_version: installed.schema_version,
             operation: "paperless.safe_uninstall".to_owned(),
             project: installed.project.clone(),
             phase: PaperlessUninstallPhase::Prepared,
@@ -1352,7 +1420,10 @@ fn read_uninstall_receipt(
                 serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
             validate_uninstall_custody(&receipt)?;
             if receipt.project != project_name(&root.display) {
-                return Err(LifecycleError::UnownedOrMismatch);
+                let installed = read_install_receipt(root)?.ok_or(LifecycleError::Receipt)?;
+                if installed.project != receipt.project {
+                    return Err(LifecycleError::UnownedOrMismatch);
+                }
             }
             Ok(Some(receipt))
         }
@@ -1426,6 +1497,26 @@ fn write_volume_set_snapshot_create_new(
     .map_err(|_| LifecycleError::Io)?;
     ensure_bound(root)
 }
+/// Publish a successor generation snapshot once its previous exact bytes are
+/// retained in Restore custody.  Restore owns the surrounding commit and
+/// compensation ordering; this helper only performs rooted replacement.
+pub(crate) fn write_volume_set_snapshot_replace(
+    root: &OwnedPaperlessRoot,
+    snapshot: &PaperlessVolumeSetSnapshot,
+) -> Result<(), LifecycleError> {
+    validate_volume_set_snapshot(snapshot, &snapshot.project)?;
+    ensure_bound(root)?;
+    let state = lifecycle_state_dir(root)?;
+    let bytes = serde_json::to_vec(snapshot).map_err(|_| LifecycleError::Io)?;
+    crate::skills::store::atomic_write_private_child(
+        &state,
+        OsStr::new(VOLUME_SET_NAME),
+        &root.display.join(RECEIPT_DIR).join(VOLUME_SET_NAME),
+        &bytes,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
 fn write_uninstall_receipt(
     root: &OwnedPaperlessRoot,
     receipt: &PaperlessUninstallReceipt,
@@ -1446,11 +1537,10 @@ fn validate_install_receipt(
     receipt: &StoredPaperlessInstallReceipt,
     root: &Path,
 ) -> Result<(), LifecycleError> {
-    if !matches!(receipt.schema_version, 1 | 2)
+    if !matches!(receipt.schema_version, 1 | 2 | 3)
         || receipt.operation != "install"
         || receipt.contract_id != paperless_staging::OCI_CONTRACT_ID
         || !receipt.authenticated_api_ready
-        || receipt.project != project_name(root)
         || receipt.images.len() != expected_images()?.len()
         || receipt.containers.len() != expected_images()?.len()
         || receipt.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
@@ -1493,7 +1583,7 @@ fn validate_install_receipt(
         }
     }
     match (&receipt.volume_set_id, receipt.schema_version) {
-        (Some(volume_set_id), 2) if paperless_staging::valid_volume_set_id(volume_set_id) => {
+        (Some(volume_set_id), 2 | 3) if paperless_staging::valid_volume_set_id(volume_set_id) => {
             if receipt
                 .volumes
                 .iter()
@@ -1502,13 +1592,22 @@ fn validate_install_receipt(
                 return Err(LifecycleError::Receipt);
             }
         }
-        (None, 1) => {}
+        (None, 1) if receipt.project == project_name(root) => {}
         _ => return Err(LifecycleError::Receipt),
     }
-    Ok(())
+    match receipt.schema_version {
+        1 | 2 if receipt.project == project_name(root) => Ok(()),
+        3 => {
+            let owned = paperless_staging::open_owned_root_at(root)
+                .map_err(|_| LifecycleError::UnownedOrMismatch)?;
+            paperless_restore::active_restore_authority_at(&owned, receipt)?;
+            Ok(())
+        }
+        _ => Err(LifecycleError::Receipt),
+    }
 }
 fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
-    if !matches!(custody.schema_version, 1 | 2)
+    if !matches!(custody.schema_version, 1 | 2 | 3)
         || custody.operation != "paperless.safe_uninstall"
         || custody.project.is_empty()
         || custody.install_receipt_sha256.len() != 64
@@ -1608,7 +1707,7 @@ fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(),
             }
         }
     }
-    if (custody.schema_version == 2
+    if (matches!(custody.schema_version, 2 | 3)
         && custody.phase == PaperlessUninstallPhase::Complete
         && custody.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len())
         || (!custody.retained_volume_snapshot.is_empty()
@@ -1980,6 +2079,21 @@ fn exact_identifier(raw: &str) -> Option<String> {
 fn project_name(root: &Path) -> String {
     let digest = Sha256::digest(root.as_os_str().to_string_lossy().as_bytes());
     format!("neoth-paperless-{}", hex::encode(digest)[..12].to_owned())
+}
+/// Deterministic Compose namespace for one Restore generation. Inputs are
+/// already custody-validated canonical identifiers; only a fixed digest prefix
+/// is exposed to Compose so no unbounded source field becomes a project name.
+pub(crate) fn restore_project_name(
+    base_project: &str,
+    backup_job_id: &str,
+    restored_volume_set_id: &str,
+) -> Option<String> {
+    let suffix = backup_job_id.strip_prefix("paperless-backup-")?;
+    if base_project.is_empty() || suffix.len() != 64 || !suffix.bytes().all(|b| b.is_ascii_hexdigit())
+        || !paperless_staging::valid_volume_set_id(restored_volume_set_id) { return None; }
+    let digest = Sha256::digest(format!("{base_project}\0{suffix}\0{restored_volume_set_id}").as_bytes());
+    let value = format!("{base_project}-restore-{}", hex::encode(digest)[..16].to_owned());
+    (value.len() <= 63 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).then_some(value)
 }
 struct ExpectedImage {
     service: &'static str,
@@ -2513,6 +2627,18 @@ mod tests {
         assert!(dotenv_port(b"PAPERLESS_BIND_PORT=${PORT}\n").is_err());
     }
     #[test]
+    fn restore_project_name_binds_only_canonical_backup_and_generation_ids() {
+        let base = "neoth-paperless-abcdef123456";
+        let backup = format!("paperless-backup-{}", "a".repeat(64));
+        let generation = "123e4567-e89b-12d3-a456-426614174000";
+        let derived = restore_project_name(base, &backup, generation).unwrap();
+        assert!(derived.starts_with("neoth-paperless-abcdef123456-restore-"));
+        assert_eq!(derived.len(), base.len() + "-restore-".len() + 16);
+        assert!(restore_project_name(base, "paperless-backup-short", generation).is_none());
+        assert!(restore_project_name(base, &backup, "not-a-volume-set").is_none());
+        assert!(restore_project_name("forged/project", &backup, generation).is_none());
+    }
+    #[test]
     fn compose_environment_matches_bootstrap_dotenv_literals() {
         for (admin, expected_user, expected_password) in [
             (
@@ -2994,6 +3120,14 @@ mod tests {
                     None => paperless_staging::legacy_compose_bytes().to_vec(),
                 });
             self.run(argv, &root.display).await
+        }
+        async fn run_retained_with_compose(
+            &mut self, argv:&[String], root:&OwnedPaperlessRoot, binding:&EnvBinding,
+            compose_input:Vec<u8>,
+        )->Result<CommandOutput,LifecycleError>{
+            compose_environment(binding)?;
+            self.retained_compose_inputs.push(compose_input);
+            self.run(argv,&root.display).await
         }
     }
     struct EventuallyReady(AtomicUsize);
@@ -3544,3 +3678,5 @@ pub(crate) mod paperless_purge;
 mod paperless_generation_auth;
 #[path = "paperless_repair.rs"]
 pub(crate) mod paperless_repair;
+#[path = "paperless_restore.rs"]
+pub(crate) mod paperless_restore;

@@ -91,8 +91,19 @@ pub(crate) async fn rotate_completed_purge_generation_at<E: ComposeExecutor>(
     root: &OwnedPaperlessRoot,
     binding: &EnvBinding,
 ) -> Result<(), LifecycleError> {
-    let project = project_name(&root.display);
-    let mut journal = match read_journal(root)? {
+    if paperless_restore::blocks_peer_operation(root)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
+    }
+    // A terminal purge of a restored generation must recreate the next
+    // generation in that same authorized Compose namespace.  Resolving the
+    // project from the receipt before the rotation begins prevents a base
+    // project install from silently creating six empty volumes.
+    let persisted = read_journal(root)?;
+    let project = match persisted.as_ref() {
+        Some(journal) => journal.project.clone(),
+        None => active_generation_project(root)?,
+    };
+    let mut journal = match persisted {
         Some(journal) => {
             validate_journal(&journal, &project)?;
             if journal.phase == RotationPhase::Prepared {
@@ -246,7 +257,7 @@ fn resume_rotation(
     root: &OwnedPaperlessRoot,
     journal: &mut RotationJournal,
 ) -> Result<(), LifecycleError> {
-    validate_journal(journal, &project_name(&root.display))?;
+    validate_journal(journal, &journal.project)?;
     validate_archives(root, journal, journal.phase != RotationPhase::Prepared)?;
     if journal.phase == RotationPhase::Prepared {
         for archive in &journal.archives {
@@ -276,6 +287,16 @@ fn resume_rotation(
     }
     if journal.phase == RotationPhase::LiveAuthorityCleared {
         validate_archives(root, journal, true)?;
+        if journal.project != project_name(&root.display) {
+            // The archived terminal chain has already proved this namespace.
+            // Persist the successor ID before a later install can create its
+            // volumes, so a retry never falls back to the base project.
+            paperless_restore::authorize_restore_successor_volume_set_at(
+                root,
+                &journal.project,
+                &journal.new_volume_set_id,
+            )?;
+        }
         let snapshot: PaperlessVolumeSetSnapshot =
             serde_json::from_slice(&journal.new_snapshot_bytes)
                 .map_err(|_| LifecycleError::Receipt)?;
@@ -298,6 +319,13 @@ fn resume_rotation(
         validate_new_snapshot(root, journal)?;
     }
     validate_archives(root, journal, journal.phase != RotationPhase::Prepared)
+}
+
+fn active_generation_project(root: &OwnedPaperlessRoot) -> Result<String, LifecycleError> {
+    match read_install_receipt(root)? {
+        Some(receipt) => Ok(receipt.project),
+        None => Ok(project_name(&root.display)),
+    }
 }
 
 fn validate_journal(journal: &RotationJournal, project: &str) -> Result<(), LifecycleError> {

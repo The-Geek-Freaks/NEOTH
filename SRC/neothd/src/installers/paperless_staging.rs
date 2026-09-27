@@ -369,6 +369,26 @@ pub(crate) fn render_compose_with_volume_set_id(volume_set_id: &str) -> Option<V
         == PAPERLESS_VOLUMES.len())
     .then_some(rendered.into_bytes())
 }
+/// Private Restore render modes. They are deliberately not CLI-facing and
+/// derive from the exact staged Compose contract only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RestorePublishMode { None, Loopback }
+
+/// Render one restore generation from the immutable trusted template. The
+/// candidate mode removes exactly the known webserver loopback stanza; every
+/// image, env and volume line remains byte-identical to the normal renderer.
+pub(crate) fn render_restore_compose(
+    volume_set_id: &str,
+    publish: RestorePublishMode,
+) -> Option<Vec<u8>> {
+    let mut rendered = String::from_utf8(render_compose_with_volume_set_id(volume_set_id)?).ok()?;
+    if publish == RestorePublishMode::None {
+        const PORTS: &str = "    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n";
+        if rendered.matches(PORTS).count() != 1 { return None; }
+        rendered = rendered.replacen(PORTS, "", 1);
+    }
+    Some(rendered.into_bytes())
+}
 
 pub(crate) fn valid_volume_set_id(value: &str) -> bool {
     value.len() == 36

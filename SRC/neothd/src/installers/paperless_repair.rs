@@ -736,6 +736,9 @@ fn refuse_repair_custody(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError
     if paperless_backup::blocks_peer_operation(root)? {
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
     }
+    if paperless_restore::blocks_peer_operation(root)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
+    }
     if read_uninstall_receipt(root)?.is_some() {
         return Err(LifecycleError::Command(
             "paperless_repair_uninstall_present",

@@ -1,0 +1,62 @@
+{
+  "schema": "neoth-paperless-restore-source/v1",
+  "capturedUtc": "2026-09-27T17:31:43.2236844Z",
+  "base": "b31e8e4587ec52941b272388c90470e564b9727e",
+  "scope": "Canonical same-instance six-volume Restore; durable per-generation history, compensation, ambiguity hold, downstream lifecycle, contained file/secret stdin and real product canary",
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1696-restore-final-review/REPORT.md",
+      "sha256": "4E7DDECE354F72D748959E4C289397A22A80DBD1DC2765108BF20290D66E440C",
+      "scope": "independent static review; not runtime acceptance"
+    },
+    {
+      "path": "work/gold-20260906/wave1697-paperless-product-review/REPORT.md",
+      "sha256": "B92C77348D401A62A33C9C571A1872E16812E71D6941D9BB4BE963251E40D1E3",
+      "scope": "independent static review; not runtime acceptance"
+    }
+  ],
+  "native": {
+    "additionalIdentities": 26,
+    "portable": 2215,
+    "linuxGrouped": 2005,
+    "windows": 770
+  },
+  "localExecutableValidationRan": false,
+  "hostedStatus": "pending",
+  "road": {
+    "done": 1077,
+    "open": 245,
+    "partial": 2
+  },
+  "limits": [
+    "Source evidence only until hosted gates accepted",
+    "Same-instance physical backup with exact retained config/platform; no cross-instance migration",
+    "Prior and compensated failed generation volumes retained with custody"
+  ],
+  "finalSourceHashes": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "B1EF499473EF5285B390440EEE44E6B51BAAB7157DE776F114BEA32F84BAB023"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "22E9EBF921EF7A9630482079824678595A86BACC4BDDBC2FDB8AB6C2AF3B2C3D"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "9F151385D463A7DA7514A1FB9D19EC9CB05A397D0EBABBBEF0B6BCE881A2AD87"
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "sha256": "6528ACE32EF91EBBDD00ADD898EDAE6BA717404D27B06EA03DC8AAB169595502"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "B24C7CC85B255C43676918B069FE1FE31B5895F02702BD99A2C852A34A9EA532"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "9853EE7385465623DE9C03DEA657F335EB744F22CB29A130C373A8A1875B2E76"
+    }
+  ]
+}

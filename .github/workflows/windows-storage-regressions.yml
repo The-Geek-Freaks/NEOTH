@@ -814,6 +814,32 @@ jobs:
           installers::paperless_lifecycle::paperless_backup::tests::corrupt_interrupted_source_companion_restores_then_holds_without_copy_replay	neothd/src/installers/paperless_backup_tests.rs
           installers::paperless_lifecycle::paperless_backup::tests::backup_readiness_waits_after_source_restart_and_committed_receipt_reentry	neothd/src/installers/paperless_backup_tests.rs
           integrations::n8n::managed_runtime::managed_update::tests::tampered_or_oversized_retained_update_receipt_blocks_second_reinstall_before_effects	neothd/src/integrations/n8n/managed_update_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_job_id_is_canonical_and_bounded	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::backup_job_id_refuses_noncanonical_or_unbounded_input	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::committed_restore_authorizes_repaired_and_successor_generations_but_not_forged_ones	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::candidate_service_lookup_is_exact_and_never_falls_back_to_another_container	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_generation_name_is_deterministic_and_bounded	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_candidate_start	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_local_auth_loopback_cutover_and_known_failure_compensation	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_failed_generation_retirement_is_immutable_and_names_exactly_six_volumes	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_tampered_retired_custody_blocks_recovery_before_fresh_create	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_second_restore_uses_new_generation_and_keeps_first_generation_history	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_committed_pointer_reentry_survives_missing_mutable_journal_without_new_effect	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_create_dispatched_discovery_failure_holds_without_second_create	neothd/src/installers/paperless_restore_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::legacy_completed_source_without_binding_allows_peer_check_then_fresh_schema_two_backup	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::legacy_inflight_source_recovery_never_writes_schema_two_without_binding	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::paperless_backup::tests::exact_restore_resolver_rejects_legacy_and_binding_or_archive_mutants_without_effects	neothd/src/installers/paperless_backup_tests.rs
+          installers::paperless_lifecycle::tests::restore_project_name_binds_only_canonical_backup_and_generation_ids	neothd/src/installers/paperless_lifecycle.rs
+          cli::paperless::tests::paperless_restore_cli_requires_canonical_backup_id_without_target_overrides	neothd/src/cli/paperless.rs
+          updater::process_containment::tests::blocked_stdin_worker_is_aborted_after_drain_grace	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::file_stdin_integrity_failure_is_reported_after_contained_reap	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::deadline_reap_kills_actual_descendant	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::fast_leader_closes_inherited_pipe_descendant	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::missing_executable_returns_setup_error	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::every_post_spawn_setup_fault_reaps_the_leader_before_setup_returns	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::reader_timeout_aborts_and_awaits_its_task	neothd/src/updater/process_containment.rs
+          updater::process_containment::tests::native_version_variant_uses_sterile_cwd_and_returns_bounded_stdout_after_reap	neothd/src/updater/process_containment.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -838,7 +864,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 744 ]]; then
+          if [[ "$expected" -ne 770 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

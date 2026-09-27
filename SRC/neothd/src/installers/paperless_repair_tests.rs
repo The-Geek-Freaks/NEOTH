@@ -266,6 +266,32 @@ impl RetainedComposeExecutor for Fake {
         }
         Err(LifecycleError::Command("fake_retained"))
     }
+
+    async fn run_retained_with_compose(
+        &mut self,
+        a: &[String],
+        root: &OwnedPaperlessRoot,
+        binding: &EnvBinding,
+        compose_input: Vec<u8>,
+    ) -> Result<CommandOutput, LifecycleError> {
+        let trusted = match binding.volume_set_id.as_deref() {
+            Some(volume_set_id) => [
+                paperless_staging::render_compose_with_volume_set_id(volume_set_id),
+                paperless_staging::render_restore_compose(
+                    volume_set_id,
+                    paperless_staging::RestorePublishMode::None,
+                ),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|expected| expected == compose_input),
+            None => compose_input.as_slice() == paperless_staging::legacy_compose_bytes(),
+        };
+        if !trusted {
+            return Err(LifecycleError::Receipt);
+        }
+        self.run_retained(a, root, binding).await
+    }
 }
 struct Ready;
 #[async_trait]

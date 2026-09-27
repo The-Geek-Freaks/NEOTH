@@ -59,7 +59,7 @@ pub(crate) fn emit_rotation_marker(
     snapshot_bytes: &[u8],
 ) -> Result<(), LifecycleError> {
     if !paperless_staging::valid_volume_set_id(volume_set_id)
-        || project != project_name(&root.display)
+        || !generation_project_is_authorized(root, project)
         || read_optional_auth_child(root, RECEIPT_NAME)?.is_some()
     {
         return Err(LifecycleError::Receipt);
@@ -105,6 +105,21 @@ pub(super) fn has_pending_marker(root: &OwnedPaperlessRoot) -> Result<bool, Life
             Ok(true)
         }
         None => Ok(false),
+    }
+}
+
+/// The marker is the durable successor authority after terminal rotation has
+/// archived the old receipt.  Lifecycle uses its validated project so the
+/// replacement generation stays in the same Compose namespace.
+pub(super) fn pending_generation_project(
+    root: &OwnedPaperlessRoot,
+) -> Result<Option<String>, LifecycleError> {
+    match read_marker(root)? {
+        Some(marker) => {
+            validate_marker_snapshot(root, &marker)?;
+            Ok(Some(marker.project))
+        }
+        None => Ok(None),
     }
 }
 /// Bind the marker to the effective pre-purge credential immediately before
@@ -402,7 +417,7 @@ fn validate_marker_snapshot(
 ) -> Result<(), LifecycleError> {
     if marker.schema_version != 1
         || marker.operation != "paperless.fresh_generation_auth"
-        || marker.project != project_name(&root.display)
+        || !generation_project_is_authorized(root, &marker.project)
         || !paperless_staging::valid_volume_set_id(&marker.volume_set_id)
         || marker.snapshot_sha256.len() != 64
         || !marker
@@ -456,6 +471,13 @@ fn valid_fingerprint(value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     })
+}
+fn generation_project_is_authorized(
+    root: &OwnedPaperlessRoot,
+    project: &str,
+) -> bool {
+    project == project_name(&root.display)
+        || paperless_restore::restore_project_authorized_at(root, project).is_ok()
 }
 fn fingerprint_is_old_or_new(marker: &GenerationAuthMarker, current: &str) -> bool {
     marker.old_token_sha256.as_deref() == Some(current)

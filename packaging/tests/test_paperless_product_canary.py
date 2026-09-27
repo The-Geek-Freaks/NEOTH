@@ -18,7 +18,7 @@ import paperless_product_canary as canary
 
 def write_backup_source(root: Path, job_id: str, install_raw: bytes, snapshot_raw: bytes) -> None:
     path = root / "source.v1.json"
-    path.write_text(json.dumps({"schema_version": 1, "operation": "paperless.backup.source", "job_id": job_id, "install_receipt_bytes": list(install_raw), "volume_set_snapshot_bytes": list(snapshot_raw)}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": 2, "operation": "paperless.backup.source", "job_id": job_id, "install_receipt_bytes": list(install_raw), "volume_set_snapshot_bytes": list(snapshot_raw), "restore_binding": {"compose_contract_id": canary.PAPERLESS_CONTRACT_ID, "environment_fingerprint": "a" * 64, "token_fingerprint": "b" * 64}}), encoding="utf-8")
     os.chmod(path, 0o600)
 
 
@@ -488,6 +488,9 @@ class CustodyTests(unittest.TestCase):
                 lambda value: value.__setitem__("install_receipt_bytes", list(b"other")),
                 lambda value: value.__setitem__("volume_set_snapshot_bytes", list(b"other")),
                 lambda value: value.__setitem__("schema_version", True),
+                lambda value: value["restore_binding"].__setitem__("compose_contract_id", "foreign-contract"),
+                lambda value: value["restore_binding"].__setitem__("environment_fingerprint", "g" * 64),
+                lambda value: value["restore_binding"].pop("token_fingerprint"),
             ):
                 changed = json.loads(original); mutate(changed); path.write_text(json.dumps(changed))
                 with self.subTest(mutate=mutate), self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
@@ -529,6 +532,58 @@ class CustodyTests(unittest.TestCase):
         with patch.object(canary, "marker_metadata", return_value=(42, "mutated title", baseline[2])):
             with self.assertRaises(canary.Failure): canary.marker_metadata_matches(18001, "token", 42, baseline)
 
+    def test_restore_receipt_binds_selected_backup_and_all_six_archives(self) -> None:
+        source_project, source_generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        backup = {"job_id": "paperless-backup-" + "a" * 64, "archives": [{"logical_name": logical, "bytes": index + 1, "sha256": f"{index + 1:064x}"} for index, (logical, _, _) in enumerate(canary.VOLUMES)]}
+        raw = b"source-install"
+        restore_job = "paperless-restore-abcdef12-1234-4234-8234-123456789abc"
+        receipt = {"schema_version": 1, "operation": "paperless.restore", "restore_job_id": restore_job, "backup_job_id": backup["job_id"], "source_project": source_project, "restore_project": "neoth-paperless-restore", "source_volume_set_id": source_generation, "restored_volume_set_id": "abcdef12-1234-4234-8234-123456789abc", "previous_install_receipt_sha256": hashlib.sha256(raw).hexdigest(), "archives": backup["archives"], "candidate_authenticated_api_ready": True, "active_authenticated_api_ready": True, "rollback_retained": True, "rollback_custody_ref": f".neoth-paperless-restore-{restore_job}.v1.json", "rollback_custody_sha256": "f" * 64}
+        self.assertEqual(canary.validate_restore(receipt, backup, source_project, source_generation, raw)[0], receipt["restore_job_id"])
+        for mutate in (lambda value: value.__setitem__("backup_job_id", "paperless-backup-" + "b" * 64), lambda value: value["archives"].pop(), lambda value: value.__setitem__("candidate_authenticated_api_ready", False), lambda value: value.__setitem__("restored_volume_set_id", source_generation)):
+            invalid = json.loads(json.dumps(receipt)); mutate(invalid)
+            with self.subTest(mutate=mutate), self.assertRaises(canary.Failure):
+                canary.validate_restore(invalid, backup, source_project, source_generation, raw)
+
+    def test_restore_authority_binds_immutable_custody_active_pointer_and_history(self) -> None:
+        project, source_generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        restored_generation = "abcdef12-1234-4234-8234-123456789abc"
+        restore_job, backup_job = "paperless-restore-fedcba98-1234-4234-8234-123456789abc", "paperless-backup-" + "a" * 64
+        source = install_receipt(2, source_generation)
+        active = install_receipt(2, restored_generation); active["schema_version"] = 3
+        source_raw, active_raw = json.dumps(source, sort_keys=True).encode(), json.dumps(active, sort_keys=True).encode()
+        source_ids = tuple(row["id"] for row in source["containers"])
+        active_ids = tuple(row["id"] for row in active["containers"])
+        configs = {row["service"]: row["config_id"] for row in active["images"]}
+        snapshot = {"schema_version": 1, "project": project, "volume_set_id": source_generation, "logical_volumes": [logical for logical, _, _ in canary.VOLUMES]}
+        snapshot_raw = json.dumps(snapshot, sort_keys=True).encode()
+        archives = [{"logical_name": logical, "bytes": index + 1, "sha256": f"{index + 1:064x}"} for index, (logical, _, _) in enumerate(canary.VOLUMES)]
+        name = f".neoth-paperless-restore-{restore_job}.v1.json"
+        restore_project = canary.restore_project_name(project, backup_job, restored_generation)
+        self.assertIsNotNone(restore_project)
+        restore = {"schema_version": 1, "operation": "paperless.restore", "restore_job_id": restore_job, "backup_job_id": backup_job, "source_project": project, "restore_project": restore_project, "source_volume_set_id": source_generation, "restored_volume_set_id": restored_generation, "previous_install_receipt_sha256": hashlib.sha256(source_raw).hexdigest(), "archives": archives, "candidate_authenticated_api_ready": True, "active_authenticated_api_ready": True, "rollback_retained": True, "rollback_custody_ref": name, "rollback_custody_sha256": ""}
+        custody = {"schema_version": 1, "operation": "paperless.restore", "phase": "committed", "restore_job_id": restore_job, "backup_job_id": backup_job, "base_project": project, "source_project": project, "source_volume_set_id": source_generation, "rollback_project": project, "rollback_volume_set_id": source_generation, "restore_project": restore["restore_project"], "restored_volume_set_id": restored_generation, "authorized_volume_set_ids": [restored_generation], "source_install_receipt_sha256": hashlib.sha256(source_raw).hexdigest(), "source_install_receipt_bytes": list(source_raw), "prior_install_receipt_bytes": list(source_raw), "source_volume_set_snapshot_bytes": list(snapshot_raw), "prior_volume_set_snapshot_bytes": list(snapshot_raw), "archives": archives, "old_containers": [{"service": service, "id": identifier, "image_id": configs[service], "running": True} for service, identifier in zip(canary.IMAGES, source_ids, strict=True)], "candidate_container_ids": [], "active_container_ids": [f"{service}:{identifier}" for service, identifier in zip(canary.IMAGES, active_ids, strict=True)], "committed_install_receipt_sha256": hashlib.sha256(active_raw).hexdigest()}
+
+        def write(path: Path, value: dict) -> None:
+            path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8"); os.chmod(path, 0o600)
+
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            custody_raw = json.dumps(custody, sort_keys=True).encode(); restore["rollback_custody_sha256"] = hashlib.sha256(custody_raw).hexdigest()
+            write(state / name, custody)
+            pointer = {"schema_version": 1, "operation": "paperless.restore", "restore_job_id": restore_job, "custody_name": name, "custody_sha256": restore["rollback_custody_sha256"], "authorized_volume_set_ids": [restored_generation]}
+            history = {"schema_version": 1, "operation": "paperless.restore", "custody_names": [name], "authorized_volume_set_ids": {name: [restored_generation]}}
+            write(state / ".neoth-paperless-restore-active.v1.json", pointer); write(state / ".neoth-paperless-restore-history.v1.json", history)
+            with patch.object(canary, "project_name", return_value=project):
+                canary.validate_restore_authority(home, restore, source_raw, snapshot_raw, active_raw, source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
+            for path, mutate in ((state / name, lambda value: value.__setitem__("backup_job_id", "paperless-backup-" + "b" * 64)), (state / name, lambda value: value.__setitem__("base_project", "foreign-base")), (state / ".neoth-paperless-restore-active.v1.json", lambda value: value.__setitem__("custody_sha256", "f" * 64)), (state / ".neoth-paperless-restore-history.v1.json", lambda value: value["authorized_volume_set_ids"].__setitem__(name, [source_generation]))):
+                original = json.loads(path.read_text()); changed = json.loads(path.read_text()); mutate(changed); write(path, changed)
+                with self.subTest(path=path.name), patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                    canary.validate_restore_authority(home, restore, source_raw, snapshot_raw, active_raw, source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
+                write(path, original)
+            foreign_restore = dict(restore); foreign_restore["restore_project"] = "foreign-restore-project"
+            with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                canary.validate_restore_authority(home, foreign_restore, source_raw, snapshot_raw, active_raw, source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
+
     def test_repair_history_baseline_rebinds_after_intentional_recovery_commit(self) -> None:
         generation = "12345678-1234-4234-8234-123456789abc"
         receipt = install_receipt(2, generation); expected = canary.validate_install(receipt, 18001)
@@ -563,3 +618,54 @@ class CustodyTests(unittest.TestCase):
         with patch.object(canary, "docker_json", return_value={}), patch.object(canary, "validate_container"), patch.object(canary, "validate_volume", side_effect=lambda _value, project, logical, _generation: f"{project}_{logical}"), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
             self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, ids + volumes, 18001), (False, "cleanup_command_failed"))
         self.assertEqual(len(calls), len(ids) + len(volumes))
+
+    def test_restore_cleanup_removes_only_prevalidated_stopped_generation(self) -> None:
+        project = "neoth-paperless-abcdef123456"
+        generation = "12345678-1234-4234-8234-123456789abc"
+        ids = tuple(f"{index:064x}" for index in range(31, 34))
+        configs = {service: f"sha256:{index:064x}" for index, service in enumerate(canary.IMAGES, start=41)}
+        volumes = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+
+        def fixture() -> dict[str, dict]:
+            rows: dict[str, dict] = {}
+            for service, identifier in zip(canary.IMAGES, ids, strict=True):
+                mounts = [
+                    {"Type": "volume", "Name": f"{project}_{logical}", "Destination": destination}
+                    for logical, owner, destination in canary.VOLUMES if owner == service
+                ]
+                rows[identifier] = {
+                    "Id": identifier, "Image": configs[service], "State": {"Running": False},
+                    "Config": {"Labels": {"com.docker.compose.project": project, "com.docker.compose.service": service}},
+                    "NetworkSettings": {"Ports": {"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18001"}]} if service == "webserver" else {}},
+                    "HostConfig": {"PortBindings": {}}, "Mounts": mounts,
+                }
+            for (logical, _, _), name in zip(canary.VOLUMES, volumes, strict=True):
+                rows[name] = {"Name": name, "Labels": {"com.docker.compose.project": project, "com.docker.compose.volume": logical, "io.neoth.paperless.volume-set-id": generation}}
+            return rows
+
+        rows = fixture(); calls: list[list[str]] = []
+
+        def inspect(identifier: str, volume: bool = False) -> dict:
+            return json.loads(json.dumps(rows[identifier]))
+
+        def delete(argv: list[str], timeout: int = 45) -> bytes:
+            calls.append(argv)
+            if len(calls) == 1:
+                raise canary.CommandFailure(argv, canary.bounded.Result(1, b"", b"paperless_command_failed", False, False))
+            return b""
+
+        with patch.object(canary, "docker_json", side_effect=inspect), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
+            self.assertEqual(canary.cleanup_retained_stopped_generation(project, configs, ids + volumes, 18001, generation), (False, "restore_cleanup_command_failed"))
+        self.assertEqual(calls, [["docker", "rm", "-f", identifier] for identifier in ids] + [["docker", "volume", "rm", name] for name in volumes])
+
+        for mutate in (
+            lambda value: value[ids[0]]["State"].__setitem__("Running", True),
+            lambda value: value[ids[0]]["Config"]["Labels"].__setitem__("com.docker.compose.project", "foreign"),
+            lambda value: value[ids[0]].__setitem__("Image", "sha256:" + "f" * 64),
+            lambda value: value[volumes[0]]["Labels"].__setitem__("io.neoth.paperless.volume-set-id", "abcdef12-1234-4234-8234-123456789abc"),
+        ):
+            rows = fixture(); mutate(rows); calls = []
+            with patch.object(canary, "docker_json", side_effect=inspect), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
+                with self.subTest(mutate=mutate):
+                    self.assertEqual(canary.cleanup_retained_stopped_generation(project, configs, ids + volumes, 18001, generation), (False, "restore_cleanup_ownership_unproven"))
+            self.assertEqual(calls, [])

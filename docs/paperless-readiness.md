@@ -235,3 +235,42 @@ artifact and 27 raw producer bindings are admitted in
 `docs/verification/gold-wave1675-paperless-backup-product-accepted.json`.
 This proves that exact Linux product flow; native/other release gates and
 Paperless Restore/Update remain separate.
+
+## Restore a same-instance backup
+
+`neoth --output json paperless restore <BACKUP_JOB_ID>` selects one completed
+Backup by its exact `paperless-backup-` ID. The command checks the immutable
+source receipt, six archive hashes, pinned image contract, configuration and
+API-token fingerprints before creating a new managed generation. It accepts
+no archive path, image, project, container, volume or credential overrides.
+Older backups without the schema-2 source configuration binding remain valid
+Backup evidence but cannot be used by this Restore command.
+
+Restore creates three stopped candidate containers and six new volumes under
+a deterministic generation project. It copies all six archives before starting
+the candidate, which publishes no host ports. Only after an authenticated API
+check inside the candidate does it stop the exact previous containers and
+activate the new generation on the configured loopback port. The prior
+generation remains stopped and retained; this command does not delete it.
+The public result identifies the selected Backup, both generations, archive
+hashes and the immutable recovery-custody file and digest.
+
+Successful Restore records a schema-3 install receipt, immutable per-generation
+custody, active pointer and history. Backup, Repair, safe Uninstall/Reinstall
+and explicit Purge validate this authority when operating on the restored
+generation. Repeating the same committed Restore returns its existing receipt;
+a later Restore from a different Backup creates another generation while
+preserving earlier history.
+
+Interrupted work is reconciled through the durable journal. Known failures
+restore the exact prior installation state and retain an immutable record for
+the failed generation's six volumes. Ambiguous Docker outcomes remain held
+without replaying an uncertain archive copy or allocating another generation.
+Peer lifecycle commands refuse an unfinished Restore. Preserve the journal,
+history and retained volumes when investigating such a hold.
+
+This is a same-instance physical restore using the current pinned platform and
+configuration. It does not migrate PostgreSQL versions or transfer a backup to
+another instance. The Restore source and regression tests are being finalized;
+hosted compilation, native regressions and the real restored-document product
+canary remain required before runtime acceptance.

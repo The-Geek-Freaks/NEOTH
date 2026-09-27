@@ -82,6 +82,13 @@ pub enum PaperlessAction {
     /// Capture a receipt-bound, same-instance backup of the six managed volumes.
     /// The command accepts no archive path, container, image, or credential override.
     Backup,
+    /// Restore a completed same-instance backup into a new managed generation.
+    /// The previous generation is stopped and retained for recovery.
+    Restore {
+        /// Exact backup job ID returned by `paperless backup`.
+        #[arg(value_name = "BACKUP_JOB_ID", value_parser = parse_paperless_backup_job_id)]
+        backup_job_id: String,
+    },
     /// Remove receipt-bound containers while retaining all data volumes and staged files.
     Uninstall,
     /// Preview permanent removal of the six volumes retained by a completed safe uninstall.
@@ -140,6 +147,20 @@ pub enum QuarantineAction {
     },
 }
 
+fn parse_paperless_backup_job_id(value: &str) -> std::result::Result<String, String> {
+    let valid = value.strip_prefix("paperless-backup-").is_some_and(|suffix| {
+        suffix.len() == 64
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
+    if valid {
+        Ok(value.to_owned())
+    } else {
+        Err("expected paperless-backup- followed by exactly 64 lowercase hexadecimal characters".into())
+    }
+}
+
 /// Async CLI entry; retain the synchronous local-document API for its callers.
 pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) -> Result<()> {
     if let PaperlessAction::Prepare { directory } = &args.action {
@@ -192,6 +213,36 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
                     );
                 }
             }
+        }
+        Ok(())
+    } else if let PaperlessAction::Restore { backup_job_id } = &args.action {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let (_, credentials) =
+            crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                .map_err(|_| {
+                    anyhow::anyhow!("Paperless restore could not read the configured credentials")
+                })?;
+        let receipt = crate::installers::paperless_lifecycle::paperless_restore::restore_at(
+            &home,
+            &credentials,
+            backup_job_id,
+        )
+        .await
+        .map_err(anyhow::Error::new)?;
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!("{}", serde_json::to_string(&receipt)?)
+            }
+            OutputFormat::Table => println!(
+                "Paperless restore: verified\njob: {}\nbackup: {}\nactive project: {}\nvolume set: {}\narchives: {}\nauthenticated readiness: {}\nprevious generation retained: {}",
+                receipt.restore_job_id,
+                receipt.backup_job_id,
+                receipt.restore_project,
+                receipt.restored_volume_set_id,
+                receipt.archives.len(),
+                receipt.active_authenticated_api_ready,
+                receipt.rollback_retained,
+            ),
         }
         Ok(())
     } else if matches!(args.action, PaperlessAction::Backup) {
@@ -384,6 +435,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
         }
         PaperlessAction::Backup => {
             anyhow::bail!("Paperless backup requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Restore { .. } => {
+            anyhow::bail!("Paperless restore requires the asynchronous CLI entry")
         }
         PaperlessAction::Uninstall => {
             anyhow::bail!("Paperless uninstall requires the asynchronous CLI entry")
@@ -743,6 +797,58 @@ mod tests {
                     "unowned"
                 ])
                 .is_err()
+            );
+        }
+    }
+    #[test]
+    fn paperless_restore_cli_requires_canonical_backup_id_without_target_overrides() {
+        use clap::Parser;
+        let job = format!("paperless-backup-{}", "0123456789abcdef".repeat(4));
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "restore", job.as_str(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Restore { backup_job_id },
+                ..
+            }) if backup_job_id == job
+        ));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "paperless", "restore"]).is_err());
+        for invalid in [
+            String::new(),
+            "latest".into(),
+            "../backup".into(),
+            format!("../{job}"),
+            format!("C:\\backups\\{job}"),
+            format!("state/backups/{job}"),
+            format!("{job}/receipt.v1.json"),
+            format!("{job} "),
+            format!("paperless-backup-{}", "a".repeat(63)),
+            format!("paperless-backup-{}", "a".repeat(65)),
+            format!("paperless-backup-{}", "A".repeat(64)),
+            format!("paperless-backup-{}", "g".repeat(64)),
+            format!("paperless-restore-{}", "a".repeat(64)),
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth", "paperless", "restore", invalid.as_str(),
+                ])
+                .is_err(),
+                "accepted invalid backup selector: {invalid:?}",
+            );
+        }
+        for option in [
+            "--archive", "--container", "--volume", "--image", "--project", "--directory",
+            "--endpoint", "--token",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth", "paperless", "restore", job.as_str(), option, "unowned",
+                ])
+                .is_err(),
+                "accepted target override: {option}",
             );
         }
     }

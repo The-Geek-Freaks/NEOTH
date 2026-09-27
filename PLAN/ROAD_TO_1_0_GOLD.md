@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1698 Paperless Restore source (2026-09-27):** Same-instance Restore is
+implemented for an exact canonical Backup job: stopped no-port candidate,
+six verified archive streams, local authenticated readiness, loopback cutover
+and retained prior generation. Immutable committed/failed-generation custody
+and history survive later Restore and lifecycle operations. Ambiguous archive
+transfers remain durably held without replay. Token/archive stdin now uses
+retained-directory process containment, bounded pipes and termination/reap.
+Source reviews W1696/W1697 passed; the product canary validates immutable
+Restore authority and a new Backup after Restore before Repair and retained
+lifecycle cleanup.26 native identities registered: Portable2215/Group2005/
+Windows770, including existing shared-process regression coverage. Hosted
+format, Core/CLI, native and actual-product gates pending. ROAD remains
+1077done245open2partial; no acceptance box closed and no local runtime ran.
+Evidence: docs/verification/gold-wave1698-paperless-restore-source.json.
 **W1691 Windows744 accepted (2026-09-27):** GitHub36333333558 at60d68325
 passed all744 exact Windows regressions with zero failures or missing cases.
 Root verified the original artifact10937156131 ZIP/API digest, all744 named

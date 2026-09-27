@@ -891,13 +891,19 @@ async fn completed_backup_accepts_changed_active_receipt_and_preserves_first_imm
     let first_source_bytes = std::fs::read(&first_source_path).unwrap();
     let first_source: BackupSource = serde_json::from_slice(&first_source_bytes).unwrap();
     let active = std::fs::read(receipt_path(home.path())).unwrap();
-    assert_eq!(first_source.schema_version, 1);
+    assert_eq!(first_source.schema_version, 2);
     assert_eq!(first_source.operation, "paperless.backup.source");
     assert_eq!(first_source.job_id, first.job_id);
     assert_eq!(first_source.install_receipt_bytes, active);
     assert_eq!(
         first_source.volume_set_snapshot_bytes,
         std::fs::read(state(home.path()).join(VOLUME_SET_NAME)).unwrap()
+    );
+    let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+    let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+    assert_eq!(
+        first_source.restore_binding,
+        Some(restore_config_binding(&read_binding(&owned).unwrap(), &credentials).unwrap())
     );
     let changed_active = [b"\n".as_slice(), active.as_slice()].concat();
     std::fs::write(receipt_path(home.path()), &changed_active).unwrap();
@@ -1083,5 +1089,151 @@ async fn corrupt_interrupted_source_companion_restores_then_holds_without_copy_r
         assert_eq!(fake.streams(), streams, "{phase}");
         assert_eq!(fake.commands("stop"), stops, "{phase}");
         assert_eq!(fake.commands("start"), starts + 3, "{phase}");
+    }
+}
+#[tokio::test]
+async fn legacy_completed_source_without_binding_allows_peer_check_then_fresh_schema_two_backup() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = StatefulBackupExecutor::new(true);
+    let first = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &Ready(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
+    let mut custody: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+    custody.as_object_mut().unwrap().remove("restore_binding");
+    std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
+    let first_source_path = source_path(home.path(), &first.job_id);
+    let mut source: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&first_source_path).unwrap()).unwrap();
+    source["schema_version"] = serde_json::Value::from(1);
+    source.as_object_mut().unwrap().remove("restore_binding");
+    std::fs::write(&first_source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+    let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+    let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+    assert!(!blocks_peer_operation(&owned).unwrap());
+    let second = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &Ready(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    assert_ne!(second.job_id, first.job_id);
+    let second_source: BackupSource =
+        serde_json::from_slice(&std::fs::read(source_path(home.path(), &second.job_id)).unwrap())
+            .unwrap();
+    assert_eq!(second_source.schema_version, 2);
+    assert!(second_source.restore_binding.is_some());
+}
+#[tokio::test]
+async fn legacy_inflight_source_recovery_never_writes_schema_two_without_binding() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = StatefulBackupExecutor::new(true);
+    let completed = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &Ready(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
+    let mut custody: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+    custody["phase"] = serde_json::Value::String("source_restored".into());
+    custody["pending_start"] = serde_json::Value::Null;
+    custody.as_object_mut().unwrap().remove("restore_binding");
+    std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
+    let source_path = source_path(home.path(), &completed.job_id);
+    std::fs::remove_file(&source_path).unwrap();
+    std::fs::remove_file(
+        home.path()
+            .join("paperless")
+            .join("state/backups")
+            .join(&completed.job_id)
+            .join("receipt.v1.json"),
+    )
+    .unwrap();
+    let streams = fake.streams();
+    let resumed = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &Ready(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed.job_id, completed.job_id);
+    assert_eq!(fake.streams(), streams);
+    let recovered: BackupSource = serde_json::from_slice(&std::fs::read(source_path).unwrap()).unwrap();
+    assert_eq!(recovered.schema_version, 1);
+    assert!(recovered.restore_binding.is_none());
+}
+#[tokio::test]
+async fn exact_restore_resolver_rejects_legacy_and_binding_or_archive_mutants_without_effects() {
+    for mutation in ["legacy", "canonical", "config", "archive"] {
+        let (home, credentials, _) =
+            super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fake = StatefulBackupExecutor::new(true);
+        let completed = backup_at_with(
+            home.path(),
+            &credentials,
+            &mut fake,
+            &Ready(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        let source_path = source_path(home.path(), &completed.job_id);
+        match mutation {
+            "legacy" | "canonical" | "config" => {
+                let mut source: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+                if mutation == "legacy" {
+                    source["schema_version"] = serde_json::Value::from(1);
+                    source.as_object_mut().unwrap().remove("restore_binding");
+                } else if mutation == "canonical" {
+                    source["restore_binding"]["compose_contract_id"] =
+                        serde_json::Value::String("paperless-oci-wrong".into());
+                } else {
+                    source["restore_binding"]["environment_fingerprint"] =
+                        serde_json::Value::String("0".repeat(64));
+                }
+                std::fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+            }
+            "archive" => std::fs::write(
+                home.path()
+                    .join("paperless")
+                    .join(&completed.archives[0].archive_path),
+                b"mutated-archive",
+            )
+            .unwrap(),
+            _ => unreachable!(),
+        }
+        let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+        let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+        let streams = fake.streams();
+        let stops = fake.commands("stop");
+        let starts = fake.commands("start");
+        let result = resolve_completed_backup_at(&owned, &completed.job_id);
+        if mutation == "legacy" {
+            assert!(matches!(
+                result,
+                Err(LifecycleError::Command(
+                    "paperless_restore_historical_config_unsupported"
+                ))
+            ));
+        } else {
+            assert!(matches!(result, Err(LifecycleError::Receipt)), "{mutation}");
+        }
+        assert_eq!(fake.streams(), streams, "{mutation}");
+        assert_eq!(fake.commands("stop"), stops, "{mutation}");
+        assert_eq!(fake.commands("start"), starts, "{mutation}");
     }
 }

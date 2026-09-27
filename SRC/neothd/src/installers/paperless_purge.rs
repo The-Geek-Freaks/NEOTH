@@ -111,6 +111,9 @@ pub(crate) fn preview_at(home: &Path) -> Result<PaperlessPurgePreview, Lifecycle
     }
     let owned = paperless_staging::open_owned_root_at(&root_path)
         .map_err(|_| LifecycleError::UnownedOrMismatch)?;
+    if paperless_restore::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
+    }
     let resolved = resolve_purge_chain(&owned, &root_path)?;
     Ok(preview_from_resolved(resolved))
 }
@@ -145,6 +148,9 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
             .map_err(map_operation_lock_error)?;
     if paperless_backup::blocks_peer_operation(&owned)? {
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
+    if paperless_restore::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_restore_in_progress"));
     }
     let resolved = resolve_purge_chain(&owned, &root_path)?;
     if confirmation != confirmation_for(&resolved) {
@@ -354,7 +360,7 @@ pub(super) async fn validate_archived_purge_authority_for_rotation<E: ComposeExe
         .ok_or(LifecycleError::Command(
             "paperless_purge_unsupported_legacy_volume_set",
         ))?;
-    if install.schema_version != 2
+    if !matches!(install.schema_version, 2 | 3)
         || install.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
         || install
             .volumes
@@ -389,7 +395,7 @@ pub(super) async fn validate_archived_purge_authority_for_rotation<E: ComposeExe
         ));
     }
     validate_completed_uninstall_snapshot(&uninstall, &install)?;
-    if uninstall.schema_version != 2
+    if !matches!(uninstall.schema_version, 2 | 3)
         || uninstall.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
         || uninstall
             .retained_volume_snapshot
@@ -481,7 +487,7 @@ fn resolve_purge_chain(
         .ok_or(LifecycleError::Command(
             "paperless_purge_unsupported_legacy_volume_set",
         ))?;
-    if install.schema_version != 2
+    if !matches!(install.schema_version, 2 | 3)
         || install.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
         || install
             .volumes
@@ -516,7 +522,7 @@ fn resolve_purge_chain(
         ));
     }
     validate_completed_uninstall_snapshot(&uninstall, &install)?;
-    if uninstall.schema_version != 2
+    if !matches!(uninstall.schema_version, 2 | 3)
         || uninstall.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
         || uninstall
             .retained_volume_snapshot

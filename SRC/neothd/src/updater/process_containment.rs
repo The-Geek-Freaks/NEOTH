@@ -15,7 +15,9 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use zeroize::Zeroizing;
 
 #[cfg(windows)]
 use cap_fs_ext::DirExt as _;
@@ -111,6 +113,7 @@ pub(crate) enum ContainedChildError {
     WorkerTimedOut {
         worker: &'static str,
     },
+    StdinIntegrity,
     Stdin(std::io::Error),
 }
 
@@ -142,6 +145,7 @@ impl std::fmt::Display for ContainedChildError {
                 formatter,
                 "contained updater helper {worker} worker did not finish after containment"
             ),
+            Self::StdinIntegrity => write!(formatter, "contained updater helper stdin integrity mismatch"),
             Self::Stdin(error) => write!(formatter, "write exact updater helper stdin: {error}"),
         }
     }
@@ -164,7 +168,22 @@ struct ReadOutput {
 }
 
 type ReaderTask = tokio::task::JoinHandle<std::io::Result<ReadOutput>>;
-type WriterTask = tokio::task::JoinHandle<std::io::Result<()>>;
+type WriterTask = tokio::task::JoinHandle<std::result::Result<(), StdinTaskError>>;
+
+enum StdinTaskError {
+    Io(std::io::Error),
+    Integrity,
+}
+
+enum ContainedStdin {
+    Exact(Vec<u8>),
+    Zeroizing(Zeroizing<Vec<u8>>),
+    File {
+        input: std::fs::File,
+        expected_bytes: u64,
+        expected_sha256: String,
+    },
+}
 
 /// Owns an exact command invocation and its OS process-tree boundary.
 ///
@@ -267,7 +286,38 @@ impl ContainedChild {
     ) -> std::result::Result<Self, ContainedChildError> {
         let retained = configure_retained_working_directory(&mut command, directory, display_path)
             .map_err(ContainedChildError::Setup)?;
-        Self::spawn_configured_with_retained(command, exact_stdin, output_cap, Some(retained)).await
+        Self::spawn_configured_with_retained(
+            command,
+            ContainedStdin::Exact(exact_stdin.to_vec()),
+            output_cap,
+            Some(retained),
+        ).await
+    }
+
+    pub(crate) async fn spawn_in_retained_directory_with_zeroizing_stdin(
+        mut command: tokio::process::Command,
+        directory: &cap_std::fs::Dir,
+        display_path: &Path,
+        stdin: Zeroizing<Vec<u8>>,
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
+        let retained = configure_retained_working_directory(&mut command, directory, display_path)
+            .map_err(ContainedChildError::Setup)?;
+        Self::spawn_configured_with_retained(command, ContainedStdin::Zeroizing(stdin), output_cap, Some(retained)).await
+    }
+
+    pub(crate) async fn spawn_in_retained_directory_with_file_stdin(
+        mut command: tokio::process::Command,
+        directory: &cap_std::fs::Dir,
+        display_path: &Path,
+        input: std::fs::File,
+        expected_bytes: u64,
+        expected_sha256: String,
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
+        let retained = configure_retained_working_directory(&mut command, directory, display_path)
+            .map_err(ContainedChildError::Setup)?;
+        Self::spawn_configured_with_retained(command, ContainedStdin::File { input, expected_bytes, expected_sha256 }, output_cap, Some(retained)).await
     }
 
     /// Launch a caller-configured command through the same owned process-tree
@@ -278,12 +328,12 @@ impl ContainedChild {
         exact_stdin: &[u8],
         output_cap: usize,
     ) -> std::result::Result<Self, ContainedChildError> {
-        Self::spawn_configured_with_retained(command, exact_stdin, output_cap, None).await
+        Self::spawn_configured_with_retained(command, ContainedStdin::Exact(exact_stdin.to_vec()), output_cap, None).await
     }
 
     async fn spawn_configured_with_retained(
         mut command: tokio::process::Command,
-        exact_stdin: &[u8],
+        stdin_source: ContainedStdin,
         output_cap: usize,
         retained_working_directory: Option<RetainedWorkingDirectory>,
     ) -> std::result::Result<Self, ContainedChildError> {
@@ -388,7 +438,6 @@ impl ContainedChild {
             job,
         } = pending.into_ready();
 
-        let stdin_bytes = exact_stdin.to_vec();
         Ok(Self {
             child: Some(child),
             #[cfg(unix)]
@@ -397,11 +446,7 @@ impl ContainedChild {
             job,
             stdout: Some(tokio::spawn(read_capped(stdout, output_cap))),
             stderr: Some(tokio::spawn(read_capped(stderr, output_cap))),
-            stdin: Some(tokio::spawn(async move {
-                let mut stdin = stdin;
-                stdin.write_all(&stdin_bytes).await?;
-                stdin.shutdown().await
-            })),
+            stdin: Some(tokio::spawn(write_contained_stdin(stdin, stdin_source))),
             output_cap,
             _retained_working_directory: retained_working_directory,
         })
@@ -747,7 +792,8 @@ async fn join_reader(
 async fn join_stdin(mut task: WriterTask) -> std::result::Result<(), ContainedChildError> {
     match tokio::time::timeout(PIPE_DRAIN_GRACE, &mut task).await {
         Ok(Ok(Ok(()))) => Ok(()),
-        Ok(Ok(Err(error))) => Err(ContainedChildError::Stdin(error)),
+        Ok(Ok(Err(StdinTaskError::Io(error)))) => Err(ContainedChildError::Stdin(error)),
+        Ok(Ok(Err(StdinTaskError::Integrity))) => Err(ContainedChildError::StdinIntegrity),
         Ok(Err(_)) => Err(ContainedChildError::WorkerPanicked { worker: "stdin" }),
         Err(_) => {
             task.abort();
@@ -755,6 +801,40 @@ async fn join_stdin(mut task: WriterTask) -> std::result::Result<(), ContainedCh
             Err(ContainedChildError::WorkerTimedOut { worker: "stdin" })
         }
     }
+}
+
+async fn write_contained_stdin(
+    mut stdin: tokio::process::ChildStdin,
+    source: ContainedStdin,
+) -> std::result::Result<(), StdinTaskError> {
+    match source {
+        ContainedStdin::Exact(bytes) => stdin
+            .write_all(&bytes)
+            .await
+            .map_err(StdinTaskError::Io)?,
+        ContainedStdin::Zeroizing(bytes) => stdin
+            .write_all(bytes.as_slice())
+            .await
+            .map_err(StdinTaskError::Io)?,
+        ContainedStdin::File { input, expected_bytes, expected_sha256 } => {
+            let mut input = tokio::fs::File::from_std(input);
+            let mut total = 0u64;
+            let mut digest = Sha256::new();
+            let mut buffer = [0u8; 16 * 1024];
+            loop {
+                let read = input.read(&mut buffer).await.map_err(StdinTaskError::Io)?;
+                if read == 0 { break; }
+                total = total.checked_add(read as u64).ok_or(StdinTaskError::Integrity)?;
+                if total > expected_bytes { return Err(StdinTaskError::Integrity); }
+                stdin.write_all(&buffer[..read]).await.map_err(StdinTaskError::Io)?;
+                digest.update(&buffer[..read]);
+            }
+            if total != expected_bytes || format!("{:x}", digest.finalize()) != expected_sha256 {
+                return Err(StdinTaskError::Integrity);
+            }
+        }
+    }
+    stdin.shutdown().await.map_err(StdinTaskError::Io)
 }
 
 #[cfg(unix)]
@@ -1393,6 +1473,40 @@ mod tests {
         assert!(matches!(
             join_reader(task, "stdout").await,
             Err(ContainedChildError::WorkerTimedOut { worker: "stdout" })
+        ));
+    }
+
+    #[tokio::test]
+    async fn blocked_stdin_worker_is_aborted_after_drain_grace() {
+        let task = tokio::spawn(async {
+            std::future::pending::<std::result::Result<(), StdinTaskError>>().await
+        });
+        assert!(matches!(
+            join_stdin(task).await,
+            Err(ContainedChildError::WorkerTimedOut { worker: "stdin" })
+        ));
+    }
+
+    #[tokio::test]
+    async fn file_stdin_integrity_failure_is_reported_after_contained_reap() {
+        let file = tempfile::tempfile().unwrap();
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command.arg("contained_child_grandchild_marker_helper");
+        let mut child = ContainedChild::spawn_configured_with_retained(
+            command,
+            ContainedStdin::File {
+                input: file,
+                expected_bytes: 1,
+                expected_sha256: "0".repeat(64),
+            },
+            8 * 1024,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            child.wait_until(Instant::now() + Duration::from_secs(2)).await,
+            Err(ContainedChildError::StdinIntegrity)
         ));
     }
 
