@@ -1,4 +1,4 @@
-//! Confirmed deletion of one receipt-proven retained n8n bootstrap volume.
+//! Confirmed deletion of one receipt-proven retained n8n volume.
 //!
 //! This is deliberately separate from normal uninstall. The caller selects a
 //! Ready uninstall job, never a Docker name, and a durable dispatch marker
@@ -182,34 +182,51 @@ fn read_receipt(
 fn source(request: &ManagedN8nRequest) -> Result<&RetainedReinstallSource, &'static str> {
     request
         .retained_reinstall_source()
-        .filter(|source| source.bootstrap_volume)
+        .filter(|source| super::managed_runtime::valid_retained_reinstall_source(source))
         .ok_or("n8n_purge_volume_unproven")
 }
 fn plan_from_request(
     uninstall_id: &JobId,
     request: &ManagedN8nRequest,
 ) -> Result<PurgePlan, &'static str> {
-    let _ = source(request)?;
+    let source = source(request)?;
     let job = uninstall_id.as_str().to_owned();
     let volume = request.volume().to_owned();
     Ok(PurgePlan {
-        confirmation: format!("PURGE N8N VOLUME {job} {volume}"),
+        confirmation: if source.rollback_restore.is_some() {
+            format!("PURGE N8N RESTORE VOLUME {job} {volume}")
+        } else {
+            format!("PURGE N8N VOLUME {job} {volume}")
+        },
         uninstall_job_id: job,
         volume,
     })
 }
 
 fn purge_manifest(plan: &PurgePlan, source: &RetainedReinstallSource) -> super::Sha256Digest {
-    sha256_parts(&[
-        "n8n-managed-retained-volume-purge-v1",
-        "PURGE N8N VOLUME",
+    let mut parts = vec![
+        if source.rollback_restore.is_some() {
+            "n8n-managed-restore-volume-purge-v2"
+        } else { "n8n-managed-retained-volume-purge-v1" },
+        if source.rollback_restore.is_some() {
+            "PURGE N8N RESTORE VOLUME"
+        } else { "PURGE N8N VOLUME" },
         plan.uninstall_job_id.as_str(),
         source.uninstall_manifest_sha256.as_str(),
         source.source_install_job_id.as_str(),
         source.source_install_manifest_sha256.as_str(),
         plan.volume.as_str(),
         source.volume_owner_install_job_id.as_str(),
-    ])
+    ];
+    if let Some(rollback) = &source.rollback_restore {
+        parts.extend([
+            rollback.rollback_job_id.as_str(), rollback.rollback_manifest_sha256.as_str(),
+            rollback.restore_job_id.as_str(), rollback.restore_manifest_sha256.as_str(),
+            rollback.backup_job_id.as_str(), rollback.backup_manifest_sha256.as_str(),
+            rollback.retained_source_container_id.as_str(), rollback.retained_source_name.as_str(),
+        ]);
+    }
+    sha256_parts(&parts)
 }
 
 fn purge_contract(plan: &PurgePlan, source: &RetainedReinstallSource) -> JobEvidenceContract {
@@ -217,7 +234,7 @@ fn purge_contract(plan: &PurgePlan, source: &RetainedReinstallSource) -> JobEvid
     JobEvidenceContract::verified(
         manifest.clone(),
         sha256_parts(&[
-            "n8n-purge-volume",
+            if source.rollback_restore.is_some() { "n8n-purge-restore-volume" } else { "n8n-purge-volume" },
             plan.volume.as_str(),
             source.volume_owner_install_job_id.as_str(),
         ]),
@@ -257,13 +274,19 @@ fn validate_observed_volume(
     let source = source(request)?;
     if found.name != request.volume()
         || found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
-        || found.labels.get("io.neoth.n8n-job").map(String::as_str)
-            != Some(source.volume_owner_install_job_id.as_str())
-        || found
+        || if source.bootstrap_volume {
+            found.labels.get("io.neoth.n8n-job").map(String::as_str)
+                != Some(source.volume_owner_install_job_id.as_str())
+        } else {
+            found.labels.get("io.neoth.n8n-restore").map(String::as_str)
+                != Some(source.volume_owner_install_job_id.as_str())
+        }
+        || (source.bootstrap_volume && found
             .labels
             .get("io.neoth.n8n-bootstrap")
             .map(String::as_str)
-            != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
+            != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
+        || (!source.bootstrap_volume && found.labels.get("io.neoth.n8n-restore-schema").map(String::as_str) != Some("1"))
     {
         Err("n8n_purge_volume_foreign")
     } else {

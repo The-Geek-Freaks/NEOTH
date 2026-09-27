@@ -1,0 +1,31 @@
+{
+  "schema": "neoth-rollback-retained-lifecycle-source/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T08:38:00.4271456Z",
+  "base": "b278eef3b2257ece3924b55a917b7f96c4604f79",
+  "reviewedWorktreeHashes": {
+    "SRC/neothd/src/integrations/n8n/managed_purge.rs": "606FA47A16F38D30FC3926B4AC9A341BDEE5F3AC9AF7A4AC1DF4F4C55EF7ADE1",
+    "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs": "B7BE0667D2F2F3D655672F3E89584DF8344C9750D790B07EC41BA7E85DF1C06B",
+    "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "C5B226B29E92D500120AD31882790D15304D2A762215E5DD7084252F5B099C44",
+    "SRC/neothd/src/integrations/n8n/managed_uninstall.rs": "4BDBFFC1C9159422B8B987F1CA9BFAC9A02B6B83BC537153E34C73CB3E70ACA6"
+  },
+  "reviewReportSha256": "854CB58866474A3D08F4EC9F7B64EC24CCBD830D89731DC8480258550B4F9170",
+  "scope": "V2 retained Restore-volume Uninstall, repeated historical reinstallation and exact confirmed Purge",
+  "invariants": [
+    "Immediate source Ready Install is distinct from immutable original Rollback/Restore/Backup provenance.",
+    "V1 bootstrap serialization and ownership checks retained; Restore owner/schema1 required.",
+    "Two reinstallation cycles create distinct live IDs; old retired container and original volume remain retained.",
+    "Purge confirmation and manifest domain select only the Restore volume."
+  ],
+  "requiredTests": [
+    "integrations::n8n::managed_runtime::managed_rollback::tests::rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_source",
+    "integrations::n8n::managed_runtime::managed_rollback::tests::tampered_restore_volume_uninstall_receipt_has_no_reinstall_or_purge_effect"
+  ],
+  "portable": 2134,
+  "grouped": 1924,
+  "windows": 689,
+  "hostedGates": "pending",
+  "actualDownstreamProduct": "pending; separate Rollback-only canary does not exercise downstream lifecycle yet",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

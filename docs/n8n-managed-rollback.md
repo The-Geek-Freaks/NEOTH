@@ -32,8 +32,16 @@ The job store migrates to schema v7 while preserving earlier history. There
 are no caller overrides for image, container, volume, endpoint or host port.
 Pending Rollback custody blocks competing managed lifecycle changes.
 
-This initial Rollback implementation still requires hosted native and actual
-product acceptance. Reinstall and Purge of a Restore-owned Rollback volume are
-not supported yet and remain a separate open batch. The retained old runtime
-and its volume are not automatically deleted. This document does not establish
-release readiness or complete installer-lifecycle acceptance.
+After a completed uninstall of the active Rollback runtime, its verified
+Restore volume can be reattached with `install --reuse-uninstall` and the
+historical key, or permanently removed with the exact receipt-derived Purge
+confirmation. Repeated reattachments preserve the immutable Restore/Backup
+origin. These operations affect the active Restore volume only; the older
+retired container and its source volume remain retained. See
+[managed uninstall and retained data](n8n-managed-uninstall.md).
+
+Hosted native and actual product acceptance for this Rollback lifecycle are
+still required. The compiled-product workflow has a separate `rollback_only`
+scenario checking that two live-source credentials become the older snapshot's
+one credential, alongside authenticated API access and retained workflows.
+A source-reviewed scenario is not a passing product result or release proof.

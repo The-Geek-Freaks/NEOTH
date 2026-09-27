@@ -1,7 +1,7 @@
 # Managed n8n uninstall
 
 `neoth n8n uninstall` removes the container belonging to the current NEOTH
-managed installation. The command checks the original successful install job,
+managed installation. The command checks the original successful managed-runtime job,
 its durable runtime binding, and the complete inspected container identity.
 It removes only that exact container ID. The named data volume is retained.
 There is no volume purge or foreign-container override on this command.
@@ -112,7 +112,25 @@ Older receipts without retained-volume proof and ordinary unlabelled default
 volumes remain readable in status but cannot authorize this explicit selector.
 The existing ordinary stdin-key installation path is unchanged.
 
-## Permanently purge a retained bootstrap volume
+## Reinstall a retained Restore volume after Rollback
+
+After uninstalling a runtime created by [managed Rollback](n8n-managed-rollback.md),
+use the same `install --reuse-uninstall <uninstall-job-id> --api-key-stdin`
+command with the API key for that historical database. The uninstall receipt
+must bind the completed Rollback, Restore and Backup chain to the retained
+Restore volume. NEOTH recreates the live container using the recorded immutable
+historical image and original port, and authenticates before reporting Ready.
+
+Further uninstall/reinstall cycles preserve that original receipt chain while
+recording each immediately preceding installation. Each successful reattach
+creates a new live container ID. The older container retained by Rollback and
+its original data volume remain untouched by these operations.
+
+This is source-level behavior awaiting hosted native and actual product
+acceptance. The separately admitted bootstrap lifecycle does not prove this
+Restore-volume path.
+
+## Permanently purge a retained data volume
 
 After a successful uninstall, inspect the exact retained-data target:
 
@@ -139,10 +157,14 @@ Preflight and execution errors also exit unsuccessfully and can be reported
 before a job response is available.
 
 The target comes exclusively from a completed managed-uninstall receipt and
-its original install job. Only a bootstrap volume carrying the matching NEOTH
-ownership labels is eligible. An active managed runtime, unproven ownership,
+its source job and verified provenance. Eligible volumes carry either the
+original bootstrap labels or the exact Restore labels bound by the Rollback
+receipt chain. An active managed runtime, unproven ownership,
 conflicting operation or incorrect confirmation prevents removal. There is no
-volume-name, container, endpoint or filesystem override.
+volume-name, container, endpoint or filesystem override. For Restore-owned
+data, the exact phrase is `PURGE N8N RESTORE VOLUME <uninstall-job-id> <volume>`.
+It selects only the Restore volume; the old container and old source volume
+retained by Rollback are preserved.
 
 The separate Purge job records the dispatch before deleting the exact volume.
 If the result is uncertain, repeating the command may establish that the volume
@@ -171,6 +193,7 @@ criteria.
 The managed image reference and any recorded blob checksum establish only the
 specific bytes or metadata checked. They are not upstream signatures or
 attestations. Upstream signature/attestation verification and admission remain
-open. Managed update and rollback remain open too. Neither a stored-identity
+open. Managed update and full Rollback lifecycle acceptance remain open too.
+Neither a stored-identity
 repair receipt nor a checksum authorizes an update, rollback, or a release
 claim.

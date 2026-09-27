@@ -757,6 +757,8 @@ jobs:
           integrations::n8n::managed_runtime::tests::legacy_binding_without_lineage_decodes_as_install_lineage	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::rollback_retired_name_is_deterministic_and_rejects_non_uuid	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::managed_backup::tests::pending_rollback_custody_blocks_backup_before_any_docker_call	neothd/src/integrations/n8n/managed_backup_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_source	neothd/src/integrations/n8n/managed_rollback_tests.rs
+          integrations::n8n::managed_runtime::managed_rollback::tests::tampered_restore_volume_uninstall_receipt_has_no_reinstall_or_purge_effect	neothd/src/integrations/n8n/managed_rollback_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -781,7 +783,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 687 ]]; then
+          if [[ "$expected" -ne 689 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

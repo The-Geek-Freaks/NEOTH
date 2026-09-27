@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T08:30:21.3451688Z",
-  "validationStatus": "Rollback product mode reviewed and core test literal corrected; executable hosted evidence pending",
+  "capturedUtc": "2026-09-27T08:38:36.4812310Z",
+  "validationStatus": "Restore-volume retained lifecycle reviewed; hosted verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 26147,
-      "sha256": "3FC93B3D0A3E480E2BFA6E3D8211344C942742643E283AD9E33E5D9A08ACE3C6"
+      "bytes": 26201,
+      "sha256": "505D996CEBCE993F720C4D45F4978A76ED7FE1CDC2F0880D01DC80BE0733D04C"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -148,8 +148,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 119178,
-      "sha256": "56AC797358DA7C8CEF4779854BFA164CA45D98E5BF2293A83488B90E53CDD059"
+      "bytes": 119581,
+      "sha256": "7015471E142F3D27C6539B3BA931C83D1A9FC22B0E2035ACE50A5A085AE28E4F"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1283,13 +1283,13 @@
     },
     {
       "path": "docs/n8n-managed-rollback.md",
-      "bytes": 2467,
-      "sha256": "E3639F57D5FBEF45BB69AD111B5EF38426054AA8D4FF2171E83A3EECDAD8963D"
+      "bytes": 2976,
+      "sha256": "DE838B459556B919BD663EAAE2152B0322E1F0036F8037CFEAFD36A699E09D09"
     },
     {
       "path": "docs/n8n-managed-uninstall.md",
-      "bytes": 9332,
-      "sha256": "64EFFF2FB1ABA2016960FBFB23A785C2695D6BF3308130B7E05913FCB20E944D"
+      "bytes": 10623,
+      "sha256": "323751917AAF157184DD25CE4FC505A8241D60BCC3987EB6C07BFCAF5364D3E1"
     },
     {
       "path": "docs/n8n-weekly-obsidian-sync.md",
@@ -2220,6 +2220,11 @@
       "path": "docs/verification/gold-wave1559-rollback-product-source.json",
       "bytes": 2132,
       "sha256": "13647D6E8B1826090BB4F54B8287480150A2C3EF96D6D3B06BC97B20A91CF159"
+    },
+    {
+      "path": "docs/verification/gold-wave1560-rollback-retained-lifecycle.json",
+      "bytes": 1967,
+      "sha256": "7FD853A1FCE520859D08E9C0B7EECB945E9EF041D7C9E361BD5A1CC93B3D5FB7"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -3183,18 +3188,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 425566,
-      "sha256": "D39B2CB90EEE041B0C6470A1589A025CBA1BEB3A01F5EA62438C0662D9C45C03"
+      "bytes": 426705,
+      "sha256": "318986B0A0587E2E73128DE1F18E79E190FDBD98CAF627CCBCC2784DD32A5D1B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1444497,
-      "sha256": "9130115706DF49F3CE8C76556BEF7572455F2501EDD5FB95B3A3D15D5A3211CC"
+      "bytes": 1445636,
+      "sha256": "15BF8AF60709432748BA653D3903FA59C05248B26150CB94579C3BD47FA999AC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2055020,
-      "sha256": "4736CCC8BC4D6A7BEFFC0635070232A89EEA7E01F9C4DE8186F970D4AD8B419B"
+      "bytes": 2056159,
+      "sha256": "E04D7B5FEA4D32F88650FED598E17D0C68D55B9B69A0512691A012FA67F0B41F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5318,8 +5323,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
-      "bytes": 26160,
-      "sha256": "FB6ED2F94FDCB3DFA4D4795F64693A8C47146551F832B5D32CBBAD322D048F4D"
+      "bytes": 27477,
+      "sha256": "606FA47A16F38D30FC3926B4AC9A341BDEE5F3AC9AF7A4AC1DF4F4C55EF7ADE1"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
@@ -5363,8 +5368,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
-      "bytes": 21925,
-      "sha256": "6822B7CFB5FE182E97BC12983BA6DCF10A52484C2CA634CC0DD65E50796C9BEB"
+      "bytes": 27243,
+      "sha256": "B7BE0667D2F2F3D655672F3E89584DF8344C9750D790B07EC41BA7E85DF1C06B"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback.rs",
@@ -5378,8 +5383,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "bytes": 100914,
-      "sha256": "AB55D0229D9029368A4962E970C1662DF3026AFDB203F40A0D080DE6629FE457"
+      "bytes": 104206,
+      "sha256": "C5B226B29E92D500120AD31882790D15304D2A762215E5DD7084252F5B099C44"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
@@ -5388,8 +5393,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
-      "bytes": 37171,
-      "sha256": "26C38F59CB5077870B3BC94089A65AD55A1AAD663981F042B7C027802766D3A4"
+      "bytes": 44661,
+      "sha256": "4BDBFFC1C9159422B8B987F1CA9BFAC9A02B6B83BC537153E34C73CB3E70ACA6"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",

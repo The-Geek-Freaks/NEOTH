@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID,
-    RetainedReinstallSource, RuntimeBinding, RuntimePhase, is_managed_job, managed_manifest,
+    RetainedReinstallSource, RollbackRestoreRetention, RuntimeBinding, RuntimePhase,
+    is_managed_job, managed_manifest,
     read_binding, remove_binding, sha256_parts, validate_binding, validate_existing_identity,
 };
 use crate::integrations::{
@@ -85,6 +86,8 @@ struct UninstallCompletionReceipt {
     source_volume_owner_install_job_id: Option<String>,
     #[serde(default)]
     source_retained_reinstall: Option<RetainedReinstallSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollback_restore: Option<RollbackRestoreRetention>,
 }
 
 fn custody_path(home: &Path) -> PathBuf {
@@ -152,7 +155,11 @@ pub(crate) fn repair_has_pending_custody(home: &Path) -> Result<bool, &'static s
     Ok(read_custody(home)?.is_some())
 }
 
-fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(), &'static str> {
+fn write_completion_receipt(
+    home: &Path,
+    custody: &UninstallCustody,
+    source: &IntegrationJob,
+) -> Result<(), &'static str> {
     let cleanup_disposition = custody
         .cleanup_disposition
         .as_deref()
@@ -170,7 +177,7 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
     let (bootstrap_volume, volume_owner_install_job_id, retained_reinstall) =
         match binding.retained_reinstall.clone() {
             Some(source) if super::valid_retained_reinstall_source(&source) => (
-                true,
+                source.bootstrap_volume,
                 Some(source.volume_owner_install_job_id.clone()),
                 Some(source),
             ),
@@ -181,8 +188,42 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
                 None => (false, None, None),
             },
         };
+    let rollback_restore = match &binding.lineage {
+        super::RuntimeLineage::Install => binding
+            .retained_reinstall
+            .as_ref()
+            .and_then(|source| source.rollback_restore.clone()),
+        super::RuntimeLineage::Rollback(lineage) => {
+            let receipt = super::managed_rollback::resolve_ready_receipt_at(home, source)?
+                .ok_or("n8n_uninstall_rollback_receipt_missing")?;
+            if receipt.rollback_job_id != binding.job_id
+                || receipt.rollback_manifest_sha256 != binding.manifest_sha256
+                || receipt.restore_job_id != lineage.restore_job_id
+                || receipt.backup_job_id != lineage.backup_job_id
+                || receipt.restore_volume != binding.volume
+                || receipt.new_container_id != custody.container_id
+                || receipt.source_pinned_image != custody.image
+                || receipt.host_port != custody.host_port
+                || receipt.retained_source_container_id != lineage.retained_source_container_id
+                || receipt.retained_source_name != lineage.retained_source_name
+            {
+                return Err("n8n_uninstall_rollback_receipt_mismatch");
+            }
+            Some(RollbackRestoreRetention {
+            rollback_job_id: receipt.rollback_job_id,
+            rollback_manifest_sha256: receipt.rollback_manifest_sha256,
+            restore_job_id: lineage.restore_job_id.clone(),
+            restore_manifest_sha256: receipt.restore_manifest_sha256,
+            backup_job_id: lineage.backup_job_id.clone(),
+            backup_manifest_sha256: receipt.backup_manifest_sha256,
+            restore_volume: binding.volume.clone(),
+            retained_source_container_id: lineage.retained_source_container_id.clone(),
+            retained_source_name: lineage.retained_source_name.clone(),
+            })
+        }
+    };
     let receipt = UninstallCompletionReceipt {
-        schema_version: 1,
+        schema_version: if rollback_restore.is_some() { 2 } else { 1 },
         uninstall_job_id: custody.uninstall_job_id.clone(),
         uninstall_manifest_sha256: custody.uninstall_manifest_sha256.clone(),
         source_install_job_id: custody.source_install_job_id.clone(),
@@ -195,6 +236,7 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
         source_bootstrap_volume: Some(bootstrap_volume),
         source_volume_owner_install_job_id: volume_owner_install_job_id,
         source_retained_reinstall: retained_reinstall,
+        rollback_restore,
     };
     crate::util::atomic_write::atomic_write_private(
         &receipt_path(home, &receipt.uninstall_job_id),
@@ -219,9 +261,11 @@ fn read_completion_receipt(
     let bytes = std::fs::read(&path).map_err(|_| "n8n_uninstall_receipt_read_failed")?;
     let receipt: UninstallCompletionReceipt =
         serde_json::from_slice(&bytes).map_err(|_| "n8n_uninstall_receipt_invalid")?;
-    if receipt.schema_version != 1
+    if !matches!(receipt.schema_version, 1 | 2)
         || receipt.uninstall_job_id != job.job_id.as_str()
         || receipt.uninstall_manifest_sha256 != job.manifest_sha256.as_str()
+        || (receipt.schema_version == 1 && receipt.rollback_restore.is_some())
+        || (receipt.schema_version == 2 && receipt.rollback_restore.is_none())
     {
         return Err("n8n_uninstall_receipt_mismatch");
     }
@@ -263,6 +307,9 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
     }
     let receipt = read_completion_receipt(home, &uninstall)?
         .ok_or("n8n_retained_reinstall_receipt_missing")?;
+    if let Some(rollback) = receipt.rollback_restore.clone() {
+        return rollback_restore_reinstall_request(home, &uninstall, &receipt, &rollback, jobs);
+    }
     let (container_id, image, host_port, volume, bootstrap_volume, volume_owner_install_job_id) =
         match (
             receipt.source_container_id.as_deref(),
@@ -302,9 +349,6 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
     // be coerced into the bootstrap retained-reinstall contract below. Until
     // that dedicated receipt format exists, fail before constructing a false
     // Install-shaped request.
-    if source.operation == JobOperation::Rollback {
-        return Err("n8n_restore_volume_reinstall_unsupported");
-    }
     if source.operation != JobOperation::Install
         || source.state != JobState::Ready
         || !is_managed_job(&source)
@@ -360,6 +404,94 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
         source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
         bootstrap_volume,
         volume_owner_install_job_id: volume_owner_install_job_id.into(),
+        rollback_restore: None,
+    }))
+}
+
+fn rollback_restore_reinstall_request(
+    home: &Path,
+    uninstall: &IntegrationJob,
+    receipt: &UninstallCompletionReceipt,
+    rollback: &RollbackRestoreRetention,
+    jobs: Vec<IntegrationJob>,
+) -> Result<ManagedN8nRequest, &'static str> {
+    let rollback_job = jobs.iter().find(|job| job.job_id.as_str() == rollback.rollback_job_id)
+        .ok_or("n8n_restore_volume_rollback_missing")?;
+    let immediate = jobs.iter().find(|job| job.job_id.as_str() == receipt.source_install_job_id)
+        .ok_or("n8n_restore_volume_source_missing")?;
+    if rollback_job.operation != JobOperation::Rollback || rollback_job.state != JobState::Ready
+        || !is_managed_job(rollback_job)
+        || rollback_job.manifest_sha256.as_str() != rollback.rollback_manifest_sha256
+        || receipt.source_volume.as_deref() != Some(rollback.restore_volume.as_str())
+        || !matches!(receipt.source_image.as_deref(), Some(image) if super::valid_historical_n8n_image(image))
+        || !matches!(receipt.source_host_port, Some(port) if port != 0)
+    { return Err("n8n_restore_volume_receipt_mismatch"); }
+    match immediate.operation {
+        JobOperation::Rollback if immediate.job_id == rollback_job.job_id => {
+            if immediate.manifest_sha256.as_str() != rollback.rollback_manifest_sha256 {
+                return Err("n8n_restore_volume_source_mismatch");
+            }
+        }
+        JobOperation::Install if immediate.state == JobState::Ready && is_managed_job(immediate)
+            && immediate.manifest_sha256.as_str() == receipt.source_install_manifest_sha256 => {
+            let source = receipt.source_retained_reinstall.as_ref()
+                .filter(|source| source.rollback_restore.as_ref() == Some(rollback))
+                .filter(|source| super::valid_retained_reinstall_source(source))
+                .ok_or("n8n_restore_volume_source_mismatch")?;
+            let request = ManagedN8nRequest::historical_rollback(
+                receipt.source_host_port.unwrap_or_default(),
+                receipt.source_image.clone().unwrap_or_default(),
+                rollback.restore_volume.clone(),
+            )?.with_retained_reinstall(source.clone());
+            if managed_manifest(&request) != immediate.manifest_sha256 {
+                return Err("n8n_restore_volume_source_mismatch");
+            }
+        }
+        _ => return Err("n8n_restore_volume_source_mismatch"),
+    }
+    let resolved = super::managed_rollback::resolve_ready_receipt_at(home, rollback_job)
+        .map_err(|_| "n8n_restore_volume_rollback_receipt_invalid")?
+        .ok_or("n8n_restore_volume_rollback_receipt_missing")?;
+    if resolved.rollback_job_id != rollback.rollback_job_id
+        || resolved.rollback_manifest_sha256 != rollback.rollback_manifest_sha256
+        || resolved.restore_job_id != rollback.restore_job_id
+        || resolved.restore_manifest_sha256 != rollback.restore_manifest_sha256
+        || resolved.backup_job_id != rollback.backup_job_id
+        || resolved.backup_manifest_sha256 != rollback.backup_manifest_sha256
+        || resolved.restore_volume != rollback.restore_volume
+        || resolved.source_pinned_image != receipt.source_image.as_deref().unwrap_or("")
+        || resolved.host_port != receipt.source_host_port.unwrap_or_default()
+        || resolved.retained_source_container_id != rollback.retained_source_container_id
+        || resolved.retained_source_name != rollback.retained_source_name
+    { return Err("n8n_restore_volume_chain_mismatch"); }
+    if immediate.operation == JobOperation::Rollback
+        && resolved.new_container_id != receipt.source_container_id.as_deref().unwrap_or("") {
+        return Err("n8n_restore_volume_chain_mismatch");
+    }
+    for (id, manifest, operation) in [
+        (&rollback.restore_job_id, &rollback.restore_manifest_sha256, JobOperation::Restore),
+        (&rollback.backup_job_id, &rollback.backup_manifest_sha256, JobOperation::Backup),
+    ] {
+        let job = jobs.iter().find(|job| job.job_id.as_str() == id.as_str())
+            .ok_or("n8n_restore_volume_chain_job_missing")?;
+        if job.operation != operation || job.state != JobState::Ready
+            || !is_managed_job(job) || job.manifest_sha256.as_str() != manifest.as_str() {
+            return Err("n8n_restore_volume_chain_mismatch");
+        }
+    }
+    ManagedN8nRequest::historical_rollback(
+        receipt.source_host_port.unwrap_or_default(),
+        receipt.source_image.clone().unwrap_or_default(),
+        rollback.restore_volume.clone(),
+    )
+    .map(|request| request.with_retained_reinstall(RetainedReinstallSource {
+        uninstall_job_id: uninstall.job_id.as_str().into(),
+        uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
+        source_install_job_id: immediate.job_id.as_str().into(),
+        source_install_manifest_sha256: immediate.manifest_sha256.as_str().into(),
+        bootstrap_volume: false,
+        volume_owner_install_job_id: rollback.restore_job_id.clone(),
+        rollback_restore: Some(rollback.clone()),
     }))
 }
 
@@ -833,7 +965,7 @@ async fn uninstall_managed_at_with_restart_inspector<
         custody.phase = UninstallPhase::Completed;
         write_custody(home, &custody).map_err(anyhow::Error::msg)?;
     }
-    write_completion_receipt(home, &custody).map_err(anyhow::Error::msg)?;
+    write_completion_receipt(home, &custody, &source).map_err(anyhow::Error::msg)?;
     if active.progress.completed_steps < 4 {
         active = checkpoint(&service, &active, 4, STEPS[3])?;
     }

@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1556-W1560 Restore-volume retained lifecycle source (2026-09-27):**
+Independent source review passed after fixing repeated reattachment authority:
+V2 Uninstall records preserve the immutable Rollback/Restore/Backup chain while
+validating each immediate Ready Install separately. Historical-key reattach
+creates a fresh exact live ID; original bootstrap and Restore-schema ownership
+checks remain enforced. The two-cycle regression ends in an explicitly
+confirmed Restore-volume-only Purge while preserving the retired old source.
+Tampered lineage and wrong confirmation require zero Docker effects. Two new
+tests select Portable2134/Group1924/Windows689; these are not passing counts.
+Hosted formatting/Core/native and downstream actual-product proof remain
+required. Core36306515321 and Rollback-only product36306516850 validate prior
+b278eef3; they cannot admit this later lifecycle change. CLI surface unchanged.
+ROAD1324/1077done/245open/2partial unchanged; no local executable validation.
+Evidence: docs/verification/gold-wave1560-rollback-retained-lifecycle.json;
+ docs/n8n-managed-rollback.md and docs/n8n-managed-uninstall.md.
+
 **W1558-W1559 Rollback product mode and test-typecheck fix (2026-09-27):**
 Core36305661335 at49646b1c passed slim production Clippy, then rejected three
 Receipt-only fields incorrectly placed in one BackupCustody test literal.
