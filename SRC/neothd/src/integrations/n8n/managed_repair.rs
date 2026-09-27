@@ -203,14 +203,20 @@ fn replacement_receipt_path(home: &Path, id: &str) -> Result<PathBuf, &'static s
 /// Keep each historical generation's identity edge after the mutable repair
 /// sidecar is retired. A Ready Update receipt continues to name the first ID.
 fn preserve_replacement_receipt(home: &Path, custody: &RepairCustody) -> Result<(), &'static str> {
-    if !matches!(custody.old_binding.lineage, super::RuntimeLineage::Update(_))
-        || custody.action.as_deref() != Some("recreated")
+    if !matches!(
+        custody.old_binding.lineage,
+        super::RuntimeLineage::Update(_)
+    ) || custody.action.as_deref() != Some("recreated")
     {
         return Ok(());
     }
-    let id = custody.new_container_id.as_deref().ok_or("n8n_repair_replacement_id_invalid")?;
+    let id = custody
+        .new_container_id
+        .as_deref()
+        .ok_or("n8n_repair_replacement_id_invalid")?;
     let path = replacement_receipt_path(home, id)?;
-    let bytes = serde_json::to_vec(custody).map_err(|_| "n8n_repair_replacement_serialize_failed")?;
+    let bytes =
+        serde_json::to_vec(custody).map_err(|_| "n8n_repair_replacement_serialize_failed")?;
     match read_replacement_receipt(home, id)? {
         Some(existing) if existing == *custody => Ok(()),
         Some(_) => Err("n8n_repair_replacement_mismatch"),
@@ -230,11 +236,17 @@ fn read_replacement_receipt(home: &Path, id: &str) -> Result<Option<RepairCustod
         return Err("n8n_repair_replacement_invalid");
     }
     let mut bytes = Vec::new();
-    std::fs::File::open(path).map_err(|_| "n8n_repair_replacement_read_failed")?
-        .take(32 * 1024 + 1).read_to_end(&mut bytes)
+    std::fs::File::open(path)
+        .map_err(|_| "n8n_repair_replacement_read_failed")?
+        .take(32 * 1024 + 1)
+        .read_to_end(&mut bytes)
         .map_err(|_| "n8n_repair_replacement_read_failed")?;
-    if bytes.len() > 32 * 1024 { return Err("n8n_repair_replacement_invalid"); }
-    serde_json::from_slice(&bytes).map(Some).map_err(|_| "n8n_repair_replacement_invalid")
+    if bytes.len() > 32 * 1024 {
+        return Err("n8n_repair_replacement_invalid");
+    }
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| "n8n_repair_replacement_invalid")
 }
 
 /// Resolve ID replacements without invoking active-lineage validation again.
@@ -252,24 +264,48 @@ pub(super) fn completed_replacement_matches(
     let mut seen = std::collections::BTreeSet::new();
     // A chain cannot contain more edges than the bounded job snapshot's jobs.
     for _ in 0..=jobs.len() {
-        let Some(id) = current.container_id.as_deref() else { return Ok(false); };
-        if id == original_id { return Ok(true); }
-        if !seen.insert(id.to_owned()) { return Ok(false); }
-        let Some(custody) = read_replacement_receipt(home, id)? else { return Ok(false); };
-        let Some(repair) = jobs.iter().find(|job| job.job_id.as_str() == custody.repair_job_id)
-            else { return Ok(false); };
+        let Some(id) = current.container_id.as_deref() else {
+            return Ok(false);
+        };
+        if id == original_id {
+            return Ok(true);
+        }
+        if !seen.insert(id.to_owned()) {
+            return Ok(false);
+        }
+        let Some(custody) = read_replacement_receipt(home, id)? else {
+            return Ok(false);
+        };
+        let Some(repair) = jobs
+            .iter()
+            .find(|job| job.job_id.as_str() == custody.repair_job_id)
+        else {
+            return Ok(false);
+        };
         if custody.phase != RepairPhase::Completed
             || custody.action.as_deref() != Some("recreated")
-            || repair.operation != JobOperation::Repair || repair.state != JobState::Ready
+            || repair.operation != JobOperation::Repair
+            || repair.state != JobState::Ready
             || validate_custody(&custody, repair, source).is_err()
-            || repair.manifest_sha256 != repair_manifest(&custody.old_binding, source, custody.generation)
+            || repair.manifest_sha256
+                != repair_manifest(&custody.old_binding, source, custody.generation)
             || custody.new_container_id.as_deref() != Some(id)
             || custody.new_binding.as_ref() != Some(&current)
             || current != expected_recreated_binding(&custody, id.to_owned())
-            || serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes).ok().as_ref() != Some(&custody.old_binding)
-            || custody.new_binding_bytes.as_deref().and_then(|bytes| serde_json::from_slice::<RuntimeBinding>(bytes).ok()).as_ref() != Some(&current)
+            || serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes)
+                .ok()
+                .as_ref()
+                != Some(&custody.old_binding)
+            || custody
+                .new_binding_bytes
+                .as_deref()
+                .and_then(|bytes| serde_json::from_slice::<RuntimeBinding>(bytes).ok())
+                .as_ref()
+                != Some(&current)
             || validate_binding(&custody.old_binding, source).is_err()
-        { return Ok(false); }
+        {
+            return Ok(false);
+        }
         current = custody.old_binding;
     }
     Ok(false)

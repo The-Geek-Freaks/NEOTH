@@ -206,11 +206,16 @@ fn plan_from_request(
 }
 
 fn purge_manifest(plan: &PurgePlan, source: &RetainedReinstallSource) -> super::Sha256Digest {
-    let update_counts = source.update.as_ref().map(|update| [
-        update.source_archive_bytes.to_string(), update.host_port.to_string(),
-        update.baseline_workflow_count.to_string(), update.baseline_credential_count.to_string(),
-        update.migrated_workflow_count.to_string(), update.migrated_credential_count.to_string(),
-    ]);
+    let update_counts = source.update.as_ref().map(|update| {
+        [
+            update.source_archive_bytes.to_string(),
+            update.host_port.to_string(),
+            update.baseline_workflow_count.to_string(),
+            update.baseline_credential_count.to_string(),
+            update.migrated_workflow_count.to_string(),
+            update.migrated_credential_count.to_string(),
+        ]
+    });
     let mut parts = vec![
         if source.update.is_some() {
             "n8n-managed-update-volume-purge-v1"
@@ -247,22 +252,50 @@ fn purge_manifest(plan: &PurgePlan, source: &RetainedReinstallSource) -> super::
     }
     if let Some(update) = &source.update {
         parts.extend([
-            update.update_job_id.as_str(), update.update_manifest_sha256.as_str(),
-            update.selector.as_str(), update.version.as_str(), update.platform.as_str(),
-            update.runtime_image.as_str(), update.repo_digest.as_str(),
-            update.catalog_evidence_sha256.as_str(), update.index_digest.as_str(),
-            update.child_manifest_digest.as_str(), update.config_digest.as_str(),
-            update.source_job_id.as_str(), update.source_manifest_sha256.as_str(),
-            update.source_archive_sha256.as_str(), update.source_image.as_str(),
-            update_counts.as_ref().map(|values| values[0].as_str()).unwrap_or(""),
-            update_counts.as_ref().map(|values| values[1].as_str()).unwrap_or(""),
-            update_counts.as_ref().map(|values| values[2].as_str()).unwrap_or(""),
-            update_counts.as_ref().map(|values| values[3].as_str()).unwrap_or(""),
-            update.baseline_content_sha256.as_str(), update.migrated_content_sha256.as_str(),
-            update_counts.as_ref().map(|values| values[4].as_str()).unwrap_or(""),
-            update_counts.as_ref().map(|values| values[5].as_str()).unwrap_or(""),
+            update.update_job_id.as_str(),
+            update.update_manifest_sha256.as_str(),
+            update.selector.as_str(),
+            update.version.as_str(),
+            update.platform.as_str(),
+            update.runtime_image.as_str(),
+            update.repo_digest.as_str(),
+            update.catalog_evidence_sha256.as_str(),
+            update.index_digest.as_str(),
+            update.child_manifest_digest.as_str(),
+            update.config_digest.as_str(),
+            update.source_job_id.as_str(),
+            update.source_manifest_sha256.as_str(),
+            update.source_archive_sha256.as_str(),
+            update.source_image.as_str(),
+            update_counts
+                .as_ref()
+                .map(|values| values[0].as_str())
+                .unwrap_or(""),
+            update_counts
+                .as_ref()
+                .map(|values| values[1].as_str())
+                .unwrap_or(""),
+            update_counts
+                .as_ref()
+                .map(|values| values[2].as_str())
+                .unwrap_or(""),
+            update_counts
+                .as_ref()
+                .map(|values| values[3].as_str())
+                .unwrap_or(""),
+            update.baseline_content_sha256.as_str(),
+            update.migrated_content_sha256.as_str(),
+            update_counts
+                .as_ref()
+                .map(|values| values[4].as_str())
+                .unwrap_or(""),
+            update_counts
+                .as_ref()
+                .map(|values| values[5].as_str())
+                .unwrap_or(""),
             update.update_volume.as_str(),
-            update.retained_source_container_id.as_str(), update.retained_source_name.as_str(),
+            update.retained_source_container_id.as_str(),
+            update.retained_source_name.as_str(),
         ]);
     }
     sha256_parts(&parts)
@@ -337,7 +370,11 @@ fn validate_observed_volume(
                 != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
         || (!source.bootstrap_volume
             && source.update.is_some()
-            && found.labels.get("io.neoth.n8n-update-schema").map(String::as_str) != Some("1"))
+            && found
+                .labels
+                .get("io.neoth.n8n-update-schema")
+                .map(String::as_str)
+                != Some("1"))
         || (!source.bootstrap_volume
             && source.update.is_none()
             && found

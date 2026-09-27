@@ -142,9 +142,11 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         }
         N8nAction::Repair => run_repair(output).await,
         N8nAction::Backup => run_backup(output).await,
-        N8nAction::Update { target, platform, api_key_stdin } => {
-            run_update(&target, &platform, api_key_stdin, output).await
-        }
+        N8nAction::Update {
+            target,
+            platform,
+            api_key_stdin,
+        } => run_update(&target, &platform, api_key_stdin, output).await,
         N8nAction::UpdateTarget {
             action: N8nUpdateTargetAction::Verify { target, platform },
         } => run_verify_update_target(&target, &platform, output).await,
@@ -178,7 +180,9 @@ async fn run_update(
     // Reject an unknown catalog selector before reading secrets or touching custody.
     crate::integrations::n8n::managed_update_target::resolve_admitted_target(target)?;
     if !api_key_stdin || std::io::stdin().is_terminal() {
-        return Err(anyhow!("n8n update requires --api-key-stdin with piped standard input"));
+        return Err(anyhow!(
+            "n8n update requires --api-key-stdin with piped standard input"
+        ));
     }
     let api_key = read_api_key_from_stdin().await?;
     let home = crate::config::FreedomConfig::default_neoth_home();
@@ -214,7 +218,11 @@ async fn run_update(
         }
     }
     if job.state != crate::integrations::JobState::Ready || receipt.is_none() {
-        return Err(anyhow!("n8n update job {} requires reconciliation (state: {})", job.job_id, job.state));
+        return Err(anyhow!(
+            "n8n update job {} requires reconciliation (state: {})",
+            job.job_id,
+            job.state
+        ));
     }
     Ok(())
 }
@@ -1061,7 +1069,16 @@ mod tests {
     fn n8n_update_cli_requires_target_platform_and_piped_key_without_resource_overrides() {
         use clap::Parser;
 
-        let base = ["neoth", "n8n", "update", "--target", "n8n-2.40.7", "--platform", "linux/amd64", "--api-key-stdin"];
+        let base = [
+            "neoth",
+            "n8n",
+            "update",
+            "--target",
+            "n8n-2.40.7",
+            "--platform",
+            "linux/amd64",
+            "--api-key-stdin",
+        ];
         let cli = crate::cli::Cli::try_parse_from(base).unwrap();
         assert!(matches!(cli.command, crate::cli::Commands::N8n(N8nArgs {
             action: N8nAction::Update { target, platform, api_key_stdin: true }
@@ -1070,14 +1087,26 @@ mod tests {
             let mut args = Vec::new();
             let mut skip_value = false;
             for argument in base {
-                if skip_value { skip_value = false; continue; }
+                if skip_value {
+                    skip_value = false;
+                    continue;
+                }
                 if argument == missing {
                     skip_value = missing != "--api-key-stdin";
-                } else { args.push(argument); }
+                } else {
+                    args.push(argument);
+                }
             }
             assert!(crate::cli::Cli::try_parse_from(args).is_err());
         }
-        for argument in ["--image", "--volume", "--container", "--receipt", "--port", "--endpoint"] {
+        for argument in [
+            "--image",
+            "--volume",
+            "--container",
+            "--receipt",
+            "--port",
+            "--endpoint",
+        ] {
             let mut args = base.to_vec();
             args.extend([argument, "unowned"]);
             assert!(crate::cli::Cli::try_parse_from(args).is_err());

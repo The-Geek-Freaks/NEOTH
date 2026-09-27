@@ -1166,17 +1166,27 @@ fn update_retention_is_the_only_nonbootstrap_retained_authority() {
         retained_source_container_id: "2".repeat(64), retained_source_name: "neoth-n8n-retired-018f0c00000070008000000000000001".into(),
     };
     let source = RetainedReinstallSource {
-        uninstall_job_id: "018f0c00-0000-7000-8000-000000000003".into(), uninstall_manifest_sha256: "3".repeat(64),
-        source_install_job_id: update.update_job_id.clone(), source_install_manifest_sha256: update.update_manifest_sha256.clone(),
-        bootstrap_volume: false, volume_owner_install_job_id: update.update_job_id.clone(), rollback_restore: None, update: Some(update),
+        uninstall_job_id: "018f0c00-0000-7000-8000-000000000003".into(),
+        uninstall_manifest_sha256: "3".repeat(64),
+        source_install_job_id: update.update_job_id.clone(),
+        source_install_manifest_sha256: update.update_manifest_sha256.clone(),
+        bootstrap_volume: false,
+        volume_owner_install_job_id: update.update_job_id.clone(),
+        rollback_restore: None,
+        update: Some(update),
     };
     assert!(valid_retained_reinstall_source(&source));
     let mut mixed = source;
     mixed.rollback_restore = Some(RollbackRestoreRetention {
-        rollback_job_id: "018f0c00-0000-7000-8000-000000000004".into(), rollback_manifest_sha256: "4".repeat(64),
-        restore_job_id: "018f0c00-0000-7000-8000-000000000005".into(), restore_manifest_sha256: "5".repeat(64),
-        backup_job_id: "018f0c00-0000-7000-8000-000000000006".into(), backup_manifest_sha256: "6".repeat(64),
-        restore_volume: "restore".into(), retained_source_container_id: "7".repeat(64), retained_source_name: "neoth-n8n-retired-018f0c00000070008000000000000001".into(),
+        rollback_job_id: "018f0c00-0000-7000-8000-000000000004".into(),
+        rollback_manifest_sha256: "4".repeat(64),
+        restore_job_id: "018f0c00-0000-7000-8000-000000000005".into(),
+        restore_manifest_sha256: "5".repeat(64),
+        backup_job_id: "018f0c00-0000-7000-8000-000000000006".into(),
+        backup_manifest_sha256: "6".repeat(64),
+        restore_volume: "restore".into(),
+        retained_source_container_id: "7".repeat(64),
+        retained_source_name: "neoth-n8n-retired-018f0c00000070008000000000000001".into(),
     });
     assert!(!valid_retained_reinstall_source(&mixed));
 }

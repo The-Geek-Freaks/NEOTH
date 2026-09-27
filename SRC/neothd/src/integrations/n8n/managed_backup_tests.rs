@@ -822,8 +822,16 @@ async fn pending_rollback_custody_blocks_backup_before_any_docker_call() {
 #[tokio::test]
 async fn malformed_update_custody_blocks_backup_before_any_docker_call() {
     let (home, mut runner, state, _) = fixture().await;
-    std::fs::write(home.path().join("n8n-managed-update.v1.json"), b"incomplete custody").unwrap();
+    std::fs::write(
+        home.path().join("n8n-managed-update.v1.json"),
+        b"incomplete custody",
+    )
+    .unwrap();
     let before = state.lock().unwrap().calls.clone();
-    assert!(backup_managed_at_with(home.path(), &mut runner).await.is_err());
+    assert!(
+        backup_managed_at_with(home.path(), &mut runner)
+            .await
+            .is_err()
+    );
     assert_eq!(state.lock().unwrap().calls, before);
 }

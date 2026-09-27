@@ -1,0 +1,36 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1633",
+  "capturedUtc": "2026-09-27T13:23:33.1528854Z",
+  "producer": "c28ecba10f89a1e8ba7b1b258a3750c2e400c2d4",
+  "status": "FORMAT_IMPORTED_HELPER_FIX_STATIC_REVIEWED_HOSTED_PENDING",
+  "format": {
+    "run": 36321902122,
+    "artifact": 10932633354,
+    "zipSha256": "50d4e5005f11cd78907a4cd6caa5b783daf5ae51b6759e6cfdb9110ccbbec7c7",
+    "patchSha256": "eea1a21ee90e62c5fb811665ac753ea9543b1c75b7eeeb5a8f73930c33a8dee8",
+    "sourceHeadSha256": "4ea42728eae1f70fb42a738ff01a5a7241fb079ceb472077bb94e47e17134012",
+    "rustFiles": 14,
+    "appliedToUnchangedProducer": true
+  },
+  "productFailure": {
+    "run": 36321913714,
+    "stage": "helper unittest discovery",
+    "error": "ModuleNotFoundError: No module named 'n8n_product_bootstrap_canary'",
+    "buildRan": false,
+    "productRan": false
+  },
+  "fixes": [
+    "Add packaging sibling import path before dynamic canary import",
+    "Match Rust RuntimeLineage snake_case update key in canary and fixture"
+  ],
+  "staticReview": "W1629 independent read-only APPROVE; no concrete blockers; runtime unverified",
+  "localExecutableValidationRan": false,
+  "road": {
+    "total": 1324,
+    "done": 1077,
+    "open": 245,
+    "partial": 2,
+    "closed": 0
+  }
+}

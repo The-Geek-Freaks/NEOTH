@@ -183,7 +183,7 @@ def update_binding(value, update, identifier):
             or value.get("container_name") != "neoth-n8n" or value.get("container_id") != identifier
             or value.get("image") != update["runtime_image"] or value.get("host_port") != 5681
             or value.get("volume") != update["update_volume"] or value.get("retained_reinstall") is not None
-            or value.get("bootstrap_volume_owner_job_id") is not None or lineage != {"Update": expected_lineage}):
+            or value.get("bootstrap_volume_owner_job_id") is not None or lineage != {"update": expected_lineage}):
         raise Failure("update_repair_binding_invalid")
     return value
 

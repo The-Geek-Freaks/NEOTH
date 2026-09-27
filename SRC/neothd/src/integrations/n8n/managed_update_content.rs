@@ -32,7 +32,9 @@ struct WireFingerprint {
 
 impl UpdateContentFingerprint {
     pub(crate) fn fingerprint_exact(&self, other: &Self) -> Result<(), &'static str> {
-        if self != other { return Err("n8n_update_content_mismatch"); }
+        if self != other {
+            return Err("n8n_update_content_mismatch");
+        }
         Ok(())
     }
 }
@@ -48,10 +50,14 @@ impl UpdateContentProof {
 }
 
 pub(crate) fn decode_fingerprint(bytes: &[u8]) -> Result<UpdateContentFingerprint, &'static str> {
-    if bytes.len() > MAX_PROOF_BYTES { return Err("n8n_update_content_proof_invalid"); }
-    let proof: WireFingerprint = serde_json::from_slice(bytes)
-        .map_err(|_| "n8n_update_content_proof_invalid")?;
-    if !valid_sha256(&proof.content_sha256) { return Err("n8n_update_content_proof_invalid"); }
+    if bytes.len() > MAX_PROOF_BYTES {
+        return Err("n8n_update_content_proof_invalid");
+    }
+    let proof: WireFingerprint =
+        serde_json::from_slice(bytes).map_err(|_| "n8n_update_content_proof_invalid")?;
+    if !valid_sha256(&proof.content_sha256) {
+        return Err("n8n_update_content_proof_invalid");
+    }
     Ok(UpdateContentFingerprint {
         workflow_count: proof.workflow_count,
         credential_count: proof.credential_count,
@@ -63,12 +69,22 @@ pub(crate) fn decode_fingerprint(bytes: &[u8]) -> Result<UpdateContentFingerprin
 /// running state. This is intentionally a small adapter: custody and timeout
 /// are provided by the managed runner, and no export bytes cross this boundary.
 pub(crate) async fn fingerprint_exact(id: &str) -> Result<UpdateContentFingerprint, &'static str> {
-    if !super::valid_container_id(id) { return Err("n8n_update_candidate_invalid_id"); }
+    if !super::valid_container_id(id) {
+        return Err("n8n_update_candidate_invalid_id");
+    }
     let (success, output, _) = super::docker(&[
-        "docker".into(), "exec".into(), id.into(), "node".into(), "--no-warnings".into(),
-        "-e".into(), SCRIPT.into(),
-    ]).await?;
-    if !success { return Err("n8n_update_content_validation_failed"); }
+        "docker".into(),
+        "exec".into(),
+        id.into(),
+        "node".into(),
+        "--no-warnings".into(),
+        "-e".into(),
+        SCRIPT.into(),
+    ])
+    .await?;
+    if !success {
+        return Err("n8n_update_content_validation_failed");
+    }
     decode_fingerprint(output.as_bytes())
 }
 
@@ -76,16 +92,27 @@ pub(crate) async fn fingerprint_exact(id: &str) -> Result<UpdateContentFingerpri
 /// namespace. It sends no credential, follows no redirect, permits only the
 /// fixed loopback health route, and the script itself has a two-second timeout.
 pub(crate) async fn candidate_server_ready_exact(id: &str) -> Result<bool, &'static str> {
-    if !super::valid_container_id(id) { return Err("n8n_update_candidate_invalid_id"); }
+    if !super::valid_container_id(id) {
+        return Err("n8n_update_candidate_invalid_id");
+    }
     let (success, output, _) = super::docker(&[
-        "docker".into(), "exec".into(), id.into(), "node".into(), "--no-warnings".into(),
-        "-e".into(), READY_SCRIPT.into(),
-    ]).await?;
+        "docker".into(),
+        "exec".into(),
+        id.into(),
+        "node".into(),
+        "--no-warnings".into(),
+        "-e".into(),
+        READY_SCRIPT.into(),
+    ])
+    .await?;
     Ok(success && output.is_empty())
 }
 
 fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 #[cfg(test)]
@@ -94,12 +121,27 @@ mod tests {
 
     #[test]
     fn equal_fingerprints_are_required_for_update_content_proof() {
-        let fingerprint = UpdateContentFingerprint { workflow_count: 2, credential_count: 1, content_sha256: "a".repeat(64) };
+        let fingerprint = UpdateContentFingerprint {
+            workflow_count: 2,
+            credential_count: 1,
+            content_sha256: "a".repeat(64),
+        };
         assert!(UpdateContentProof::new(fingerprint.clone(), fingerprint).is_ok());
-        assert!(UpdateContentProof::new(
-            UpdateContentFingerprint { workflow_count: 2, credential_count: 1, content_sha256: "a".repeat(64) },
-            UpdateContentFingerprint { workflow_count: 2, credential_count: 1, content_sha256: "b".repeat(64) },
-        ).is_err());
+        assert!(
+            UpdateContentProof::new(
+                UpdateContentFingerprint {
+                    workflow_count: 2,
+                    credential_count: 1,
+                    content_sha256: "a".repeat(64)
+                },
+                UpdateContentFingerprint {
+                    workflow_count: 2,
+                    credential_count: 1,
+                    content_sha256: "b".repeat(64)
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -110,6 +152,11 @@ mod tests {
         );
         assert!(decode_fingerprint(valid.as_bytes()).is_ok());
         assert!(decode_fingerprint(br#"{"workflow_count":2,"credential_count":1,"content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","secret":"no"}"#).is_err());
-        assert!(decode_fingerprint(br#"{"workflow_count":2,"credential_count":1,"content_sha256":"ABC"}"#).is_err());
+        assert!(
+            decode_fingerprint(
+                br#"{"workflow_count":2,"credential_count":1,"content_sha256":"ABC"}"#
+            )
+            .is_err()
+        );
     }
 }

@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, RuntimeBinding, RuntimePhase,
-    is_managed_job, read_binding, read_binding_bytes, sha256_parts, validate_binding, validate_existing_identity,
+    is_managed_job, read_binding, read_binding_bytes, sha256_parts, validate_binding,
+    validate_existing_identity,
 };
 use crate::integrations::{
     catalog::CapabilityId,
@@ -966,7 +967,10 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
                 custody.archive_bytes.unwrap_or(0),
             )?;
         }
-        let historical_source = matches!(source.operation, JobOperation::Rollback | JobOperation::Update);
+        let historical_source = matches!(
+            source.operation,
+            JobOperation::Rollback | JobOperation::Update
+        );
         let receipt = BackupReceiptView {
             schema_version: match source.operation {
                 JobOperation::Update => 3,
@@ -977,7 +981,8 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
             backup_manifest_sha256: custody.backup_manifest_sha256.clone(),
             source_install_job_id: custody.source_install_job_id.clone(),
             source_job_id: historical_source.then(|| source.job_id.as_str().into()),
-            source_manifest_sha256: historical_source.then(|| source.manifest_sha256.as_str().into()),
+            source_manifest_sha256: historical_source
+                .then(|| source.manifest_sha256.as_str().into()),
             source_operation: historical_source.then(|| source.operation.as_str().into()),
             source_pinned_image: custody.image.clone(),
             source_container_id: custody.container_id.clone(),
@@ -1079,7 +1084,8 @@ pub(crate) fn completed_receipt_at(
         3 => {
             source.operation == JobOperation::Update
                 && receipt.source_job_id.as_deref() == Some(source.job_id.as_str())
-                && receipt.source_manifest_sha256.as_deref() == Some(source.manifest_sha256.as_str())
+                && receipt.source_manifest_sha256.as_deref()
+                    == Some(source.manifest_sha256.as_str())
                 && receipt.source_operation.as_deref() == Some("update")
                 && super::managed_update::completed_receipt_at(home, source)?.is_some()
         }

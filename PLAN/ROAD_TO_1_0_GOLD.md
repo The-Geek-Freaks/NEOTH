@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1633 Hosted formatting and Update helper corrections (2026-09-27):**
+Preflight36321902122 atc28ecba1 failed Rust formatting. Its original artifact
+10932633354 matches the GitHub API SHA256; the exact producer-bound patch
+was applied to14 unchanged Rust files without running a local formatter.
+Managed Update36321913714 stopped in helper discovery before build/product
+execution: the packaging sibling import was missing. The helper test now
+sets that import path; canary and fixture use the actual snake_case Update
+lineage key. These two corrections passed independent static review only.
+Fresh Core/CLI, product and native gates remain required; Group1955 and
+Windows720 will follow the generated new CLI reference. No ROAD box closed,
+no local executable validation. Counts1324/1077/245/2 remain unchanged.
+Evidence: docs/verification/gold-wave1633-hosted-format-helper-repair.json.
 **W1630 Managed Update source reviewed; hosted validation pending (2026-09-27):**
 The batch adds the explicit n8n Update CLI, an isolated copied-volume
 transaction with complete workflow/credential fingerprints, retained original

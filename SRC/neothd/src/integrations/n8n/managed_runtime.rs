@@ -39,12 +39,12 @@ mod managed_restore_io;
 pub(crate) mod managed_rollback;
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
+#[path = "managed_update.rs"]
+pub(crate) mod managed_update;
 #[path = "managed_update_candidate.rs"]
 pub(crate) mod managed_update_candidate;
 #[path = "managed_update_content.rs"]
 pub(crate) mod managed_update_content;
-#[path = "managed_update.rs"]
-pub(crate) mod managed_update;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
@@ -200,13 +200,23 @@ impl ManagedN8nRequest {
         target: &super::managed_update_target::AdmittedUpdateTarget,
         volume: String,
     ) -> Result<Self, &'static str> {
-        if port == 0 || !valid_volume_name(&volume) { return Err("n8n_update_runtime_invalid"); }
+        if port == 0 || !valid_volume_name(&volume) {
+            return Err("n8n_update_runtime_invalid");
+        }
         // Volume ownership is validated by v4 lineage/custody; here admission
         // is limited to the exact compiled immutable target tuple.
         let admitted = super::managed_update_target::resolve_admitted_target(&target.selector)
             .map_err(|_| "n8n_update_runtime_invalid")?;
-        if &admitted != target { return Err("n8n_update_runtime_invalid"); }
-        Ok(Self { port, image: target.runtime_image.clone(), volume, prepared_job: None, retained_reinstall: None })
+        if &admitted != target {
+            return Err("n8n_update_runtime_invalid");
+        }
+        Ok(Self {
+            port,
+            image: target.runtime_image.clone(),
+            volume,
+            prepared_job: None,
+            retained_reinstall: None,
+        })
     }
     pub(crate) fn volume(&self) -> &str {
         &self.volume
@@ -688,17 +698,19 @@ pub(super) fn restore_binding_bytes(home: &Path, bytes: &[u8]) -> Result<(), &'s
                 && valid_container_id(&lineage.retained_source_container_id)
                 && valid_retired_container_name(&lineage.retained_source_name)
         }
-        RuntimeLineage::Update(lineage) => binding.schema_version == 4
-            && super::JobId::parse(lineage.update_job_id.clone()).is_ok()
-            && lineage.update_volume_owner_job_id == lineage.update_job_id
-            && valid_manifest_sha256(&lineage.update_manifest_sha256)
-            && valid_manifest_sha256(&lineage.source_manifest_sha256)
-            && valid_manifest_sha256(&lineage.source_archive_sha256)
-            && valid_container_id(&lineage.source_container_id)
-            && valid_volume_name(&lineage.source_volume)
-            && valid_container_id(&lineage.retained_source_container_id)
-            && valid_retired_container_name(&lineage.retained_source_name)
-            && lineage.source_archive_bytes > 0,
+        RuntimeLineage::Update(lineage) => {
+            binding.schema_version == 4
+                && super::JobId::parse(lineage.update_job_id.clone()).is_ok()
+                && lineage.update_volume_owner_job_id == lineage.update_job_id
+                && valid_manifest_sha256(&lineage.update_manifest_sha256)
+                && valid_manifest_sha256(&lineage.source_manifest_sha256)
+                && valid_manifest_sha256(&lineage.source_archive_sha256)
+                && valid_container_id(&lineage.source_container_id)
+                && valid_volume_name(&lineage.source_volume)
+                && valid_container_id(&lineage.retained_source_container_id)
+                && valid_retired_container_name(&lineage.retained_source_name)
+                && lineage.source_archive_bytes > 0
+        }
     };
     if !structurally_valid
         || binding.container_name != MANAGED_CONTAINER_NAME
@@ -783,8 +795,10 @@ pub(super) fn validate_existing_identity(
     };
     if !valid_container_id(&observed.id)
         || !(binding.schema_version == 2
-            || (binding.schema_version == 3 && matches!(&binding.lineage, RuntimeLineage::Rollback(_)))
-            || (binding.schema_version == 4 && matches!(&binding.lineage, RuntimeLineage::Update(_))))
+            || (binding.schema_version == 3
+                && matches!(&binding.lineage, RuntimeLineage::Rollback(_)))
+            || (binding.schema_version == 4
+                && matches!(&binding.lineage, RuntimeLineage::Update(_))))
         || binding.job_id != job.job_id.as_str()
         || binding.manifest_sha256 != job.manifest_sha256.as_str()
         || binding.container_name != MANAGED_CONTAINER_NAME
@@ -853,14 +867,36 @@ pub(crate) fn enqueue_prepared(
 
 pub(super) fn managed_manifest(request: &ManagedN8nRequest) -> super::Sha256Digest {
     let port = request.port.to_string();
-    let update_archive_bytes = request.retained_reinstall.as_ref()
+    let update_archive_bytes = request
+        .retained_reinstall
+        .as_ref()
         .and_then(|source| source.update.as_ref())
         .map(|update| update.source_archive_bytes.to_string());
-    let update_host_port = request.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).map(|update| update.host_port.to_string());
-    let update_baseline_workflows = request.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).map(|update| update.baseline_workflow_count.to_string());
-    let update_baseline_credentials = request.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).map(|update| update.baseline_credential_count.to_string());
-    let update_migrated_workflows = request.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).map(|update| update.migrated_workflow_count.to_string());
-    let update_migrated_credentials = request.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).map(|update| update.migrated_credential_count.to_string());
+    let update_host_port = request
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.as_ref())
+        .map(|update| update.host_port.to_string());
+    let update_baseline_workflows = request
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.as_ref())
+        .map(|update| update.baseline_workflow_count.to_string());
+    let update_baseline_credentials = request
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.as_ref())
+        .map(|update| update.baseline_credential_count.to_string());
+    let update_migrated_workflows = request
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.as_ref())
+        .map(|update| update.migrated_workflow_count.to_string());
+    let update_migrated_credentials = request
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.as_ref())
+        .map(|update| update.migrated_credential_count.to_string());
     let mut parts = vec![
         "n8n-managed-runtime-v4",
         request.image.as_str(),
@@ -938,13 +974,21 @@ pub(super) fn validate_binding(
 ) -> Result<ManagedN8nRequest, &'static str> {
     let mut request = match &binding.lineage {
         RuntimeLineage::Install
-            if binding.retained_reinstall.as_ref().and_then(|source| source.update.as_ref()).is_some() =>
+            if binding
+                .retained_reinstall
+                .as_ref()
+                .and_then(|source| source.update.as_ref())
+                .is_some() =>
         {
-            let update = binding.retained_reinstall.as_ref().and_then(|source| source.update.as_ref())
+            let update = binding
+                .retained_reinstall
+                .as_ref()
+                .and_then(|source| source.update.as_ref())
                 .ok_or("n8n_update_runtime_admission_invalid")?;
             let target = super::managed_update_target::resolve_admitted_target(&update.selector)
                 .map_err(|_| "n8n_update_runtime_admission_invalid")?;
-            if target.version != update.version || target.runtime_image != update.runtime_image
+            if target.version != update.version
+                || target.runtime_image != update.runtime_image
                 || target.repo_digest != update.repo_digest
                 || target.catalog_evidence_sha256 != update.catalog_evidence_sha256
                 || target.index_digest != update.index_digest
@@ -952,7 +996,9 @@ pub(super) fn validate_binding(
                     format!("{}/{}", platform.os, platform.architecture) == update.platform
                         && platform.child_manifest_digest == update.child_manifest_digest
                 })
-            { return Err("n8n_update_runtime_admission_invalid"); }
+            {
+                return Err("n8n_update_runtime_admission_invalid");
+            }
             ManagedN8nRequest::admitted_update(binding.host_port, &target, binding.volume.clone())?
         }
         RuntimeLineage::Install
@@ -978,15 +1024,17 @@ pub(super) fn validate_binding(
             binding.volume.clone(),
         )?,
         RuntimeLineage::Update(lineage) => {
-            let target = super::managed_update_target::resolve_admitted_target(&lineage.admitted_selector)
-                .map_err(|_| "n8n_update_runtime_admission_invalid")?;
+            let target =
+                super::managed_update_target::resolve_admitted_target(&lineage.admitted_selector)
+                    .map_err(|_| "n8n_update_runtime_admission_invalid")?;
             if target.version != lineage.admitted_version
                 || target.runtime_image != lineage.admitted_runtime_image
                 || target.repo_digest != lineage.admitted_repo_digest
                 || target.catalog_evidence_sha256 != lineage.catalog_evidence_sha256
                 || target.index_digest != lineage.index_digest
                 || !target.platforms.iter().any(|platform| {
-                    format!("{}/{}", platform.os, platform.architecture) == lineage.admitted_platform
+                    format!("{}/{}", platform.os, platform.architecture)
+                        == lineage.admitted_platform
                         && platform.child_manifest_digest == lineage.child_manifest_digest
                 })
             {
@@ -1050,8 +1098,10 @@ pub(super) fn validate_binding(
                 && valid_container_id(&lineage.retained_source_container_id)
                 && valid_retired_container_name(&lineage.retained_source_name)
                 && super::managed_update_target::resolve_admitted_target(&lineage.admitted_selector)
-                    .is_ok_and(|target| target.catalog_evidence_sha256 == lineage.catalog_evidence_sha256
-                        && target.index_digest == lineage.index_digest)
+                    .is_ok_and(|target| {
+                        target.catalog_evidence_sha256 == lineage.catalog_evidence_sha256
+                            && target.index_digest == lineage.index_digest
+                    })
         }
     };
     if !is_managed_job(job)
@@ -1089,8 +1139,8 @@ pub(super) fn validate_active_runtime_lineage(
         return Err("n8n_active_runtime_not_ready");
     }
     if let RuntimeLineage::Update(lineage) = &binding.lineage {
-        let receipt = managed_update::completed_receipt_at(home, job)?
-            .ok_or("n8n_update_receipt_missing")?;
+        let receipt =
+            managed_update::completed_receipt_at(home, job)?.ok_or("n8n_update_receipt_missing")?;
         if receipt.update_job_id != binding.job_id
             || receipt.update_manifest_sha256 != binding.manifest_sha256
             || receipt.selector != lineage.admitted_selector
@@ -1125,11 +1175,20 @@ pub(super) fn validate_active_runtime_lineage(
             return Err("n8n_update_runtime_lineage_mismatch");
         }
         if receipt.new_container_id != binding.container_id.as_deref().unwrap_or("")
-            && !managed_repair::completed_replacement_matches(home, binding, job, &receipt.new_container_id)?
-        { return Err("n8n_update_runtime_lineage_mismatch"); }
+            && !managed_repair::completed_replacement_matches(
+                home,
+                binding,
+                job,
+                &receipt.new_container_id,
+            )?
+        {
+            return Err("n8n_update_runtime_lineage_mismatch");
+        }
         return Ok(());
     }
-    let RuntimeLineage::Rollback(lineage) = &binding.lineage else { return Ok(()); };
+    let RuntimeLineage::Rollback(lineage) = &binding.lineage else {
+        return Ok(());
+    };
     // The Rollback resolver verifies its own immutable Ready receipt plus the
     // Restore/Backup chain.  It deliberately never reads this binding, which
     // keeps this downstream comparison non-recursive.
@@ -1173,7 +1232,9 @@ pub(crate) fn valid_historical_n8n_image(image: &str) -> bool {
         .is_some_and(valid_manifest_sha256)
 }
 fn valid_sha256_digest(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(valid_manifest_sha256)
+    value
+        .strip_prefix("sha256:")
+        .is_some_and(valid_manifest_sha256)
 }
 
 pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) -> bool {
@@ -1193,10 +1254,14 @@ pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) 
             && source.volume_owner_install_job_id == update.update_job_id
             && super::JobId::parse(update.update_job_id.clone()).is_ok()
             && valid_manifest_sha256(&update.update_manifest_sha256)
-            && !update.selector.is_empty() && !update.version.is_empty()
+            && !update.selector.is_empty()
+            && !update.version.is_empty()
             && matches!(update.platform.as_str(), "linux/amd64" | "linux/arm64")
             && valid_historical_n8n_image(&update.runtime_image)
-            && update.repo_digest.strip_prefix("n8nio/n8n@").is_some_and(valid_sha256_digest)
+            && update
+                .repo_digest
+                .strip_prefix("n8nio/n8n@")
+                .is_some_and(valid_sha256_digest)
             && valid_manifest_sha256(&update.catalog_evidence_sha256)
             && valid_sha256_digest(&update.index_digest)
             && valid_sha256_digest(&update.child_manifest_digest)
@@ -1215,7 +1280,9 @@ pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) 
             && valid_container_id(&update.retained_source_container_id)
             && valid_retired_container_name(&update.retained_source_name);
     }
-    let Some(rollback) = &source.rollback_restore else { return false; };
+    let Some(rollback) = &source.rollback_restore else {
+        return false;
+    };
     base && source.volume_owner_install_job_id == rollback.restore_job_id
         && super::JobId::parse(rollback.rollback_job_id.clone()).is_ok()
         && valid_manifest_sha256(&rollback.rollback_manifest_sha256)
@@ -1406,8 +1473,10 @@ pub(in crate::integrations) async fn install_managed_at_with<
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
-        &operation_lock_path(home), "n8n managed runtime operation",
-    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+        &operation_lock_path(home),
+        "n8n managed runtime operation",
+    )?
+    .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
@@ -1456,7 +1525,11 @@ async fn verify_retained_volume<R: ManagedDockerRunner>(
                 != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
         || (!source.bootstrap_volume
             && source.update.is_some()
-            && found.labels.get("io.neoth.n8n-update-schema").map(String::as_str) != Some("1"))
+            && found
+                .labels
+                .get("io.neoth.n8n-update-schema")
+                .map(String::as_str)
+                != Some("1"))
         || (!source.bootstrap_volume
             && source.update.is_none()
             && found
@@ -1486,9 +1559,16 @@ pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
     let retained = binding.retained_reinstall.as_ref();
     if let RuntimeLineage::Update(lineage) = &binding.lineage {
         if found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
-            || found.labels.get("io.neoth.n8n-update").map(String::as_str) != Some(lineage.update_job_id.as_str())
-            || found.labels.get("io.neoth.n8n-update-schema").map(String::as_str) != Some("1")
-        { return Err("n8n_repair_volume_owner_mismatch"); }
+            || found.labels.get("io.neoth.n8n-update").map(String::as_str)
+                != Some(lineage.update_job_id.as_str())
+            || found
+                .labels
+                .get("io.neoth.n8n-update-schema")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err("n8n_repair_volume_owner_mismatch");
+        }
         return Ok(());
     }
     let expected_owner = retained
@@ -1513,7 +1593,11 @@ pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
                     != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
             || (retained.is_some_and(|source| !source.bootstrap_volume)
                 && retained.is_some_and(|source| source.update.is_some())
-                && found.labels.get("io.neoth.n8n-update-schema").map(String::as_str) != Some("1"))
+                && found
+                    .labels
+                    .get("io.neoth.n8n-update-schema")
+                    .map(String::as_str)
+                    != Some("1"))
             || (retained.is_some_and(|source| !source.bootstrap_volume && source.update.is_none())
                 && found
                     .labels
@@ -1542,8 +1626,10 @@ pub(in crate::integrations) async fn install_retained_at_with<
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
-        &operation_lock_path(home), "n8n managed runtime operation",
-    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+        &operation_lock_path(home),
+        "n8n managed runtime operation",
+    )?
+    .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
@@ -1836,8 +1922,10 @@ pub(crate) async fn install_prepared_managed_in_service(
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
-        &operation_lock_path(home), "n8n managed runtime operation",
-    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+        &operation_lock_path(home),
+        "n8n managed runtime operation",
+    )?
+    .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
@@ -2627,21 +2715,43 @@ async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'sta
 /// Callers choose the Update seed or server parser; crossing those parsers is
 /// deliberately impossible at this adapter boundary.
 async fn inspect_update_candidate_body(id: &str) -> Result<Option<String>, &'static str> {
-    if !valid_container_id(id) { return Err("n8n_update_candidate_invalid_id"); }
+    if !valid_container_id(id) {
+        return Err("n8n_update_candidate_invalid_id");
+    }
     let (listed, ids, _) = docker(&[
-        "docker".into(), "container".into(), "ls".into(), "-a".into(),
-        "--no-trunc".into(), "--filter".into(), format!("id={id}"),
-        "--format".into(), "{{.ID}}".into(),
-    ]).await?;
-    if !listed { return Err("n8n_update_candidate_inspect_unknown"); }
+        "docker".into(),
+        "container".into(),
+        "ls".into(),
+        "-a".into(),
+        "--no-trunc".into(),
+        "--filter".into(),
+        format!("id={id}"),
+        "--format".into(),
+        "{{.ID}}".into(),
+    ])
+    .await?;
+    if !listed {
+        return Err("n8n_update_candidate_inspect_unknown");
+    }
     let rows: Vec<_> = ids.lines().filter(|value| !value.is_empty()).collect();
-    if rows.is_empty() { return Ok(None); }
-    if rows.len() != 1 || rows[0] != id { return Err("n8n_update_candidate_inspect_unknown"); }
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    if rows.len() != 1 || rows[0] != id {
+        return Err("n8n_update_candidate_inspect_unknown");
+    }
     let (inspected, body, _) = docker(&[
-        "docker".into(), "container".into(), "inspect".into(), "--format".into(),
-        managed_update_candidate::UPDATE_CANDIDATE_INSPECT_FORMAT.into(), id.into(),
-    ]).await?;
-    if !inspected { return Err("n8n_update_candidate_inspect_unknown"); }
+        "docker".into(),
+        "container".into(),
+        "inspect".into(),
+        "--format".into(),
+        managed_update_candidate::UPDATE_CANDIDATE_INSPECT_FORMAT.into(),
+        id.into(),
+    ])
+    .await?;
+    if !inspected {
+        return Err("n8n_update_candidate_inspect_unknown");
+    }
     Ok(Some(body))
 }
 
@@ -2919,8 +3029,11 @@ impl ManagedDockerRunner for DockerManagedRunner {
         &mut self,
         spec: managed_update_candidate::UpdateVolumeSpec<'_>,
     ) -> Result<ManagedCommandReceipt, &'static str> {
-        let (_, _, receipt) = docker(&managed_update_candidate::update_volume_command(spec)).await?;
-        if !receipt.succeeded { return Err("n8n_update_volume_create_command_failed"); }
+        let (_, _, receipt) =
+            docker(&managed_update_candidate::update_volume_command(spec)).await?;
+        if !receipt.succeeded {
+            return Err("n8n_update_volume_create_command_failed");
+        }
         Ok(receipt)
     }
     async fn inspect_update_volume_exact(
@@ -2930,8 +3043,11 @@ impl ManagedDockerRunner for DockerManagedRunner {
         let name = managed_update_candidate::update_volume_name(job);
         match inspect_volume_target(&name).await? {
             InspectVolumeOutcome::Found(found)
-                if found.name == name && managed_update_candidate::valid_update_volume_labels(&found.labels, job) =>
-            { Ok(InspectVolumeOutcome::Found(found)) }
+                if found.name == name
+                    && managed_update_candidate::valid_update_volume_labels(&found.labels, job) =>
+            {
+                Ok(InspectVolumeOutcome::Found(found))
+            }
             InspectVolumeOutcome::Absent => Ok(InspectVolumeOutcome::Absent),
             _ => Ok(InspectVolumeOutcome::Unknown),
         }
@@ -2942,9 +3058,14 @@ impl ManagedDockerRunner for DockerManagedRunner {
     ) -> Result<ManagedCreateReceipt, &'static str> {
         let command = managed_update_candidate::update_seed_command(spec)?;
         let (_, stdout, receipt) = docker(&command).await?;
-        if !receipt.succeeded { return Err("n8n_update_seed_create_command_failed"); }
+        if !receipt.succeeded {
+            return Err("n8n_update_seed_create_command_failed");
+        }
         let id = stdout.trim();
-        Ok(ManagedCreateReceipt { command: receipt, container_id: valid_container_id(id).then(|| id.to_owned()) })
+        Ok(ManagedCreateReceipt {
+            command: receipt,
+            container_id: valid_container_id(id).then(|| id.to_owned()),
+        })
     }
     async fn inspect_update_seed_exact(
         &mut self,
@@ -2952,10 +3073,14 @@ impl ManagedDockerRunner for DockerManagedRunner {
     ) -> Result<managed_update_candidate::InspectUpdateSeedOutcome, &'static str> {
         match inspect_update_candidate_body(id).await {
             Ok(None) => Ok(managed_update_candidate::InspectUpdateSeedOutcome::Absent),
-            Ok(Some(body)) => match managed_update_candidate::parse_observed_update_seed_json(body.as_bytes()) {
-                Ok(found) if found.id == id => Ok(managed_update_candidate::InspectUpdateSeedOutcome::Found(found)),
-                _ => Ok(managed_update_candidate::InspectUpdateSeedOutcome::Unknown),
-            },
+            Ok(Some(body)) => {
+                match managed_update_candidate::parse_observed_update_seed_json(body.as_bytes()) {
+                    Ok(found) if found.id == id => Ok(
+                        managed_update_candidate::InspectUpdateSeedOutcome::Found(found),
+                    ),
+                    _ => Ok(managed_update_candidate::InspectUpdateSeedOutcome::Unknown),
+                }
+            }
             Err(_) => Ok(managed_update_candidate::InspectUpdateSeedOutcome::Unknown),
         }
     }
@@ -2965,9 +3090,14 @@ impl ManagedDockerRunner for DockerManagedRunner {
     ) -> Result<ManagedCreateReceipt, &'static str> {
         let command = managed_update_candidate::update_server_candidate_command(spec)?;
         let (_, stdout, receipt) = docker(&command).await?;
-        if !receipt.succeeded { return Err("n8n_update_server_candidate_create_command_failed"); }
+        if !receipt.succeeded {
+            return Err("n8n_update_server_candidate_create_command_failed");
+        }
         let id = stdout.trim();
-        Ok(ManagedCreateReceipt { command: receipt, container_id: valid_container_id(id).then(|| id.to_owned()) })
+        Ok(ManagedCreateReceipt {
+            command: receipt,
+            container_id: valid_container_id(id).then(|| id.to_owned()),
+        })
     }
     async fn inspect_update_server_candidate_exact(
         &mut self,
@@ -2975,10 +3105,16 @@ impl ManagedDockerRunner for DockerManagedRunner {
     ) -> Result<managed_update_candidate::InspectUpdateServerCandidateOutcome, &'static str> {
         match inspect_update_candidate_body(id).await {
             Ok(None) => Ok(managed_update_candidate::InspectUpdateServerCandidateOutcome::Absent),
-            Ok(Some(body)) => match managed_update_candidate::parse_observed_update_server_candidate_json(body.as_bytes()) {
-                Ok(found) if found.id == id => Ok(managed_update_candidate::InspectUpdateServerCandidateOutcome::Found(found)),
-                _ => Ok(managed_update_candidate::InspectUpdateServerCandidateOutcome::Unknown),
-            },
+            Ok(Some(body)) => {
+                match managed_update_candidate::parse_observed_update_server_candidate_json(
+                    body.as_bytes(),
+                ) {
+                    Ok(found) if found.id == id => Ok(
+                        managed_update_candidate::InspectUpdateServerCandidateOutcome::Found(found),
+                    ),
+                    _ => Ok(managed_update_candidate::InspectUpdateServerCandidateOutcome::Unknown),
+                }
+            }
             Err(_) => Ok(managed_update_candidate::InspectUpdateServerCandidateOutcome::Unknown),
         }
     }
@@ -3004,19 +3140,43 @@ impl ManagedDockerRunner for DockerManagedRunner {
 #[async_trait]
 impl super::managed_update_target::UpdateTargetDockerRunner for DockerManagedRunner {
     async fn pull_exact_target(&mut self, platform: &str, image: &str) -> anyhow::Result<()> {
-        if !matches!(platform, "linux/amd64" | "linux/arm64") || !image.starts_with("docker.io/n8nio/n8n@sha256:") {
+        if !matches!(platform, "linux/amd64" | "linux/arm64")
+            || !image.starts_with("docker.io/n8nio/n8n@sha256:")
+        {
             return Err(anyhow::anyhow!("n8n_update_target_docker_input_invalid"));
         }
-        let (ok, _, _) = docker(&["docker".into(), "pull".into(), "--platform".into(), platform.into(), image.into()]).await
-            .map_err(anyhow::Error::msg)?;
-        if !ok { return Err(anyhow::anyhow!("n8n_update_target_docker_pull_failed")); }
+        let (ok, _, _) = docker(&[
+            "docker".into(),
+            "pull".into(),
+            "--platform".into(),
+            platform.into(),
+            image.into(),
+        ])
+        .await
+        .map_err(anyhow::Error::msg)?;
+        if !ok {
+            return Err(anyhow::anyhow!("n8n_update_target_docker_pull_failed"));
+        }
         Ok(())
     }
-    async fn inspect_pulled_target(&mut self, image: &str) -> anyhow::Result<super::managed_update_target::DockerImageObservation> {
-        if !image.starts_with("docker.io/n8nio/n8n@sha256:") { return Err(anyhow::anyhow!("n8n_update_target_docker_input_invalid")); }
-        let (ok, stdout, _) = docker(&["docker".into(), "image".into(), "inspect".into(), image.into()]).await
-            .map_err(anyhow::Error::msg)?;
-        if !ok { return Err(anyhow::anyhow!("n8n_update_target_docker_inspect_failed")); }
+    async fn inspect_pulled_target(
+        &mut self,
+        image: &str,
+    ) -> anyhow::Result<super::managed_update_target::DockerImageObservation> {
+        if !image.starts_with("docker.io/n8nio/n8n@sha256:") {
+            return Err(anyhow::anyhow!("n8n_update_target_docker_input_invalid"));
+        }
+        let (ok, stdout, _) = docker(&[
+            "docker".into(),
+            "image".into(),
+            "inspect".into(),
+            image.into(),
+        ])
+        .await
+        .map_err(anyhow::Error::msg)?;
+        if !ok {
+            return Err(anyhow::anyhow!("n8n_update_target_docker_inspect_failed"));
+        }
         super::managed_update_target::parse_docker_image_observation(stdout.as_bytes())
     }
 }

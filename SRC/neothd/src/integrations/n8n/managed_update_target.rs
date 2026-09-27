@@ -200,7 +200,10 @@ pub(crate) fn resolve_admitted_target(selector: &str) -> Result<AdmittedUpdateTa
     })
 }
 
-pub(crate) async fn prove_admitted_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner>(
+pub(crate) async fn prove_admitted_target_with<
+    R: RegistryTargetReader,
+    D: UpdateTargetDockerRunner,
+>(
     target: &AdmittedUpdateTarget,
     platform: &str,
     reader: &R,
@@ -257,14 +260,34 @@ async fn verify_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner
     docker: &mut D,
 ) -> Result<TargetPreflightReceiptView> {
     let platform_entry = target_platform(target, platform)?;
-    let index_raw = bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
+    let index_raw =
+        bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
     let child_descriptor = verify_index(&index_raw, target, platform_entry)?;
-    let child_raw = bounded_registry_read(reader, RegistryObject::Manifest(platform_entry.child_manifest_digest)).await?;
+    let child_raw = bounded_registry_read(
+        reader,
+        RegistryObject::Manifest(platform_entry.child_manifest_digest),
+    )
+    .await?;
     let config_digest = verify_child_manifest(&child_raw, platform_entry, child_descriptor.size)?;
-    docker.pull_exact_target(platform, target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
-    let observed = docker.inspect_pulled_target(target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
+    docker
+        .pull_exact_target(platform, target.runtime_image)
+        .await
+        .map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
+    let observed = docker
+        .inspect_pulled_target(target.runtime_image)
+        .await
+        .map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
     verify_pulled_target(&observed, target, platform_entry, &config_digest)?;
-    Ok(TargetPreflightReceiptView { selector: target.selector.into(), version: target.version.into(), platform: platform.into(), runtime_image: target.runtime_image.into(), index_digest: target.index_digest.into(), child_manifest_digest: platform_entry.child_manifest_digest.into(), config_digest, catalog_evidence_sha256: target.catalog_evidence_sha256.into() })
+    Ok(TargetPreflightReceiptView {
+        selector: target.selector.into(),
+        version: target.version.into(),
+        platform: platform.into(),
+        runtime_image: target.runtime_image.into(),
+        index_digest: target.index_digest.into(),
+        child_manifest_digest: platform_entry.child_manifest_digest.into(),
+        config_digest,
+        catalog_evidence_sha256: target.catalog_evidence_sha256.into(),
+    })
 }
 
 fn resolve_target(selector: &str) -> Result<&'static UpdateTargetCatalogEntry> {
@@ -582,9 +605,16 @@ struct DockerImageInspect {
 pub(crate) fn parse_docker_image_observation(data: &[u8]) -> Result<DockerImageObservation> {
     let images: Vec<DockerImageInspect> = serde_json::from_slice(data)
         .map_err(|_| anyhow!("n8n_update_target_docker_inspect_invalid"))?;
-    if images.len() != 1 { return Err(anyhow!("n8n_update_target_docker_inspect_invalid")); }
+    if images.len() != 1 {
+        return Err(anyhow!("n8n_update_target_docker_inspect_invalid"));
+    }
     let image = images.into_iter().next().expect("one checked image");
-    Ok(DockerImageObservation { id: image.id, repo_digests: image.repo_digests, os: image.os, architecture: image.architecture })
+    Ok(DockerImageObservation {
+        id: image.id,
+        repo_digests: image.repo_digests,
+        os: image.os,
+        architecture: image.architecture,
+    })
 }
 
 async fn run_docker(args: &[&str], deadline: Duration) -> Result<Vec<u8>> {
