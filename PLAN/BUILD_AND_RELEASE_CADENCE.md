@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1736/W1738 Archive Bridge combined product gate (2026-09-27):**
+A dedicated manual main-only workflow verifies the locked0.2.0 bundle, its
+tracked artifact equality and contract checks, then builds the actual CLI.
+The isolated daemon and installed plugin run pairing/offline queue/real IPC,
+exact captured-event replay, stale-source rejection and unpair. Read-only
+SQLite/state checks require exactly one imported fixture through these paths.
+Authentic0.1.1 update, repair, uninstall and retained operator settings/vault
+are verified; failure cleanup records processes, homes, pairing and descriptors.
+The Node adapter supplies only Obsidian host methods; native Obsidian desktop,
+Marketplace/publisher signature and whole P2-21 acceptance remain unproven.
+Independent review corrections are integrated; first hosted execution pending.
+Rollback nativeGroup2012run36351441068 and Windows777run36351443009 continue
+atb26808ea. No parent ROAD closure;1324/1077/245/2 unchanged. BSOD hold strict.
+
+**W1737 Rollback admitted and native gates dispatched (2026-09-27):**
+Original Core36350236837 and Product36350238657 at0b14919d admitted. Generated
+CLI reference imported atb26808ea; actual rollback includes exact authority,
+repeat/PDF preservation, downstream lifecycle and complete Docker/home cleanup.
+Group2012run36351441068 and Windows777run36351443009 onb26808ea dispatched once.
+W1736 Archive Bridge canary/driver and single manual product workflow remain
+under independent W1738 review. No native Obsidian desktop or P2-21 acceptance.
+Local executable validation remains forbidden; no duplicate CI dispatch loop.
+
 **W1734 Rollback optional-port compilation repair (2026-09-27):**
 Core36349853969 and Product36349855973 at9cdae427 failed before execution
 with the same E0308/E0599: HostConfig.PortBindings is an optional map.

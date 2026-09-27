@@ -12,6 +12,21 @@ surface. This is not yet a release acceptance claim: hosted plugin
 `typecheck`, build, contract tests, and native daemon acceptance remain
 pending. Do not treat a source checkout as an installed or accepted plugin.
 
+## Hosted lifecycle verification
+
+The manual `obsidian-bridge-product.yml` workflow rebuilds the locked plugin,
+checks the tracked bundle for drift, runs its contract checks, and builds the
+current public NEOTH CLI. A disposable daemon/home/vault then exercises the
+installed bundle through a minimal Node host adapter: pairing, offline queue,
+real local IPC, exact-event retry, stale-source rejection, unpair, and
+install/update/repair/uninstall with retained settings and vault contents.
+
+The adapter supplies Obsidian host methods; it does not prove execution in the
+native Obsidian desktop application. Receipts distinguish source and installed
+artifact hashes, product outcomes, and cleanup. A submitted workflow or a
+source review alone does not establish a passed lifecycle. This new combined
+gate is pending its first hosted execution.
+
 ## Prerequisites
 
 Run a compatible NEOTH daemon for the same user. Configure all of these in

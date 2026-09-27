@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T21:19:29.3529457Z",
-  "validationStatus": "Rollback hosted product and slim Core admitted; native2012/777 pending",
+  "capturedUtc": "2026-09-27T21:32:12.8093815Z",
+  "validationStatus": "Archive Bridge combined product gate source review PASS; hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -105,6 +105,11 @@
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
       "bytes": 6154,
       "sha256": "49906E7FC2E530128CEA0CE7D51518DB3352EB6BF63336C423E76DA3A8A53D80"
+    },
+    {
+      "path": ".github/workflows/obsidian-bridge-product.yml",
+      "bytes": 4436,
+      "sha256": "FB5ABF6FBF1DB7267EF3FB74D15E13E082526753D3D1901F59BFFA29037A4D71"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -1328,8 +1333,8 @@
     },
     {
       "path": "docs/obsidian-archive-bridge.md",
-      "bytes": 4905,
-      "sha256": "23E91BBE7EEAC91691589B8B371A6BF2D6BD86A22711EFA6032261CE80AF677D"
+      "bytes": 5750,
+      "sha256": "7E238F45CE9ECDC564A123C49C87639D3D4F64F693ADCF3B95CF26763DD85A5A"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -2582,6 +2587,11 @@
       "sha256": "76AF79ED78080C67B465AD9C76CF36439BDF372C8D0FDC9783EC6B2A60FE4871"
     },
     {
+      "path": "docs/verification/gold-wave1736-archive-bridge-source.json",
+      "bytes": 1330,
+      "sha256": "66FA85ADB6BA498AF7D2BA2AA8AD2878AEBB0B0B976BD237215CEE0F6C7EAF18"
+    },
+    {
       "path": "docs/verification/gold-wave1737-core-admission.json",
       "bytes": 663,
       "sha256": "87168AC777349EAA4DD622803F6593BE2514EBE1F05124CACD2AD26426C477DF"
@@ -3477,6 +3487,16 @@
       "sha256": "5F9A7107904AD9494E6EDC33CE0B935F57B46903978D3246939F08D768E2E609"
     },
     {
+      "path": "packaging/obsidian_archive_bridge_product_canary.py",
+      "bytes": 23014,
+      "sha256": "4DF27B9CED617A90976F909F6C957F7D47DEFCDE8C6F1D2F4406DEDABB9BE19C"
+    },
+    {
+      "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
+      "bytes": 5395,
+      "sha256": "36A64D910FEFF3FEA7F8F451CBFF143D5F82AC738C165850B1E9B2119540FE6F"
+    },
+    {
       "path": "packaging/paperless_product_canary.py",
       "bytes": 108589,
       "sha256": "95EA2B48EC824725FB02BBDAA3A5BCC864649B8DE11CA554974A6B0426877D90"
@@ -3547,6 +3567,11 @@
       "sha256": "DE7DB4674D6C8110542463C6E99096C77CAAC316D2046E7BEC575783D92D701E"
     },
     {
+      "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+      "bytes": 3994,
+      "sha256": "D6C0BDA899D0971B3B277EEBEBC8648EA8D43229182DFF5B8486D5E0987FF9C7"
+    },
+    {
       "path": "packaging/tests/test_paperless_product_canary.py",
       "bytes": 68509,
       "sha256": "645CFE290AABA1AEDB240058CB5018900DA76FE5CBF3B5C7BCEB290534E66DE9"
@@ -3608,18 +3633,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 483940,
-      "sha256": "530171A84436AEE140D085B2A22A0C37770D9DD2D6FF63E37C6ADA44EE864713"
+      "bytes": 485560,
+      "sha256": "C752978E5AAD289BB8C539E73690DAAEE89E9C30F3C7C0CA35E96D185A95CFF9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1504079,
-      "sha256": "4D37C976B7B512FA7163B9ADACDF293D38092632B52266E22464218001027A06"
+      "bytes": 1505076,
+      "sha256": "2052D5AFD736C4920BECE198811C9F4D2935A489B76D650363BA9D9C92952EA4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2114602,
-      "sha256": "FED1F88C660AFEDDA3A500634EBABD852C7ED05C9E89A80F9E9945C1B68D5A62"
+      "bytes": 2115599,
+      "sha256": "298A104C4DD72FA0DCD03320188993727C8CAAB2A8C7902AFD0E780EDD3DF256"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

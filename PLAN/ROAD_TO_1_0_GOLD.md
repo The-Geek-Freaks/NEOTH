@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1736/W1738 Archive Bridge combined product gate (2026-09-27):**
+A dedicated manual main-only workflow verifies the locked0.2.0 bundle, its
+tracked artifact equality and contract checks, then builds the actual CLI.
+The isolated daemon and installed plugin run pairing/offline queue/real IPC,
+exact captured-event replay, stale-source rejection and unpair. Read-only
+SQLite/state checks require exactly one imported fixture through these paths.
+Authentic0.1.1 update, repair, uninstall and retained operator settings/vault
+are verified; failure cleanup records processes, homes, pairing and descriptors.
+The Node adapter supplies only Obsidian host methods; native Obsidian desktop,
+Marketplace/publisher signature and whole P2-21 acceptance remain unproven.
+Independent review corrections are integrated; first hosted execution pending.
+Rollback nativeGroup2012run36351441068 and Windows777run36351443009 continue
+atb26808ea. No parent ROAD closure;1324/1077/245/2 unchanged. BSOD hold strict.
+
 **W1737 Paperless Rollback product and Core admitted (2026-09-27):**
 Actual Product36350238657 at0b14919d passed selected Restore-ID rollback,
 raw old receipt/snapshot/pointer absence, identical repeat, PDF preservation,

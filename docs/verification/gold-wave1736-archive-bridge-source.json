@@ -1,0 +1,33 @@
+{
+  "schema": "neoth-archive-bridge-product-gate-source/v1",
+  "base": "b26808ea167cdc6013083bd87f498cd2f1a18601",
+  "sourceStatus": "INDEPENDENT_STATIC_REVIEW_PASS",
+  "hostedStatus": "pending",
+  "reviewPath": "work/gold-20260906/wave1738-bridge-review/REVIEW.md",
+  "reviewSha256": "e885e23ff5c24a7c1f9e0faf9a0e2875ad0e56fc07b52f17f6adb7581f378a0b",
+  "sources": [
+    {
+      "path": "packaging/obsidian_archive_bridge_product_canary.py",
+      "sha256": "4df27b9ced617a90976f909f6c957f7d47defcde8c6f1d2f4406dedabb9be19c"
+    },
+    {
+      "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
+      "sha256": "36a64d910feff3fea7f8f451cbff143d5f82ac738c165850b1e9b2119540fe6f"
+    },
+    {
+      "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+      "sha256": "d6c0bda899d0971b3b277eebebc8648ea8d43229182dff5b8486d5e0987ff9c7"
+    },
+    {
+      "path": ".github/workflows/obsidian-bridge-product.yml",
+      "sha256": "fb5abf6fbf1db7267ef3fb74d15e13e082526753d3d1901f59bffa29037a4d71"
+    }
+  ],
+  "scope": "Actual compiled CLI/daemon/installed bundle through headless Obsidian host adapter",
+  "boundaries": [
+    "No native Obsidian desktop acceptance",
+    "No Marketplace or publisher-signature acceptance",
+    "No parent ROAD closure"
+  ],
+  "localExecutableValidationRan": false
+}
