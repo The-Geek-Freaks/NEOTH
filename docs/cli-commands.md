@@ -3302,6 +3302,13 @@ Restore a completed same-instance backup into a new managed generation. The prev
 
 - `<BACKUP_JOB_ID>` — Exact backup job ID returned by `paperless backup`
 
+### `neoth paperless rollback`
+
+Preview returning to the exact previous generation retained by Restore
+
+- `<RESTORE_JOB_ID>` — Exact Restore job ID whose previous generation should be restored
+- `--confirm <PHRASE>` — Exact preview phrase; without it, the active generation is unchanged
+
 ### `neoth paperless status`
 
 Check authenticated local API readiness using stored credentials. Artifact provenance and managed installation readiness remain separate

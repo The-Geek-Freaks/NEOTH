@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T21:00:43.1333445Z",
-  "validationStatus": "Rollback HostConfig optional map compiler errors corrected; hosted retry pending",
+  "capturedUtc": "2026-09-27T21:19:29.3529457Z",
+  "validationStatus": "Rollback hosted product and slim Core admitted; native2012/777 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -213,8 +213,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 256736,
-      "sha256": "426F52B933889BE22FCEAC3098E67D46E20606E80B1A7A11A82DBB513E160B65"
+      "bytes": 257028,
+      "sha256": "DED0A7B9EE8431F99AA249F578F5A84B77DDE711F3058FFB83D5C2CCCEA3978C"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -2582,6 +2582,16 @@
       "sha256": "76AF79ED78080C67B465AD9C76CF36439BDF372C8D0FDC9783EC6B2A60FE4871"
     },
     {
+      "path": "docs/verification/gold-wave1737-core-admission.json",
+      "bytes": 663,
+      "sha256": "87168AC777349EAA4DD622803F6593BE2514EBE1F05124CACD2AD26426C477DF"
+    },
+    {
+      "path": "docs/verification/gold-wave1737-paperless-rollback-admission.json",
+      "bytes": 1258,
+      "sha256": "41362794FEAF598FE9A5A7AF2878A8E8EAC6B169466298E3FA28CD98AA0B5EDC"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3603,13 +3613,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1502871,
-      "sha256": "7CE0438F267BB51F367A9575D1968C73754440C5E44D53DA34F481154A33541A"
+      "bytes": 1504079,
+      "sha256": "4D37C976B7B512FA7163B9ADACDF293D38092632B52266E22464218001027A06"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2113394,
-      "sha256": "21C7E30886EE83D669C98E34925E81CAC509F586FA30E5797EDFA964004D211E"
+      "bytes": 2114602,
+      "sha256": "FED1F88C660AFEDDA3A500634EBABD852C7ED05C9E89A80F9E9945C1B68D5A62"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

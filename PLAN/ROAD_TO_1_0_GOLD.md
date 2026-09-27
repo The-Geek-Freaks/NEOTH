@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1737 Paperless Rollback product and Core admitted (2026-09-27):**
+Actual Product36350238657 at0b14919d passed selected Restore-ID rollback,
+raw old receipt/snapshot/pointer absence, identical repeat, PDF preservation,
+retained stopped generation, and subsequent Backup/Repair/Uninstall/Reinstall.
+Both Docker generations and isolated home were removed. Original artifact
+10942206319 ZIPfcf1b61135f81c82f12fdc0912056afafa250e1022707d8780f5f1f67709916e
+and eight recorded producer source hashes verified against raw Git blobs.
+The shared base helper is covered by the exact checkout, not a separately
+recorded runtime hash. Core36350236837 passed slim Clippy, test-target
+checking and CLI build; original10941654973 ZIPb5ae1fd761599a0b24ec0fe7674875f54eb5036028ee5b2a72e4172eea97cd4a
+and generated-reference digest verified; new rollback CLI reference imported.
+Group2012/Windows777 pending. Archive Bridge product canary is separate WIP
+under independent review. No parent ROAD closure:1324/1077/245/2 unchanged.
+Absolute local BSOD hold; no local executable validation.
+Evidence: docs/verification/gold-wave1737-core-admission.json and
+ docs/verification/gold-wave1737-paperless-rollback-admission.json.
+
 **W1734 Rollback optional-port compilation repair (2026-09-27):**
 Core36349853969 and Product36349855973 at9cdae427 failed before execution
 with the same E0308/E0599: HostConfig.PortBindings is an optional map.

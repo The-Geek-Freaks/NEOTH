@@ -1,0 +1,28 @@
+{
+  "schema": "neoth-paperless-rollback-admission/v1",
+  "run": 36350238657,
+  "source": "0b14919dcb85689407ff8e67caecc9cbdca6cdfc",
+  "artifact": 10942206319,
+  "zipSha256": "fcf1b61135f81c82f12fdc0912056afafa250e1022707d8780f5f1f67709916e",
+  "status": "SOURCE_ADMITTED_PASS",
+  "recordedSourceBindingsVerified": 8,
+  "binarySha256": "4a5f0f162384c64cd2b0e8167d8aba48e7b0b37a9b98f5634416e1f6f8f1a599",
+  "binaryHashEvidence": "Recorded by source-bound hosted canary; executable not downloaded or run locally",
+  "stages": [
+    "Install PDF Backup Restore",
+    "effect-free rollback preview",
+    "confirmed selected restore rollback",
+    "identical repeat with no extra effect",
+    "exact old authority bytes and pointer absence",
+    "retained restored generation stopped",
+    "Backup Repair Uninstall Reinstall",
+    "PDF preserved after reinstall",
+    "both Docker generations cleaned",
+    "isolated home removed"
+  ],
+  "provenanceScope": "Eight explicitly recorded source paths verified against raw producer Git blobs; imported base helper covered by exact checkout, no separate runtime hash in this receipt",
+  "localExecutableValidationRan": false,
+  "native2012Accepted": false,
+  "windows777Accepted": false,
+  "parentRoadClosure": false
+}

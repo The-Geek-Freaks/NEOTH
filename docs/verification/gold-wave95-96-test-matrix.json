@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Rollback HostConfig optional map compiler errors corrected; hosted retry pending",
+  "status": "Rollback hosted product and slim Core admitted; native2012/777 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 254479,
-    "sha256": "2535C3123254C71D9A8EC0C56676E9E09019BAE4189F424D6580295705A3B9E2"
+    "bytes": 254854,
+    "sha256": "75525E1B6F8FE241C24894860F19605D20EF764C5D2DF796F462CAFF9534D96F"
   },
-  "sourceInputs": 1415,
+  "sourceInputs": 1417,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -53432,6 +53432,44 @@
       }
     ],
     "note": "Core36349853969 and Product36349855973 exact same E0308/E0599. Required webserver binding remains fail-closed; no validation weakening. Root source diff/type review only.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1737RollbackAdmission": {
+    "base": "0b14919dcb85689407ff8e67caecc9cbdca6cdfc",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 257028,
+        "sha256": "DED0A7B9EE8431F99AA249F578F5A84B77DDE711F3058FFB83D5C2CCCEA3978C",
+        "blob": "e0544e92c25474f39a585325bff3f3c7f9f21f7d"
+      },
+      {
+        "path": "docs/verification/gold-wave1737-core-admission.json",
+        "bytes": 663,
+        "sha256": "87168AC777349EAA4DD622803F6593BE2514EBE1F05124CACD2AD26426C477DF",
+        "blob": "0802353d7bed89e6b898015439cf831d075a65fa"
+      },
+      {
+        "path": "docs/verification/gold-wave1737-paperless-rollback-admission.json",
+        "bytes": 1258,
+        "sha256": "41362794FEAF598FE9A5A7AF2878A8E8EAC6B169466298E3FA28CD98AA0B5EDC",
+        "blob": "2c070c26b55e6fb0ba6b7b0e0e6f81956f1250dd"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1504079,
+        "sha256": "4D37C976B7B512FA7163B9ADACDF293D38092632B52266E22464218001027A06",
+        "blob": "4c616780886b3e4ef8568e2f46d306ddd95a59c1"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2114602,
+        "sha256": "FED1F88C660AFEDDA3A500634EBABD852C7ED05C9E89A80F9E9945C1B68D5A62",
+        "blob": "ff1ffd1d2b13a5975c39de42089cc97d3049f31f"
+      }
+    ],
+    "note": "Original ZIP/API digests, generated reference and eight recorded product raw source hashes verified. No parent closure or local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
