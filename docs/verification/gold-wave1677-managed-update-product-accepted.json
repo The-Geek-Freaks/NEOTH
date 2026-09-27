@@ -1,0 +1,149 @@
+{
+  "schema": "neoth-managed-update-product-admission/v1",
+  "batch": "W1677",
+  "capturedUtc": "2026-09-27T16:07:08.3444455Z",
+  "run": 36331276264,
+  "runUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36331276264",
+  "producer": "6c03220cd1132bd248bd42691459fdb6facaec2d",
+  "artifact": 10935219337,
+  "zipSha256": "1a1605a06c2ef2e89c45be13111f4d07fd447ba1cc5a15c798a58b96a6f857f0",
+  "originalZipDigestVerified": true,
+  "rawProducerSourceBindingsVerified": 30,
+  "status": "PRODUCT_ADMITTED_PASS",
+  "receipt": {
+    "binary_sha256": "6fbbb25246ccfa44a3237f9559d9c498d8dcdda64a7543b12ff96212de68693c",
+    "cleanup": {
+      "isolated_home_removed": true,
+      "retained_source_and_volume_removed": true,
+      "secrets_removed": true,
+      "update_runtime_and_volume_absent": true
+    },
+    "cleanup_proven": true,
+    "content": {
+      "anonymous_401": true,
+      "credential_decryption": true,
+      "historical_key": true,
+      "node_groups": true,
+      "workflows": 13
+    },
+    "downstream": {
+      "backup_archive": {
+        "archive_bytes": 5711872,
+        "archive_sha256": "e3a46a9bae37cfa0f97474135f3e069194d8e477bd04b94503d25b640082611d",
+        "generation": 1
+      },
+      "backup_job_id": "01a0e39b-db13-7d11-be25-bded8affe353",
+      "backup_manifest_sha256": "5ef735fc7a79c5735dab23faff7906be3664c2248dfd7a07d54ec35ed8522e7d",
+      "final_uninstall_job_id": "01a0e39d-a911-7662-938b-ae26e85a7f34",
+      "final_uninstall_manifest_sha256": "ee58898a6c4f5782f657618f82acbd7ef4b6ebf27c4f8c8426ab7bdf1fce1226",
+      "purge_job_id": "01a0e39d-ad71-7180-8d7f-8117e08c167d",
+      "purge_manifest_sha256": "ce3e0fdb228295a00bd6e984d86a06f08337f99174e95bb0c76b55c11f4ebaa0",
+      "reinstall_chain": [
+        {
+          "ordinal": 1,
+          "reinstall_job_id": "01a0e39c-d04d-7563-b564-1b6f38261151",
+          "reinstall_manifest_sha256": "aa6da6cb7ccb84376d048304fecf99153bebb7e4abaa52b82fdacecb9c36a89f",
+          "uninstall_job_id": "01a0e39c-c4f6-73b2-91cb-22236589037c",
+          "uninstall_manifest_sha256": "f6791d56bba13b5bfd010d6b4b54dd07a78749534d1e59e5c9d01cc77e2c1941"
+        },
+        {
+          "ordinal": 2,
+          "reinstall_job_id": "01a0e39d-42be-7ce1-813e-c918f87aa3dd",
+          "reinstall_manifest_sha256": "06d3dc5acefa130369f4fac86befebbf76105c99dbed327fbf8e7995de621620",
+          "uninstall_job_id": "01a0e39d-37dc-70d3-ad37-231b7d66b2c5",
+          "uninstall_manifest_sha256": "d428afa36cc6e85d1dab49f0d90c7dd581dfeccbfb0ae874844e60183a0b7be4"
+        }
+      ],
+      "repairs": [
+        {
+          "action": "healthy",
+          "container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f",
+          "job_id": "01a0e39c-1609-7b23-bcf2-9864e5695469",
+          "manifest_sha256": "ea47ac685f46074746bf009910d430bc73708788e7243c6aa413d048f3993234",
+          "prior_container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f"
+        },
+        {
+          "action": "started",
+          "container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f",
+          "job_id": "01a0e39c-32e8-7bf1-8568-9381933d4146",
+          "manifest_sha256": "ee3d75ce1ebcb28102ce1178c7d65d53e5d2318c85ee8f8a98af11c97a0febe5",
+          "prior_container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f"
+        },
+        {
+          "action": "recreated",
+          "container_id": "523a998d84ad37ebd9d0ddce0aec000e6c355973eddc42e6a58ca4c28356cc2e",
+          "job_id": "01a0e39c-6ccf-75d0-871b-29001344e786",
+          "manifest_sha256": "2a5016bf7dcf045fc43f6c942c2a22764af0fd417c5531fb705729505042e79e",
+          "prior_container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f"
+        }
+      ],
+      "update_volume_absent": true
+    },
+    "input_sha256": {
+      ".github/workflows/n8n-managed-update.yml": "0dd3f5f06b441c0129a51debf65e94b8b0fcc3f7f1b63fd6c720cdf875f6b116",
+      "SRC/Cargo.lock": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "SRC/neothd/Cargo.toml": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "SRC/neothd/src/cli/n8n.rs": "63a4ac9587e46b81b1cdb1871d32be8d952ef052bc2f439739b7838e3cfcf161",
+      "SRC/neothd/src/integrations/jobs.rs": "e535a8dfbdef24dd2523a9d03b91d631ad8d587e8ca98297cd02d15355cd397e",
+      "SRC/neothd/src/integrations/n8n.rs": "23e5f84e4cda376a301a4511cc2c867d4e8967a3856e627f18d8bcbdceed9d99",
+      "SRC/neothd/src/integrations/n8n/managed_backup.rs": "c29344c939cf8d06215335df5c7346f06b6f8340c2d2351278838ccd13bc60b9",
+      "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs": "f5d9921c9dfe2dc91fd26324fb485ce92cf7817b97900e5fb9776995609c03f2",
+      "SRC/neothd/src/integrations/n8n/managed_purge.rs": "6b811c0b3f33c7df08368a8dd83d7ad298665c1f05e0d4fde59567430fcc4dfe",
+      "SRC/neothd/src/integrations/n8n/managed_repair.rs": "dd1d67d1aacb6a3bcb00f1a8d7cb8c7627b64a82a4fb69875f32b6c6f5c60ca4",
+      "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs": "b064c8ceb1f504e7597c34169fcb5936c151151855c7562702a3e7851debfde6",
+      "SRC/neothd/src/integrations/n8n/managed_rollback.rs": "deac850da23140a2970ef783d0a00e844a6a9ce967f9cd8f19fb134af9275990",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "1043068895f3acd10e15844b77047dbe36ad58d4a806560e6297fd5861c2dc9e",
+      "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs": "1a748071199d4e30d5cf05e0133531c5b47ba361ee895ce2f666b82231a2ed3c",
+      "SRC/neothd/src/integrations/n8n/managed_uninstall.rs": "460c54f5f8099bd3b8a287c9a5f43d5e5dd70fcdc449cb72b87c6980829cfc97",
+      "SRC/neothd/src/integrations/n8n/managed_update.rs": "8282fd9f87e7c6a83e6c45b84a329c00c07e21a23f88c6195f3f8236f28a0055",
+      "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs": "da98c9349571dbbab1e890b3af4b710d3b2866939e6f2303c3d2cc7e74f09754",
+      "SRC/neothd/src/integrations/n8n/managed_update_content.rs": "3a9cd949703b246d0e9901015461a70816dc5c74530bfab3f5e8721b7f563051",
+      "SRC/neothd/src/integrations/n8n/managed_update_target.rs": "da820ab86436b56268611f70837da70ac8833991bc8ac2a62b467bb3d2a0e73a",
+      "SRC/neothd/src/integrations/n8n/managed_update_tests.rs": "9321ee86a46bb1bea9e34cec902f7d2c1622a28f4115747c5f90f424303c1b3b",
+      "SRC/neothd/src/integrations/n8n/managed_update_verify.js": "86a7b299f8b194c8e9597eeaccc72c1850eb0e3cd25be57fb9b49bfcb8edb248",
+      "SRC/neothd/src/integrations/state.rs": "5d9089c66f023aeb6069e2493bd0d78f799523ba7ab0cb097a024c8cdf512b11",
+      "packaging/n8n_managed_update_canary.py": "fe249685bab7c0b2e7f323f17a14df6d3a5c4bb2f0cf5c776e03edde807ef93b",
+      "packaging/n8n_product_bootstrap_canary.py": "dd4fd9428303e150bbe09725a16c769b8f8f520e61d177770bb418a5dc40a9d4",
+      "packaging/n8n_update_migration_canary.py": "8daff6a6013809c3bf8fa1f46fd0a465ada59100d345eca5461c42e91a375253",
+      "packaging/n8n_update_target_preflight_canary.py": "5f9a7107904ad9494e6edc33ce0b935f57b46903978d3246939f08d768e2e609",
+      "packaging/tests/test_n8n_managed_update_canary.py": "3e202dcd7388ee3a7ab220f5188bc764eb6f19d0966f0edee5067e997544d4d1",
+      "packaging/tests/test_n8n_product_bootstrap_canary.py": "a36257646615af4b6406a6777ada9dd8f6f1af549285352308075f75f1dc6a61",
+      "packaging/tests/test_n8n_update_content.py": "ad4d6efcd771eba084d08169d41f54e83edddcdef4e3901ca19df733fe46764a",
+      "packaging/tests/test_n8n_update_migration_canary.py": "27a69b67c17b03efb628cd9c08ed4894fd472812368f9ff0f5671388e679042d"
+    },
+    "outcome": "passed",
+    "scenario": "n8n_managed_update",
+    "schema": 1,
+    "source_archive": {
+      "after_archive_bytes": 5708800,
+      "after_archive_sha256": "50baec88fe91a670e29d6ae2c11fcb6fe1a85d095c710ece7fc621005a9b62d9",
+      "after_member_manifest_sha256": "08049754db835e4904648ee7c070fb53e7e40ebbd61807d26b693ef3a2a42d02",
+      "archive_bytes": 5708800,
+      "archive_sha256": "50baec88fe91a670e29d6ae2c11fcb6fe1a85d095c710ece7fc621005a9b62d9",
+      "member_manifest_sha256": "08049754db835e4904648ee7c070fb53e7e40ebbd61807d26b693ef3a2a42d02"
+    },
+    "source_sha": "6c03220cd1132bd248bd42691459fdb6facaec2d",
+    "update": {
+      "new_container_id": "c62ddd5f2927e135a4e8a57a603ac01de49f01f27d11aab8071321283d10448f",
+      "platform": "linux/amd64",
+      "retained_source_name": "neoth-n8n-retired-01a0e39ad75b7482a7d086ff7deceaff",
+      "runtime_image": "docker.io/n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+      "selector": "n8n-2.40.7",
+      "update_job_id": "01a0e39a-d75b-7482-a7d0-86ff7deceaff",
+      "update_volume": "neoth_n8n_update_01a0e39ad75b7482a7d086ff7deceaff",
+      "version": "2.40.7"
+    }
+  },
+  "priorCore": {
+    "slimProductionClippy": "success",
+    "fullWorkspaceClippy": "success",
+    "run": 36329532560,
+    "publicCliBuildExport": "success",
+    "nativeTestTypecheck": "success",
+    "apiJobLogSha256": "8F49011B710F512DBEA7334E0B9C18A332F376B08D342042AC0441210427F090",
+    "producer": "70e8b768fe2fa95adacb8e92a0cf6f4ffa1615c4"
+  },
+  "nativeCohorts": "Group1979/Windows744 pending at6c03220c",
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

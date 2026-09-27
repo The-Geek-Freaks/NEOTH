@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1677 Managed n8n Update full product accepted (2026-09-27):**
+Product36331276264 at6c03220c passed the complete real Linux Keychain flow.
+Original artifact10935219337/ZIP digest and30 raw producer bindings are verified.
+Pinned n8n2.40.7 runs with all13 workflows/node groups, negative-control401,
+historical API key and credential decryption intact. Source archive custody,
+Update-volume Backup, healthy/start/recreate Repair, two complete retained
+Uninstall/Reinstall cycles, final Uninstall/Purge and complete resource/secrets/
+isolated-home cleanup are proven. The strict Keychain cleanup check passed;
+no unknown/preserved fallback was admitted. Core36329532560 at70e8b768 also
+passed full workspace Clippy after slim/typecheck/CLI gates; newer receipt-bound
+source still has its own native/latest-slim verification boundary. Group1979 and
+Windows744 at6c03220c remain running. No global release or ROAD closure.
+Evidence: docs/verification/gold-wave1677-managed-update-product-accepted.json.
 **W1675 Paperless Backup full product accepted (2026-09-27):**
 Product36330901213 atc48aadb4 passed its complete real Linux lifecycle. Original
 artifact10935424477/ZIP digest and27 raw producer source bindings are verified.
