@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "compile-repair-hosted-pending",
+  "status": "clippy-repaired-hosted-core-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 247303,
-    "sha256": "939780AF86415D8D3C6AF0AADC1D9EE3BE3D85483CBD2DBB2C9F57CD9FB766FC"
+    "bytes": 247500,
+    "sha256": "A5F90729651A3337802ADBECF80F29B4CC15A6B82DA0D3BA2A755A53412016AF"
   },
-  "sourceInputs": 1378,
+  "sourceInputs": 1379,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -9816,25 +9816,25 @@
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_mount_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
@@ -12474,49 +12474,49 @@
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_counts_and_hashes_opaque_bytes",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_cap_before_unbounded_write",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_symlinked_outside_volume_data",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_accepts_docker_style_current_directory_root",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_rejects_nonzero_data_after_tar_end",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_publish_never_replaces_existing_destination",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_non_exact_container_id_before_private_file_creation",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_known_destination_collision_before_staging_or_docker",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "0DEC843D927E427C3FFB630B14635AF06C1D71BC2610E7993426672B4A9174B4",
+      "sourceSha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
       "junitClass": "neoth"
     },
     {
@@ -51107,6 +51107,56 @@
       }
     ],
     "note": "25 hosted helper tests passed on prior producer; digest type mismatch and unused import corrected. Product not executed. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1638UpdateClippyRepair": {
+    "base": "4670105bb42c9d8cf5984d2148c7ee30357c972f",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1638-update-clippy-repair.json",
+        "bytes": 718,
+        "sha256": "E537762DCF02F8E604A455A1507F6E8241E770C93E28CCF37D2C8EF0545A2295",
+        "blob": "fe75e42716b4f43f7a3c2d71e57e8deafbc7db85"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 450361,
+        "sha256": "92C540A4FB99DD701E181338F6920C53CD355B895EE8BDE52F1158715717928E",
+        "blob": "bb3e0385a8a1b7f544e855b7252ef4b2e8099564"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1469292,
+        "sha256": "6D44A2F316DBD5335913BC7024F8D1C876296190B1BCD30F4344253CDE8F2122",
+        "blob": "b85e4ace870cc92815a306ad1519a3101cb5ffc1"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2079815,
+        "sha256": "90D3698AE83EBCAE60F8698B3966A6E5BF43E7C1288CA83E2D269213A97A439C",
+        "blob": "d113f42cdac78ea6c3354101a1c26298442c2262"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+        "bytes": 133147,
+        "sha256": "1043068895F3ACD10E15844B77047DBE36AD58D4A806560E6297FD5861C2DC9E",
+        "blob": "163a09467e6a76e2bc31d189f99aa0081a8869aa"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+        "bytes": 57157,
+        "sha256": "406A84039E977212E8D7A2F3994C71B655854CBC812B7029507D402ECF035727",
+        "blob": "3699ba016015aaa98aa9a872082f1bed1559e159"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update.rs",
+        "bytes": 80476,
+        "sha256": "8282FD9F87E7C6A83E6C45B84A329C00C07E21A23F88C6195F3F8236F28A0055",
+        "blob": "5fbd58fce9f8084cf054a50d3fdc189baa409a3a"
+      }
+    ],
+    "note": "4670105b public CLI built; product ongoing. Three exact Clippy diagnostics corrected. Paperless WIP excluded. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

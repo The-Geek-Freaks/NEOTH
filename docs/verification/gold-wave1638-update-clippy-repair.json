@@ -1,0 +1,22 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1638",
+  "capturedUtc": "2026-09-27T13:39:04.8625666Z",
+  "producer": "4670105bb42c9d8cf5984d2148c7ee30357c972f",
+  "coreRun": 36322783850,
+  "productRun": 36322785782,
+  "status": "CLIPPY_REPAIRED_CORE_RERUN_REQUIRED_PRODUCT_RUNNING",
+  "publicCliBuildPassed": true,
+  "diagnostics": [
+    "private_bounds update_managed_at_with",
+    "manual_range_patterns uninstall receipt schema",
+    "large_enum_variant RuntimeLineage Update"
+  ],
+  "fixes": [
+    "Restrict injectable helper visibility",
+    "Use schema range1..=3",
+    "Box Update payload and sole constructor; serde shape unchanged"
+  ],
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

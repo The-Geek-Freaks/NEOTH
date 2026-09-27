@@ -548,7 +548,7 @@ pub(super) enum RuntimeLineage {
     #[default]
     Install,
     Rollback(RollbackRuntimeLineage),
-    Update(UpdateRuntimeLineage),
+    Update(Box<UpdateRuntimeLineage>),
 }
 /// Non-secret active-generation provenance.  The Rollback coordinator binds
 /// these values to its separate immutable receipt/custody before it publishes

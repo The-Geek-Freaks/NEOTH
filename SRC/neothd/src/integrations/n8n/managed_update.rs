@@ -1335,7 +1335,7 @@ pub(crate) async fn update_managed_at(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn update_managed_at_with<R, D, H, P>(
+pub(in crate::integrations) async fn update_managed_at_with<R, D, H, P>(
     home: &Path,
     selector: &str,
     platform: &str,
@@ -1953,7 +1953,7 @@ where
             volume: volume.clone(),
             retained_reinstall: None,
             bootstrap_volume_owner_job_id: None,
-            lineage: RuntimeLineage::Update(UpdateRuntimeLineage {
+            lineage: RuntimeLineage::Update(Box::new(UpdateRuntimeLineage {
                 update_job_id: c.update_job_id.clone(),
                 update_manifest_sha256: c.update_manifest_sha256.clone(),
                 admitted_selector: c.selector.clone(),
@@ -1981,7 +1981,7 @@ where
                 update_volume_owner_job_id: c.update_job_id.clone(),
                 retained_source_container_id: c.source_container_id.clone(),
                 retained_source_name: c.retained_source_name.clone(),
-            }),
+            })),
         };
         super::write_binding(home, &b).map_err(anyhow::Error::msg)?;
         c.phase = Phase::BindingPublished;

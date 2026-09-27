@@ -351,7 +351,7 @@ fn read_completion_receipt(
     let bytes = std::fs::read(&path).map_err(|_| "n8n_uninstall_receipt_read_failed")?;
     let receipt: UninstallCompletionReceipt =
         serde_json::from_slice(&bytes).map_err(|_| "n8n_uninstall_receipt_invalid")?;
-    if !matches!(receipt.schema_version, 1 | 2 | 3)
+    if !matches!(receipt.schema_version, 1..=3)
         || receipt.uninstall_job_id != job.job_id.as_str()
         || receipt.uninstall_manifest_sha256 != job.manifest_sha256.as_str()
         || (receipt.schema_version == 1

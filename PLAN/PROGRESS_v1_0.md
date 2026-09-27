@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1638 Managed Update builds; remaining Clippy corrections (2026-09-27):**
+Product36322785782 at4670105b passed its helper checks and compiled the public
+CLI; its actual Docker lifecycle is still running at this snapshot. Core
+36322783850 failed three Clippy checks: helper visibility exceeded its probe
+trait, schema alternatives required a range, and the Update lineage payload
+made the enum excessively large. The helper now matches trait visibility,
+the schema pattern uses1..=3, and Update provenance is boxed with unchanged
+serde output. Root reviewed all three scoped files; fresh Core is required.
+Paperless Backup is separate unpublished work. No native/product acceptance,
+local executable checks or ROAD closure are claimed; counts1324/1077/245/2.
+Evidence: docs/verification/gold-wave1638-update-clippy-repair.json.
 **W1635 Hosted Update helper suites passed; compile repair (2026-09-27):**
 At8b701256, product36322373346 passed14 Update-canary,2 full-content and9
 migration-helper tests. The Rust build then failed E0308 in retained Update
