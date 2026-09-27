@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1544 Restore fixture-key label repair (2026-09-27):**
+Product36303000905 at00aa8660 now pinpoints mint HTTP400 after successful login.
+The exact pinned n8n DTO limits key labels to50 characters; the fixture sent61.
+Shortened only its label to50 and checked the limit on the actual captured
+mint payload. Original artifact10926461839 ZIP and pinned DTO source are
+verified. Docker cleanup passed; Restore never started and full cleanup was
+not proven. Product rerun required; existing native/Core gates continue.
+Preflight36303433602 and CodeQL36303433385 passed at39197cc5. Rollback stays
+unpublished; no local runtime or ROAD closure.
+Evidence: docs/verification/gold-wave1544-restore-product-label.json.
+
 **W1543 hosted Restore formatting import (2026-09-27):**
 Imported the exact candidate-predicate rustfmt postimage from original artifact
 10925493233 / Preflight36302995542 at00aa8660, with ZIP/internal/producer and

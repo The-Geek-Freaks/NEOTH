@@ -615,7 +615,7 @@ def mint_restore_credential_key(job: str, runtime_id: str) -> bytes:
         raise Failure("restore_scope_session_invalid")
     minted = restore_scope_reply(runtime_id, {
         "op": "mint", "browserId": browser, "cookie": cookie,
-        "label": f"neoth-restore-credential-{job}",
+        "label": f"neoth-restore-{job}",
     })
     data = minted["body"].get("data")
     if not isinstance(data, dict):

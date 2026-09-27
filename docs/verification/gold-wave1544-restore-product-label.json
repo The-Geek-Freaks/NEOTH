@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-restore-product-label-repair/v1",
+  "status": "source-corrected-hosted-product-rerun-required",
+  "run": 36303000905,
+  "producer": "00aa8660a36938e69ac816ca8dfaa240835f3d32",
+  "artifact": 10926461839,
+  "originalZipSha256": "b39dc157f3b21442790088eb1bc61fe44aab2e7ff0241607c3ca37a63a1e0310",
+  "failureStage": "restore_scope_mint_response_status_400",
+  "restoreStarted": false,
+  "dockerCleanup": true,
+  "completeCleanup": false,
+  "diagnosis": {
+    "pinnedCommit": "a331d3858797b161e4acba288396be3835425d8e",
+    "dto": "packages/@n8n/api-types/src/dto/api-keys/update-api-key-request.dto.ts",
+    "dtoSha256": "f9cd0d5fe4981d38b76f7d29b00a64aa3b05dd80662e0849a4584195e920542d",
+    "maximumLabelLength": 50,
+    "previousLabelLength": 61,
+    "newLabelLength": 50,
+    "previousPrefix": "neoth-restore-credential-",
+    "newPrefix": "neoth-restore-"
+  },
+  "regression": "Existing actual mint payload capture now asserts the upstream maximum length.",
+  "changedProductionPermissions": false,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

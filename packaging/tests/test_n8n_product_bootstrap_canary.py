@@ -164,8 +164,9 @@ class RestoreCredentialKeyTests(unittest.TestCase):
         })
         self.assertEqual(mint_payload, {
             "op": "mint", "browserId": "browser-id", "cookie": "n8n-auth=session",
-            "label": f"neoth-restore-credential-{self.job}",
+            "label": f"neoth-restore-{self.job}",
         })
+        self.assertLessEqual(len(mint_payload["label"]), 50)
         self.assertIn("/rest/login", canary.RESTORE_API_KEY_CLIENT)
         self.assertIn("/rest/api-keys", canary.RESTORE_API_KEY_CLIENT)
         self.assertIn("['credential:list','credential:create']", canary.RESTORE_API_KEY_CLIENT)
