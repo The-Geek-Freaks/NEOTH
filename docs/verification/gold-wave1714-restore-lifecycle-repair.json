@@ -1,0 +1,90 @@
+{
+  "schema": "neoth-restore-lifecycle-repair/v1",
+  "capturedUtc": "2026-09-27T19:25:06.5728066Z",
+  "base": "af77c4b9f30aa83b9ede35d3fa43a26d3c6ed9f9",
+  "product": {
+    "run": 36342549396,
+    "source": "af77c4b9f30aa83b9ede35d3fa43a26d3c6ed9f9",
+    "artifact": 10939357364,
+    "zipSha256": "e8661df9f469210c798f80091dc9851a0ddf5cd02cc5cbc6016abcc1a4cedabc",
+    "sourceBindingsVerified": 29,
+    "passedStages": [
+      "Restore authenticated candidate/active generation",
+      "retained old source",
+      "new-generation Backup",
+      "Repair healthy/start/recreate"
+    ],
+    "failedStage": "uninstall_receipt_invalid",
+    "fullLifecycleAccepted": false
+  },
+  "native": {
+    "source": "c6fab6ac3b691d7c64543e2d7fdc5f2b93582679",
+    "groupRun": 36342050755,
+    "groupSelected": 2005,
+    "groupPassed": 2003,
+    "groupFailed": 2,
+    "groupReceiptArtifact": 10939633225,
+    "groupReceiptZipSha256": "ef00e77d68acd2376746989a43b7004b467232f69d7c78d381214887cd8c12a7",
+    "windowsRun": 36342052916,
+    "windowsSelected": 770,
+    "windowsPassed": 768,
+    "windowsFailed": 2,
+    "windowsMissing": 0,
+    "windowsArtifact": 10939758516,
+    "windowsZipSha256": "03146474cfd812acffdf0756fbb0cfffb5c1da127729ef9bf077ec4ab116a972",
+    "windowsInternalHashesVerified": 10,
+    "admission": "FAILURE DIAGNOSIS ONLY"
+  },
+  "repair": [
+    "Uninstall current custody schema equals exact installed schema after legitimate generation reset",
+    "Resolver invalid-format mutant retained; valid-hex current-config mismatch rejected before commands",
+    "Canary Uninstall schema binds to raw install receipt; post-Reinstall and post-Purge schema3 authority validated"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_backup_tests.rs",
+      "sha256": "C628B732C3282F5B27AEDDC467C9F376A2E408DCDB429150097F9262F0CB4D7B"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "FF55BF3408E77B0FAC4DC691F36538AC87F2FB991606022E966A3C84FEC5D4FC"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "75F1A86A0E31FAEA368780EBB52993B1C46ED6C72D1CBAAF9CF0348D3C5218DD"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "AA2EEB9B1FFBA17275C8F866DBB33EA647E2ACAC2574B985B45DA22289B60A54"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "2BEC4FCDA28D5EF25252CA2FF36F30DAB7759701B4FF01A350798F32A4B85E89"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1713-paperless-product-repair/CANARY.md",
+      "sha256": "0247CACD9E4A488E9FB246A915E60963E335A54625AEE5BFCCE9FD0EAB35687C"
+    },
+    {
+      "path": "work/gold-20260906/wave1713-paperless-product-repair/PYTHON-REVIEW.md",
+      "sha256": "98FDCE54D0DDCCA2EF95BE1E7E7FF44D6D7729F4EC5490B152360509B12C123E"
+    },
+    {
+      "path": "work/gold-20260906/wave1714-native-restore-repair/REPORT.md",
+      "sha256": "B1372D885E4BE3DCC3E9610B4913442CCE57920B23BC98A0CD57D954D290A7A6"
+    },
+    {
+      "path": "work/gold-20260906/wave1714-native-restore-repair/RUST-REVIEW.md",
+      "sha256": "1C621735C35DE3922862299DE52715AA91C66A0EA2E207E6BBE7889085E7B89C"
+    },
+    {
+      "path": "work/gold-20260906/wave1714-restore-config-mismatch/TESTS.md",
+      "sha256": "8389D4BC14CF72F2FB9332E3A61B6D5A7CD56BC6129E94DBA05BBE069FDECC53"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "freshHostedValidation": "pending",
+  "roadClosure": false
+}

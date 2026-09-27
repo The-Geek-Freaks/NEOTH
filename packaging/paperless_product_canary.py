@@ -602,9 +602,10 @@ def purge_artifacts_absent(home: Path) -> tuple[object, ...]:
 
 def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...], volume_names: tuple[str, ...], install_receipt_bytes: bytes, volume_set_id: str | None = None) -> None:
     schema_version = value.get("schema_version")
-    if schema_version not in {1, 2} or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
+    install_schema = read_json_bytes(install_receipt_bytes, "uninstall_receipt_invalid").get("schema_version")
+    if install_schema not in {1, 2, 3} or schema_version != install_schema or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
         raise Failure("uninstall_receipt_invalid")
-    if (volume_set_id is None and schema_version != 1) or (volume_set_id is not None and schema_version != 2):
+    if (volume_set_id is None and install_schema != 1) or (volume_set_id is not None and install_schema not in {2, 3}):
         raise Failure("uninstall_receipt_invalid")
     ids = value.get("original_container_ids")
     retained = value.get("retained_volumes")
@@ -868,6 +869,29 @@ def validate_restore_authority(home: Path, restore: dict, source_install: bytes,
     names, history_authorized = history.get("custody_names"), history.get("authorized_volume_set_ids")
     if set(history) != {"schema_version", "operation", "custody_names", "authorized_volume_set_ids"} or history.get("schema_version") != 1 or history.get("operation") != "paperless.restore" or not isinstance(names, list) or not names or names != sorted(names) or len(set(names)) != len(names) or any(not isinstance(value, str) or not RESTORE_CUSTODY_NAME.fullmatch(value) for value in names) or not isinstance(history_authorized, dict) or set(history_authorized) != set(names) or name not in names or history_authorized.get(name) != authorized:
         raise Failure("restore_custody_invalid")
+
+
+def validate_current_restore_authority(home: Path, restore: dict, install_receipt_bytes: bytes, project: str, volume_set_id: str, port: int) -> None:
+    """Bind a later schema-3 generation to its original immutable Restore custody."""
+    if not isinstance(install_receipt_bytes, bytes):
+        raise Failure("restore_current_authority_invalid")
+    installed = read_json_bytes(install_receipt_bytes, "restore_current_authority_invalid")
+    if installed.get("schema_version") != 3 or validate_install(installed, port)[0] != project or installed.get("volume_set_id") != volume_set_id:
+        raise Failure("restore_current_authority_invalid")
+    name = restore.get("rollback_custody_ref")
+    if not isinstance(name, str) or not RESTORE_CUSTODY_NAME.fullmatch(name):
+        raise Failure("restore_current_authority_invalid")
+    custody_raw, custody = restore_private_json(home, name)
+    if custody.get("schema_version") != 1 or custody.get("operation") != "paperless.restore" or custody.get("phase") != "committed" or custody.get("restore_job_id") != restore.get("restore_job_id") or custody.get("backup_job_id") != restore.get("backup_job_id") or custody.get("restore_project") != project or hashlib.sha256(custody_raw).hexdigest() != restore.get("rollback_custody_sha256"):
+        raise Failure("restore_current_authority_invalid")
+    _, pointer = restore_private_json(home, ".neoth-paperless-restore-active.v1.json")
+    authorized = pointer.get("authorized_volume_set_ids")
+    if set(pointer) != {"schema_version", "operation", "restore_job_id", "custody_name", "custody_sha256", "authorized_volume_set_ids"} or pointer.get("schema_version") != 1 or pointer.get("operation") != "paperless.restore" or pointer.get("restore_job_id") != restore.get("restore_job_id") or pointer.get("custody_name") != name or pointer.get("custody_sha256") != restore.get("rollback_custody_sha256") or not isinstance(authorized, list) or not authorized or authorized != sorted(authorized) or len(set(authorized)) != len(authorized) or any(not isinstance(value, str) or not VOLUME_SET_ID.fullmatch(value) for value in authorized) or volume_set_id not in authorized:
+        raise Failure("restore_current_authority_invalid")
+    _, history = restore_private_json(home, ".neoth-paperless-restore-history.v1.json")
+    history_authorized = history.get("authorized_volume_set_ids")
+    if set(history) != {"schema_version", "operation", "custody_names", "authorized_volume_set_ids"} or history.get("schema_version") != 1 or history.get("operation") != "paperless.restore" or not isinstance(history.get("custody_names"), list) or name not in history["custody_names"] or not isinstance(history_authorized, dict) or history_authorized.get(name) != authorized or volume_set_id not in history_authorized[name]:
+        raise Failure("restore_current_authority_invalid")
 
 
 def json_sha256(value: object) -> str:
@@ -1188,6 +1212,7 @@ def main() -> int:
         identities = reinstall_ids
         # Reinstall records the new container IDs in a new install receipt.
         install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
+        validate_current_restore_authority(home, restored, install_receipt_bytes, project, volume_set_id, args.port)
         receipt["reinstall_api"] = verify_api(args.port, configured_token(home))
         survived_id, survived_title, survived_sha256 = marker_metadata(args.port, configured_token(home), document_id)
         receipt["retained_document"] = {
@@ -1268,6 +1293,7 @@ def main() -> int:
         identities, volume_set_id, retired_ids, volumes_purged = fresh_ids, fresh_volume_set_id, (), False
         fresh_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         fresh_install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
+        validate_current_restore_authority(home, restored, fresh_install_receipt_bytes, project, volume_set_id, args.port)
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         retained_volumes(project, identities[3:], volume_set_id)

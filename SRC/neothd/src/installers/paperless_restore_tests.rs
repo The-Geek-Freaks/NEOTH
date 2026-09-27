@@ -833,6 +833,49 @@ async fn restore_stateful_tampered_retired_custody_blocks_recovery_before_fresh_
 async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect() {
     {
         let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut mismatch_fake = RestoreFake::new(false);
+        let backup = restore_fixture(home.path(), &c, &mut mismatch_fake).await;
+        let source_path = restore_state(home.path())
+            .join("backups")
+            .join(&backup.job_id)
+            .join("source.v1.json");
+        let mut source: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+        let current = source["restore_binding"]["environment_fingerprint"]
+            .as_str()
+            .unwrap();
+        let replacement = if current == "b".repeat(64) {
+            "c".repeat(64)
+        } else {
+            "b".repeat(64)
+        };
+        source["restore_binding"]["environment_fingerprint"] =
+            serde_json::Value::String(replacement);
+        std::fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let commands = mismatch_fake.commands.len();
+        let effects = mismatch_fake.effects();
+        assert!(matches!(
+            restore_at_with(
+                home.path(),
+                &c,
+                &backup.job_id,
+                &mut mismatch_fake,
+                &RestoreReady(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Command(
+                "paperless_restore_config_fingerprint_mismatch"
+            ))
+        ));
+        assert_eq!(
+            mismatch_fake.commands.len(),
+            commands,
+            "config mismatch blocks before engine selection"
+        );
+        assert_eq!(mismatch_fake.effects(), effects);
+    }
+    {
+        let (home, c, _) = super::super::tests::installed_home_for_uninstall_test().await;
         let mut fatal_fake = RestoreFake::new(false);
         let backup = restore_fixture(home.path(), &c, &mut fatal_fake).await;
         let original = fatal_fake.source_state();

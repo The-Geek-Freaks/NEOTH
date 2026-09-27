@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1713-W1714 Restore lifecycle/schema repairs (2026-09-27):**
+Product36342549396 ataf77c4b9 proves authenticated Restore, retained old source,
+Backup of the new generation and all three Repair paths; then its Uninstall
+validator rejected valid schema3. Original artifact10939357364/ZIP
+e8661df9f469210c798f80091dc9851a0ddf5cd02cc5cbc6016abcc1a4cedabc and29 producer
+bindings verified. Canary now binds Uninstall schema to exact install bytes
+and proves unchanged immutable Restore custody plus current pointer/history
+authorization after Reinstall and post-Purge successor installation.
+Native Group2005run36342050755 and Windows770run36342052916 atc6fab6ac both
+executed their complete selections with2 identical failures (2003/768 passed).
+Root retained the original cross-schema tampering assertion and repaired the
+production Uninstall schema-equality guard before any completed return or
+Docker selection, after permitted generation reset. Resolver format mutation
+uses non-hex bytes; a separate valid-hex mismatch regression verifies the real
+Restore boundary before any command/effect. Rust/Python reviews PASS. Original
+native receipt/Windows ZIP and10 internal Windows evidence hashes verified;
+this is failure diagnosis, not whole-cohort admission. Fresh hosted gates are
+required. ROAD1324/1077/245/2 unchanged; no local runtime/formatter/tests.
+Evidence: docs/verification/gold-wave1714-restore-lifecycle-repair.json.
+
 **W1711-W1712 Restore proof binding and Core accepted (2026-09-27):**
 Core36341427568 atd0bc24f2 passed slim Clippy, test-target typecheck and CLI
 build/export. Original artifact10938938927 ZIP2f78bdca85b83e06b1f617bb209d9aa505280f16258b9c3479cb4f7a3b22977d

@@ -1203,7 +1203,7 @@ async fn exact_restore_resolver_rejects_legacy_and_binding_or_archive_mutants_wi
                         serde_json::Value::String("paperless-oci-wrong".into());
                 } else {
                     source["restore_binding"]["environment_fingerprint"] =
-                        serde_json::Value::String("0".repeat(64));
+                        serde_json::Value::String("g".repeat(64));
                 }
                 std::fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
             }

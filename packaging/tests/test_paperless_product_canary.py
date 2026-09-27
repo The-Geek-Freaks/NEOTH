@@ -233,6 +233,20 @@ class CustodyTests(unittest.TestCase):
         with self.assertRaises(canary.Failure):
             canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
 
+    def test_restore_schema_three_uninstall_must_match_exact_active_install_schema(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        installed = install_receipt(2, generation); installed["schema_version"] = 3
+        ids = tuple(row["id"] for row in installed["containers"])
+        volumes = tuple(row["name"] for row in installed["volumes"])
+        install_raw = json.dumps(installed, sort_keys=True).encode("utf-8")
+        receipt = uninstall_receipt(); receipt["schema_version"] = 3
+        receipt["install_receipt_sha256"] = hashlib.sha256(install_raw).hexdigest()
+        receipt["retained_volume_snapshot"] = [{"logical_name": logical, "name": name, "project": installed["project"], "volume_set_id": generation} for (logical, _, _), name in zip(canary.VOLUMES, volumes, strict=True)]
+        canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
+        receipt["schema_version"] = 2
+        with self.assertRaises(canary.Failure):
+            canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
+
     def test_purge_preview_and_completion_bind_both_receipts_generation_and_six_volumes(self) -> None:
         project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
         install_raw, uninstall_raw = b"install-custody", b"final-uninstall-custody"
@@ -602,6 +616,28 @@ class CustodyTests(unittest.TestCase):
             foreign_restore = dict(restore); foreign_restore["restore_project"] = "foreign-restore-project"
             with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
                 canary.validate_restore_authority(home, foreign_restore, source_raw, snapshot_raw, active_raw, source_ids + tuple(row["name"] for row in source["volumes"]), active_ids + tuple(row["name"] for row in active["volumes"]), configs, 18001)
+            successor_generation = "fedcba98-1234-4234-8234-123456789abc"
+            successor = install_receipt(2, successor_generation); successor["schema_version"] = 3
+            successor_raw = json.dumps(successor, sort_keys=True).encode()
+            pointer["authorized_volume_set_ids"] = [restored_generation, successor_generation]
+            history["authorized_volume_set_ids"][name] = [restored_generation, successor_generation]
+            write(state / ".neoth-paperless-restore-active.v1.json", pointer); write(state / ".neoth-paperless-restore-history.v1.json", history)
+            with patch.object(canary, "project_name", return_value=project):
+                canary.validate_current_restore_authority(home, restore, successor_raw, project, successor_generation, 18001)
+            downgraded = dict(successor); downgraded["schema_version"] = 2
+            with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                canary.validate_current_restore_authority(home, restore, json.dumps(downgraded, sort_keys=True).encode(), project, successor_generation, 18001)
+            pointer["authorized_volume_set_ids"] = [restored_generation]; write(state / ".neoth-paperless-restore-active.v1.json", pointer)
+            with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                canary.validate_current_restore_authority(home, restore, successor_raw, project, successor_generation, 18001)
+            pointer["authorized_volume_set_ids"] = [restored_generation, successor_generation]; write(state / ".neoth-paperless-restore-active.v1.json", pointer)
+            history["authorized_volume_set_ids"][name] = [restored_generation]; write(state / ".neoth-paperless-restore-history.v1.json", history)
+            with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                canary.validate_current_restore_authority(home, restore, successor_raw, project, successor_generation, 18001)
+            history["authorized_volume_set_ids"][name] = [restored_generation, successor_generation]; write(state / ".neoth-paperless-restore-history.v1.json", history)
+            changed_custody = json.loads((state / name).read_text()); changed_custody["base_project"] = "foreign"; write(state / name, changed_custody)
+            with patch.object(canary, "project_name", return_value=project), self.assertRaises(canary.Failure):
+                canary.validate_current_restore_authority(home, restore, successor_raw, project, successor_generation, 18001)
 
     def test_repair_history_baseline_rebinds_after_intentional_recovery_commit(self) -> None:
         generation = "12345678-1234-4234-8234-123456789abc"

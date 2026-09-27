@@ -1242,6 +1242,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
         };
     }
     if custody.operation != "paperless.safe_uninstall"
+        || custody.schema_version != installed.schema_version
         || custody.project != installed.project
         || custody.install_receipt_sha256 != install_receipt_sha256
         || custody.original_container_ids != installed_ids
