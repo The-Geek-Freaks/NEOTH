@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1754/W1756 independent source reviews pass; hosted replacement and custody validation pending",
+  "status": "W1754/W1756 source reviewed; exact authenticated hosted format imported; hosted runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 256932,
-    "sha256": "A3BA7405F7F3B54F8F6466E82D5E7AA0EEE96A6F7E0C73E773004A3352772A3D"
+    "bytes": 256933,
+    "sha256": "61876F63C3789DEC6AC7E1C02F0452766F7100FEAC1019200B590ABCB731C204"
   },
   "sourceInputs": 1428,
   "requiredNativeTests": [
@@ -2406,67 +2406,67 @@
     {
       "test": "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA",
+      "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA",
+      "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA",
+      "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_ledgers_separate_account_containers_and_redacts_account_secrets",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_opaque_subtree_blocks_at_its_exact_account_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_never_binds_credential_bearing_string_urls",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::whatsapp_auth_dir_requires_the_legacy_string_shape",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_walks_typed_descendants_under_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::explicit_typed_leaves_take_precedence_over_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA",
+      "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -8256,19 +8256,19 @@
     {
       "test": "tests::selected_slack_account_is_exact_and_never_serializes_its_tokens",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::selected_slack_account_rejects_broad_or_ambiguous_shapes_without_tokens_in_error",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::selected_slack_account_keeps_the_exact_loaded_source_set",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -13356,25 +13356,25 @@
     {
       "test": "tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552",
+      "sourceSha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA",
+      "sourceSha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
       "junitClass": "neoth-openclaw-custody"
     }
   ],
@@ -54014,6 +54014,26 @@
       }
     ],
     "note": "Four source-custody cases and two per-boot token cases added. Actual diagnostic36357234491 proves token-write failure at second startup; private atomic replacement source reviewed. Original Channel16 remains admitted at ca2ad7f2; no full relink or product completion.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1756HostedCustodyFormat": {
+    "base": "9899347d6986aa2ab8a7b9849bb69ba8ef420b64",
+    "sources": [
+      {
+        "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+        "bytes": 105244,
+        "sha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C",
+        "blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+        "bytes": 22524,
+        "sha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD",
+        "blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8"
+      }
+    ],
+    "note": "Preflight36357927404 original artifact10944119847 ZIP7c01358db3ef14f7787149d44695296ce16d72b79766221a5e74159fc22460ad and internal checksums verified; both raw Git postimages exact. No local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

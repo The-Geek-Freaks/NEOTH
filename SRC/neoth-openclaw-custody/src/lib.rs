@@ -804,7 +804,9 @@ fn select_converted_relink_from_merged(
 fn validate_converted_relink_value(value: &Value, path: &mut Vec<PathPart>) -> Result<()> {
     match secret_ref_state(value) {
         SecretRefState::InvalidCandidate => {
-            anyhow::bail!("selected OpenClaw converted-relink account has an invalid secret reference")
+            anyhow::bail!(
+                "selected OpenClaw converted-relink account has an invalid secret reference"
+            )
         }
         SecretRefState::Valid => {
             let schema = schema_lookup(path, value)?;
@@ -2632,13 +2634,15 @@ mod tests {
         let cases = [
             (
                 "blank account",
-                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }".to_string(),
+                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }"
+                    .to_string(),
                 ConvertedRelinkChannel::IMessage,
                 " ",
             ),
             (
                 "missing account",
-                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }".to_string(),
+                "{ channels: { imessage: { accounts: { work: { cliPath: '/usr/bin/imsg' } } } } }"
+                    .to_string(),
                 ConvertedRelinkChannel::IMessage,
                 "missing",
             ),
@@ -2704,7 +2708,10 @@ mod tests {
             "{ imessage: { accounts: { work: { cliPath: '/usr/bin/imsg-a' } } } }",
         )
         .unwrap();
-        let path = write_config(temp.path(), "{ channels: { $include: './converted.json5' } }");
+        let path = write_config(
+            temp.path(),
+            "{ channels: { $include: './converted.json5' } }",
+        );
         let inventory = canonical_known_channel_inventory_sha256();
         let loaded = load_openclaw_document(&path, &inventory).unwrap();
         let selected = loaded

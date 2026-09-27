@@ -229,9 +229,7 @@ fn is_object_composition_member(template: &str) -> bool {
     template
         .strip_suffix(".id")
         .and_then(|parent| parent.rsplit('.').next())
-        .is_some_and(|component| {
-            component.contains("{anyOf:") && component.contains("{oneOf:")
-        })
+        .is_some_and(|component| component.contains("{anyOf:") && component.contains("{oneOf:"))
 }
 
 /// Account objects are structural records, not values copied into a target.
@@ -625,9 +623,11 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(matched.scope, SchemaScope::TypedLeaf);
-        assert!(matched
-            .path_template
-            .starts_with("accounts.{key}.serviceAccount{anyOf:2}{oneOf:"));
+        assert!(
+            matched
+                .path_template
+                .starts_with("accounts.{key}.serviceAccount{anyOf:2}{oneOf:")
+        );
 
         assert!(
             lookup(

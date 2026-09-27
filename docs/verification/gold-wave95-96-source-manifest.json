@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T23:09:45.6287590Z",
-  "validationStatus": "W1754/W1756 independent source reviews pass; hosted replacement and custody validation pending",
+  "capturedUtc": "2026-09-27T23:13:20.9389740Z",
+  "validationStatus": "W1754/W1756 source reviewed; exact authenticated hosted format imported; hosted runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3798,8 +3798,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 105137,
-      "sha256": "D2B867BC56C58E556C788B2DE658BB2A86CD249EF97D798963F7BC5E9471D552"
+      "bytes": 105244,
+      "sha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
@@ -3808,8 +3808,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "bytes": 22518,
-      "sha256": "088118603F3ABF5A41796473F4A1B0C882E4DE1CA7BBD1F08EA4C005DA1F32BA"
+      "bytes": 22524,
+      "sha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD"
     },
     {
       "path": "SRC/neothd-gui/AGENTS.md",
