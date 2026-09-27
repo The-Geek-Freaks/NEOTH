@@ -89,6 +89,15 @@ pub enum PaperlessAction {
         #[arg(value_name = "BACKUP_JOB_ID", value_parser = parse_paperless_backup_job_id)]
         backup_job_id: String,
     },
+    /// Preview returning to the exact previous generation retained by Restore.
+    Rollback {
+        /// Exact Restore job ID whose previous generation should be restored.
+        #[arg(value_name = "RESTORE_JOB_ID", value_parser = parse_paperless_restore_job_id)]
+        restore_job_id: String,
+        /// Exact preview phrase; without it, the active generation is unchanged.
+        #[arg(long, value_name = "PHRASE")]
+        confirm: Option<String>,
+    },
     /// Remove receipt-bound containers while retaining all data volumes and staged files.
     Uninstall,
     /// Preview permanent removal of the six volumes retained by a completed safe uninstall.
@@ -145,6 +154,19 @@ pub enum QuarantineAction {
         /// The uid returned by `quarantine list`.
         uid: String,
     },
+}
+
+fn parse_paperless_restore_job_id(value: &str) -> std::result::Result<String, String> {
+    let canonical = value
+        .strip_prefix("paperless-restore-")
+        .is_some_and(|id| {
+            crate::installers::paperless_staging::valid_volume_set_id(id)
+                && id.bytes().all(|byte| !byte.is_ascii_uppercase())
+        });
+    if !canonical {
+        return Err("expected a canonical paperless-restore UUID job ID".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_paperless_backup_job_id(value: &str) -> std::result::Result<String, String> {
@@ -217,6 +239,62 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
                         preview.confirmation
                     );
                 }
+            }
+        }
+        Ok(())
+    } else if let PaperlessAction::Rollback {
+        restore_job_id,
+        confirm,
+    } = &args.action
+    {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let (_, credentials) =
+            crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                .map_err(|_| {
+                    anyhow::anyhow!("Paperless rollback could not read the configured credentials")
+                })?;
+        if let Some(confirmation) = confirm {
+            let receipt =
+                crate::installers::paperless_lifecycle::paperless_restore::rollback_at(
+                    &home,
+                    &credentials,
+                    restore_job_id,
+                    confirmation,
+                )
+                .await
+                .map_err(anyhow::Error::new)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&receipt)?)
+                }
+                OutputFormat::Table => println!(
+                    "Paperless rollback: verified\nrestore job: {}\nrestored project: {}\nprevious source was running: {}\nauthenticated API ready: {}\nreplaced generation retained: {}",
+                    receipt.restore_job_id,
+                    receipt.rollback_project,
+                    receipt.old_source_was_running,
+                    receipt.authenticated_api_ready,
+                    receipt.current_project,
+                ),
+            }
+        } else {
+            let preview =
+                crate::installers::paperless_lifecycle::paperless_restore::rollback_preview_at(
+                    &home,
+                    &credentials,
+                    restore_job_id,
+                )
+                .map_err(anyhow::Error::new)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&preview)?)
+                }
+                OutputFormat::Table => println!(
+                    "Paperless rollback preview\ncurrent project: {}\nprevious project: {}\nTo restore this previous generation:\nneoth paperless rollback {} --confirm \"{}\"",
+                    preview.current_project,
+                    preview.rollback_project,
+                    preview.restore_job_id,
+                    preview.confirmation,
+                ),
             }
         }
         Ok(())
@@ -443,6 +521,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
         }
         PaperlessAction::Restore { .. } => {
             anyhow::bail!("Paperless restore requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Rollback { .. } => {
+            anyhow::bail!("Paperless rollback requires the asynchronous CLI entry")
         }
         PaperlessAction::Uninstall => {
             anyhow::bail!("Paperless uninstall requires the asynchronous CLI entry")
@@ -869,6 +950,57 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn paperless_rollback_cli_binds_restore_id_and_confirmation_without_target_overrides() {
+        use clap::Parser;
+        let job = "paperless-restore-12345678-1234-4234-8234-123456789abc";
+        let preview = crate::cli::Cli::try_parse_from(["neoth", "paperless", "rollback", job])
+            .unwrap();
+        assert!(matches!(
+            preview.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Rollback { restore_job_id, confirm: None },
+                ..
+            }) if restore_job_id == job
+        ));
+        let phrase = "ROLLBACK PAPERLESS RESTORE exact-custody exact-current-receipt ";
+        let confirmed = crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "rollback", job, "--confirm", phrase,
+        ])
+        .unwrap();
+        assert!(matches!(
+            confirmed.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Rollback { restore_job_id, confirm: Some(value) },
+                ..
+            }) if restore_job_id == job && value == phrase
+        ));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "paperless", "rollback"]).is_err());
+        for invalid in [
+            "latest".to_owned(),
+            format!("../{job}"),
+            format!("{job}/custody.json"),
+            job.to_uppercase(),
+            "paperless-restore-12345678-1234-4234-8234-123456789ABC".to_owned(),
+            format!("{job} "),
+            "paperless-restore-not-a-uuid".to_owned(),
+        ] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "paperless", "rollback", invalid.as_str(),
+            ])
+            .is_err());
+        }
+        for option in [
+            "--archive", "--container", "--volume", "--image", "--project",
+            "--directory", "--endpoint", "--token",
+        ] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "paperless", "rollback", job, option, "unowned",
+            ])
+            .is_err());
+        }
+    }
+
     #[test]
     fn paperless_purge_cli_preserves_exact_confirmation_without_target_overrides() {
         use clap::Parser;

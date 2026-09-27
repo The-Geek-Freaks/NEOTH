@@ -1,0 +1,54 @@
+{
+  "schema": "neoth-paperless-rollback-source/v1",
+  "status": "INDEPENDENT_STATIC_REVIEW_PASS_HOSTED_PENDING",
+  "base": "488b74b05c941de3b4ea0f10b2a7b62ef3d224c4",
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_rollback.rs",
+      "sha256": "e06591ef03ecea7cf8b14f4b05995e486ccbfb6e4de820e56663090a82f25802"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "765d62feecf236017aa8451f19e8065f139a081e648a7b8461f84572b2588741"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "be8075975c32f27ca8b9665e009105520207573b9f05785b955fc7a37121ffb5"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "d1a8b6297bedf2a42365a85c098c65a9edb6f776e743e1f431fbf47236c07f0b"
+    },
+    {
+      "path": "packaging/paperless_rollback_product_canary.py",
+      "sha256": "3fe2f20b89ad8d2040818e59b2818d40db1b3bd9aebfc6895ee66eded140d886"
+    },
+    {
+      "path": "packaging/tests/test_paperless_rollback_product_canary.py",
+      "sha256": "eca2af272d9a6312cd4b2db9f181585162ac6a01c240f36e974402a465e25225"
+    },
+    {
+      "path": ".github/workflows/paperless-rollback-product.yml",
+      "sha256": "cdc7a3235fb110012ea6c56a113632d177be1250888f7c2188245c71ffb6a9ff"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1726-rollback-review/REVIEW.md",
+      "sha256": "6e450289ea2402f4bd5c4a0a3bb25872c51364aac0c2f14ee3f68bc8574fec14"
+    },
+    {
+      "path": "work/gold-20260906/wave1726-rollback-review/REVIEW-PRODUCT.md",
+      "sha256": "608b07c2411810a49ac0c50daa97184d2d7f698e9d72d007dbf0ab79809a30ba"
+    }
+  ],
+  "native": {
+    "additional": 7,
+    "portable": 2222,
+    "group": 2012,
+    "windows": 777
+  },
+  "runtimeAccepted": false,
+  "localExecutableValidationRan": false,
+  "scope": "Same-instance selected Restore rollback; no Update, artifact-signature, release or parent-road acceptance"
+}

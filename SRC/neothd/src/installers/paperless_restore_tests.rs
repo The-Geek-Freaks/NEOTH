@@ -209,6 +209,11 @@ struct RestoreFake {
     stdin_failures: usize,
     stdin_calls: usize,
     stdin_fatal: bool,
+    rollback_ambiguous_action: Option<&'static str>,
+    rollback_inspect_wrong_project: bool,
+    rollback_inspect_missing_mount: bool,
+    rollback_inspect_wrong_port: bool,
+    rollback_inspect_wrong_old_port: bool,
 }
 impl RestoreFake {
     fn new(mixed: bool) -> Self {
@@ -237,6 +242,11 @@ impl RestoreFake {
             stdin_failures: 0,
             stdin_calls: 0,
             stdin_fatal: false,
+            rollback_ambiguous_action: None,
+            rollback_inspect_wrong_project: false,
+            rollback_inspect_missing_mount: false,
+            rollback_inspect_wrong_port: false,
+            rollback_inspect_wrong_old_port: false,
         }
     }
     fn count(&self, name: &str) -> usize {
@@ -294,15 +304,31 @@ impl RestoreFake {
             .get("linux/amd64")
             .ok_or(LifecycleError::Receipt)?;
         let source_project = project_name(cwd);
-        let project = self.id_projects.get(id).unwrap_or(&source_project);
+        let project = if self.rollback_inspect_wrong_project {
+            "foreign-paperless-project".to_owned()
+        } else {
+            self.id_projects.get(id).unwrap_or(&source_project).clone()
+        };
         let port = dotenv_port(
             &std::fs::read(cwd.join("paperless.env")).map_err(|_| LifecycleError::Io)?,
         )?;
+        let port = if self.rollback_inspect_wrong_port
+            || (self.rollback_inspect_wrong_old_port && id.starts_with('a'))
+        {
+            "1".to_owned()
+        } else {
+            port.to_string()
+        };
         let publishes = matches!(id.as_bytes().first(), Some(b'a' | b'1' | b'7'));
         let ports = if service == "webserver" && publishes {
             format!(r#"{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"{port}"}}]}}"#)
         } else {
             "{}".into()
+        };
+        let runtime_ports = if self.running.get(id).copied().unwrap_or(false) {
+            ports.clone()
+        } else {
+            "{}".to_owned()
         };
         let mounts = paperless_staging::PAPERLESS_VOLUMES
             .iter()
@@ -310,15 +336,16 @@ impl RestoreFake {
             .map(|v| {
                 format!(
                     r#"{{"Type":"volume","Name":"{}","Destination":"{}"}}"#,
-                    volume_name(project, v.logical_name),
+                    volume_name(&project, v.logical_name),
                     v.destination
                 )
             })
             .collect::<Vec<_>>()
             .join(",");
+        let mounts = if self.rollback_inspect_missing_mount { String::new() } else { mounts };
         Ok(CommandOutput {
             stdout: format!(
-                r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":{}}},"Config":{{"Labels":{{"com.docker.compose.project":"{project}","com.docker.compose.service":"{service}"}}}},"HostConfig":{{"PortBindings":{ports}}},"NetworkSettings":{{"Ports":{ports}}},"Mounts":[{mounts}]}}"#,
+                r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":{}}},"Config":{{"Labels":{{"com.docker.compose.project":"{project}","com.docker.compose.service":"{service}"}}}},"HostConfig":{{"PortBindings":{ports}}},"NetworkSettings":{{"Ports":{runtime_ports}}},"Mounts":[{mounts}]}}"#,
                 self.running.get(id).copied().unwrap_or(false)
             ),
         })
@@ -434,6 +461,12 @@ impl ComposeExecutor for RestoreFake {
             }
             if argv.iter().any(|x| x == "start") {
                 self.running.insert(id.clone(), true);
+            }
+            if self.rollback_ambiguous_action.is_some_and(|action| {
+                argv.iter().any(|argument| argument == action)
+            }) {
+                self.rollback_ambiguous_action = None;
+                return Err(LifecycleError::Command("fake_rollback_command_ambiguous"));
             }
         }
         Ok(CommandOutput {
@@ -1345,4 +1378,349 @@ async fn restore_stateful_create_dispatched_discovery_failure_holds_without_seco
     )
     .unwrap();
     assert_eq!(journal["phase"], "held");
+}
+
+#[tokio::test]
+async fn rollback_stateful_base_restores_exact_prior_files_and_removes_absent_pointer() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = RestoreFake::new(false);
+    let backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let restored = restore_at_with(
+        home.path(),
+        &credentials,
+        &backup.job_id,
+        &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let custody: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(restore_state(home.path()).join(&restored.rollback_custody_ref)).unwrap(),
+    )
+    .unwrap();
+    let prior_receipt: Vec<u8> =
+        serde_json::from_value(custody["prior_install_receipt_bytes"].clone()).unwrap();
+    let prior_snapshot: Vec<u8> =
+        serde_json::from_value(custody["prior_volume_set_snapshot_bytes"].clone()).unwrap();
+    let preview = rollback_preview_at(home.path(), &credentials, &restored.restore_job_id).unwrap();
+    let start = fake.commands.len();
+    let receipt = super::paperless_rollback::rollback_at_with(
+        home.path(),
+        &credentials,
+        &restored.restore_job_id,
+        &preview.confirmation,
+        &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(receipt.operation, "paperless.rollback");
+    assert!(receipt.old_source_was_running);
+    assert!(receipt.authenticated_api_ready);
+    assert_eq!(
+        std::fs::read(restore_state(home.path()).join(RECEIPT_NAME)).unwrap(),
+        prior_receipt
+    );
+    assert_eq!(
+        std::fs::read(restore_state(home.path()).join(VOLUME_SET_NAME)).unwrap(),
+        prior_snapshot
+    );
+    assert!(!restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME).exists());
+    let run = &fake.commands[start..];
+    assert!(run.iter().all(|argv| !argv.iter().any(|arg| matches!(arg.as_str(), "rm" | "cp" | "up"))));
+    assert_eq!(fake.source_state(), vec![true, true, true]);
+    let publication_path = restore_state(home.path()).join(".neoth-paperless-rollback-journal.v1.json");
+    let mut publication: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&publication_path).unwrap()).unwrap();
+    publication["phase"] = serde_json::Value::String("publication_dispatched".to_owned());
+    std::fs::write(&publication_path, serde_json::to_vec(&publication).unwrap()).unwrap();
+    let effects = fake.effects();
+    let repeated = super::paperless_rollback::rollback_at_with(
+        home.path(),
+        &credentials,
+        &restored.restore_job_id,
+        &preview.confirmation,
+        &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(repeated, receipt, "terminal reconciles a publication-dispatched mutable journal");
+    assert_eq!(fake.effects(), effects, "publication reentry emits no second effect");
+    let later_backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let later = restore_at_with(
+        home.path(),
+        &credentials,
+        &later_backup.job_id,
+        &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .expect("a committed rollback permits a later lifecycle operation");
+    let later_effects = fake.effects();
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(),
+            &credentials,
+            &restored.restore_job_id,
+            &preview.confirmation,
+            &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_terminal_stale"))
+    ));
+    assert_eq!(fake.effects(), later_effects, "stale terminal retry has no effects");
+    let later_preview = rollback_preview_at(home.path(), &credentials, &later.restore_job_id).unwrap();
+    assert!(super::paperless_rollback::rollback_at_with(
+        home.path(),
+        &credentials,
+        &later.restore_job_id,
+        &later_preview.confirmation,
+        &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .is_ok(), "a different later rollback remains allowed");
+}
+
+#[tokio::test]
+async fn rollback_stateful_nested_restores_raw_prior_pointer_and_refuses_pre_effect_mutants() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = RestoreFake::new(false);
+    let first_backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let first = restore_at_with(
+        home.path(), &credentials, &first_backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+    let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+    authorize_restore_successor_volume_set_at(
+        &owned,
+        &first.restore_project,
+        "00000000-0000-0000-0000-000000000001",
+    )
+    .unwrap();
+    let first_pointer = std::fs::read(restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME)).unwrap();
+    let second_backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let second = restore_at_with(
+        home.path(), &credentials, &second_backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let commands = fake.commands.len();
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &second.restore_job_id, "wrong-confirmation", &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_confirmation_invalid"))
+    ));
+    assert_eq!(fake.commands.len(), commands, "confirmation rejects before engine effects");
+    assert!(matches!(
+        rollback_preview_at(home.path(), &credentials, &first.restore_job_id),
+        Err(LifecycleError::Receipt)
+    ));
+    let mut changed_credentials = credentials.clone();
+    changed_credentials.paperless_token = Some(crate::secret::SecretString::from("different-token"));
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &changed_credentials, &second.restore_job_id, "wrong-confirmation", &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_config_mismatch"))
+    ));
+    assert_eq!(fake.commands.len(), commands, "selected custody and config reject before effects");
+    let preview = rollback_preview_at(home.path(), &credentials, &second.restore_job_id).unwrap();
+    let receipt_path = restore_state(home.path()).join(RECEIPT_NAME);
+    let original_receipt = std::fs::read(&receipt_path).unwrap();
+    let mut changed_receipt = original_receipt.clone();
+    changed_receipt.push(b'\n');
+    std::fs::write(&receipt_path, &changed_receipt).unwrap();
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &second.restore_job_id, &preview.confirmation, &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_confirmation_invalid"))
+    ));
+    std::fs::write(&receipt_path, original_receipt).unwrap();
+    assert_eq!(fake.commands.len(), commands, "stale confirmation rejects before effects");
+    super::paperless_rollback::rollback_at_with(
+        home.path(), &credentials, &second.restore_job_id, &preview.confirmation, &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME)).unwrap(),
+        first_pointer,
+        "nested rollback restores the custody-captured pointer bytes, including successors"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn rollback_stateful_readiness_failure_compensates_without_removing_retained_generations() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = RestoreFake::new(false);
+    let backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let restored = restore_at_with(
+        home.path(), &credentials, &backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let preview = rollback_preview_at(home.path(), &credentials, &restored.restore_job_id).unwrap();
+    let current_receipt = std::fs::read(restore_state(home.path()).join(RECEIPT_NAME)).unwrap();
+    let current_snapshot = std::fs::read(restore_state(home.path()).join(VOLUME_SET_NAME)).unwrap();
+    let current_pointer =
+        std::fs::read(restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME)).unwrap();
+    let current_ids = fake.active_ids.clone();
+    let start = fake.commands.len();
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+            &RestoreReady(AtomicBool::new(false)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_readiness_failed"))
+    ));
+    assert_eq!(std::fs::read(restore_state(home.path()).join(RECEIPT_NAME)).unwrap(), current_receipt);
+    assert_eq!(std::fs::read(restore_state(home.path()).join(VOLUME_SET_NAME)).unwrap(), current_snapshot);
+    assert_eq!(
+        std::fs::read(restore_state(home.path()).join(RESTORE_ACTIVE_POINTER_NAME)).unwrap(),
+        current_pointer
+    );
+    assert_eq!(fake.source_state(), vec![false, false, false]);
+    assert!(current_ids.iter().all(|id| fake.running[id]));
+    assert!(fake.commands[start..]
+        .iter()
+        .all(|argv| !argv.iter().any(|arg| matches!(arg.as_str(), "rm" | "cp" | "up"))));
+    let fresh_backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    assert!(restore_at_with(
+        home.path(), &credentials, &fresh_backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .is_ok(), "completed compensation permits a fresh lifecycle operation");
+}
+
+#[tokio::test]
+async fn rollback_stateful_ambiguous_stop_holds_and_blocks_replay_or_peer_restore() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = RestoreFake::new(false);
+    let backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+    let restored = restore_at_with(
+        home.path(), &credentials, &backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let preview = rollback_preview_at(home.path(), &credentials, &restored.restore_job_id).unwrap();
+    let stops = fake.count("stop");
+    fake.rollback_ambiguous_action = Some("stop");
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_stop_ambiguous"))
+    ));
+    let effects = fake.effects();
+    assert!(matches!(
+        super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_requires_recovery"))
+    ));
+    assert_eq!(fake.effects(), effects, "dispatched stop is never replayed");
+    assert_eq!(fake.count("stop"), stops + 1, "the ambiguous command itself is never retried");
+    let journal_path = restore_state(home.path()).join(".neoth-paperless-rollback-journal.v1.json");
+    let held = std::fs::read(&journal_path).unwrap();
+    let mut journal: serde_json::Value = serde_json::from_slice(&held).unwrap();
+    journal["restore_custody_sha256"] = serde_json::Value::String("0".repeat(64));
+    std::fs::write(&journal_path, serde_json::to_vec(&journal).unwrap()).unwrap();
+    assert!(matches!(super::paperless_rollback::rollback_at_with(
+        home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+        &RestoreReady(AtomicBool::new(true)),
+    )
+    .await, Err(LifecycleError::Receipt)));
+    assert_eq!(fake.effects(), effects, "tampered held authority cannot replay a command");
+    std::fs::write(&journal_path, held).unwrap();
+    assert!(matches!(
+        restore_at_with(
+            home.path(), &credentials, &backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+        )
+        .await,
+        Err(LifecycleError::Command("paperless_rollback_in_progress"))
+    ));
+}
+
+#[tokio::test]
+async fn rollback_stateful_preserves_partial_or_stopped_old_runtime_without_readiness_claim() {
+    for (fully_stopped, expected_old_state) in [
+        (false, vec![true, false, true]),
+        (true, vec![false, false, false]),
+    ] {
+        let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fake = RestoreFake::new(true);
+        let backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+        if fully_stopped {
+            for id in ['a', 'b', 'c'].map(|prefix| prefix.to_string().repeat(64)) {
+                fake.running.insert(id, false);
+            }
+        }
+        let restored = restore_at_with(
+            home.path(), &credentials, &backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        let preview = rollback_preview_at(home.path(), &credentials, &restored.restore_job_id).unwrap();
+        let receipt = super::paperless_rollback::rollback_at_with(
+            home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+            &RestoreReady(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(receipt.old_source_was_running, !fully_stopped);
+        assert!(!receipt.authenticated_api_ready, "stopped source never claims full readiness");
+        assert_eq!(fake.source_state(), expected_old_state);
+        assert!(fake.active_ids.iter().all(|id| !fake.running[id]));
+    }
+}
+
+#[tokio::test]
+async fn rollback_stateful_current_identity_port_and_mount_mutants_reject_before_effects() {
+    for mutant in ["project", "current_port", "mount", "old_port"] {
+        let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fake = RestoreFake::new(false);
+        let backup = restore_fixture(home.path(), &credentials, &mut fake).await;
+        let restored = restore_at_with(
+            home.path(), &credentials, &backup.job_id, &mut fake, &RestoreReady(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        let preview = rollback_preview_at(home.path(), &credentials, &restored.restore_job_id).unwrap();
+        match mutant {
+            "project" => fake.rollback_inspect_wrong_project = true,
+            "current_port" => fake.rollback_inspect_wrong_port = true,
+            "mount" => fake.rollback_inspect_missing_mount = true,
+            "old_port" => fake.rollback_inspect_wrong_old_port = true,
+            _ => unreachable!(),
+        }
+        let effects = fake.effects();
+        assert!(matches!(
+            super::paperless_rollback::rollback_at_with(
+                home.path(), &credentials, &restored.restore_job_id, &preview.confirmation, &mut fake,
+                &RestoreReady(AtomicBool::new(true)),
+            )
+            .await,
+            Err(LifecycleError::Receipt)
+        ), "{mutant}");
+        assert_eq!(fake.effects(), effects, "{mutant} rejects before Docker effects");
+    }
 }

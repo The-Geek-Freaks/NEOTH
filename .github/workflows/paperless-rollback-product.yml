@@ -1,0 +1,85 @@
+name: Paperless Restore rollback product canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paperless-rollback-product-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  product-canary:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare failure receipt before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/paperless-rollback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt"
+          mkdir -m 700 -p "$evidence"
+          printf '{"schema":1,"source_sha":"%s","outcome":"failed","failure_stage":"product_not_started","cleanup_proven":false,"docker_cleanup_proven":false,"isolated_home_removed":false}\n' "$GITHUB_SHA" > "$evidence/receipt.json"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Verify Restore helper boundaries
+        run: python3 -m unittest discover -s packaging/tests -p test_paperless_product_canary.py
+      - name: Verify Rollback helper boundaries
+        run: python3 -m unittest discover -s packaging/tests -p test_paperless_rollback_product_canary.py
+      - name: Restore CLI-reference Cargo checkpoint
+        id: cli-reference-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Build current public CLI
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked
+      - name: Save completed CLI-reference Cargo checkpoint
+        if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cli-reference-cargo-cache.outputs.cache-primary-key }}
+      - name: Run isolated compiled Paperless rollback lifecycle
+        shell: bash
+        env:
+          NO_COLOR: '1'
+          RUST_BACKTRACE: '0'
+        run: |
+          set -euo pipefail
+          canary_root="$RUNNER_TEMP/paperless-rollback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export NEOTH_HOME="$canary_root/neoth-home" W1146_ROOT="$RUNNER_TEMP"
+          mkdir -m 700 -p "$NEOTH_HOME"
+          python3 packaging/paperless_rollback_product_canary.py --binary SRC/target/debug/neoth --home "$NEOTH_HOME" --port 18001 --receipt "$canary_root/receipt/receipt.json"
+      - name: Upload redacted rollback product receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paperless-rollback-product-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paperless-rollback-${{ github.run_id }}-${{ github.run_attempt }}/receipt/receipt.json
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,30 @@
+{
+  "schema": "neoth-windows770-accepted/v1",
+  "capturedUtc": "2026-09-27T20:52:42.8045320Z",
+  "run": {
+    "id": 36346796236,
+    "status": "completed",
+    "conclusion": "success",
+    "headSha": "6483ba4a7f4ea713bccc452cf6096d04072a83f8",
+    "workflow": "Windows storage regressions",
+    "htmlUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36346796236"
+  },
+  "artifact": {
+    "id": 10941885700,
+    "zipSha256": "a1ba8a5eda84b7224a1202c4d810ff5f539bfa589cb2eb9124035b369a032faf",
+    "apiDigestMatchesLocalZip": true
+  },
+  "cohort": {
+    "selected": 770,
+    "passed": 770,
+    "failed": 0,
+    "missing": 0,
+    "exactPassingTerminalsVerified": 770,
+    "sourceGitBlobHashesChecked": 108,
+    "inputGitBlobHashesChecked": 13,
+    "evidenceFileHashesVerified": 10
+  },
+  "admissionSha256": "7eb52ca1c02b176c5dc3835cb1ccb4fe7a07b8f1f7487919211d7bea3a4ed7e0",
+  "localExecutableValidationRan": false,
+  "scope": "Exact Windows770 at6483ba4a; unpublished Paperless Rollback excluded"
+}

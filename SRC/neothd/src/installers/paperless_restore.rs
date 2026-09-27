@@ -247,7 +247,7 @@ pub(crate) fn restore_project_authorized_at(
 /// committed or completed known-source compensation.
 pub(crate) fn blocks_peer_operation(root: &OwnedPaperlessRoot) -> Result<bool, LifecycleError> {
     let state = lifecycle_state_dir(root)?;
-    match crate::skills::store::read_regular_file_bounded(
+    let restore_blocks = match crate::skills::store::read_regular_file_bounded(
         &state,
         std::ffi::OsStr::new(RESTORE_JOURNAL_NAME),
         &root.display.join(RECEIPT_DIR).join(RESTORE_JOURNAL_NAME),
@@ -271,7 +271,8 @@ pub(crate) fn blocks_peer_operation(root: &OwnedPaperlessRoot) -> Result<bool, L
             Ok(false)
         }
         Err(_) => Err(LifecycleError::Receipt),
-    }
+    }?;
+    Ok(restore_blocks || paperless_rollback::blocks_peer_operation(root)?)
 }
 
 /// Append one post-purge generation to a committed Restore lineage before its
@@ -487,6 +488,9 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
             .map_err(map_operation_lock_error)?;
     if paperless_backup::blocks_peer_operation(&owned)? {
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
+    }
+    if paperless_rollback::blocks_peer_operation(&owned)? {
+        return Err(LifecycleError::Command("paperless_rollback_in_progress"));
     }
 
     if let Some(mut existing) = read_restore_journal(&owned).map_err(restore_journal_stage_error)? {
@@ -1615,6 +1619,19 @@ fn read_active_restore_custody(
     Ok((pointer, custody_bytes, custody))
 }
 
+/// Read the current active Restore pointer as exact capability bytes.  Rollback
+/// uses these bytes only for compensation; the custody bytes returned by
+/// `read_active_restore_custody` are a different immutable object.
+fn read_active_pointer_bytes(root: &OwnedPaperlessRoot) -> Result<Vec<u8>, LifecycleError> {
+    let state = lifecycle_state_dir(root)?;
+    crate::skills::store::read_regular_file_bounded(
+        &state,
+        std::ffi::OsStr::new(RESTORE_ACTIVE_POINTER_NAME),
+        &root.display.join(RECEIPT_DIR).join(RESTORE_ACTIVE_POINTER_NAME),
+        RECEIPT_READ_LIMIT,
+    ).map_err(|_| LifecycleError::Receipt)
+}
+
 fn validate_restore_active_pointer(pointer: &RestoreActivePointer) -> Result<(), LifecycleError> {
     if pointer.schema_version != 1
         || pointer.operation != RESTORE_OPERATION
@@ -1842,6 +1859,36 @@ fn write_active_pointer_value(
     ensure_bound(root)
 }
 
+/// Restore the exact authority bytes captured by a later Restore custody.
+/// This intentionally accepts raw validated bytes: reserializing would change
+/// the capability that rollback promises to reinstate.
+fn restore_active_pointer_bytes(
+    root: &OwnedPaperlessRoot,
+    prior: &RestorePriorActivePointer,
+) -> Result<(), LifecycleError> {
+    let state = lifecycle_state_dir(root)?;
+    let name = std::ffi::OsStr::new(RESTORE_ACTIVE_POINTER_NAME);
+    let path = root.display.join(RECEIPT_DIR).join(RESTORE_ACTIVE_POINTER_NAME);
+    match prior {
+        RestorePriorActivePointer::Present { bytes, sha256 } => {
+            if restore_digest(bytes) != *sha256 { return Err(LifecycleError::Receipt); }
+            let pointer: RestoreActivePointer = serde_json::from_slice(bytes).map_err(|_| LifecycleError::Receipt)?;
+            validate_restore_active_pointer(&pointer)?;
+            crate::skills::store::atomic_write_private_child(&state, name, &path, bytes)
+                .map_err(|_| LifecycleError::Io)?;
+        }
+        RestorePriorActivePointer::Absent { absence } if absence == "not_found" => {
+            match state.remove_file(name) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(LifecycleError::Io),
+            }
+        }
+        _ => return Err(LifecycleError::Receipt),
+    }
+    ensure_bound(root)
+}
+
 fn active_restore_for_backup(
     root: &OwnedPaperlessRoot,
     backup_job_id: &str,
@@ -1936,6 +1983,10 @@ fn receipt_from_committed_custody(
         rollback_custody_sha256: restore_digest(&custody_bytes),
     })
 }
+
+#[path = "paperless_rollback.rs"]
+pub(crate) mod paperless_rollback;
+pub(crate) use paperless_rollback::{rollback_at, rollback_preview_at};
 
 #[cfg(test)]
 #[path = "paperless_restore_tests.rs"]

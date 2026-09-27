@@ -195,7 +195,7 @@ truth for that result; it does not close unrelated roadmap or release gates.
 The recursive OCI receipt records registry metadata and blob checksums. A
 checksum proves only the bytes that were checked; it is not an upstream
 signature or attestation. Upstream signature/attestation verification and
-admission remain open. Update and rollback remain open as well. The accepted
+admission remain open. Update and Rollback runtime admission remain open. The accepted
 Paperless lifecycle result above therefore does not authorize unimplemented
 update or rollback behavior, or claim artifact-signature verification.
 
@@ -271,6 +271,39 @@ history and retained volumes when investigating such a hold.
 
 This is a same-instance physical restore using the current pinned platform and
 configuration. It does not migrate PostgreSQL versions or transfer a backup to
-another instance. The Restore source and regression tests are being finalized;
-hosted compilation, native regressions and the real restored-document product
-canary remain required before runtime acceptance.
+another instance. GitHub product run `36346791804` at `6483ba4a` passed the authenticated
+Restore, PDF-marker, downstream lifecycle and full two-generation cleanup
+journey. Linux native run `36346794100` passed all 2,005 selected regressions.
+Their source-bound receipts are in `docs/verification/gold-wave1725-paperless-restore-admission.json`
+and `docs/verification/gold-wave1730-group2005-accepted.json`. These results do
+not establish Update or Rollback runtime acceptance.
+
+## Return to the generation retained by Restore
+
+`neoth --output json paperless rollback <RESTORE_JOB_ID>` previews the exact
+previous generation retained by that Restore. Use the returned phrase with
+`--confirm` to perform the rollback. The phrase binds the selected immutable
+Restore custody and the current installation receipt. Changed credentials,
+configuration, generation or receipt require a fresh applicable preview.
+Only Restore custody schema 2 carries the required prior authority proof.
+
+The command validates both generations before changing their running state.
+It stops and retains the current containers, then returns the previous ones
+to their originally captured running or stopped states. It deletes no
+container or volume. A fully running previous system must pass authenticated
+API readiness; a partly or fully stopped one reports readiness as false.
+The prior installation receipt, volume snapshot and active Restore pointer
+are restored from their exact saved bytes, including prior pointer absence.
+
+Interrupted commands with an uncertain Docker outcome remain held. Preserve
+the journals, immutable intent and custody records, and both generations for
+recovery. Known readiness or publication failures compensate to the verified
+current generation. A completed compensation permits fresh lifecycle work;
+it is not a successful rollback, and the same compensated job is not silently
+retried. Repeating a completed rollback returns its immutable receipt only
+while the restored authority and exact container states still apply. A later
+generation change makes that historical retry stale.
+
+The new Rollback source, behavioral fixtures and separate hosted product
+canary require GitHub compilation and actual lifecycle evidence before
+runtime acceptance. The previously accepted Restore gate does not cover it.

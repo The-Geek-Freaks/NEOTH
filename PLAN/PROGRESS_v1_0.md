@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1731 complete Paperless Rollback source; W1730 Windows770 admitted (2026-09-27):**
+Selected Restore-ID rollback now uses immutable initial authority, per-command
+intent and exact post-effect ID/image/label/mount/loopback/state verification.
+It retains both generations, restores exact receipt/snapshot/pointer bytes,
+compensates known failures, holds ambiguity without replay, reconciles an
+immutable terminal after interrupted publication, rejects stale terminal
+retries and permits later independent lifecycle work. CLI preview confirmation
+binds selected custody/current receipt. Six stateful cases plus one CLI case
+are added: Portable2222/Group2012/Windows777. Independent backend/product
+source reviews PASS; hosted formatting, compilation, native tests and actual
+Rollback lifecycle are pending. A separate hosted product workflow covers
+PDF preservation, repeat, Backup/Repair/Uninstall/Reinstall and full cleanup.
+Windows36346796236 at6483ba4a is admitted: original artifact10941885700,
+ZIPa1ba8a5eda84b7224a1202c4d810ff5f539bfa589cb2eb9124035b369a032faf,
+108 source/input blobs,13 additional input checks,10 evidence hashes and770
+exact single-pass terminals verified. Together with Group2005/Core/product,
+this completes the native Restore batch, not the new Rollback runtime gate.
+No parent ROAD closure;1324/1077/245/2 unchanged. Absolute local BSOD hold.
+Evidence: docs/verification/gold-wave1731-paperless-rollback-source.json
+and docs/verification/gold-wave1730-windows770-accepted.json.
+
 **W1730 exact Linux Group2005 admitted (2026-09-27):**
 Run36346794100 at6483ba4a passed all2005 selected tests. Root admitted original
 artifact/API ZIP digests,310 raw producer source blobs,10 additional inputs,
