@@ -306,7 +306,7 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
 
 
 def admitted_images() -> dict[str, tuple[str, str]]:
-    path = Path.cwd() / "docs/verification/paperless-oci-v1-3c8cabbaae8b77ae/recursive-blob-receipt.json"
+    path = Path.cwd() / "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json"
     try:
         receipt = json.loads(path.read_bytes())
     except Exception as error:
@@ -819,7 +819,7 @@ def source_hashes() -> dict[str, str]:
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
         "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/updater/process_containment.rs",
-        "docs/verification/paperless-oci-v1-3c8cabbaae8b77ae/recursive-blob-receipt.json",
+        "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
     )
     return {name: hashlib.sha256((Path.cwd() / name).read_bytes()).hexdigest() for name in names}
 

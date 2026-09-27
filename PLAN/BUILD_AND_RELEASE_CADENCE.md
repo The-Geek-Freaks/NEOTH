@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1658-W1659 Hosted Backup build and helper corrections (2026-09-27):**
+The first new gates stopped before product execution: Paperless helper38 found
+two physical receipt paths accidentally changed with the semantic contract ID,
+and a cleanup fake returned an incorrect volume name. n8n helper74 exposed one
+duplicated diagnostic category. All three narrow corrections were independently
+reviewed. Core36327666545 found the new Backup module lacked its local digest
+helper and used four nonexistent capability-directory sync methods. It now uses
+the local SHA256 helper and the existing capability-bound directory-sync API.
+Authenticated Preflight36327637916 artifact10934760673 supplied the exact
+six-file Rust format patch, applied to unchanged producer files. No formatter
+ran locally. Fresh hosted compile/helpers/product gates remain required; no
+new execution acceptance or ROAD closure is inferred from these source repairs.
+Evidence: docs/verification/gold-wave1658-1659-hosted-repairs.json.
 **W1649-W1656 Paperless Backup and retained Update lifecycle (2026-09-27):**
 Paperless now has a flag-free same-instance six-volume Backup command with
 private bounded streams, per-archive readback, exact original source-state

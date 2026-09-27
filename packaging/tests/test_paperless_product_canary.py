@@ -499,6 +499,6 @@ class CustodyTests(unittest.TestCase):
             calls.append(argv)
             if len(calls) == 1: raise canary.CommandFailure(argv, canary.bounded.Result(1, b"", b"paperless_command_failed", False, False))
             return b""
-        with patch.object(canary, "docker_json", return_value={}), patch.object(canary, "validate_container"), patch.object(canary, "validate_volume", side_effect=lambda *_: "owned"), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
+        with patch.object(canary, "docker_json", return_value={}), patch.object(canary, "validate_container"), patch.object(canary, "validate_volume", side_effect=lambda _value, project, logical, _generation: f"{project}_{logical}"), patch.object(canary, "run", side_effect=delete), patch.object(canary.bounded, "prove_absent"):
             self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, ids + volumes, 18001), (False, "cleanup_command_failed"))
         self.assertEqual(len(calls), len(ids) + len(volumes))

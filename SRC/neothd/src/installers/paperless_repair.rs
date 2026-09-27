@@ -788,13 +788,23 @@ fn read_repair_journal(
 }
 /// Backup may coexist only with a fully authenticated, committed repair
 /// journal.  A JSON `phase` string is never sufficient authority.
-pub(super) fn completed_repair_journal_is_valid(root: &OwnedPaperlessRoot) -> Result<bool, LifecycleError> {
-    let Some(journal) = read_repair_journal(root)? else { return Ok(true); };
-    if journal.phase != RepairPhase::Complete { return Ok(false); }
+pub(super) fn completed_repair_journal_is_valid(
+    root: &OwnedPaperlessRoot,
+) -> Result<bool, LifecycleError> {
+    let Some(journal) = read_repair_journal(root)? else {
+        return Ok(true);
+    };
+    if journal.phase != RepairPhase::Complete {
+        return Ok(false);
+    }
     // A completed journal is historical: later reinstall may legitimately
     // replace the active receipt. Validate its own before/after chain instead.
-    let current = journal.after_receipt_bytes.as_deref().ok_or(LifecycleError::Receipt)?;
-    let receipt: StoredPaperlessInstallReceipt = serde_json::from_slice(current).map_err(|_| LifecycleError::Receipt)?;
+    let current = journal
+        .after_receipt_bytes
+        .as_deref()
+        .ok_or(LifecycleError::Receipt)?;
+    let receipt: StoredPaperlessInstallReceipt =
+        serde_json::from_slice(current).map_err(|_| LifecycleError::Receipt)?;
     validate_install_receipt(&receipt, &root.display)?;
     validate_repair_journal(&journal, &receipt, current, &root.display)?;
     Ok(true)

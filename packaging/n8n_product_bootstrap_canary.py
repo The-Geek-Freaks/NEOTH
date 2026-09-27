@@ -164,7 +164,7 @@ class CommandFailure(Failure):
             "n8n_container_inspect_unknown", "n8n_managed_container_create_failed",
             "n8n_managed_container_identity_ambiguous",
             "n8n_preexisting_container_unowned_or_mismatch",
-            "n8n_managed_custody_mismatch", "n8n_retained_reinstall_already_active", "n8n_docker_wait_failed",
+            "n8n_managed_custody_mismatch", "n8n_docker_wait_failed",
             "n8n_repair_binding_compare_and_set_failed", "n8n_repair_binding_missing",
             "n8n_repair_config_custody_mismatch", "n8n_repair_conflicting_custody",
             "n8n_repair_create_id_unwitnessed", "n8n_repair_create_outcome_uncertain",

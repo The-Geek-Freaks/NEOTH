@@ -757,12 +757,10 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
         .unwrap()
         .volume;
 
-    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(),
-        &mut runner,
-    )
-    .await
-    .unwrap();
+    let uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     assert_eq!(uninstall.state, JobState::Ready);
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let reinstall = super::super::install_retained_at_with(
@@ -806,12 +804,10 @@ async fn update_uninstall_manifest_tampering_blocks_retained_reinstall_before_ef
     )
     .await
     .unwrap();
-    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(),
-        &mut runner,
-    )
-    .await
-    .unwrap();
+    let uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     let path = home
         .path()
         .join(format!("n8n-uninstall-{}.receipt.json", uninstall.job_id));

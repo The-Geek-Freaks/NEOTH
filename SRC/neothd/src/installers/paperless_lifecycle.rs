@@ -15,13 +15,16 @@ use std::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 use zeroize::Zeroizing;
 
-#[path = "paperless_operation_lock.rs"]
-mod paperless_operation_lock;
 #[path = "paperless_backup.rs"]
 pub(crate) mod paperless_backup;
+#[path = "paperless_operation_lock.rs"]
+mod paperless_operation_lock;
 
 #[cfg(windows)]
 use crate::connectors::local_import::{
@@ -389,7 +392,9 @@ pub trait ComposeExecutor: Send {
         _output: std::fs::File,
         _limit: u64,
     ) -> Result<StreamedArchive, LifecycleError> {
-        Err(LifecycleError::Command("paperless_backup_stream_unsupported"))
+        Err(LifecycleError::Command(
+            "paperless_backup_stream_unsupported",
+        ))
     }
 }
 #[async_trait]
@@ -488,20 +493,44 @@ impl ComposeExecutor for DockerExecutor {
         let mut child = command
             .spawn()
             .map_err(|_| LifecycleError::Command("paperless_backup_stream_spawn_failed"))?;
-        let mut stdout = child.stdout.take().ok_or(LifecycleError::Command("paperless_backup_stream_capture_failed"))?;
-        let mut stderr = child.stderr.take().ok_or(LifecycleError::Command("paperless_backup_stream_capture_failed"))?;
+        let mut stdout = child.stdout.take().ok_or(LifecycleError::Command(
+            "paperless_backup_stream_capture_failed",
+        ))?;
+        let mut stderr = child.stderr.take().ok_or(LifecycleError::Command(
+            "paperless_backup_stream_capture_failed",
+        ))?;
         let mut file = tokio::fs::File::from_std(output);
         // Keep both pipes draining independently.  Do not use `join!` here:
         // a failed writer can otherwise stop stdout consumption while Docker is
         // blocked trying to write it, leaving the child unreaped forever.
         let mut copy = tokio::spawn(async move {
-                let mut hasher = Sha256::new(); let mut total = 0u64; let mut buf = [0u8; 16 * 1024];
-                loop { let n = stdout.read(&mut buf).await.map_err(|_| LifecycleError::Command("paperless_backup_stream_read_failed"))?;
-                    if n == 0 { break; } total = total.checked_add(n as u64).ok_or(LifecycleError::Command("paperless_backup_stream_limit"))?;
-                    if total > limit { return Err(LifecycleError::Command("paperless_backup_stream_limit")); }
-                    file.write_all(&buf[..n]).await.map_err(|_| LifecycleError::Io)?; hasher.update(&buf[..n]); }
-                file.sync_all().await.map_err(|_| LifecycleError::Io)?;
-                Ok::<_, LifecycleError>(StreamedArchive { bytes: total, sha256: format!("{:x}", hasher.finalize()) })
+            let mut hasher = Sha256::new();
+            let mut total = 0u64;
+            let mut buf = [0u8; 16 * 1024];
+            loop {
+                let n = stdout
+                    .read(&mut buf)
+                    .await
+                    .map_err(|_| LifecycleError::Command("paperless_backup_stream_read_failed"))?;
+                if n == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(n as u64)
+                    .ok_or(LifecycleError::Command("paperless_backup_stream_limit"))?;
+                if total > limit {
+                    return Err(LifecycleError::Command("paperless_backup_stream_limit"));
+                }
+                file.write_all(&buf[..n])
+                    .await
+                    .map_err(|_| LifecycleError::Io)?;
+                hasher.update(&buf[..n]);
+            }
+            file.sync_all().await.map_err(|_| LifecycleError::Io)?;
+            Ok::<_, LifecycleError>(StreamedArchive {
+                bytes: total,
+                sha256: format!("{:x}", hasher.finalize()),
+            })
         });
         let mut stderr = tokio::spawn(async move { read_bounded(&mut stderr).await });
         let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
@@ -532,13 +561,17 @@ impl ComposeExecutor for DockerExecutor {
         match result {
             Ok(Ok(stream)) => Ok(stream),
             Ok(Err(error)) => {
-                copy.abort(); stderr.abort();
-                let _ = child.kill().await; let _ = child.wait().await;
+                copy.abort();
+                stderr.abort();
+                let _ = child.kill().await;
+                let _ = child.wait().await;
                 Err(error)
             }
             Err(_) => {
-                copy.abort(); stderr.abort();
-                let _ = child.kill().await; let _ = child.wait().await;
+                copy.abort();
+                stderr.abort();
+                let _ = child.kill().await;
+                let _ = child.wait().await;
                 Err(LifecycleError::Command("paperless_backup_stream_timeout"))
             }
         }
@@ -2933,11 +2966,16 @@ mod tests {
         ) -> Result<StreamedArchive, LifecycleError> {
             self.commands.push(argv.to_vec());
             let bytes = b"paperless-volume-fixture";
-            if bytes.len() as u64 > limit { return Err(LifecycleError::Command("fake_stream_limit")); }
+            if bytes.len() as u64 > limit {
+                return Err(LifecycleError::Command("fake_stream_limit"));
+            }
             use std::io::Write as _;
             output.write_all(bytes).map_err(|_| LifecycleError::Io)?;
             output.sync_all().map_err(|_| LifecycleError::Io)?;
-            Ok(StreamedArchive { bytes: bytes.len() as u64, sha256: format!("{:x}", Sha256::digest(bytes)) })
+            Ok(StreamedArchive {
+                bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+            })
         }
     }
 

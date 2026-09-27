@@ -1,0 +1,37 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1658-W1659",
+  "capturedUtc": "2026-09-27T15:01:37.7446484Z",
+  "producer": "2e3f99c61e1e2fc16fceb4ca03e9f0e5ffdc848c",
+  "format": {
+    "run": 36327637916,
+    "artifact": 10934760673,
+    "zipSha256": "8db9acc18585ddabae5a904f6dffce8b370815284633f92a1e161fee869f82c1",
+    "patchSha256": "2bd83d703b8fc52c02df0bdb2892c5a89bfea9d4decbee447bcec04d40866e30",
+    "files": 6,
+    "sourceHeadAndOriginalZipVerified": true
+  },
+  "helperFailures": {
+    "paperlessRun": 36327668639,
+    "paperlessTests": 38,
+    "errors": 1,
+    "failures": 1,
+    "n8nRun": 36327670643,
+    "n8nTests": 74,
+    "n8nFailures": 1,
+    "repairs": [
+      "restore two physical OCI receipt paths independently of semantic contract ID",
+      "cleanup fake returns exact validated volume name",
+      "emit retained-already-active marker once"
+    ]
+  },
+  "core": {
+    "run": 36327666545,
+    "failure": "missing local digest helper at10 sites, unsupported capability directory sync at4 sites, unformatted if layout lint",
+    "repair": "local SHA256 helper, existing capability sync_parent_directory at4 sites, imported hosted formatter"
+  },
+  "review": "W1658 independent Python delta approval; W1659 compiler-scope repair checked by Root",
+  "localExecutableValidationRan": false,
+  "newHostedExecution": "pending",
+  "roadClosed": 0
+}
