@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T18:37:01.3005648Z",
-  "validationStatus": "W1708 source reviewed; Core4e207896 accepted and reference imported; fresh runtime/native pending",
+  "capturedUtc": "2026-09-27T18:40:42.7706500Z",
+  "validationStatus": "W1710 exact hosted readiness formatting imported; Core/product pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3528,18 +3528,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 471502,
-      "sha256": "CC556C4DDB7EC2B0B18A480FF1C3982611BA8FA7220B1F936F31A4E5B3780265"
+      "bytes": 471897,
+      "sha256": "65D91DB1041E94F3AE1AC09D6708B37BBE6EBB4475C559F162670F7394D2028F"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1490433,
-      "sha256": "258EDEDA201E7E22AEF96272429C49221EF89BF8673017EEF51EC76FAF3C5360"
+      "bytes": 1490828,
+      "sha256": "7D4836E7C660B18C87CA6C48BA23EE835DBAC06CB9EB0751DFDE6BC2DBF48732"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2100956,
-      "sha256": "D3B09278A3C126147D1C41D7482B48A5BBD9CFD9A8A39E3DBAD03AE3F79DE757"
+      "bytes": 2101351,
+      "sha256": "F3D8CB88A2DAF5D7B276998FEA866C5650F2934CF2056A3EBA6513FA78AFC8BA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5603,8 +5603,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
-      "bytes": 37920,
-      "sha256": "0F796B4CA2589594DD4DB2A45E48003A20A5204352A6349A3C62E60445C4DD87"
+      "bytes": 37950,
+      "sha256": "EFE1102E9AF27BAA4275090B9ED2CB700BC8C07E3D9A933579BA7ED9DD2CC6ED"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore.rs",

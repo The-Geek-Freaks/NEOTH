@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1710 Hosted readiness-test formatting (2026-09-27):** Exact single-pattern
+rustfmt patch imported from Preflight36341427063 atd0bc24f2. Original
+artifact10938239787 ZIP3247828dc752c7e1f3955ffe6b98fbf4cef6fa221b9f6d9abfebf1be5be13619,
+producer and internal hashes verified. Core36341427568 and Product36341429567
+continue on that semantic source. No local formatter, runtime or ROAD closure.
+
 **W1708-W1709 Restore startup and Core evidence (2026-09-27):**
 Core36340155292 at4e207896 passed slim Clippy, native-test typecheck and public
 CLI build. Original generated-reference artifact10939065647/ZIP

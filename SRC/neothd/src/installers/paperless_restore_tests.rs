@@ -876,7 +876,9 @@ async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have
                 &RestoreReady(AtomicBool::new(true))
             )
             .await,
-            Err(LifecycleError::Command("paperless_restore_candidate_probe_not_ready"))
+            Err(LifecycleError::Command(
+                "paperless_restore_candidate_probe_not_ready"
+            ))
         ));
         assert!(
             (45..=46).contains(&deadline_fake.stdin_calls),
