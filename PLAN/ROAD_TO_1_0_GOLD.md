@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1668 Hosted formatting (2026-09-27):**
+Preflight36329532317 at70e8b768 provided original artifact10935118293,
+ZIP SHA25649013b1a04d74e1d2aa9f850fb97e871c05190b9b04ba103477769c4f7801dc3.
+Its exact three-file rustfmt patch and producer/source identities were verified
+and imported. Core36329532560/Paperless36329534029/Update36329535494 remain the
+active semantic gates at70e8b768; native dispatch still waits for generated CLI
+reference. W1666 corrected Windows paths relative to SRC before any dispatch.
+No local formatter or runtime ran; no ROAD closure or new product acceptance.
 **W1660-W1665 Backup source custody and repeated Update retention (2026-09-27):**
 Each Paperless Backup now retains private immutable source.v1.json with exact
 raw install-receipt and volume-snapshot bytes. Missing/tampered completed source

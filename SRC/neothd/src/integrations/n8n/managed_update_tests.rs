@@ -793,16 +793,15 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
         .and_then(|source| source.update.clone())
         .unwrap();
 
-    let second_uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(),
-        &mut runner,
-    )
-    .await
-    .unwrap();
+    let second_uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     assert_eq!(second_uninstall.state, JobState::Ready);
-    let second_receipt = home
-        .path()
-        .join(format!("n8n-uninstall-{}.receipt.json", second_uninstall.job_id));
+    let second_receipt = home.path().join(format!(
+        "n8n-uninstall-{}.receipt.json",
+        second_uninstall.job_id
+    ));
     let second_view: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&second_receipt).unwrap()).unwrap();
     assert_eq!(
@@ -849,8 +848,14 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
             .retained_reinstall
             .as_ref()
             .and_then(|source| source.update.as_ref())
-            .map(|source| (source.update_job_id.as_str(), source.update_manifest_sha256.as_str())),
-        Some((expected_update.update_job_id.as_str(), expected_update.update_manifest_sha256.as_str()))
+            .map(|source| (
+                source.update_job_id.as_str(),
+                source.update_manifest_sha256.as_str()
+            )),
+        Some((
+            expected_update.update_job_id.as_str(),
+            expected_update.update_manifest_sha256.as_str()
+        ))
     );
 }
 
@@ -869,12 +874,10 @@ async fn tampered_retained_update_provenance_blocks_second_reinstall_before_effe
     )
     .await
     .unwrap();
-    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(),
-        &mut runner,
-    )
-    .await
-    .unwrap();
+    let uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     super::super::install_retained_at_with(
         home.path(),
@@ -887,15 +890,14 @@ async fn tampered_retained_update_provenance_blocks_second_reinstall_before_effe
     )
     .await
     .unwrap();
-    let second_uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
-        home.path(),
-        &mut runner,
-    )
-    .await
-    .unwrap();
-    let path = home
-        .path()
-        .join(format!("n8n-uninstall-{}.receipt.json", second_uninstall.job_id));
+    let second_uninstall =
+        super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
+    let path = home.path().join(format!(
+        "n8n-uninstall-{}.receipt.json",
+        second_uninstall.job_id
+    ));
     let mut receipt: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     receipt["update"]["source_archive_sha256"] = serde_json::Value::String("0".repeat(64));

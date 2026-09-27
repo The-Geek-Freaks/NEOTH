@@ -154,9 +154,15 @@ async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
                         return Err(LifecycleError::Receipt);
                     }
                     return restore_then_hold(
-                        executor, &engine, &owned, &binding, &install, &mut c,
+                        executor,
+                        &engine,
+                        &owned,
+                        &binding,
+                        &install,
+                        &mut c,
                         "paperless_backup_source_companion_invalid",
-                    ).await;
+                    )
+                    .await;
                 }
             }
             c
@@ -1017,7 +1023,8 @@ fn read_source_companion(
         RECEIPT_READ_LIMIT,
     )
     .map_err(|_| LifecycleError::Receipt)?;
-    let source: BackupSource = serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
+    let source: BackupSource =
+        serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
     if source.schema_version != 1
         || source.operation != "paperless.backup.source"
         || source.job_id != custody.job_id
@@ -1255,8 +1262,7 @@ fn read_receipt(
     snapshot: &[u8],
 ) -> Result<PaperlessBackupReceipt, LifecycleError> {
     let source = read_source_companion(root, c)?;
-    if source.install_receipt_bytes != install_bytes
-        || source.volume_set_snapshot_bytes != snapshot
+    if source.install_receipt_bytes != install_bytes || source.volume_set_snapshot_bytes != snapshot
     {
         return Err(LifecycleError::Receipt);
     }

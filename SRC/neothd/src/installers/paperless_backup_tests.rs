@@ -416,14 +416,9 @@ async fn backup_readiness_waits_after_source_restart_and_committed_receipt_reent
     custody["pending_start"] = serde_json::Value::Null;
     std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
     let committed_reentry = EventuallyReady::new();
-    let resumed = backup_at_with(
-        home.path(),
-        &credentials,
-        &mut fake,
-        &committed_reentry,
-    )
-    .await
-    .unwrap();
+    let resumed = backup_at_with(home.path(), &credentials, &mut fake, &committed_reentry)
+        .await
+        .unwrap();
     assert_eq!(resumed.job_id, completed.job_id);
     assert_eq!(committed_reentry.calls(), 3);
     assert_eq!(fake.streams(), streams);
@@ -909,14 +904,16 @@ async fn completed_backup_accepts_changed_active_receipt_and_preserves_first_imm
         std::fs::read(&first_receipt_path).unwrap(),
         first_receipt_bytes
     );
-    assert_eq!(std::fs::read(first_source_path).unwrap(), first_source_bytes);
+    assert_eq!(
+        std::fs::read(first_source_path).unwrap(),
+        first_source_bytes
+    );
     assert_eq!(fake.streams(), 12);
 }
 #[tokio::test]
 async fn completed_backup_rejects_missing_tampered_or_foreign_source_companion_before_effects() {
     for mutation in ["missing", "tampered", "foreign"] {
-        let (home, credentials, _) =
-            super::super::tests::installed_home_for_uninstall_test().await;
+        let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
         let mut fake = StatefulBackupExecutor::new(true);
         let receipt = backup_at_with(
             home.path(),
@@ -933,10 +930,8 @@ async fn completed_backup_rejects_missing_tampered_or_foreign_source_companion_b
             "foreign" => {
                 let mut source: serde_json::Value =
                     serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-                source["job_id"] = serde_json::Value::String(format!(
-                    "paperless-backup-{}",
-                    "f".repeat(64)
-                ));
+                source["job_id"] =
+                    serde_json::Value::String(format!("paperless-backup-{}", "f".repeat(64)));
                 std::fs::write(&path, serde_json::to_vec(&source).unwrap()).unwrap();
             }
             _ => unreachable!(),
@@ -958,7 +953,7 @@ async fn completed_backup_rejects_missing_tampered_or_foreign_source_companion_b
 }
 #[tokio::test]
 async fn source_restored_with_receipt_but_missing_source_companion_rejects_without_recreation_or_effects()
-{
+ {
     let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
     let mut fake = StatefulBackupExecutor::new(true);
     let completed = backup_at_with(
@@ -977,13 +972,14 @@ async fn source_restored_with_receipt_but_missing_source_companion_rejects_witho
     std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
     let source_path = source_path(home.path(), &completed.job_id);
     std::fs::remove_file(&source_path).unwrap();
-    assert!(home
-        .path()
-        .join("paperless")
-        .join("state/backups")
-        .join(&completed.job_id)
-        .join("receipt.v1.json")
-        .is_file());
+    assert!(
+        home.path()
+            .join("paperless")
+            .join("state/backups")
+            .join(&completed.job_id)
+            .join("receipt.v1.json")
+            .is_file()
+    );
     let streams = fake.streams();
     let stops = fake.commands("stop");
     let starts = fake.commands("start");
@@ -1007,8 +1003,7 @@ async fn source_restored_with_receipt_but_missing_source_companion_rejects_witho
 #[tokio::test]
 async fn corrupt_interrupted_source_companion_restores_then_holds_without_copy_replay() {
     for phase in ["stopped", "archive_verified"] {
-        let (home, credentials, _) =
-            super::super::tests::installed_home_for_uninstall_test().await;
+        let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
         let mut fake = StatefulBackupExecutor::new(true);
         let completed = backup_at_with(
             home.path(),
@@ -1038,7 +1033,9 @@ async fn corrupt_interrupted_source_companion_restores_then_holds_without_copy_r
         std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
         let source_path = source_path(home.path(), &completed.job_id);
         std::fs::write(&source_path, b"{}\n").unwrap();
-        fake.running.values_mut().for_each(|running| *running = false);
+        fake.running
+            .values_mut()
+            .for_each(|running| *running = false);
         let streams = fake.streams();
         let stops = fake.commands("stop");
         let starts = fake.commands("start");
