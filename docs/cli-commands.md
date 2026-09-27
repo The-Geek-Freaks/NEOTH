@@ -3242,6 +3242,10 @@ Paperless authenticated API status, OCR ingest, consult and quarantine
 - `--vault <PATH>` — Override the vault root. Defaults to `~/Documents/NEOTH-Vault`
 - `--subdir <NAME>` — Override the subdir inside the vault. Defaults to `NEOTH`
 
+### `neoth paperless backup`
+
+Capture a receipt-bound, same-instance backup of the six managed volumes. The command accepts no archive path, container, image, or credential override
+
 ### `neoth paperless consult`
 
 PL-03 keyword scan — find paperless docs that match an operator question

@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 249026,
-    "sha256": "1815D8CA3837ED89CE15D306E3D9BFC29EF369C2FC77A054B4286C5B27DA9521"
+    "bytes": 249225,
+    "sha256": "2BC05AAB1C52E4102F82727BBA34BB9804D0108F3E66CE62BBDD153597194810"
   },
-  "sourceInputs": 1387,
+  "sourceInputs": 1388,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -51845,6 +51845,56 @@
       }
     ],
     "note": "Original artifact10935118293 at70e8b768 authenticated; exact3-file patch F88BA3A9F0841770BFC9DBCBE0A2873599153090EFBFC271C650BEC3F2EDA4A2 imported. No local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1671BackupReferenceAndHistory": {
+    "base": "888db33c0ec6ea66cfbac63ebe46b3929a554bbd",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 256495,
+        "sha256": "E97FD1DC3167A524D451D2FC69EF6DE1B4E0BA2D2701CC30489B5F2E324F1DF5",
+        "blob": "4876b77c7473d09cb8f6207a490bf28b0260dfc5"
+      },
+      {
+        "path": "docs/verification/gold-wave1670-1671-backup-product-history.json",
+        "bytes": 1308,
+        "sha256": "7C7E61DB33587F7D6DD4AD42E63596FD6BD4E0542B4BDF743617C2F9F914F268",
+        "blob": "308fa8820e58911daa34c0b69c906d761577719b"
+      },
+      {
+        "path": "packaging/paperless_product_canary.py",
+        "bytes": 82195,
+        "sha256": "21BC2E84C901E8A463CFF72A2874B99807CD1143430E3C120146BE8C6D8E0A56",
+        "blob": "adcdbabb779319969d381f03f58c46147bfa3e24"
+      },
+      {
+        "path": "packaging/tests/test_paperless_product_canary.py",
+        "bytes": 47194,
+        "sha256": "4B028733316837A6FADE7D8B9D38B1BAF0770B415601147784C080A58F7DA219",
+        "blob": "c7b9189db7b10071bf7c68a26384cf74cf33a9c5"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 459644,
+        "sha256": "B914F1423D13C893E7BB5D6552461A4AF924C52372B90B7EA8E48BD59D06F521",
+        "blob": "46a4178375122657777fded238f8c9ccd8bcde79"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1478575,
+        "sha256": "6B0F9FBB91E97201740E5E94C21B9E904EBCAA442DE03C2A6D4890C3BB38D364",
+        "blob": "095d9d3802d4bf7cb23f69bc5b5a65e6d48d5548"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2089098,
+        "sha256": "B6A99D5A9782DD8D62CD555F0F20D5210111F365E1860966715B1A508BA77ACB",
+        "blob": "0b8cb73a0177dcbb84b7390cef2ba7fa63185942"
+      }
+    ],
+    "note": "Authentic70e8b768 CLI generated reference imported; Paperless partial Backup evidence authenticated; post-recovery canary baseline corrected with immutable snapshot/credential checks and independent rereview. Full product pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

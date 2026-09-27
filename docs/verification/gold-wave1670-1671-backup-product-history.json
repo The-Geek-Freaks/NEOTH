@@ -1,0 +1,38 @@
+{
+  "schema": "neoth-gold-product-history-repair/v1",
+  "batch": "W1670-W1671",
+  "producer": "70e8b768fe2fa95adacb8e92a0cf6f4ffa1615c4",
+  "paperless": {
+    "repair": "Rebind only validated install receipt after intentional recovery, require snapshot/credentials equal pre-Backup bytes",
+    "backup": [
+      "running6 archives",
+      "stopped6 archives",
+      "media marker bytes",
+      "source state restored/preserved",
+      "controlled repair recovery"
+    ],
+    "zipSha256": "2cbdff9431555e0cf2f15e3b07f33c9ccd9afbac91572c9508f66b82b9849af6",
+    "rawSourceBindings": 27,
+    "review": "W1637 independent Root-delta rereview approved",
+    "run": 36329534029,
+    "artifact": 10935072653,
+    "completeProductAccepted": false,
+    "failure": "repair_healthy_mutated_history"
+  },
+  "cliReference": {
+    "newLines": 4,
+    "run": 36329532560,
+    "imported": true,
+    "zipSha256": "bcd29828bec092122267e0f776d1d4d14f684497656384d538f0dbfd568c640e",
+    "artifact": 10935382723,
+    "referenceSha256": "E97FD1DC3167A524D451D2FC69EF6DE1B4E0BA2D2701CC30489B5F2E324F1DF5"
+  },
+  "core": {
+    "slimProductionClippy": "success",
+    "publicCliBuild": "success",
+    "nativeTestTypecheck": "success",
+    "workspaceClippy": "pending"
+  },
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

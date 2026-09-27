@@ -634,6 +634,22 @@ def persisted_volume_set_snapshot(home: Path, project: str, volume_set_id: str) 
     return raw
 
 
+def repair_history_baseline(home: Path, expected: tuple[str, dict[str, str], tuple[str, ...], str], port: int, prior_snapshot: bytes, prior_credentials: bytes) -> tuple[bytes, bytes, bytes]:
+    """Capture the exact post-recovery authority for subsequent Repair checks."""
+    project, _, _, volume_set_id = expected
+    credentials = home / "credentials.yaml"
+    if credentials.is_symlink() or not credentials.is_file() or credentials.stat().st_size > CONFIG_LIMIT:
+        raise Failure("repair_credentials_bytes_invalid")
+    observed = (
+        persisted_install_receipt(home, expected, port),
+        persisted_volume_set_snapshot(home, project, volume_set_id),
+        credentials.read_bytes(),
+    )
+    if observed[1:] != (prior_snapshot, prior_credentials):
+        raise Failure("backup_recovery_mutated_authority")
+    return observed
+
+
 def private_path(path: Path, directory: bool, code: str) -> None:
     try:
         metadata = os.lstat(path)
@@ -899,6 +915,7 @@ def main() -> int:
         # both admissible source states before any lifecycle mutation removes
         # this precise source authority.
         backup_history = (install_receipt_bytes, volume_set_snapshot_bytes, tuple(json_sha256(docker_json(name, volume=True)) for name in identities[3:]))
+        credentials_before_backup = (home / "credentials.yaml").read_bytes()
         running_backup = read_json_bytes(run([str(binary), "--output", "json", "paperless", "backup"], timeout=900), "backup_json_invalid")
         running_backup_id, running_archives = validate_backup(running_backup, home, project, config_ids, identities, volume_set_id, install_receipt_bytes, volume_set_snapshot_bytes, True)
         if len(running_archives) != len(VOLUMES) or backup_history != (persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_volume_set_snapshot(home, project, volume_set_id), tuple(json_sha256(docker_json(name, volume=True)) for name in identities[3:])):
@@ -928,9 +945,11 @@ def main() -> int:
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         retained_volumes(project, identities[3:], volume_set_id)
         verify_api(args.port, configured_token(home)); marker_metadata_matches(args.port, configured_token(home), document_id, baseline_marker)
+        # Starting an intentionally stopped source uses Repair's transactional
+        # receipt commit. Rebase only here; every later Repair assertion still
+        # requires this exact post-recovery authority to remain unchanged.
+        install_receipt_bytes, repair_volume_snapshot_bytes, credentials_before_repair = repair_history_baseline(home, (project, config_ids, identities, volume_set_id), args.port, volume_set_snapshot_bytes, credentials_before_backup)
         receipt["backup"] = {"running_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "stopped_job_sha256": hashlib.sha256(stopped_backup_id.encode()).hexdigest(), "archives_per_backup": len(VOLUMES), "running_source_restored": True, "stopped_source_retained": True, "media_marker_in_archives": True, "source_identity_preserved": True, "recovered_by_repair": True}
-        credentials_before_repair = (home / "credentials.yaml").read_bytes()
-        repair_volume_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         receipt["repair_progress"] = {"phase": "healthy", "witness": "before_product_repair"}
         healthy_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(healthy_repair, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))

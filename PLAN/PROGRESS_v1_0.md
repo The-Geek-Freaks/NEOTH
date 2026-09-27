@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1670-W1671 Backup product history and exact CLI reference (2026-09-27):**
+Paperless36329534029 at70e8b768 proved running/stopped six-volume Backup,
+retained PDF bytes, original source state and controlled Repair recovery, then
+failed repair_healthy_mutated_history. Original artifact10935072653/ZIP digest
+and27 producer bindings are authenticated. The canary had compared the later
+healthy Repair against raw install-receipt bytes from before intentional recovery.
+It now rebinds only that validated receipt after recovery; snapshot and credentials
+must still equal their pre-Backup bytes. Positive and mutation regressions plus
+independent static rereview cover the correction. Full product/cleanup remains
+unaccepted until a fresh successful run.
+Core36329532560 passed slim production Clippy, native-test source typecheck and
+public CLI build/export. Authenticated artifact10935382723 from70e8b768 supplies
+the exact four generated Backup-reference lines. Workspace Clippy is still active.
+W1672 Update failed a later status check; investigation targets the old4KiB
+uninstall receipt reader with newly nested provenance. Its canary remains strict.
+No native execution or full product acceptance is inferred; ROAD counts unchanged.
 **W1668 Hosted formatting (2026-09-27):**
 Preflight36329532317 at70e8b768 provided original artifact10935118293,
 ZIP SHA25649013b1a04d74e1d2aa9f850fb97e871c05190b9b04ba103477769c4f7801dc3.

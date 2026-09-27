@@ -529,6 +529,29 @@ class CustodyTests(unittest.TestCase):
         with patch.object(canary, "marker_metadata", return_value=(42, "mutated title", baseline[2])):
             with self.assertRaises(canary.Failure): canary.marker_metadata_matches(18001, "token", 42, baseline)
 
+    def test_repair_history_baseline_rebinds_after_intentional_recovery_commit(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        receipt = install_receipt(2, generation); expected = canary.validate_install(receipt, 18001)
+        old = json.dumps(receipt, sort_keys=True, indent=2).encode(); current = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+        snapshot = {"schema_version": 1, "project": expected[0], "volume_set_id": generation, "logical_volumes": [logical for logical, _, _ in canary.VOLUMES]}
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            install_path = state / ".neoth-paperless-lifecycle-receipt.v1.json"; install_path.write_bytes(old)
+            install_path.write_bytes(current)
+            (state / ".neoth-paperless-volume-set.v1.json").write_text(json.dumps(snapshot), encoding="utf-8")
+            (home / "credentials.yaml").write_text("paperless_token: retained\n", encoding="utf-8")
+            authority = (expected[0], expected[1], expected[2], generation)
+            snapshot_raw = json.dumps(snapshot).encode()
+            credentials_raw = b"paperless_token: retained\n"
+            observed_receipt, observed_snapshot, observed_credentials = canary.repair_history_baseline(home, authority, 18001, snapshot_raw, credentials_raw)
+            for prior_snapshot, prior_credentials in ((b"changed", credentials_raw), (snapshot_raw, b"changed")):
+                with self.assertRaises(canary.Failure):
+                    canary.repair_history_baseline(home, authority, 18001, prior_snapshot, prior_credentials)
+        self.assertEqual(observed_receipt, current)
+        self.assertNotEqual(observed_receipt, old)
+        self.assertEqual(observed_snapshot, json.dumps(snapshot).encode())
+        self.assertEqual(observed_credentials, b"paperless_token: retained\n")
+
     def test_cleanup_attempts_every_prevalidated_resource_after_first_delete_failure(self) -> None:
         project = "neoth-paperless-abcdef123456"; ids = ("a" * 64, "b" * 64, "c" * 64)
         volumes = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
