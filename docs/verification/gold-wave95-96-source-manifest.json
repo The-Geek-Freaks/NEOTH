@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T10:12:45.8100190Z",
-  "validationStatus": "hosted-format-import-native-pending",
+  "capturedUtc": "2026-09-27T10:29:51.5674821Z",
+  "validationStatus": "update-target-preflight-source-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -82,6 +82,11 @@
       "sha256": "3F24519A038A84C45ADF8929F6471A3098BAD40E0A02C7F3FE7F5467D8DEA920"
     },
     {
+      "path": ".github/workflows/n8n-update-target-preflight.yml",
+      "bytes": 4290,
+      "sha256": "9EDAB799B492F2A4E6B4DD1536D7494918B21FB9D825AB638D8A7384A89BCA33"
+    },
+    {
       "path": ".github/workflows/n8n-upstream-provenance.yml",
       "bytes": 10438,
       "sha256": "CEABB764168965CF5DF026B80D36189CF7DFC6894886158AAFE3B29137E7616D"
@@ -133,8 +138,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 26201,
-      "sha256": "505D996CEBCE993F720C4D45F4978A76ED7FE1CDC2F0880D01DC80BE0733D04C"
+      "bytes": 26251,
+      "sha256": "0A94046987D7C9CF5BD4D77BC66C4AA3805E8D804F38F64D46738EFB2CD179AF"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -153,8 +158,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 119581,
-      "sha256": "7015471E142F3D27C6539B3BA931C83D1A9FC22B0E2035ACE50A5A085AE28E4F"
+      "bytes": 121015,
+      "sha256": "A1B811ED7E665B25E451133AC9F490CF40BE016983E9C5044445F22561860E0E"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1298,8 +1303,8 @@
     },
     {
       "path": "docs/n8n-update-target-evidence.md",
-      "bytes": 1721,
-      "sha256": "6B8240602485044BEEEEB3C06B904F08601063DF67E828C51894B702E6008053"
+      "bytes": 3248,
+      "sha256": "E0266451824AA8DEC831346821F7AFDD6186DA6A7A1B26EFFC29288974DBC6CF"
     },
     {
       "path": "docs/n8n-weekly-obsidian-sync.md",
@@ -2337,9 +2342,24 @@
       "sha256": "D32E643A7CD94E1F7B394EBACDCE58155E2820253252AA88136DE0EB97FE1AE1"
     },
     {
+      "path": "docs/verification/gold-wave1590-cbc2-native-results.json",
+      "bytes": 890,
+      "sha256": "5C295563CD90B0E3052FED38DC831D288A789E962AA96A2BDA9279EFF31644AC"
+    },
+    {
+      "path": "docs/verification/gold-wave1591-update-target-preflight-source.json",
+      "bytes": 2748,
+      "sha256": "94E6F5226DCD9864D81DA3F2D6C781B9F141951443803FF3850ACFCFD1E2A1B6"
+    },
+    {
       "path": "docs/verification/gold-wave1593-retained-fixture-hosted-format.json",
       "bytes": 529,
       "sha256": "BBB80C4338BCA1C4D2B5D9B27630188401E7A1BF4C30D267322FB3F0A8E18E4F"
+    },
+    {
+      "path": "docs/verification/gold-wave1594-cd2-core-accepted.json",
+      "bytes": 3083,
+      "sha256": "D99E44E532294D09AD1B0CB0941C36A63389DF7516DB7437B6D19BB2ADF32AA9"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -3212,6 +3232,11 @@
       "sha256": "9843EFA4D8F0DAD881C07F8B74A5218BFB6B66AA58E169753503DB8EC5387066"
     },
     {
+      "path": "packaging/n8n_update_target_preflight_canary.py",
+      "bytes": 9910,
+      "sha256": "5F9A7107904AD9494E6EDC33CE0B935F57B46903978D3246939F08D768E2E609"
+    },
+    {
       "path": "packaging/paperless_product_canary.py",
       "bytes": 67042,
       "sha256": "5ABC30CFB144CF67A6EDB6CFC8C3AC9110DFD7C93E5D4EB2C2D68728C756473F"
@@ -3255,6 +3280,11 @@
       "path": "packaging/tests/test_n8n_update_target_evidence.py",
       "bytes": 2511,
       "sha256": "841B13A0D10033010983AAD6724AD2EA8A18EEE819E44A3BE075F421B1399B3B"
+    },
+    {
+      "path": "packaging/tests/test_n8n_update_target_preflight_canary.py",
+      "bytes": 5367,
+      "sha256": "DE7DB4674D6C8110542463C6E99096C77CAAC316D2046E7BEC575783D92D701E"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3313,18 +3343,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 437651,
-      "sha256": "EC20E8965786C0B19B91635BE864C280B29272BDDD37110A2AB747FF639D9588"
+      "bytes": 439267,
+      "sha256": "20C399985594B1CAB9BEFAE55B8FC2CBE7AC202A66DEFB4DC347773D1B143FE6"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1456582,
-      "sha256": "DA8F5C7B8B8D9D81C59EF9DA45296AD571EBFC6016C3E9F8824EE3371F135EE7"
+      "bytes": 1458198,
+      "sha256": "A65735796AA4267F52A9068F50708ED6A0741C2192DFEAC2058985E7D432EA00"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2067105,
-      "sha256": "ABE94553953490C34D96B9606C0723932E353E853CA32BC8F8F823E232472156"
+      "bytes": 2068721,
+      "sha256": "CE318D56D84D16C18940911C7EB7BA35D053D571477328A36C767881CA85FA60"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4388,8 +4418,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/n8n.rs",
-      "bytes": 42776,
-      "sha256": "9C2D0D7626DA4BB49A3203A78C7FB8B17CAE5ED138DE67F34E7E0AC2B5C80817"
+      "bytes": 45680,
+      "sha256": "857A6C4359F2315396D16C68E00C56EE947C6C7467C291CE571FE8F9F712F9DA"
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
@@ -5418,8 +5448,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n.rs",
-      "bytes": 52284,
-      "sha256": "E9EE39AB17A87C19F0AF9DB2D61DEC46DDA0238699840630A090E384387789E7"
+      "bytes": 52322,
+      "sha256": "7AD0415C5EC4DC30E2C265C6FE15F5EC1D5BC2DB9E154C21BF918BA9071336A0"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
@@ -5520,6 +5550,16 @@
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
       "bytes": 45056,
       "sha256": "31108547F017A68EB0C066DB599743097C67E746FF8CA05CD15EDA5EEAFF8627"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target_tests.rs",
+      "bytes": 8634,
+      "sha256": "FEE09EBDFF3FFA2EF0DB0492A22BA54FFB330900F4F72B84F79DE76971D5BCC9"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target.rs",
+      "bytes": 17701,
+      "sha256": "6E5E024901E5218BD72EEA91120DD3047B9B0CDB7FAE64A1310DE6E951264A55"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",

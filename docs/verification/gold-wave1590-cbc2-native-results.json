@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1590",
+  "status": "recorded_verified_failures_not_admitted",
+  "producer_commit": "cbc2f93c62a0a061e5e589c3ebdee3236137273e",
+  "native": {
+    "group": {
+      "run": 36310581970,
+      "compiled": true,
+      "selected": 1924,
+      "executed": 1924,
+      "failed": 1
+    },
+    "windows": {
+      "run": 36310583329,
+      "compile_status": 0,
+      "expected": 689,
+      "executed": 689,
+      "passed": 688,
+      "failed": 1,
+      "missing": 0
+    }
+  },
+  "remaining_fixture": "rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_source",
+  "provenance": {
+    "group_inputs_matched": 10,
+    "group_inputs_mismatches": 0,
+    "windows_source_bindings": 689,
+    "windows_source_paths_matched": 99,
+    "windows_source_mismatches": 0
+  },
+  "admission": "not_admitted",
+  "public_docs_published": true
+}

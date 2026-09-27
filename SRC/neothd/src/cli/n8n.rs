@@ -1,4 +1,4 @@
-//! `neoth n8n {install,repair,backup,restore,rollback,uninstall,purge,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,repair,backup,restore,rollback,update-target,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -46,6 +46,11 @@ pub enum N8nAction {
     /// Stop the owned runtime, archive its complete data volume, and restore its running state.
     /// Repeating an interrupted backup reconciles custody without repeating an uncertain copy.
     Backup,
+    /// Verify a reviewed update image before any managed lifecycle operation.
+    UpdateTarget {
+        #[command(subcommand)]
+        action: N8nUpdateTargetAction,
+    },
     /// Validate a receipt-owned backup in an isolated candidate volume. The live n8n runtime is unchanged.
     Restore {
         /// Ready backup job whose verified archive is the only restore source.
@@ -92,6 +97,20 @@ pub enum N8nAction {
     Workflows,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum N8nUpdateTargetAction {
+    /// Pull a reviewed immutable target and verify its platform and image identity.
+    /// This downloads an image; it does not start n8n or migrate its data.
+    Verify {
+        /// Exact reviewed target selector, for example n8n-2.40.7.
+        #[arg(long)]
+        target: String,
+        /// Linux platform used by the Docker engine, including remote engines.
+        #[arg(long, value_parser = ["linux/amd64", "linux/arm64"])]
+        platform: String,
+    },
+}
+
 pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         N8nAction::Install {
@@ -111,6 +130,9 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         }
         N8nAction::Repair => run_repair(output).await,
         N8nAction::Backup => run_backup(output).await,
+        N8nAction::UpdateTarget {
+            action: N8nUpdateTargetAction::Verify { target, platform },
+        } => run_verify_update_target(&target, &platform, output).await,
         N8nAction::Restore { backup } => run_restore(&backup, output).await,
         N8nAction::Rollback {
             restore,
@@ -128,6 +150,29 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_verify_update_target(
+    target: &str,
+    platform: &str,
+    output: OutputFormat,
+) -> Result<()> {
+    let receipt = crate::integrations::n8n::managed_update_target::verify_update_target(
+        target, platform,
+    )
+    .await?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Table => {
+            println!("n8n update target: {}", receipt.selector);
+            println!("version: {}", receipt.version);
+            println!("platform: {}", receipt.platform);
+            println!("image: {}", receipt.runtime_image);
+            println!("image identity: verified");
+            println!("n8n migration: not performed");
+        }
+    }
+    Ok(())
 }
 
 async fn run_backup(output: OutputFormat) -> Result<()> {
@@ -825,6 +870,35 @@ fn run_workflows(output: OutputFormat) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_target_cli_requires_explicit_target_and_supported_platform() {
+        use clap::Parser;
+        let base = ["neoth", "n8n", "update-target", "verify"];
+        let cli = crate::cli::Cli::try_parse_from(
+            base.into_iter().chain([
+                "--target", "n8n-2.40.7", "--platform", "linux/amd64",
+            ]),
+        )
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::UpdateTarget {
+                    action: N8nUpdateTargetAction::Verify { target, platform },
+                },
+            }) if target == "n8n-2.40.7" && platform == "linux/amd64"
+        ));
+        for arguments in [
+            vec!["--target", "n8n-2.40.7"],
+            vec!["--platform", "linux/amd64"],
+            vec!["--target", "n8n-2.40.7", "--platform", "windows/amd64"],
+            vec!["--target", "n8n-2.40.7", "--platform", "linux/amd64", "--image", "unreviewed"],
+            vec!["--target", "n8n-2.40.7", "--platform", "linux/amd64", "--volume", "live"],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(base.into_iter().chain(arguments)).is_err());
+        }
+    }
+
     #[test]
     fn n8n_backup_cli_uses_owned_archive_and_runtime_without_overrides() {
         use clap::Parser;

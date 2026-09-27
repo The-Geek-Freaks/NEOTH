@@ -35,6 +35,7 @@ pub(crate) mod bootstrap_transport;
 pub(crate) mod managed_bootstrap;
 pub(crate) mod managed_purge;
 pub(crate) mod managed_runtime;
+pub(crate) mod managed_update_target;
 pub(crate) mod workflow_import;
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";

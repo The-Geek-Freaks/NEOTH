@@ -1,0 +1,69 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1591/W1592/W1595/W1596",
+  "status": "source_reviewed_hosted_validation_pending",
+  "base": "3394524877cb0bfb34303271d60930b046ac912c",
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/n8n-update-target-preflight.yml",
+      "gitBlob": "6b3c7a2316c9ec4ae243904da3acb8ed9657698c",
+      "sha256": "9EDAB799B492F2A4E6B4DD1536D7494918B21FB9D825AB638D8A7384A89BCA33"
+    },
+    {
+      "path": ".github/workflows/research-lifecycle.yml",
+      "gitBlob": "19fe425fccf5023f517f357680a19542093eec7c",
+      "sha256": "0A94046987D7C9CF5BD4D77BC66C4AA3805E8D804F38F64D46738EFB2CD179AF"
+    },
+    {
+      "path": ".github/workflows/windows-storage-regressions.yml",
+      "gitBlob": "5ae36f18312f3a6242704a1a25c2478f62d17113",
+      "sha256": "A1B811ED7E665B25E451133AC9F490CF40BE016983E9C5044445F22561860E0E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "gitBlob": "50333ead47de64f9cbd9f8ba0f1ab316c63cedf3",
+      "sha256": "857A6C4359F2315396D16C68E00C56EE947C6C7467C291CE571FE8F9F712F9DA"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "gitBlob": "68478cd71ba48e5f3e9ed18e734d8dd0f37555ba",
+      "sha256": "7AD0415C5EC4DC30E2C265C6FE15F5EC1D5BC2DB9E154C21BF918BA9071336A0"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target.rs",
+      "gitBlob": "2da18ff564cdc8d568dc3d57f07d19d26de74add",
+      "sha256": "6E5E024901E5218BD72EEA91120DD3047B9B0CDB7FAE64A1310DE6E951264A55"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target_tests.rs",
+      "gitBlob": "dccb730989ba614bb35035a94da94a5e07216305",
+      "sha256": "FEE09EBDFF3FFA2EF0DB0492A22BA54FFB330900F4F72B84F79DE76971D5BCC9"
+    },
+    {
+      "path": "packaging/n8n_update_target_preflight_canary.py",
+      "gitBlob": "e8b9773b30de00bb4e9c355aa0078beb4eaacdb7",
+      "sha256": "5F9A7107904AD9494E6EDC33CE0B935F57B46903978D3246939F08D768E2E609"
+    },
+    {
+      "path": "packaging/tests/test_n8n_update_target_preflight_canary.py",
+      "gitBlob": "315f0e3e5cbfc2b9f17117bf1ca96632d361e8f5",
+      "sha256": "DE7DB4674D6C8110542463C6E99096C77CAAC316D2046E7BEC575783D92D701E"
+    }
+  ],
+  "reviews": [
+    "W1596 Rust/catalog/CLI accepted",
+    "W1595 product-canary/workflow accepted"
+  ],
+  "newRequiredTests": 8,
+  "portable": 2142,
+  "group": 1932,
+  "windows": 697,
+  "scope": "Reviewed fixed update target identity preflight; downloads approved image; no lifecycle migration.",
+  "excludedClaims": [
+    "managed Update implementation",
+    "target runtime readiness/migration",
+    "hosted or local execution of newly written source",
+    "ROAD/P2-20/release closure"
+  ],
+  "localExecutableValidationRan": false
+}

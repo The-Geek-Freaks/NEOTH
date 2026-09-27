@@ -28,3 +28,30 @@ prove Docker platform selection, start n8n, migrate data or change the current
 installer pin. An admitted target still needs a separate product gate that
 starts the target on an isolated volume and preserves the old source bytes
 through migration, readiness and authenticated cutover.
+
+The compiled CLI exposes a separate target preflight:
+
+```console
+neoth --output json n8n update-target verify --target n8n-2.40.7 --platform linux/amd64
+```
+
+Use `linux/arm64` for an ARM64 Linux Docker engine. The platform is explicit
+because the selected Docker engine may be remote. This command downloads the
+reviewed image. It verifies the raw OCI index, selected child manifest and
+config digest, then checks the pulled image's config ID, repository digest
+and platform. Registry requests have fixed hosts, bounded responses and no
+redirects. The command honors the selected Docker host/context and uses no
+caller-supplied image reference or local JSON admission authority.
+
+The JSON receipt records the target selector/version/platform, immutable image,
+index/child/config digests and the W1587 catalog evidence hash. It proves image
+identity only. The command does not create containers or volumes, migrate n8n,
+or change the installed 2.40.5 pin. The catalog is compiled from reviewed
+metadata; accepting another target requires a reviewed source change.
+
+The separate `n8n-update-target-preflight.yml` hosted gate builds the actual
+CLI, runs negative controls through a Docker deny/record shim, verifies the
+returned image through an independent inspection and compares container,
+volume and isolated-home inventories. It retains redacted failures and exact
+producer/binary/source bindings. Its source is reviewed; runtime acceptance is
+recorded separately after the hosted run succeeds and its artifact is verified.

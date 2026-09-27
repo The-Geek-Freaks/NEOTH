@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "wave": "W1594",
+  "status": "ROOT_ACCEPTED_EXACT_PRODUCER_CORE_GATES",
+  "decision": "ADMIT_EXACT_CORE_AND_GENERATED_CLI_ARTIFACT",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36309505194,
+    "workflow": "Generate CLI reference",
+    "event": "workflow_dispatch",
+    "conclusion": "success",
+    "head_branch": "main",
+    "head_sha": "cd2bfc6edd46e8bb2ada40f9af302a8341a488c6",
+    "attempt": 1,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36309505194"
+  },
+  "artifact": {
+    "id": 10929030742,
+    "name": "generated-cli-reference",
+    "size_bytes": 87500,
+    "api_digest": "sha256:5c425751278593d20a80e368dd8b2b0687c2d0a79df11870258f4ba1e04162cf",
+    "downloaded_zip_sha256": "5c425751278593d20a80e368dd8b2b0687c2d0a79df11870258f4ba1e04162cf",
+    "zip_digest_matches_api": true,
+    "safe_zip": {
+      "entry_count": 3,
+      "unsafe_entry_count": 0,
+      "total_uncompressed_bytes": 255628
+    },
+    "internal_sha256sums": {
+      "member_count": 1,
+      "all_members_match": true
+    },
+    "generated_cli_reference": {
+      "path": "cli-commands.md",
+      "sha256": "375e26be61b4d91edf90c1bafa8ce187755fa81f68b1031c4af33423af2401c3",
+      "source_head_matches_run_head": true
+    }
+  },
+  "producer_bindings": {
+    "producer_tree": "1a44c27b5ef4a90feaf4ab82a555c1064fbbf1eb",
+    "workflow_path": ".github/workflows/cli-reference.yml",
+    "workflow_git_blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+    "workflow_sha256_raw_blob": "0b971561dcb33d02fc5943f1ad3f37cfe22ffa0bcc8229704d9d7e395695403b",
+    "raw_git_cat_file_and_hash_object_match": true,
+    "cargo_lock_git_blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+    "n8n_cli_git_blob": "d30df44e1be3a915e8c0c0ba062880507b1a3cdc",
+    "neoth_lib_git_blob": "ac09a467292d971fe76b479519f3c279faba9f0d"
+  },
+  "hosted_gates": {
+    "runner": "ubuntu-24.04",
+    "rust_toolchain": "1.91.0",
+    "slim_core_production_clippy": {
+      "conclusion": "success",
+      "command": "cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings"
+    },
+    "core_test_target_typecheck": {
+      "conclusion": "success",
+      "command": "cargo check -p neoth --tests --locked --keep-going",
+      "executed_tests_claim": false
+    },
+    "public_cli_build": {
+      "conclusion": "success",
+      "command": "cargo build -p neoth --bin neoth --locked"
+    },
+    "workspace_clippy": {
+      "conclusion": "success",
+      "command": "cargo clippy --workspace --all-targets --features wizard wasm-plugin-host --locked -- -D warnings"
+    },
+    "generated_reference_export": {
+      "conclusion": "success",
+      "command": "SRC/target/debug/neoth completions --reference"
+    }
+  },
+  "excluded_claims": [
+    "current CLI_REFERENCE.md equality or replacement",
+    "new managed n8n Update CLI WIP behavior",
+    "runtime, Docker, product or target-image acceptance",
+    "other platform or downstream native-matrix admission",
+    "P2-20 or release closure"
+  ],
+  "localExecutableValidationRan": false
+}

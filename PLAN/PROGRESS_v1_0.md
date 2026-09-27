@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1591/W1592 Update target verification implemented; W1594 Core accepted (2026-09-27):**
+The CLI now exposes update-target verify with an explicit reviewed selector and
+Linux Docker platform. It binds the compiled W1587 catalog to raw index and
+child-manifest hashes, then compares the actual pulled config ID, repository
+digest and platform. It downloads the target image without starting or migrating
+n8n; no local JSON receipt can grant target authority. Root/independent reviews
+cover token envelopes, exact pull/inspect ordering, pre-effect rejections and
+Docker context preservation. Eight new Rust/CLI regressions are inventoried:
+portable2142, Group1932 and Windows697. Hosted execution remains pending.
+The separate compiled-product gate checks the real command, Docker-denied
+negative controls and unchanged container/volume/empty-home inventories, with
+producer/binary hashes and retained failure receipts. W1594 accepts original
+Core36309505194 at cd2bfc6e: slim and workspace Clippy, test-target typecheck,
+public CLI build/export. Typecheck is not test execution, and the older CLI
+artifact is not evidence for this new target command. W1590 retains cbc2's
+one remaining native fixture failure (Group1924; Windows688passed/1failed),
+whose exact-ID correction is already published and under its own hosted rerun.
+No ROAD closure or local executable validation. Full Update migration and
+cross-platform/release acceptance remain open.
+Evidence: gold-wave1590-cbc2-native-results.json,
+ gold-wave1591-update-target-preflight-source.json and
+ gold-wave1594-cd2-core-accepted.json under docs/verification.
 **W1593 Hosted formatting imported (2026-09-27):** Exact Preflight36311662375
 artifact10928594650 at e639e712 authenticates the remaining test-expression
 line wrap. ZIP/API/internal checksums and pre/post Git blobs match. No local
