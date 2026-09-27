@@ -1,0 +1,15 @@
+{
+  "schema": "neoth-rollback-core-correction/v1",
+  "status": "SOURCE_REPAIRED_HOSTED_PENDING",
+  "failedRun": 36305113248,
+  "producer": "e14c4813812cc2eceb380978acd454653201c41f",
+  "failedGate": "Check exact-source slim-core production Clippy",
+  "diagnostics": [
+    "Four E0308 probe arguments in managed_rollback compensation: N8nInstanceConfig passed instead of its LoopbackHttpEndpoint field.",
+    "One E0283 in retired_container_name: ambiguous Into argument changed to explicit owned string."
+  ],
+  "repair": "Probe endpoint fields and explicit JobId input only; existing focused compensation/retired-name tests unchanged.",
+  "logSha256": "319F4C902165CDEFF4E9C27A1EE000CE7E00260139E6F67220EDFC5A505BEE9A",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

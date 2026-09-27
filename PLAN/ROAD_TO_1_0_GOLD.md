@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1555 Rollback Core compile correction (2026-09-27):**
+Core36305113248 ate14c4813 found four E0308 compensation probe arguments and
+one E0283 retired-name JobId conversion. Corrected only the endpoint field
+selection and explicit owned-string argument. Existing compensation/reentry
+and retired-name regressions remain selected. New Core/CLI proof is required;
+no native or product acceptance is inferred and no local runtime was used.
+W1549 product review also found unsupported fresh-install sequencing; a
+separate Rollback mode will use the existing live runtime before the original
+uninstall/purge tail, retaining the original baseline mode and its proof.
+ROAD counts unchanged; source evidence:
+ docs/verification/gold-wave1555-rollback-core-correction.json.
+
 **W1551-W1552 Restore Core accepted; Rollback formatting (2026-09-27):**
 Restore Core36302999480 at00aa8660 passed all four gates, including full Linux
 workspace Clippy. Original artifact10926259406, internal generated-reference

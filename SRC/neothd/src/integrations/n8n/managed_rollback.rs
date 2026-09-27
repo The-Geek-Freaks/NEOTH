@@ -1018,11 +1018,11 @@ async fn compensate<
                 anyhow::bail!("n8n_rollback_old_runtime_not_ready");
             }
             probe
-                .negative_control(&endpoint)
+                .negative_control(&endpoint.endpoint)
                 .await
                 .map_err(|_| anyhow::anyhow!("n8n_rollback_old_runtime_authentication_failed"))?;
             probe
-                .authenticated_probe(&endpoint, &api_key)
+                .authenticated_probe(&endpoint.endpoint, &api_key)
                 .await
                 .map_err(|_| anyhow::anyhow!("n8n_rollback_old_runtime_authentication_failed"))?;
         } else {
@@ -1075,11 +1075,11 @@ async fn validate_compensated<
             anyhow::bail!("n8n_rollback_old_runtime_not_ready");
         }
         probe
-            .negative_control(&endpoint)
+            .negative_control(&endpoint.endpoint)
             .await
             .map_err(|_| anyhow::anyhow!("n8n_rollback_old_runtime_authentication_failed"))?;
         probe
-            .authenticated_probe(&endpoint, &api_key)
+            .authenticated_probe(&endpoint.endpoint, &api_key)
             .await
             .map_err(|_| anyhow::anyhow!("n8n_rollback_old_runtime_authentication_failed"))?;
     } else {

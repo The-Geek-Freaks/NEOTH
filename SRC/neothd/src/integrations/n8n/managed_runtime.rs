@@ -873,7 +873,7 @@ pub(crate) fn valid_container_name(name: &str) -> bool {
 }
 
 pub(crate) fn retired_container_name(rollback_job_id: &str) -> Result<String, &'static str> {
-    let job = super::JobId::parse(rollback_job_id.into())
+    let job = super::JobId::parse(rollback_job_id.to_owned())
         .map_err(|_| "n8n_rollback_retired_name_invalid_job")?;
     let compact: String = job
         .as_str()
