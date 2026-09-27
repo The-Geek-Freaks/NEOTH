@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1608-W1612 Isolated n8n migration gate source reviewed (2026-09-27):**
+A new hosted-only gate creates a real2.40.5 fixture, snapshots the stopped
+source through the product Backup command, and starts the admitted2.40.7 image
+only on a distinct copied volume. It verifies historical workflow/scoped keys,
+anonymous401, exact per-ID graph fields including nodeGroups, and the actual
+fixture credential's decrypted identity/type/data in private tmpfs. A second
+stopped source Backup binds unchanged file paths/types/sizes/modes/contents;
+old-server usability and exact resource/secret/home cleanup are required.
+Unknown partial install custody remains failed/preserved. Root repaired earlier
+incomplete drafts before independent W1612 source approval; focused hosted
+Node/Python failure-injection checks accompany the gate. No local execution.
+Migration runtime proof, managed Update/cutover and ROAD acceptance remain open.
+Evidence: docs/verification/gold-wave1612-isolated-migration-source.json.
 **W1606/W1611 Windows target cohort accepted and exact CLI reference imported (2026-09-27):**
 Windows36312860764 at3b267d83 passed all697 selected cases, zero failures or
 missing cases. Original artifact10929719946 matches its API digest;709 ZIP

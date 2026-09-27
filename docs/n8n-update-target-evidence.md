@@ -55,3 +55,30 @@ returned image through an independent inspection and compares container,
 volume and isolated-home inventories. It retains redacted failures and exact
 producer/binary/source bindings. Its source is reviewed; runtime acceptance is
 recorded separately after the hosted run succeeds and its artifact is verified.
+The manual `n8n-update-migration.yml` gate exercises the admitted target on a
+fresh, isolated copy of a real product-installed 2.40.5 instance. It imports
+13 inactive workflows, creates one encrypted fixture credential, stops the
+source, and uses the public Backup command while that source stays stopped.
+The private archive is verified and streamed unchanged into a stopped seed
+container on a separate, run-owned volume. A normal 2.40.7 server then starts
+on that copy with networking disabled and no published ports.
+
+The gate checks historical workflow-key authentication and an unauthenticated
+401 response, reads every workflow by ID, and compares name, nodes,
+connections, settings and nodeGroups. The credential-scoped key is used only
+for credential listing. A private target-local `export:credentials --decrypted`
+proves the exact fixture's ID, type and plaintext; the export is deleted and
+only hashes leave the container. A second real Backup of the still-stopped
+source must have identical canonical member paths, types, sizes, modes and
+contents. Archive header timestamps and member ordering are not content proof.
+The original server is restarted and its workflow and credential usability
+checked before exact fixture resources, secrets and isolated home are removed.
+
+The workflow retains a redacted failed receipt even when setup, compilation or
+fixture checks fail. Unknown partial install custody stays explicitly failed
+and preserves its local diagnostic home. It never guesses a cleanup target or
+reports successful cleanup without proof. This is a hosted migration feasibility
+gate; it does not expose a managed Update command, perform a live cutover, alter
+the installed pin, or establish release acceptance. Source review is recorded in
+`verification/gold-wave1612-isolated-migration-source.json`; runtime acceptance
+requires a successful run and authenticated producer-bound receipt.

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "wave": "W1608-W1612",
+  "status": "INDEPENDENT_SOURCE_REVIEW_ACCEPTED_HOSTED_EXECUTION_PENDING",
+  "base_head": "d04d1cd64e0743b7ec948ee50ea8abb7be72fa4f",
+  "source_bindings": [
+    {
+      "path": "packaging/n8n_update_migration_canary.py",
+      "bytes": 36870,
+      "sha256": "8daff6a6013809c3bf8fa1f46fd0a465ada59100d345eca5461c42e91a375253"
+    },
+    {
+      "path": "packaging/tests/test_n8n_update_migration_canary.py",
+      "bytes": 12559,
+      "sha256": "27a69b67c17b03efb628cd9c08ed4894fd472812368f9ff0f5671388e679042d"
+    },
+    {
+      "path": ".github/workflows/n8n-update-migration.yml",
+      "bytes": 5079,
+      "sha256": "75180f5f22f1c244f7ecb19dad0bce1409edbe7d6970729309feeb041cc207f2"
+    }
+  ],
+  "review": {
+    "report": "work/gold-20260906/wave1612-migration-final-review/REPORT.md",
+    "sha256": "0a2268113daf2223117126a6cfa125d21fe73ab16f23cf670717b3890c86acc0",
+    "verdict": "APPROVE_STATIC",
+    "runtime_claim": false
+  },
+  "upstream": {
+    "target_version": "2.40.7",
+    "target_commit": "09b3ce6f9889c889e13cf3747f6f6c68eebdeeb6",
+    "old_version": "2.40.5",
+    "old_commit": "a331d3858797b161e4acba288396be3835425d8e",
+    "finding": "Normal main-server startup awaits database migration before server start. Public credential API omits secret data; actual private decrypted export is required.",
+    "report": "work/gold-20260906/wave1609-migration-upstream/REPORT.md",
+    "runtime_claim": false
+  },
+  "defined_scenario": [
+    "Fresh real CLI source install;13 inactive workflows and one fixture credential",
+    "Same managed local Docker engine; real admitted target preflight",
+    "Source stopped through both durable product Backups; canonical member path/type/size/mode/content equality",
+    "Unchanged private archive streamed directly into exact stopped seed on fresh owned target volume",
+    "Real normal-server target starts network-none with no published ports",
+    "Historical canonical/scoped keys kept separate; anonymous workflow API must return401",
+    "Per-ID name/nodes/connections/settings/nodeGroups equality and exact decrypted credential identity/type/data proof",
+    "Candidate exact-ID/run-attempt/volume cleanup before source restart",
+    "Source workflow/credential usability after restart and independent resource/secret/private-home cleanup"
+  ],
+  "failure_boundary": "Unknown partial source install custody is failed and preserved; no guessed cleanup or positive cleanup receipt. Candidate create intents reconcile deterministic owned names once, without retrying create.",
+  "hosted_regressions": "Archive aliases/duplicates/rename/content/mode/order/limits, custody handoff and label replacement, runtime isolation, nodeGroups-only change, actual Node credential export fixtures and anonymous API negative control",
+  "excluded_claims": [
+    "Managed Update implementation",
+    "Cutover, Upgrade runtime lineage or update rollback",
+    "Cross-platform migration",
+    "ROAD or release closure"
+  ],
+  "localExecutableValidationRan": false
+}
