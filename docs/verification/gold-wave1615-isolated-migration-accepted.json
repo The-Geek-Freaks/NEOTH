@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "wave": "W1615",
+  "status": "ROOT_ACCEPTED_EXACT_LINUX_AMD64_ISOLATED_MIGRATION",
+  "run": {
+    "id": 36316090902,
+    "head_sha": "fcb8d03039f2c6b4836f6d458dba3fc43f8ec3f2",
+    "conclusion": "success",
+    "attempt": 1,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36316090902"
+  },
+  "artifact": {
+    "id": 10930827928,
+    "sha256": "cd701f0fdb072b0653c46b539ff88066c5fd889c16f686e5e0c7be024da18fde",
+    "api_matches_download": true,
+    "safe_zip_entries": 1,
+    "receipt_bytes": 5125,
+    "receipt_sha256": "6db4d0e19830d869cc452ed7a84182a51ce17b4cc12a0be7ec15c01813f640e6"
+  },
+  "producer": {
+    "tree": "75addf7e6e2bf829e2292b7b4ad949de0b835114",
+    "workflow_blob": "9e8ec006ed23a305bcfe2fe34597d0b078bd1a1c",
+    "verified_raw_input_count": 31,
+    "input_sha256_and_git_blob_all_match": true
+  },
+  "hosted_helper_tests": {
+    "executed": 9,
+    "conclusion": "OK",
+    "original_log_verified": true
+  },
+  "receipt": {
+    "binary_sha256": "3c8b3d5d31013644e863d335aaf0107267bd4e777ad6d2ba537ac93d1a8e65a4",
+    "candidate": {
+      "credential_count": 1,
+      "credential_decryption_proven": true,
+      "credential_proof": {
+        "id_sha256": "f4911e7970b040c60db64e011080f32c62cbfaada76a48c4c901c88285936742",
+        "proof_sha256": "473dc6c7adab54a6e7c7a1d3df1040700b2cdcb21c007299aca6be06f29b533b"
+      },
+      "historical_credential_key_authenticated": true,
+      "historical_workflow_key_authenticated": true,
+      "unauthenticated_workflows_status": 401,
+      "workflow_count": 13,
+      "workflow_graph_fields": [
+        "name",
+        "nodes",
+        "connections",
+        "settings",
+        "nodeGroups"
+      ],
+      "workflow_set_sha256": "8b9868907495ab9c41646603922a119c7f263ad0e6b0103c8cca9fa847f8a08b"
+    },
+    "cleanup": {
+      "bootstrap_and_canonical_secrets": true,
+      "candidates": true,
+      "isolated_home": true,
+      "source": true
+    },
+    "cleanup_proven": true,
+    "input_sha256": {
+      ".github/workflows/n8n-update-migration.yml": "75180f5f22f1c244f7ecb19dad0bce1409edbe7d6970729309feeb041cc207f2",
+      "SRC/Cargo.lock": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "SRC/neothd/Cargo.toml": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "SRC/neothd/assets/n8n_workflows/daily_summary.json": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+      "SRC/neothd/assets/n8n_workflows/morning_brief.json": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+      "SRC/neothd/assets/n8n_workflows/weekly_stats.json": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+      "SRC/neothd/src/cli/credential.rs": "869ee22da169e1a1e1ef839052225b1a9d2d1f9032d8312da7fd404b0164dfcd",
+      "SRC/neothd/src/cli/init.rs": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "SRC/neothd/src/cli/init/io.rs": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "SRC/neothd/src/cli/init/steps_provider.rs": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "SRC/neothd/src/cli/init/types.rs": "5a938f592f1dbaf6d142c69fa85a5f8a67566093e6ed6e8ad4c64c0e7e748297",
+      "SRC/neothd/src/cli/n8n.rs": "cbba50e2002c4751583af091af6800a3199ab363217c87e5eed50ec1a176f8ad",
+      "SRC/neothd/src/config/credentials.rs": "101e3c4ceebdc934267338f5cd0274619f1f9e7b86efbdd379ac22747aa19062",
+      "SRC/neothd/src/config/keychain.rs": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f",
+      "SRC/neothd/src/config/mod.rs": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "SRC/neothd/src/installers/n8n_starter_workflows.rs": "5d8ab67490cee0a05225d8ba62ec1dbd5e4cff1c98ca6c773adac76589db770b",
+      "SRC/neothd/src/installers/n8n_workflows.rs": "f3e7fb2f481cfce01ce9d865cd700a9e180855a176b5218501f57a3fa395e846",
+      "SRC/neothd/src/integrations/jobs.rs": "e535a8dfbdef24dd2523a9d03b91d631ad8d587e8ca98297cd02d15355cd397e",
+      "SRC/neothd/src/integrations/n8n.rs": "7ad0415c5ec4dc30e2c265c6fe15f5ec1d5bc2db9e154c21bf918ba9071336a0",
+      "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs": "efedfb5665ca6d3ab1c6a7bf9c9c2339d7f17be0c79bfd58c40a1d20d12bba38",
+      "SRC/neothd/src/integrations/n8n/managed_backup.rs": "09c07fa5b37b30b25cd35e40230746f1310df36e62d58ab7c0409a1106b99123",
+      "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs": "ec5617541704078918257e4fc0dbd0aee25fbfeefbc769b8daf9c4ff12535d2c",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "3485ec8b33a54864b99081e56cded1fa19d8625be2c4899b4dcfbf3a6ef5f9de",
+      "SRC/neothd/src/integrations/n8n/managed_update_target.rs": "8524d1b00d686a67115969c56ceaa5441f43faf39176ec022223c663c9742900",
+      "SRC/neothd/src/integrations/n8n/workflow_import.rs": "5f3b30b13a778e99ba10e412d1e9ca11f0b5cda2fff072ec8bead87a19403ecd",
+      "SRC/neothd/src/integrations/state.rs": "5d9089c66f023aeb6069e2493bd0d78f799523ba7ab0cb097a024c8cdf512b11",
+      "packaging/n8n_bootstrap_canary.py": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+      "packaging/n8n_product_bootstrap_canary.py": "acd43dbc08a429fa8c9e5b8b10743b96c319f12a610eec4739dc8977cc77ae5c",
+      "packaging/n8n_update_migration_canary.py": "8daff6a6013809c3bf8fa1f46fd0a465ada59100d345eca5461c42e91a375253",
+      "packaging/n8n_update_target_preflight_canary.py": "5f9a7107904ad9494e6edc33ce0b935f57b46903978d3246939f08d768e2e609",
+      "packaging/tests/test_n8n_update_migration_canary.py": "27a69b67c17b03efb628cd9c08ed4894fd472812368f9ff0f5671388e679042d"
+    },
+    "outcome": "passed",
+    "scenario": "n8n_isolated_migration_feasibility",
+    "schema": 2,
+    "source_backups": {
+      "first_sha256": "ea3fd1d64d6d438b3094011308f7690a44c15a10350145fa58136b7d84b781fe",
+      "member_manifest_sha256": "68bd81136f5313a93b33a8f001dc438d2b47d21863baea7a523303f33418aa2a",
+      "second_sha256": "ea3fd1d64d6d438b3094011308f7690a44c15a10350145fa58136b7d84b781fe"
+    },
+    "source_restored": {
+      "credentials": 1,
+      "workflows": 13
+    },
+    "source_sha": "fcb8d03039f2c6b4836f6d458dba3fc43f8ec3f2",
+    "stage": "source_restart",
+    "target": {
+      "child_manifest_digest": "sha256:599d68c7b6fb18b5ac1e7cd013a2e72c886ec1c807b9d436d56e90da32c664ac",
+      "config_digest": "sha256:f3bf0d098792d61b470ac74b110e3a32d5c5d1e4920ae2b78215ad41a599824a",
+      "index_digest": "sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+      "runtime_image": "docker.io/n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34",
+      "selector": "n8n-2.40.7",
+      "version": "2.40.7"
+    }
+  },
+  "excluded_claims": [
+    "Actual managed Update coordinator",
+    "Live cutover or durable Update lineage",
+    "Compensation or interrupted Update recovery",
+    "Cross-platform migration or release acceptance",
+    "GOLD-LF-P2-20 closure"
+  ],
+  "localExecutableValidationRan": false
+}

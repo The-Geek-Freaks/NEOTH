@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1615 Actual isolated n8n migration accepted (2026-09-27):**
+Hosted36316090902 atfcb8d030 passed the real Linux-amd64 migration fixture:
+2.40.7 started on the copied volume; both historical API keys authenticated,
+anonymous workflow reads returned401, all13 per-ID workflow graphs including
+nodeGroups matched, and the known credential decrypted exactly. The source
+remained stopped through two real Backups whose SHA256 digests were identical,
+then restarted with13 workflows and1 usable credential. Candidate/source,
+bootstrap/canonical secrets and isolated-home cleanup all passed. Original
+artifact10930827928 matches API/download digest; its receipt and31 raw producer
+bindings verify. The same hosted log proves9 helper boundary tests passed.
+This accepts that isolated migration scenario only. W1614 now implements the
+managed Update coordinator, persistent lineage and downstream lifecycle; that
+source remains uncommitted/unaccepted. No ROAD closure or local execution.
+Evidence: docs/verification/gold-wave1615-isolated-migration-accepted.json.
 **W1608-W1612 Isolated n8n migration gate source reviewed (2026-09-27):**
 A new hosted-only gate creates a real2.40.5 fixture, snapshots the stopped
 source through the product Backup command, and starts the admitted2.40.7 image

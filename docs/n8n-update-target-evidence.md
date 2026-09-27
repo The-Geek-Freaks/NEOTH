@@ -82,3 +82,11 @@ gate; it does not expose a managed Update command, perform a live cutover, alter
 the installed pin, or establish release acceptance. Source review is recorded in
 `verification/gold-wave1612-isolated-migration-source.json`; runtime acceptance
 requires a successful run and authenticated producer-bound receipt.
+
+The first exact Linux-amd64 run, `36316090902` at `fcb8d030`, is accepted in
+`verification/gold-wave1615-isolated-migration-accepted.json`. Its original
+artifact, receipt, compiled binary identity and 31 raw producer inputs are bound.
+All nine helper tests and the real copied-volume migration passed, including
+the two byte-identical stopped-source archives, workflow/credential proof,
+source restart and complete fixture cleanup. This result does not establish
+managed Update cutover, persistent Update recovery or release acceptance.
