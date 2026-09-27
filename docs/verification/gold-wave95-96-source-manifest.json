@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T10:33:06.6853010Z",
-  "validationStatus": "rollback-linux-group-admitted-target-hosted-pending",
+  "capturedUtc": "2026-09-27T10:39:01.7224725Z",
+  "validationStatus": "group1932-execution-count-repaired-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -139,7 +139,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 26251,
-      "sha256": "0A94046987D7C9CF5BD4D77BC66C4AA3805E8D804F38F64D46738EFB2CD179AF"
+      "sha256": "E93BCB08813D01E1D1119C844C18113D295254F5FB1F69C6A1406655B9C6A3A8"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -2372,6 +2372,11 @@
       "sha256": "E1D47B42A857BD53972805ECD84791DEF18FA6DEDCA6B9547FE7DE57282BBC72"
     },
     {
+      "path": "docs/verification/gold-wave1600-group-count-repair.json",
+      "bytes": 559,
+      "sha256": "ECD07294AB0B173D20E68D91BDF71054FF283920796134F8F72DBD29F4D49E36"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3353,18 +3358,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 440116,
-      "sha256": "2EE5AB841F93EE1B7399B52DC971E91A7A51825AE916B9246BA1C881B5C4DAFE"
+      "bytes": 440579,
+      "sha256": "52A330EF79FCB9F0D474F57BB04BBDEB8AF02B6845B00948E430464D4052FF91"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1459047,
-      "sha256": "77D32D2A7856F2DDFCD33D23AD6318AAEF8D5811AFAFC78E5D0D527D944A40CE"
+      "bytes": 1459510,
+      "sha256": "7323DAA7982CF6E7A9B2F270185A651B522FDA63AD1D005DA044EEC3BEF07CFC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2069570,
-      "sha256": "4D31B302651DEE98CB0D076F0CEA00D9A9AABCB97FCCF66DC01815D81E6BF30A"
+      "bytes": 2070033,
+      "sha256": "7986019832B3A860B966AA29C4C2CE676CD219F421D3CE3C3F24B59B279D750E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1600 Group-count execution guard corrected (2026-09-27):** Run36312858808
+at3b267d83 correctly selected1932 cases, but a second shell guard still expected
+1924 and stopped before compilation/tests. Both guards now require1932; the
+eight new cases remain selected. Hosted rerun required. Target product36312856719
+succeeded; its original artifact intake is separate and no migration is proven.
+Evidence: docs/verification/gold-wave1600-group-count-repair.json.
 **W1597/W1598 Rollback Linux native acceptance and hosted target formatting (2026-09-27):**
 Group36311757940 at e639e712 executed all1924 selected regressions with no
 failures. Original three artifact ZIPs and10 producer inputs verify; this admits

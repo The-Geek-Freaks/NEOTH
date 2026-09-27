@@ -1,0 +1,11 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1600",
+  "status": "workflow_count_repaired_hosted_rerun_pending",
+  "failedRun": 36312858808,
+  "producer": "3b267d83d9f843ff639f1ab0ab08e05a6972e1a2",
+  "failure": "Python selector accepted1932; shell execution guard still expected1924 and rejected1932 before compilation or test execution.",
+  "repair": "Both exact guards now require1932, eight new cases remain selected.",
+  "logSha256": "A634929303F22163074532BC0948C33DB4934444BE63B07EAE2ABDD7DA7F54A4",
+  "localExecutableValidationRan": false
+}
