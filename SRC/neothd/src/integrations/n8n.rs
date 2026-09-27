@@ -469,6 +469,14 @@ impl N8nRestartValidator {
 
 impl RestartValidator for N8nRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        if job.operation == JobOperation::Update {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_update_reconciliation_required",
+                    "The interrupted update retains source and candidate custody; rerun n8n update to inspect the recorded effects without repeating an uncertain migration or cutover.",
+                ).expect("static failure is valid"),
+            };
+        }
         if job.operation == JobOperation::Backup {
             return RestartDecision::Hold {
                 failure: JobFailure::new(

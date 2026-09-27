@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, RuntimeBinding, RuntimePhase,
-    is_managed_job, read_binding, sha256_parts, validate_binding, validate_existing_identity,
+    is_managed_job, read_binding, read_binding_bytes, sha256_parts, validate_binding, validate_existing_identity,
 };
 use crate::integrations::{
     catalog::CapabilityId,
@@ -398,7 +398,7 @@ fn validate_custody(
     }
     if !matches!(
         source.operation,
-        JobOperation::Install | JobOperation::Rollback
+        JobOperation::Install | JobOperation::Rollback | JobOperation::Update
     ) || source.state != JobState::Ready
         || !is_managed_job(source)
         || !is_managed_job(job)
@@ -644,7 +644,7 @@ impl RestartValidator for ExplicitBackupRestartValidator {
                     .ok()
                     .flatten()
                     .is_some_and(|receipt| {
-                        receipt.schema_version == 1
+                        matches!(receipt.schema_version, 1..=3)
                             && receipt.backup_job_id == custody.backup_job_id
                             && receipt.backup_manifest_sha256 == custody.backup_manifest_sha256
                             && receipt.archive_sha256
@@ -665,7 +665,7 @@ impl RestartValidator for ExplicitBackupRestartValidator {
             })
             && matches!(
                 source.operation,
-                JobOperation::Install | JobOperation::Rollback
+                JobOperation::Install | JobOperation::Rollback | JobOperation::Update
             )
             && source.state == JobState::Ready
             && let Some(binding) = read_binding(&self.home).ok().flatten()
@@ -719,13 +719,14 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
     home: &Path,
     runner: &mut R,
 ) -> Result<IntegrationJob> {
-    super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
-    super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
         &super::operation_lock_path(home),
         "n8n managed runtime operation",
     )?
     .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+    super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
+    super::managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::managed_uninstall::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::super::managed_purge::repair_has_pending_custody(home)
@@ -965,15 +966,19 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
                 custody.archive_bytes.unwrap_or(0),
             )?;
         }
-        let rollback_source = source.operation == JobOperation::Rollback;
+        let historical_source = matches!(source.operation, JobOperation::Rollback | JobOperation::Update);
         let receipt = BackupReceiptView {
-            schema_version: if rollback_source { 2 } else { 1 },
+            schema_version: match source.operation {
+                JobOperation::Update => 3,
+                JobOperation::Rollback => 2,
+                _ => 1,
+            },
             backup_job_id: custody.backup_job_id.clone(),
             backup_manifest_sha256: custody.backup_manifest_sha256.clone(),
             source_install_job_id: custody.source_install_job_id.clone(),
-            source_job_id: rollback_source.then(|| source.job_id.as_str().into()),
-            source_manifest_sha256: rollback_source.then(|| source.manifest_sha256.as_str().into()),
-            source_operation: rollback_source.then(|| source.operation.as_str().into()),
+            source_job_id: historical_source.then(|| source.job_id.as_str().into()),
+            source_manifest_sha256: historical_source.then(|| source.manifest_sha256.as_str().into()),
+            source_operation: historical_source.then(|| source.operation.as_str().into()),
             source_pinned_image: custody.image.clone(),
             source_container_id: custody.container_id.clone(),
             volume_name: custody.volume.clone(),
@@ -1070,6 +1075,13 @@ pub(crate) fn completed_receipt_at(
                 && receipt.source_manifest_sha256.as_deref()
                     == Some(source.manifest_sha256.as_str())
                 && receipt.source_operation.as_deref() == Some("rollback")
+        }
+        3 => {
+            source.operation == JobOperation::Update
+                && receipt.source_job_id.as_deref() == Some(source.job_id.as_str())
+                && receipt.source_manifest_sha256.as_deref() == Some(source.manifest_sha256.as_str())
+                && receipt.source_operation.as_deref() == Some("update")
+                && super::managed_update::completed_receipt_at(home, source)?.is_some()
         }
         _ => false,
     };

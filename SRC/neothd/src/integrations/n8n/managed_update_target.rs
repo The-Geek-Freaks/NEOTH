@@ -79,6 +79,43 @@ pub(crate) struct TargetPreflightReceiptView {
     pub catalog_evidence_sha256: String,
 }
 
+/// Compiled admission authority for a managed Update.  This deliberately has
+/// no receipt path or local-preflight field: callers can obtain it only from
+/// the immutable catalog compiled into this binary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AdmittedUpdateTarget {
+    pub selector: String,
+    pub version: String,
+    pub runtime_image: String,
+    pub repo_digest: String,
+    pub index_digest: String,
+    pub catalog_evidence_sha256: String,
+    pub platforms: Vec<AdmittedUpdatePlatform>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AdmittedUpdatePlatform {
+    pub os: String,
+    pub architecture: String,
+    pub child_manifest_digest: String,
+}
+
+/// Engine-local proof produced only after the selected managed Docker engine
+/// has pulled and inspected the compiled target.  It is evidence for a job,
+/// never an input to admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TargetImageProof {
+    pub selector: String,
+    pub version: String,
+    pub platform: String,
+    pub runtime_image: String,
+    pub repo_digest: String,
+    pub index_digest: String,
+    pub child_manifest_digest: String,
+    pub config_digest: String,
+    pub catalog_evidence_sha256: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RegistryObject {
     Manifest(&'static str),
@@ -125,20 +162,60 @@ pub(crate) async fn verify_update_target_with<
     reader: &R,
     docker: &mut D,
 ) -> Result<TargetPreflightReceiptView> {
-    let target = resolve_target(selector)?;
-    verify_target_with(target, platform, reader, docker).await
+    let target = resolve_admitted_target(selector)?;
+    let proof = prove_admitted_target_with(&target, platform, reader, docker).await?;
+    Ok(TargetPreflightReceiptView {
+        selector: proof.selector,
+        version: proof.version,
+        platform: proof.platform,
+        runtime_image: proof.runtime_image,
+        index_digest: proof.index_digest,
+        child_manifest_digest: proof.child_manifest_digest,
+        config_digest: proof.config_digest,
+        catalog_evidence_sha256: proof.catalog_evidence_sha256,
+    })
 }
 
-async fn verify_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner>(
-    target: &UpdateTargetCatalogEntry,
+/// Resolve one immutable, compiled catalog target.  A `TargetPreflightReceiptView`
+/// is intentionally not accepted here; a standalone preflight has no authority
+/// over the engine that owns the managed runtime.
+pub(crate) fn resolve_admitted_target(selector: &str) -> Result<AdmittedUpdateTarget> {
+    let entry = resolve_target(selector)?;
+    Ok(AdmittedUpdateTarget {
+        selector: entry.selector.into(),
+        version: entry.version.into(),
+        runtime_image: entry.runtime_image.into(),
+        repo_digest: entry.repo_digest.into(),
+        index_digest: entry.index_digest.into(),
+        catalog_evidence_sha256: entry.catalog_evidence_sha256.into(),
+        platforms: entry
+            .platforms
+            .iter()
+            .map(|platform| AdmittedUpdatePlatform {
+                os: platform.os.into(),
+                architecture: platform.architecture.into(),
+                child_manifest_digest: platform.child_manifest_digest.into(),
+            })
+            .collect(),
+    })
+}
+
+pub(crate) async fn prove_admitted_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner>(
+    target: &AdmittedUpdateTarget,
     platform: &str,
     reader: &R,
     docker: &mut D,
-) -> Result<TargetPreflightReceiptView> {
-    let platform_entry = target_platform(target, platform)?;
+) -> Result<TargetImageProof> {
+    // Re-resolve the catalog tuple before using it.  This rejects values that
+    // merely resemble an admitted target but were reconstructed from a file.
+    let catalog = resolve_target(&target.selector)?;
+    if target != &resolve_admitted_target(catalog.selector)? {
+        return Err(anyhow!("n8n_update_target_admission_mismatch"));
+    }
+    let platform_entry = target_platform(catalog, platform)?;
     let index_raw =
-        bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
-    let child_descriptor = verify_index(&index_raw, target, platform_entry)?;
+        bounded_registry_read(reader, RegistryObject::Manifest(catalog.index_digest)).await?;
+    let child_descriptor = verify_index(&index_raw, catalog, platform_entry)?;
     let child_raw = bounded_registry_read(
         reader,
         RegistryObject::Manifest(platform_entry.child_manifest_digest),
@@ -147,25 +224,47 @@ async fn verify_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner
     let config_digest = verify_child_manifest(&child_raw, platform_entry, child_descriptor.size)?;
 
     docker
-        .pull_exact_target(platform, target.runtime_image)
+        .pull_exact_target(platform, catalog.runtime_image)
         .await
         .map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
     let observed = docker
-        .inspect_pulled_target(target.runtime_image)
+        .inspect_pulled_target(catalog.runtime_image)
         .await
         .map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
-    verify_pulled_target(&observed, target, platform_entry, &config_digest)?;
+    verify_pulled_target(&observed, catalog, platform_entry, &config_digest)?;
 
-    Ok(TargetPreflightReceiptView {
-        selector: target.selector.into(),
-        version: target.version.into(),
+    Ok(TargetImageProof {
+        selector: catalog.selector.into(),
+        version: catalog.version.into(),
         platform: platform.into(),
-        runtime_image: target.runtime_image.into(),
-        index_digest: target.index_digest.into(),
+        runtime_image: catalog.runtime_image.into(),
+        repo_digest: catalog.repo_digest.into(),
+        index_digest: catalog.index_digest.into(),
         child_manifest_digest: platform_entry.child_manifest_digest.into(),
         config_digest,
-        catalog_evidence_sha256: target.catalog_evidence_sha256.into(),
+        catalog_evidence_sha256: catalog.catalog_evidence_sha256.into(),
     })
+}
+
+// Kept private for the catalog fixture suite.  Production Update never calls
+// this compatibility helper: it must first pass through
+// `resolve_admitted_target` above.
+#[cfg(test)]
+async fn verify_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner>(
+    target: &UpdateTargetCatalogEntry,
+    platform: &str,
+    reader: &R,
+    docker: &mut D,
+) -> Result<TargetPreflightReceiptView> {
+    let platform_entry = target_platform(target, platform)?;
+    let index_raw = bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
+    let child_descriptor = verify_index(&index_raw, target, platform_entry)?;
+    let child_raw = bounded_registry_read(reader, RegistryObject::Manifest(platform_entry.child_manifest_digest)).await?;
+    let config_digest = verify_child_manifest(&child_raw, platform_entry, child_descriptor.size)?;
+    docker.pull_exact_target(platform, target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
+    let observed = docker.inspect_pulled_target(target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
+    verify_pulled_target(&observed, target, platform_entry, &config_digest)?;
+    Ok(TargetPreflightReceiptView { selector: target.selector.into(), version: target.version.into(), platform: platform.into(), runtime_image: target.runtime_image.into(), index_digest: target.index_digest.into(), child_manifest_digest: platform_entry.child_manifest_digest.into(), config_digest, catalog_evidence_sha256: target.catalog_evidence_sha256.into() })
 }
 
 fn resolve_target(selector: &str) -> Result<&'static UpdateTargetCatalogEntry> {
@@ -348,11 +447,11 @@ struct OciManifest {
     config: OciDescriptor,
 }
 
-struct DockerHubRegistryTargetReader {
+pub(crate) struct DockerHubRegistryTargetReader {
     client: reqwest::Client,
 }
 impl DockerHubRegistryTargetReader {
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
@@ -463,18 +562,7 @@ impl UpdateTargetDockerRunner for LocalUpdateTargetDockerRunner {
             return Err(anyhow!("n8n_update_target_docker_input_invalid"));
         }
         let output = run_docker(&["image", "inspect", image], INSPECT_TIMEOUT).await?;
-        let images: Vec<DockerImageInspect> = serde_json::from_slice(&output)
-            .map_err(|_| anyhow!("n8n_update_target_docker_inspect_invalid"))?;
-        if images.len() != 1 {
-            return Err(anyhow!("n8n_update_target_docker_inspect_invalid"));
-        }
-        let image = images.into_iter().next().expect("one checked image");
-        Ok(DockerImageObservation {
-            id: image.id,
-            repo_digests: image.repo_digests,
-            os: image.os,
-            architecture: image.architecture,
-        })
+        parse_docker_image_observation(&output)
     }
 }
 #[derive(Deserialize)]
@@ -487,6 +575,16 @@ struct DockerImageInspect {
     os: String,
     #[serde(rename = "Architecture")]
     architecture: String,
+}
+
+/// Shared by the managed-engine adapter.  The command runner remains bound to
+/// the caller; this parser cannot select an ambient Docker context.
+pub(crate) fn parse_docker_image_observation(data: &[u8]) -> Result<DockerImageObservation> {
+    let images: Vec<DockerImageInspect> = serde_json::from_slice(data)
+        .map_err(|_| anyhow!("n8n_update_target_docker_inspect_invalid"))?;
+    if images.len() != 1 { return Err(anyhow!("n8n_update_target_docker_inspect_invalid")); }
+    let image = images.into_iter().next().expect("one checked image");
+    Ok(DockerImageObservation { id: image.id, repo_digests: image.repo_digests, os: image.os, architecture: image.architecture })
 }
 
 async fn run_docker(args: &[&str], deadline: Duration) -> Result<Vec<u8>> {

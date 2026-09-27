@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1630 Managed Update source reviewed; hosted validation pending (2026-09-27):**
+The batch adds the explicit n8n Update CLI, an isolated copied-volume
+transaction with complete workflow/credential fingerprints, retained original
+runtime, durable failure recovery, Update lineage and downstream Backup/Repair/
+Uninstall/Reinstall/Purge handling. Root corrected the real Docker inspect JSON,
+missing image Cmd and inherited OCI/DHI labels against the exact admitted image
+config. The coordinator and hosted product acceptance gate passed independent static review;
+23 new native cases are currently registered (portable2165/Group1955/Windows720).
+Evidence: docs/verification/gold-wave1630-managed-update-source.json.
+These are source changes, not test or product acceptance. No local executable
+validation ran, no new hosted gate has started, and no ROAD checkbox is closed.
+ROAD remains1324 total/1077 done/245 open/2 partial. Prior successful runs apply
+only to their original producers. Root retains Git/PLAN/CI; Claude RESULT079 is
+still the latest processed result and TASK083 remains unacknowledged.
 **W1616-W1617 Linux Group and remaining Core gates accepted (2026-09-27):**
 Group36315962039 atd04d1cd6 executed all1932 selected cases with zero failures.
 Its original receipt/source/log artifacts match the GitHub API digests; all10

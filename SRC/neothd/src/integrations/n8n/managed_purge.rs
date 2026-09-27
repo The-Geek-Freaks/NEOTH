@@ -193,7 +193,9 @@ fn plan_from_request(
     let job = uninstall_id.as_str().to_owned();
     let volume = request.volume().to_owned();
     Ok(PurgePlan {
-        confirmation: if source.rollback_restore.is_some() {
+        confirmation: if source.update.is_some() {
+            format!("PURGE N8N UPDATE VOLUME {job} {volume}")
+        } else if source.rollback_restore.is_some() {
             format!("PURGE N8N RESTORE VOLUME {job} {volume}")
         } else {
             format!("PURGE N8N VOLUME {job} {volume}")
@@ -204,13 +206,22 @@ fn plan_from_request(
 }
 
 fn purge_manifest(plan: &PurgePlan, source: &RetainedReinstallSource) -> super::Sha256Digest {
+    let update_counts = source.update.as_ref().map(|update| [
+        update.source_archive_bytes.to_string(), update.host_port.to_string(),
+        update.baseline_workflow_count.to_string(), update.baseline_credential_count.to_string(),
+        update.migrated_workflow_count.to_string(), update.migrated_credential_count.to_string(),
+    ]);
     let mut parts = vec![
-        if source.rollback_restore.is_some() {
+        if source.update.is_some() {
+            "n8n-managed-update-volume-purge-v1"
+        } else if source.rollback_restore.is_some() {
             "n8n-managed-restore-volume-purge-v2"
         } else {
             "n8n-managed-retained-volume-purge-v1"
         },
-        if source.rollback_restore.is_some() {
+        if source.update.is_some() {
+            "PURGE N8N UPDATE VOLUME"
+        } else if source.rollback_restore.is_some() {
             "PURGE N8N RESTORE VOLUME"
         } else {
             "PURGE N8N VOLUME"
@@ -234,6 +245,26 @@ fn purge_manifest(plan: &PurgePlan, source: &RetainedReinstallSource) -> super::
             rollback.retained_source_name.as_str(),
         ]);
     }
+    if let Some(update) = &source.update {
+        parts.extend([
+            update.update_job_id.as_str(), update.update_manifest_sha256.as_str(),
+            update.selector.as_str(), update.version.as_str(), update.platform.as_str(),
+            update.runtime_image.as_str(), update.repo_digest.as_str(),
+            update.catalog_evidence_sha256.as_str(), update.index_digest.as_str(),
+            update.child_manifest_digest.as_str(), update.config_digest.as_str(),
+            update.source_job_id.as_str(), update.source_manifest_sha256.as_str(),
+            update.source_archive_sha256.as_str(), update.source_image.as_str(),
+            update_counts.as_ref().map(|values| values[0].as_str()).unwrap_or(""),
+            update_counts.as_ref().map(|values| values[1].as_str()).unwrap_or(""),
+            update_counts.as_ref().map(|values| values[2].as_str()).unwrap_or(""),
+            update_counts.as_ref().map(|values| values[3].as_str()).unwrap_or(""),
+            update.baseline_content_sha256.as_str(), update.migrated_content_sha256.as_str(),
+            update_counts.as_ref().map(|values| values[4].as_str()).unwrap_or(""),
+            update_counts.as_ref().map(|values| values[5].as_str()).unwrap_or(""),
+            update.update_volume.as_str(),
+            update.retained_source_container_id.as_str(), update.retained_source_name.as_str(),
+        ]);
+    }
     sha256_parts(&parts)
 }
 
@@ -242,7 +273,9 @@ fn purge_contract(plan: &PurgePlan, source: &RetainedReinstallSource) -> JobEvid
     JobEvidenceContract::verified(
         manifest.clone(),
         sha256_parts(&[
-            if source.rollback_restore.is_some() {
+            if source.update.is_some() {
+                "n8n-purge-update-volume"
+            } else if source.rollback_restore.is_some() {
                 "n8n-purge-restore-volume"
             } else {
                 "n8n-purge-volume"
@@ -289,6 +322,9 @@ fn validate_observed_volume(
         || if source.bootstrap_volume {
             found.labels.get("io.neoth.n8n-job").map(String::as_str)
                 != Some(source.volume_owner_install_job_id.as_str())
+        } else if source.update.is_some() {
+            found.labels.get("io.neoth.n8n-update").map(String::as_str)
+                != Some(source.volume_owner_install_job_id.as_str())
         } else {
             found.labels.get("io.neoth.n8n-restore").map(String::as_str)
                 != Some(source.volume_owner_install_job_id.as_str())
@@ -300,6 +336,10 @@ fn validate_observed_volume(
                 .map(String::as_str)
                 != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
         || (!source.bootstrap_volume
+            && source.update.is_some()
+            && found.labels.get("io.neoth.n8n-update-schema").map(String::as_str) != Some("1"))
+        || (!source.bootstrap_volume
+            && source.update.is_none()
             && found
                 .labels
                 .get("io.neoth.n8n-restore-schema")
@@ -570,6 +610,8 @@ pub(crate) async fn purge_retained_volume_at_with<R: ManagedDockerRunner>(
     super::managed_runtime::managed_restore::reject_pending_restore(home)
         .map_err(anyhow::Error::msg)?;
     super::managed_runtime::managed_rollback::reject_pending_rollback(home)
+        .map_err(anyhow::Error::msg)?;
+    super::managed_runtime::managed_update::reject_pending_update(home)
         .map_err(anyhow::Error::msg)?;
     if super::managed_runtime::managed_repair::repair_has_pending_custody(home)
         .map_err(anyhow::Error::msg)?

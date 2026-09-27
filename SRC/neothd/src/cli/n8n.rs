@@ -1,4 +1,4 @@
-//! `neoth n8n {install,repair,backup,restore,rollback,update-target,uninstall,purge,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,repair,backup,restore,rollback,update,update-target,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -46,6 +46,18 @@ pub enum N8nAction {
     /// Stop the owned runtime, archive its complete data volume, and restore its running state.
     /// Repeating an interrupted backup reconciles custody without repeating an uncertain copy.
     Backup,
+    /// Migrate a private copy to a reviewed n8n release and retain the original runtime.
+    Update {
+        /// Exact reviewed target selector, for example n8n-2.40.7.
+        #[arg(long)]
+        target: String,
+        /// Linux platform of the managed Docker engine.
+        #[arg(long, value_parser = ["linux/amd64", "linux/arm64"])]
+        platform: String,
+        /// Read the existing n8n API key from piped standard input.
+        #[arg(long, required = true)]
+        api_key_stdin: bool,
+    },
     /// Verify a reviewed update image before any managed lifecycle operation.
     UpdateTarget {
         #[command(subcommand)]
@@ -130,6 +142,9 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         }
         N8nAction::Repair => run_repair(output).await,
         N8nAction::Backup => run_backup(output).await,
+        N8nAction::Update { target, platform, api_key_stdin } => {
+            run_update(&target, &platform, api_key_stdin, output).await
+        }
         N8nAction::UpdateTarget {
             action: N8nUpdateTargetAction::Verify { target, platform },
         } => run_verify_update_target(&target, &platform, output).await,
@@ -150,6 +165,58 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_update(
+    target: &str,
+    platform: &str,
+    api_key_stdin: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    use crate::integrations::n8n::managed_runtime::managed_update;
+
+    // Reject an unknown catalog selector before reading secrets or touching custody.
+    crate::integrations::n8n::managed_update_target::resolve_admitted_target(target)?;
+    if !api_key_stdin || std::io::stdin().is_terminal() {
+        return Err(anyhow!("n8n update requires --api-key-stdin with piped standard input"));
+    }
+    let api_key = read_api_key_from_stdin().await?;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let job = managed_update::update_managed_at(&home, target, platform, api_key).await?;
+    let receipt = managed_update::completed_receipt_at(&home, &job).map_err(anyhow::Error::msg)?;
+    if job.state == crate::integrations::JobState::Ready && receipt.is_none() {
+        return Err(anyhow!("n8n update has no verified completion receipt"));
+    }
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "operation": "update",
+                "target": target,
+                "platform": platform,
+                "receipt": receipt,
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n update job: {}", job.job_id);
+            println!("state: {}", job.state);
+            println!("target: {target} ({platform})");
+            if receipt.is_some() {
+                println!("migration and update receipt: verified");
+                println!("original runtime and volume: retained");
+            }
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if job.state != crate::integrations::JobState::Ready || receipt.is_none() {
+        return Err(anyhow!("n8n update job {} requires reconciliation (state: {})", job.job_id, job.state));
+    }
+    Ok(())
 }
 
 async fn run_verify_update_target(
@@ -988,6 +1055,36 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn n8n_update_cli_requires_target_platform_and_piped_key_without_resource_overrides() {
+        use clap::Parser;
+
+        let base = ["neoth", "n8n", "update", "--target", "n8n-2.40.7", "--platform", "linux/amd64", "--api-key-stdin"];
+        let cli = crate::cli::Cli::try_parse_from(base).unwrap();
+        assert!(matches!(cli.command, crate::cli::Commands::N8n(N8nArgs {
+            action: N8nAction::Update { target, platform, api_key_stdin: true }
+        }) if target == "n8n-2.40.7" && platform == "linux/amd64"));
+        for missing in ["--target", "--platform", "--api-key-stdin"] {
+            let mut args = Vec::new();
+            let mut skip_value = false;
+            for argument in base {
+                if skip_value { skip_value = false; continue; }
+                if argument == missing {
+                    skip_value = missing != "--api-key-stdin";
+                } else { args.push(argument); }
+            }
+            assert!(crate::cli::Cli::try_parse_from(args).is_err());
+        }
+        for argument in ["--image", "--volume", "--container", "--receipt", "--port", "--endpoint"] {
+            let mut args = base.to_vec();
+            args.extend([argument, "unowned"]);
+            assert!(crate::cli::Cli::try_parse_from(args).is_err());
+        }
+        let mut invalid_platform = base;
+        invalid_platform[6] = "windows/amd64";
+        assert!(crate::cli::Cli::try_parse_from(invalid_platform).is_err());
     }
 
     #[test]

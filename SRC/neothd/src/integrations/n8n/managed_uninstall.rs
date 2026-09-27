@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
     JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID,
-    RetainedReinstallSource, RollbackRestoreRetention, RuntimeBinding, RuntimePhase,
+    RetainedReinstallSource, RollbackRestoreRetention, UpdateRetention, RuntimeBinding, RuntimePhase,
     is_managed_job, managed_manifest, read_binding, remove_binding, sha256_parts, validate_binding,
     validate_existing_identity,
 };
@@ -88,6 +88,8 @@ struct UninstallCompletionReceipt {
     source_retained_reinstall: Option<RetainedReinstallSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollback_restore: Option<RollbackRestoreRetention>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    update: Option<UpdateRetention>,
 }
 
 fn custody_path(home: &Path) -> PathBuf {
@@ -175,7 +177,9 @@ fn write_completion_receipt(
         return Err("n8n_uninstall_receipt_source_binding_mismatch");
     }
     let (bootstrap_volume, volume_owner_install_job_id, retained_reinstall) =
-        match binding.retained_reinstall.clone() {
+        match &binding.lineage {
+            super::RuntimeLineage::Update(lineage) => (false, Some(lineage.update_job_id.clone()), None),
+            _ => match binding.retained_reinstall.clone() {
             Some(source) if super::valid_retained_reinstall_source(&source) => (
                 source.bootstrap_volume,
                 Some(source.volume_owner_install_job_id.clone()),
@@ -187,12 +191,12 @@ fn write_completion_receipt(
                 Some(_) => return Err("n8n_uninstall_receipt_source_binding_mismatch"),
                 None => (false, None, None),
             },
-        };
-    let rollback_restore = match &binding.lineage {
-        super::RuntimeLineage::Install => binding
+        }};
+    let (rollback_restore, update) = match &binding.lineage {
+        super::RuntimeLineage::Install => (binding
             .retained_reinstall
             .as_ref()
-            .and_then(|source| source.rollback_restore.clone()),
+            .and_then(|source| source.rollback_restore.clone()), None),
         super::RuntimeLineage::Rollback(lineage) => {
             let receipt = super::managed_rollback::resolve_ready_receipt_at(home, source)?
                 .ok_or("n8n_uninstall_rollback_receipt_missing")?;
@@ -209,7 +213,7 @@ fn write_completion_receipt(
             {
                 return Err("n8n_uninstall_rollback_receipt_mismatch");
             }
-            Some(RollbackRestoreRetention {
+            (Some(RollbackRestoreRetention {
                 rollback_job_id: receipt.rollback_job_id,
                 rollback_manifest_sha256: receipt.rollback_manifest_sha256,
                 restore_job_id: lineage.restore_job_id.clone(),
@@ -219,11 +223,69 @@ fn write_completion_receipt(
                 restore_volume: binding.volume.clone(),
                 retained_source_container_id: lineage.retained_source_container_id.clone(),
                 retained_source_name: lineage.retained_source_name.clone(),
-            })
+            }), None)
+        }
+        super::RuntimeLineage::Update(lineage) => {
+            let receipt = super::managed_update::completed_receipt_at(home, source)?
+                .ok_or("n8n_uninstall_update_receipt_missing")?;
+            if receipt.update_job_id != binding.job_id
+                || receipt.update_manifest_sha256 != binding.manifest_sha256
+                || receipt.runtime_image != binding.image
+                || receipt.update_volume != binding.volume
+                || receipt.selector != lineage.admitted_selector
+                || receipt.version != lineage.admitted_version
+                || receipt.platform != lineage.admitted_platform
+                || receipt.repo_digest != lineage.admitted_repo_digest
+                || receipt.catalog_evidence_sha256 != lineage.catalog_evidence_sha256
+                || receipt.index_digest != lineage.index_digest
+                || receipt.child_manifest_digest != lineage.child_manifest_digest
+                || receipt.config_digest != lineage.config_digest
+                || receipt.source_job_id != lineage.source_job_id
+                || receipt.source_manifest_sha256 != lineage.source_manifest_sha256
+                || receipt.source_archive_sha256 != lineage.source_archive_sha256
+                || receipt.source_archive_bytes != lineage.source_archive_bytes
+                || receipt.source_container_id != lineage.source_container_id
+                || receipt.source_volume != lineage.source_volume
+                || receipt.retained_source_container_id != lineage.retained_source_container_id
+                || receipt.retained_source_name != lineage.retained_source_name
+            { return Err("n8n_uninstall_update_receipt_mismatch"); }
+            if receipt.new_container_id != custody.container_id
+                && !super::managed_repair::completed_replacement_matches(home, &binding, source, &receipt.new_container_id)?
+            { return Err("n8n_uninstall_update_receipt_mismatch"); }
+            (None, Some(UpdateRetention {
+                update_job_id: receipt.update_job_id,
+                update_manifest_sha256: receipt.update_manifest_sha256,
+                selector: receipt.selector,
+                version: receipt.version,
+                platform: receipt.platform,
+                runtime_image: receipt.runtime_image,
+                repo_digest: receipt.repo_digest,
+                catalog_evidence_sha256: receipt.catalog_evidence_sha256,
+                index_digest: receipt.index_digest,
+                child_manifest_digest: receipt.child_manifest_digest,
+                config_digest: receipt.config_digest,
+                source_job_id: receipt.source_job_id,
+                source_manifest_sha256: receipt.source_manifest_sha256,
+                source_archive_sha256: receipt.source_archive_sha256,
+                source_archive_bytes: receipt.source_archive_bytes,
+                source_container_id: receipt.source_container_id,
+                source_image: receipt.source_image,
+                source_volume: receipt.source_volume,
+                host_port: receipt.host_port,
+                baseline_workflow_count: receipt.baseline_workflow_count,
+                baseline_credential_count: receipt.baseline_credential_count,
+                baseline_content_sha256: receipt.baseline_content_sha256,
+                migrated_workflow_count: receipt.migrated_workflow_count,
+                migrated_credential_count: receipt.migrated_credential_count,
+                migrated_content_sha256: receipt.migrated_content_sha256,
+                update_volume: receipt.update_volume,
+                retained_source_container_id: receipt.retained_source_container_id,
+                retained_source_name: receipt.retained_source_name,
+            }))
         }
     };
     let receipt = UninstallCompletionReceipt {
-        schema_version: if rollback_restore.is_some() { 2 } else { 1 },
+        schema_version: if update.is_some() { 3 } else if rollback_restore.is_some() { 2 } else { 1 },
         uninstall_job_id: custody.uninstall_job_id.clone(),
         uninstall_manifest_sha256: custody.uninstall_manifest_sha256.clone(),
         source_install_job_id: custody.source_install_job_id.clone(),
@@ -237,6 +299,7 @@ fn write_completion_receipt(
         source_volume_owner_install_job_id: volume_owner_install_job_id,
         source_retained_reinstall: retained_reinstall,
         rollback_restore,
+        update,
     };
     crate::util::atomic_write::atomic_write_private(
         &receipt_path(home, &receipt.uninstall_job_id),
@@ -261,11 +324,12 @@ fn read_completion_receipt(
     let bytes = std::fs::read(&path).map_err(|_| "n8n_uninstall_receipt_read_failed")?;
     let receipt: UninstallCompletionReceipt =
         serde_json::from_slice(&bytes).map_err(|_| "n8n_uninstall_receipt_invalid")?;
-    if !matches!(receipt.schema_version, 1 | 2)
+    if !matches!(receipt.schema_version, 1 | 2 | 3)
         || receipt.uninstall_job_id != job.job_id.as_str()
         || receipt.uninstall_manifest_sha256 != job.manifest_sha256.as_str()
-        || (receipt.schema_version == 1 && receipt.rollback_restore.is_some())
-        || (receipt.schema_version == 2 && receipt.rollback_restore.is_none())
+        || (receipt.schema_version == 1 && (receipt.rollback_restore.is_some() || receipt.update.is_some()))
+        || (receipt.schema_version == 2 && (receipt.rollback_restore.is_none() || receipt.update.is_some()))
+        || (receipt.schema_version == 3 && (receipt.rollback_restore.is_some() || receipt.update.is_none()))
     {
         return Err("n8n_uninstall_receipt_mismatch");
     }
@@ -307,6 +371,9 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
     }
     let receipt = read_completion_receipt(home, &uninstall)?
         .ok_or("n8n_retained_reinstall_receipt_missing")?;
+    if let Some(update) = receipt.update.clone() {
+        return update_reinstall_request(home, &uninstall, &receipt, &update, jobs);
+    }
     if let Some(rollback) = receipt.rollback_restore.clone() {
         return rollback_restore_reinstall_request(home, &uninstall, &receipt, &rollback, jobs);
     }
@@ -405,6 +472,7 @@ pub(crate) fn retained_reinstall_request_from_snapshot(
         bootstrap_volume,
         volume_owner_install_job_id: volume_owner_install_job_id.into(),
         rollback_restore: None,
+        update: None,
     }))
 }
 
@@ -522,6 +590,7 @@ fn rollback_restore_reinstall_request(
             bootstrap_volume: false,
             volume_owner_install_job_id: rollback.restore_job_id.clone(),
             rollback_restore: Some(rollback.clone()),
+            update: None,
         })
     })
 }
@@ -547,6 +616,109 @@ fn uninstall_manifest_from_identity(
         "n8n-managed-retained-volume-provenance-v1",
         volume_owner_install_job_id,
     ])
+}
+
+/// Reinstall an Update-retained volume only after independently resolving the
+/// non-cyclic completed Update receipt and the compiled catalog target.  The
+/// uninstall receipt carries custody; it never becomes target authority.
+fn update_reinstall_request(
+    home: &Path,
+    uninstall: &IntegrationJob,
+    receipt: &UninstallCompletionReceipt,
+    update: &UpdateRetention,
+    jobs: Vec<IntegrationJob>,
+) -> Result<ManagedN8nRequest, &'static str> {
+    let update_job = jobs.iter()
+        .find(|job| job.job_id.as_str() == update.update_job_id)
+        .ok_or("n8n_update_volume_update_missing")?;
+    let immediate = jobs.iter()
+        .find(|job| job.job_id.as_str() == receipt.source_install_job_id)
+        .ok_or("n8n_update_volume_source_missing")?;
+    if update_job.operation != JobOperation::Update || update_job.state != JobState::Ready
+        || update_job.manifest_sha256.as_str() != update.update_manifest_sha256
+        || receipt.source_volume.as_deref() != Some(update.update_volume.as_str())
+        || receipt.source_image.as_deref() != Some(update.runtime_image.as_str())
+        || !matches!(receipt.source_container_id.as_deref(), Some(id) if super::valid_container_id(id))
+        || !matches!(receipt.source_host_port, Some(port) if port != 0)
+    { return Err("n8n_update_volume_receipt_mismatch"); }
+    let resolved = super::managed_update::completed_receipt_at(home, update_job)?
+        .ok_or("n8n_update_volume_update_receipt_missing")?;
+    if resolved.update_job_id != update.update_job_id
+        || resolved.update_manifest_sha256 != update.update_manifest_sha256
+        || resolved.selector != update.selector || resolved.version != update.version
+        || resolved.platform != update.platform || resolved.runtime_image != update.runtime_image
+        || resolved.repo_digest != update.repo_digest
+        || resolved.catalog_evidence_sha256 != update.catalog_evidence_sha256
+        || resolved.index_digest != update.index_digest
+        || resolved.child_manifest_digest != update.child_manifest_digest
+        || resolved.config_digest != update.config_digest
+        || resolved.source_job_id != update.source_job_id
+        || resolved.source_manifest_sha256 != update.source_manifest_sha256
+        || resolved.source_archive_sha256 != update.source_archive_sha256
+        || resolved.source_archive_bytes != update.source_archive_bytes
+        || resolved.source_container_id != update.source_container_id
+        || resolved.source_image != update.source_image
+        || resolved.source_volume != update.source_volume
+        || resolved.host_port != update.host_port
+        || resolved.baseline_workflow_count != update.baseline_workflow_count
+        || resolved.baseline_credential_count != update.baseline_credential_count
+        || resolved.baseline_content_sha256 != update.baseline_content_sha256
+        || resolved.migrated_workflow_count != update.migrated_workflow_count
+        || resolved.migrated_credential_count != update.migrated_credential_count
+        || resolved.migrated_content_sha256 != update.migrated_content_sha256
+        || resolved.update_volume != update.update_volume
+        || resolved.retained_source_container_id != update.retained_source_container_id
+        || resolved.retained_source_name != update.retained_source_name
+    { return Err("n8n_update_volume_update_receipt_mismatch"); }
+    let target = super::super::managed_update_target::resolve_admitted_target(&update.selector)
+        .map_err(|_| "n8n_update_volume_target_invalid")?;
+    if target.version != update.version || target.runtime_image != update.runtime_image
+        || target.repo_digest != update.repo_digest
+        || target.catalog_evidence_sha256 != update.catalog_evidence_sha256
+        || target.index_digest != update.index_digest
+        || !target.platforms.iter().any(|platform| {
+            format!("{}/{}", platform.os, platform.architecture) == update.platform
+                && platform.child_manifest_digest == update.child_manifest_digest
+        })
+    { return Err("n8n_update_volume_target_mismatch"); }
+    let inherited = RetainedReinstallSource {
+        uninstall_job_id: uninstall.job_id.as_str().into(),
+        uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
+        source_install_job_id: immediate.job_id.as_str().into(),
+        source_install_manifest_sha256: immediate.manifest_sha256.as_str().into(),
+        bootstrap_volume: false,
+        volume_owner_install_job_id: update.update_job_id.clone(),
+        rollback_restore: None,
+        update: Some(update.clone()),
+    };
+    match immediate.operation {
+        JobOperation::Update if immediate.job_id == update_job.job_id => {
+            if immediate.manifest_sha256 != update.update_manifest_sha256 { return Err("n8n_update_volume_source_mismatch"); }
+        }
+        JobOperation::Install if immediate.state == JobState::Ready && is_managed_job(immediate) => {
+            let previous = receipt.source_retained_reinstall.as_ref()
+                .filter(|source| source.update.as_ref() == Some(update))
+                .filter(|source| super::valid_retained_reinstall_source(source))
+                .ok_or("n8n_update_volume_source_mismatch")?;
+            let previous_request = ManagedN8nRequest::admitted_update(
+                receipt.source_host_port.unwrap_or_default(), &target, update.update_volume.clone(),
+            )?.with_retained_reinstall(previous.clone());
+            if managed_manifest(&previous_request) != immediate.manifest_sha256 { return Err("n8n_update_volume_source_mismatch"); }
+        }
+        _ => return Err("n8n_update_volume_source_mismatch"),
+    }
+    if receipt.source_install_manifest_sha256 != immediate.manifest_sha256.as_str()
+        || uninstall.manifest_sha256 != uninstall_manifest_from_identity(
+            immediate.job_id.as_str(), immediate.manifest_sha256.as_str(),
+            receipt.source_container_id.as_deref().unwrap_or(""),
+            receipt.source_image.as_deref().unwrap_or(""), receipt.source_host_port.unwrap_or_default(),
+            receipt.source_volume.as_deref().unwrap_or(""), update.update_job_id.as_str(),
+        )
+    { return Err("n8n_update_volume_uninstall_manifest_mismatch"); }
+    let request = ManagedN8nRequest::admitted_update(
+        receipt.source_host_port.unwrap_or_default(), &target, update.update_volume.clone(),
+    )?.with_retained_reinstall(inherited);
+    Ok(request)
 }
 
 fn uninstall_manifest(binding: &RuntimeBinding) -> super::super::Sha256Digest {
@@ -854,6 +1026,7 @@ async fn uninstall_managed_at_with_restart_inspector<
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
+    super::managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)? {
         anyhow::bail!("n8n_uninstall_repair_custody_pending");
     }

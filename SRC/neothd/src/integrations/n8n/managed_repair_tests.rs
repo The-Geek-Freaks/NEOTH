@@ -1179,3 +1179,39 @@ async fn retained_install_repair_uninstall_reinstall_and_repair_preserves_origin
     assert_ne!(reinstalled.job_id, source.job_id);
     assert_no_effect_after_setup(&state);
 }
+
+#[tokio::test]
+async fn malformed_update_custody_blocks_repair_before_any_docker_call() {
+    let (home, mut runner, state, _) = fixture().await;
+    std::fs::write(home.path().join("n8n-managed-update.v1.json"), b"incomplete custody").unwrap();
+    let before = state.lock().unwrap().calls.clone();
+    assert!(repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true)).await.is_err());
+    assert_eq!(state.lock().unwrap().calls, before);
+}
+
+#[tokio::test]
+async fn replacement_history_requires_ready_job_and_exact_binding_transition() {
+    let (home, mut runner, state, source) = fixture().await;
+    let original = read_binding(home.path()).unwrap().unwrap().container_id.unwrap();
+    state.lock().unwrap().container = None;
+    let repaired = repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true)).await.unwrap();
+    assert_eq!(repaired.state, JobState::Ready);
+    let binding = read_binding(home.path()).unwrap().unwrap();
+    assert!(!completed_replacement_matches(home.path(), &binding, &source, &original).unwrap());
+    let custody = read_custody(home.path()).unwrap().unwrap();
+    // Use the real completed repair transition as a historical edge fixture.
+    let path = replacement_receipt_path(home.path(), binding.container_id.as_deref().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&custody).unwrap()).unwrap();
+    assert!(completed_replacement_matches(home.path(), &binding, &source, &original).unwrap());
+    let mut changed = binding.clone();
+    changed.volume = "foreign-volume".into();
+    assert!(!completed_replacement_matches(home.path(), &changed, &source, &original).unwrap());
+    let mut changed_custody = custody.clone();
+    changed_custody.repair_job_id = source.job_id.as_str().into();
+    std::fs::write(&path, serde_json::to_vec(&changed_custody).unwrap()).unwrap();
+    assert!(!completed_replacement_matches(home.path(), &binding, &source, &original).unwrap());
+    let mut changed_custody = custody;
+    changed_custody.old_binding_bytes = b"{}".to_vec();
+    std::fs::write(&path, serde_json::to_vec(&changed_custody).unwrap()).unwrap();
+    assert!(!completed_replacement_matches(home.path(), &binding, &source, &original).unwrap());
+}

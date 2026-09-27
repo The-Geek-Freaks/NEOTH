@@ -1,0 +1,56 @@
+{
+  "schema": "neoth-gold-source-batch/v1",
+  "batch": "W1630",
+  "capturedUtc": "2026-09-27T13:14:06.1508279Z",
+  "base": "5b8b28d5a3e9c8e77b7a4b9919dfb70c66bdd1f9",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "scope": "Managed n8n Update with copied-volume full-content proof, durable failure reconciliation, retained original source, schema4 active lineage, repair replacement history and repeated retained lifecycle",
+  "sourceReview": [
+    {
+      "verdict": "STATIC_APPROVE",
+      "sha256": "D524C7FFC05CA1A2D589BD32AFB542BE1748336113ABF6A5E14A1E3090666A48",
+      "report": "work/gold-20260906/wave1631-update-final-review/REPORT.md"
+    },
+    {
+      "verdict": "STATIC_APPROVE_HOSTED_REQUIRED",
+      "sha256": "3DB19980013D0CE8DF2B0CD068D048B3B37D4D3CFB7AE4FFF5C5173013BCB550",
+      "report": "work/gold-20260906/wave1629-product-review/REPORT.md"
+    }
+  ],
+  "targetImageConfig": {
+    "imageLabels": "Inherited OCI/DHI labels are allowed outside closed io.neoth custody namespace",
+    "bytes": 7955,
+    "digest": "sha256:f3bf0d098792d61b470ac74b110e3a32d5c5d1e4920ae2b78215ad41a599824a",
+    "report": "work/gold-20260906/wave1626-target-image-config/REPORT.md",
+    "entrypoint": [
+      "tini",
+      "--",
+      "/docker-entrypoint.sh"
+    ],
+    "cmdPresent": false,
+    "user": "node"
+  },
+  "registeredTests": {
+    "group": 1955,
+    "portable": 2165,
+    "executedLocally": 0,
+    "added": 23,
+    "windows": 720
+  },
+  "hosted": "pending",
+  "localExecutableValidationRan": false,
+  "roadmap": {
+    "total": 1324,
+    "done": 1077,
+    "closedByThisBatch": 0,
+    "partial": 2,
+    "open": 245
+  },
+  "constraints": [
+    "Absolute local BSOD hold",
+    "No .slint changes",
+    "Root-only Git and CI dispatch",
+    "main only",
+    "No release/runtime acceptance inferred from static review"
+  ]
+}

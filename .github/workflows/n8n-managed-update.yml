@@ -1,0 +1,37 @@
+name: W1623 managed n8n Update acceptance
+on: {workflow_dispatch:}
+permissions: {contents: read}
+env: {CARGO_BUILD_JOBS: '1', CARGO_INCREMENTAL: '0', CARGO_PROFILE_DEV_DEBUG: '0', DOCKER_HOST: unix:///var/run/docker.sock, DOCKER_CONTEXT: ''}
+jobs:
+  managed-update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: {persist-credentials: false}
+      - name: Initialize redacted receipt
+        run: mkdir -m 700 -p "$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt" && printf '{"schema":1,"outcome":"failed","failure_stage":"workflow_not_completed"}\n' > "$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt/receipt.json"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with: {toolchain: '1.91.0'}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools python3-yaml sqlite3
+      - run: python3 -m unittest discover -s packaging/tests -p test_n8n_managed_update_canary.py
+      - run: python3 -m unittest discover -s packaging/tests -p test_n8n_update_content.py
+      - run: python3 -m unittest discover -s packaging/tests -p test_n8n_update_migration_canary.py
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with: {path: "~/.cargo/registry/index/\n~/.cargo/registry/cache/\n~/.cargo/git/db/\nSRC/target/", key: "${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}"}
+      - working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked
+      - name: Run hosted managed Update acceptance
+        env: {PYTHONDONTWRITEBYTECODE: '1'}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; export NEOTH_HOME="$root/neoth-home" NO_COLOR=1 RUST_BACKTRACE=0 XDG_CONFIG_HOME="$root/xdg-config" XDG_DATA_HOME="$root/xdg-data" XDG_RUNTIME_DIR="$root/xdg-runtime"
+          mkdir -m 700 -p "$NEOTH_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          timeout 1800s dbus-run-session -- python3 packaging/n8n_managed_update_canary.py --binary SRC/target/debug/neoth --home "$NEOTH_HOME" --receipt "$root/receipt/receipt.json"
+      - name: Finalize receipt fallback
+        if: always()
+        run: mkdir -m 700 -p "$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt"; test -s "$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt/receipt.json" || printf '{"schema":1,"outcome":"failed","failure_stage":"workflow_receipt_missing"}\n' > "$RUNNER_TEMP/w1623-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt/receipt.json"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: {name: "w1623-n8n-managed-update-${{ github.run_id }}-${{ github.run_attempt }}", path: "${{ runner.temp }}/w1623-n8n-${{ github.run_id }}-${{ github.run_attempt }}/receipt/receipt.json", retention-days: 7}

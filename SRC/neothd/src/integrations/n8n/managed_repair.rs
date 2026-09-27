@@ -192,6 +192,88 @@ fn write_custody(home: &Path, custody: &RepairCustody) -> Result<(), &'static st
     )
     .map_err(|_| "n8n_repair_custody_write_failed")
 }
+
+fn replacement_receipt_path(home: &Path, id: &str) -> Result<PathBuf, &'static str> {
+    if !super::valid_container_id(id) {
+        return Err("n8n_repair_replacement_id_invalid");
+    }
+    Ok(home.join(format!("n8n-repair-container-{id}.receipt.json")))
+}
+
+/// Keep each historical generation's identity edge after the mutable repair
+/// sidecar is retired. A Ready Update receipt continues to name the first ID.
+fn preserve_replacement_receipt(home: &Path, custody: &RepairCustody) -> Result<(), &'static str> {
+    if !matches!(custody.old_binding.lineage, super::RuntimeLineage::Update(_))
+        || custody.action.as_deref() != Some("recreated")
+    {
+        return Ok(());
+    }
+    let id = custody.new_container_id.as_deref().ok_or("n8n_repair_replacement_id_invalid")?;
+    let path = replacement_receipt_path(home, id)?;
+    let bytes = serde_json::to_vec(custody).map_err(|_| "n8n_repair_replacement_serialize_failed")?;
+    match read_replacement_receipt(home, id)? {
+        Some(existing) if existing == *custody => Ok(()),
+        Some(_) => Err("n8n_repair_replacement_mismatch"),
+        None => crate::util::atomic_write::write_private_create_new_durable(&path, &bytes)
+            .map_err(|_| "n8n_repair_replacement_write_failed"),
+    }
+}
+
+fn read_replacement_receipt(home: &Path, id: &str) -> Result<Option<RepairCustody>, &'static str> {
+    let path = replacement_receipt_path(home, id)?;
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("n8n_repair_replacement_read_failed"),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 32 * 1024 {
+        return Err("n8n_repair_replacement_invalid");
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).map_err(|_| "n8n_repair_replacement_read_failed")?
+        .take(32 * 1024 + 1).read_to_end(&mut bytes)
+        .map_err(|_| "n8n_repair_replacement_read_failed")?;
+    if bytes.len() > 32 * 1024 { return Err("n8n_repair_replacement_invalid"); }
+    serde_json::from_slice(&bytes).map(Some).map_err(|_| "n8n_repair_replacement_invalid")
+}
+
+/// Resolve ID replacements without invoking active-lineage validation again.
+/// Every edge requires its own Ready Repair job and preserves all binding
+/// fields except the exact container ID. Cycles and missing history fail closed.
+pub(super) fn completed_replacement_matches(
+    home: &Path,
+    binding: &RuntimeBinding,
+    source: &IntegrationJob,
+    original_id: &str,
+) -> Result<bool, &'static str> {
+    let jobs = IntegrationJobService::read_only_snapshot(home)
+        .map_err(|_| "n8n_repair_source_read_failed")?;
+    let mut current = binding.clone();
+    let mut seen = std::collections::BTreeSet::new();
+    // A chain cannot contain more edges than the bounded job snapshot's jobs.
+    for _ in 0..=jobs.len() {
+        let Some(id) = current.container_id.as_deref() else { return Ok(false); };
+        if id == original_id { return Ok(true); }
+        if !seen.insert(id.to_owned()) { return Ok(false); }
+        let Some(custody) = read_replacement_receipt(home, id)? else { return Ok(false); };
+        let Some(repair) = jobs.iter().find(|job| job.job_id.as_str() == custody.repair_job_id)
+            else { return Ok(false); };
+        if custody.phase != RepairPhase::Completed
+            || custody.action.as_deref() != Some("recreated")
+            || repair.operation != JobOperation::Repair || repair.state != JobState::Ready
+            || validate_custody(&custody, repair, source).is_err()
+            || repair.manifest_sha256 != repair_manifest(&custody.old_binding, source, custody.generation)
+            || custody.new_container_id.as_deref() != Some(id)
+            || custody.new_binding.as_ref() != Some(&current)
+            || current != expected_recreated_binding(&custody, id.to_owned())
+            || serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes).ok().as_ref() != Some(&custody.old_binding)
+            || custody.new_binding_bytes.as_deref().and_then(|bytes| serde_json::from_slice::<RuntimeBinding>(bytes).ok()).as_ref() != Some(&current)
+            || validate_binding(&custody.old_binding, source).is_err()
+        { return Ok(false); }
+        current = custody.old_binding;
+    }
+    Ok(false)
+}
 /// Startup can resume only the post-create binding commit: the exact new id
 /// was already receipt-witnessed and both raw binding byte alternatives are
 /// durable. All earlier effect-dispatch phases remain held, and resume itself
@@ -236,7 +318,7 @@ fn restart_binding_commit_proven(
     if job.operation != JobOperation::Repair
         || !matches!(
             source.operation,
-            JobOperation::Install | JobOperation::Rollback
+            JobOperation::Install | JobOperation::Rollback | JobOperation::Update
         )
         || source.state != JobState::Ready
         || !is_managed_job(&source)
@@ -454,6 +536,7 @@ pub(in crate::integrations) async fn repair_managed_at_with<
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     super::managed_rollback::reject_pending_rollback(home).map_err(anyhow::Error::msg)?;
+    super::managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     if super::managed_uninstall::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::super::managed_purge::repair_has_pending_custody(home)
             .map_err(anyhow::Error::msg)?
@@ -474,6 +557,7 @@ pub(in crate::integrations) async fn repair_managed_at_with<
                 && job.manifest_sha256.as_str() == custody.repair_manifest_sha256
         })
     {
+        preserve_replacement_receipt(home, custody).map_err(anyhow::Error::msg)?;
         let source = service.snapshot()?.into_iter().find(|job| {
             job.job_id.as_str() == custody.source_install_job_id
                 && job.manifest_sha256.as_str() == custody.source_install_manifest_sha256
@@ -778,6 +862,7 @@ pub(in crate::integrations) async fn repair_managed_at_with<
         custody.phase = RepairPhase::Completed;
         write_custody(home, &custody).map_err(anyhow::Error::msg)?;
     }
+    preserve_replacement_receipt(home, &custody).map_err(anyhow::Error::msg)?;
     if active.progress.completed_steps < 5 {
         active = checkpoint(&service, &active, 5, STEPS[4])?;
     }
@@ -907,7 +992,7 @@ fn completed_authority(
     let current = read_binding(home)?.ok_or("n8n_repair_binding_missing")?;
     if !matches!(
         source.operation,
-        JobOperation::Install | JobOperation::Rollback
+        JobOperation::Install | JobOperation::Rollback | JobOperation::Update
     ) || source.state != JobState::Ready
         || !is_managed_job(&source)
         || current != *expected

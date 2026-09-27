@@ -469,6 +469,7 @@ pub(in crate::integrations) async fn rollback_managed_at_with_readiness<
     .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
     super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
+    super::managed_update::reject_pending_update(home).map_err(anyhow::Error::msg)?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::managed_uninstall::repair_has_pending_custody(home).map_err(anyhow::Error::msg)?
         || super::super::managed_purge::repair_has_pending_custody(home)

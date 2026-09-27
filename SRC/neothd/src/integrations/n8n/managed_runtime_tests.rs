@@ -1147,3 +1147,36 @@ fn queued_foreign_create_intent_stays_fail_closed_without_docker_inspection() {
         "another-job"
     );
 }
+
+#[test]
+fn update_retention_is_the_only_nonbootstrap_retained_authority() {
+    let update = UpdateRetention {
+        update_job_id: "018f0c00-0000-7000-8000-000000000001".into(),
+        update_manifest_sha256: "a".repeat(64),
+        selector: "n8n-2.40.7".into(), version: "2.40.7".into(), platform: "linux/amd64".into(),
+        runtime_image: "docker.io/n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34".into(),
+        repo_digest: "n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34".into(),
+        catalog_evidence_sha256: "b".repeat(64), index_digest: "sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34".into(),
+        child_manifest_digest: format!("sha256:{}", "c".repeat(64)), config_digest: format!("sha256:{}", "d".repeat(64)),
+        source_job_id: "018f0c00-0000-7000-8000-000000000002".into(), source_manifest_sha256: "e".repeat(64),
+        source_archive_sha256: "f".repeat(64), source_archive_bytes: 1,
+        source_container_id: "1".repeat(64), source_image: N8N_OCI_REFERENCE.into(), source_volume: "neoth_n8n_data".into(), host_port: 5678,
+        baseline_workflow_count: 1, baseline_credential_count: 1, baseline_content_sha256: "8".repeat(64), migrated_workflow_count: 1, migrated_credential_count: 1, migrated_content_sha256: "9".repeat(64),
+        update_volume: "neoth_n8n_update_018f0c00000070008000000000000001".into(),
+        retained_source_container_id: "2".repeat(64), retained_source_name: "neoth-n8n-retired-018f0c00000070008000000000000001".into(),
+    };
+    let source = RetainedReinstallSource {
+        uninstall_job_id: "018f0c00-0000-7000-8000-000000000003".into(), uninstall_manifest_sha256: "3".repeat(64),
+        source_install_job_id: update.update_job_id.clone(), source_install_manifest_sha256: update.update_manifest_sha256.clone(),
+        bootstrap_volume: false, volume_owner_install_job_id: update.update_job_id.clone(), rollback_restore: None, update: Some(update),
+    };
+    assert!(valid_retained_reinstall_source(&source));
+    let mut mixed = source;
+    mixed.rollback_restore = Some(RollbackRestoreRetention {
+        rollback_job_id: "018f0c00-0000-7000-8000-000000000004".into(), rollback_manifest_sha256: "4".repeat(64),
+        restore_job_id: "018f0c00-0000-7000-8000-000000000005".into(), restore_manifest_sha256: "5".repeat(64),
+        backup_job_id: "018f0c00-0000-7000-8000-000000000006".into(), backup_manifest_sha256: "6".repeat(64),
+        restore_volume: "restore".into(), retained_source_container_id: "7".repeat(64), retained_source_name: "neoth-n8n-retired-018f0c00000070008000000000000001".into(),
+    });
+    assert!(!valid_retained_reinstall_source(&mixed));
+}

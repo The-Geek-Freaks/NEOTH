@@ -767,6 +767,29 @@ jobs:
           integrations::n8n::managed_update_target::tests::wrong_repo_platform_config_and_extra_aliases_are_handled_after_exact_command_contract	neothd/src/integrations/n8n/managed_update_target_tests.rs
           integrations::n8n::managed_update_target::tests::docker_hub_token_envelope_accepts_standard_optional_fields_without_exposing_them	neothd/src/integrations/n8n/managed_update_target_tests.rs
           cli::n8n::tests::update_target_cli_requires_explicit_target_and_supported_platform	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_runtime::managed_update::tests::update_ready_preserves_source_custody_and_is_idempotent	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::stopped_source_remains_stopped_after_ready_update	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::ready_update_is_a_valid_source_for_the_real_backup_coordinator	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::known_content_mismatch_compensates_running_source_to_exact_prior_binding	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::known_content_mismatch_preserves_a_previously_stopped_source	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::lost_archive_receipt_is_held_and_reentry_never_rearchives_source	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::ambiguous_candidate_removal_holds_after_one_remove_without_live_create	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::lost_extract_receipt_is_held_and_reentry_never_reextracts_or_creates_target	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::source_tuple_image_mismatch_blocks_before_source_mutation	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::compensation_candidate_remove_unknown_holds_then_observed_absence_finalizes_failed	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update::tests::lost_candidate_id_does_not_retry_create_on_reentry	neothd/src/integrations/n8n/managed_update_tests.rs
+          integrations::n8n::managed_runtime::managed_update_candidate::tests::target_candidate_is_networkless_normal_and_hardened	neothd/src/integrations/n8n/managed_update_candidate.rs
+          integrations::n8n::managed_runtime::managed_update_candidate::tests::production_inspect_projection_emits_parseable_json	neothd/src/integrations/n8n/managed_update_candidate.rs
+          integrations::n8n::managed_runtime::managed_update_candidate::tests::parsers_reject_the_other_process_and_any_exposure	neothd/src/integrations/n8n/managed_update_candidate.rs
+          integrations::n8n::managed_runtime::managed_update_candidate::tests::parsers_bind_the_exact_reserved_name	neothd/src/integrations/n8n/managed_update_candidate.rs
+          integrations::n8n::managed_runtime::managed_update_content::tests::equal_fingerprints_are_required_for_update_content_proof	neothd/src/integrations/n8n/managed_update_content.rs
+          integrations::n8n::managed_runtime::managed_update_content::tests::decoder_accepts_only_the_small_exact_public_receipt_shape	neothd/src/integrations/n8n/managed_update_content.rs
+          integrations::n8n::managed_runtime::tests::update_retention_is_the_only_nonbootstrap_retained_authority	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::managed_backup::tests::malformed_update_custody_blocks_backup_before_any_docker_call	neothd/src/integrations/n8n/managed_backup_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::malformed_update_custody_blocks_repair_before_any_docker_call	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::replacement_history_requires_ready_job_and_exact_binding_transition	neothd/src/integrations/n8n/managed_repair_tests.rs
+          cli::n8n::tests::n8n_update_cli_requires_target_platform_and_piped_key_without_resource_overrides	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_runtime::managed_update::tests::invalid_persisted_content_proof_holds_before_recovery_effects	neothd/src/integrations/n8n/managed_update_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -791,7 +814,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 697 ]]; then
+          if [[ "$expected" -ne 720 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
