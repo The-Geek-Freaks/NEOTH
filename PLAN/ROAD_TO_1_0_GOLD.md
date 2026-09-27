@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1721 authenticated hosted formatting (2026-09-27):** Exact two-file rustfmt
+patch from Preflight36346777755 at6483ba4a imported. Original artifact10941021963
+ZIP486894916580ac9b7fc93723ec83aca0d21f638394695b8241cc38dd6cfe6e23, producer,
+internal hashes and resulting Git blob IDs verified. Core36346789651,
+Product36346791804, Group2005run36346794100 and Windows770run36346796236 continue
+on the same semantic source. No local formatter or duplicate dispatch.
+
 **W1719 native failure boundary corrected (2026-09-27):**
 Atb5335f6b Group36344409302 executed2005 with2004 passes/one failure;
 Windows36344410932 executed770 with769 passes/one failure, no missing tests.

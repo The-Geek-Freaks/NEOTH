@@ -852,11 +852,27 @@ async fn restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have
         }
         let commands = pointer_fake.commands.len();
         let effects = pointer_fake.effects();
-        assert!(matches!(
-            restore_at_with(home.path(), &c, &backup.job_id, &mut pointer_fake, &RestoreReady(AtomicBool::new(true))).await,
-            Err(LifecycleError::Command("paperless_restore_active_authority_invalid"))
-        ), "{pointer_kind}");
-        assert_eq!(pointer_fake.commands.len(), commands, "{pointer_kind} blocks before engine selection");
+        assert!(
+            matches!(
+                restore_at_with(
+                    home.path(),
+                    &c,
+                    &backup.job_id,
+                    &mut pointer_fake,
+                    &RestoreReady(AtomicBool::new(true))
+                )
+                .await,
+                Err(LifecycleError::Command(
+                    "paperless_restore_active_authority_invalid"
+                ))
+            ),
+            "{pointer_kind}"
+        );
+        assert_eq!(
+            pointer_fake.commands.len(),
+            commands,
+            "{pointer_kind} blocks before engine selection"
+        );
         assert_eq!(pointer_fake.effects(), effects, "{pointer_kind}");
     }
     {
@@ -1084,7 +1100,10 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     .unwrap();
     assert_eq!(first_custody["schema_version"], 2);
     assert_eq!(first_custody["prior_active_pointer"]["state"], "absent");
-    assert_eq!(first_custody["prior_active_pointer"]["absence"], "not_found");
+    assert_eq!(
+        first_custody["prior_active_pointer"]["absence"],
+        "not_found"
+    );
     assert!(first_custody["rollback_restore_binding"].is_object());
     let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
     let owned = paperless_staging::open_owned_root_at(&root).unwrap();
@@ -1111,12 +1130,28 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     .unwrap();
     assert_eq!(second_custody["schema_version"], 2);
     assert_eq!(second_custody["prior_active_pointer"]["state"], "present");
-    let captured = second_custody["prior_active_pointer"]["bytes"].as_array().unwrap();
+    let captured = second_custody["prior_active_pointer"]["bytes"]
+        .as_array()
+        .unwrap();
     assert!(!captured.is_empty());
-    assert_eq!(second_custody["prior_active_pointer"]["sha256"].as_str().unwrap().len(), 64);
-    let captured_bytes: Vec<u8> = captured.iter().map(|item| item.as_u64().unwrap() as u8).collect();
+    assert_eq!(
+        second_custody["prior_active_pointer"]["sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    let captured_bytes: Vec<u8> = captured
+        .iter()
+        .map(|item| item.as_u64().unwrap() as u8)
+        .collect();
     let captured_pointer: RestoreActivePointer = serde_json::from_slice(&captured_bytes).unwrap();
-    assert!(captured_pointer.authorized_volume_set_ids.iter().any(|known| known == successor));
+    assert!(
+        captured_pointer
+            .authorized_volume_set_ids
+            .iter()
+            .any(|known| known == successor)
+    );
     assert_eq!(captured_bytes, original_pointer_bytes);
     assert_eq!(
         second_custody["prior_active_pointer"]["sha256"],
@@ -1124,24 +1159,31 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     );
     let mut legacy = first_custody.clone();
     legacy["schema_version"] = serde_json::Value::from(1);
-    legacy.as_object_mut().unwrap().remove("prior_active_pointer");
-    legacy.as_object_mut().unwrap().remove("rollback_restore_binding");
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("prior_active_pointer");
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("rollback_restore_binding");
     let legacy: RestoreCustody = serde_json::from_value(legacy).unwrap();
-    assert!(validate_restore_custody(&legacy).is_ok(), "v1 historical custody stays verifiable");
+    assert!(
+        validate_restore_custody(&legacy).is_ok(),
+        "v1 historical custody stays verifiable"
+    );
     let mut absent_project_mismatch = first_custody.clone();
     let mismatched_project = "neoth-paperless-abcdef123456";
-    let prior_bytes: Vec<u8> = serde_json::from_value(
-        absent_project_mismatch["prior_install_receipt_bytes"].clone(),
-    )
-    .unwrap();
+    let prior_bytes: Vec<u8> =
+        serde_json::from_value(absent_project_mismatch["prior_install_receipt_bytes"].clone())
+            .unwrap();
     let mut prior: serde_json::Value = serde_json::from_slice(&prior_bytes).unwrap();
     prior["project"] = serde_json::Value::String(mismatched_project.to_owned());
     absent_project_mismatch["prior_install_receipt_bytes"] =
         serde_json::to_value(serde_json::to_vec(&prior).unwrap()).unwrap();
-    let rollback_snapshot_bytes: Vec<u8> = serde_json::from_value(
-        absent_project_mismatch["prior_volume_set_snapshot_bytes"].clone(),
-    )
-    .unwrap();
+    let rollback_snapshot_bytes: Vec<u8> =
+        serde_json::from_value(absent_project_mismatch["prior_volume_set_snapshot_bytes"].clone())
+            .unwrap();
     let mut rollback_snapshot: serde_json::Value =
         serde_json::from_slice(&rollback_snapshot_bytes).unwrap();
     rollback_snapshot["project"] = serde_json::Value::String(mismatched_project.to_owned());
@@ -1155,20 +1197,34 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
         validate_restore_custody(&absent_project_mismatch),
         Err(LifecycleError::Receipt)
     ));
-    for mutation in ["missing_pointer", "missing_binding", "bad_absence", "absent_schema3", "bad_binding"] {
+    for mutation in [
+        "missing_pointer",
+        "missing_binding",
+        "bad_absence",
+        "absent_schema3",
+        "bad_binding",
+    ] {
         let mut invalid = second_custody.clone();
         match mutation {
             "missing_pointer" => {
-                invalid.as_object_mut().unwrap().remove("prior_active_pointer");
+                invalid
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("prior_active_pointer");
             }
             "missing_binding" => {
-                invalid.as_object_mut().unwrap().remove("rollback_restore_binding");
+                invalid
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("rollback_restore_binding");
             }
             "bad_absence" => {
-                invalid["prior_active_pointer"] = serde_json::json!({"state":"absent","absence":"missing"});
+                invalid["prior_active_pointer"] =
+                    serde_json::json!({"state":"absent","absence":"missing"});
             }
             "absent_schema3" => {
-                invalid["prior_active_pointer"] = serde_json::json!({"state":"absent","absence":"not_found"});
+                invalid["prior_active_pointer"] =
+                    serde_json::json!({"state":"absent","absence":"not_found"});
             }
             "bad_binding" => {
                 invalid["rollback_restore_binding"]["environment_fingerprint"] =
@@ -1177,7 +1233,13 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
             _ => unreachable!(),
         };
         let parsed: RestoreCustody = serde_json::from_value(invalid).unwrap();
-        assert!(matches!(validate_restore_custody(&parsed), Err(LifecycleError::Receipt)), "{mutation}");
+        assert!(
+            matches!(
+                validate_restore_custody(&parsed),
+                Err(LifecycleError::Receipt)
+            ),
+            "{mutation}"
+        );
     }
     let mut missing_rollback_authorization = second_custody.clone();
     let captured_bytes: Vec<u8> = serde_json::from_value(
@@ -1185,8 +1247,9 @@ async fn restore_stateful_second_restore_uses_new_generation_and_keeps_first_gen
     )
     .unwrap();
     let mut captured_pointer: serde_json::Value = serde_json::from_slice(&captured_bytes).unwrap();
-    let rollback_volume_set_id =
-        missing_rollback_authorization["rollback_volume_set_id"].as_str().unwrap();
+    let rollback_volume_set_id = missing_rollback_authorization["rollback_volume_set_id"]
+        .as_str()
+        .unwrap();
     captured_pointer["authorized_volume_set_ids"]
         .as_array_mut()
         .unwrap()

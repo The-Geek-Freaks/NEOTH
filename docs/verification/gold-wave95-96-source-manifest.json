@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T20:04:05.4046631Z",
-  "validationStatus": "W1716/W1718/W1719 reviewed source; fresh hosted verification required",
+  "capturedUtc": "2026-09-27T20:07:00.2843146Z",
+  "validationStatus": "Authenticated W1721 hosted format imported; Core/Product/native at6483 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3558,18 +3558,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 478642,
-      "sha256": "FE3D96D393ABBF9C3AD7B9D54B841340C6C7D3976C175CEAEAB7D060451059DF"
+      "bytes": 479106,
+      "sha256": "DF102BB31C3BC99A342C2BDCDEF1EE4B7C7DE177B7C9621169EA5D90E28E9B0E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1497573,
-      "sha256": "BB162777BE19F1B22A8BD0678271049BF97F1DFAE2E402F17F73A1E97DC28CB9"
+      "bytes": 1498037,
+      "sha256": "C75D0BDA630A8B3249C66156849313FD4EBAD8F21A20BBE90F03639D5EE90297"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2108096,
-      "sha256": "BFB178AB27F2D2C9B202D98675656C5C5E3FB86BA7ED2E569ABADCDE520ED0B1"
+      "bytes": 2108560,
+      "sha256": "DC35F79D3949B580EDF8019A0B61A1EFF042AC06018CB2B6694353345914DBBB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5633,13 +5633,13 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
-      "bytes": 48419,
-      "sha256": "18214234F4799789B73251A12F5D700E444167557E0C087ABF19A6A6A5342C1E"
+      "bytes": 49246,
+      "sha256": "56E8B468ED12EEF1772DF7B27F525B506123ADFB9F17584E6754C7542E08A6C7"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_restore.rs",
-      "bytes": 72496,
-      "sha256": "BBDB0E4A0BC26453808F5A254970F0674A37B3DF02167028F42BBB71979781DF"
+      "bytes": 72495,
+      "sha256": "0F49BFFF16C3F53E0C72DEE439874D837FD616F658D416CA8D8FA140DC89351F"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",

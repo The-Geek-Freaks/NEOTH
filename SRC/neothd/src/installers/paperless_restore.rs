@@ -411,8 +411,8 @@ fn validate_restore_custody(custody: &RestoreCustody) -> Result<(), LifecycleErr
                     {
                         return Err(LifecycleError::Receipt);
                     }
-                    let pointer: RestoreActivePointer = serde_json::from_slice(bytes)
-                        .map_err(|_| LifecycleError::Receipt)?;
+                    let pointer: RestoreActivePointer =
+                        serde_json::from_slice(bytes).map_err(|_| LifecycleError::Receipt)?;
                     validate_restore_active_pointer(&pointer)?;
                     if prior.schema_version != 3
                         || !pointer
