@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "source-corrected-product-validation-pending",
+  "status": "Restore Group1906 Windows671 and actual candidate-only product admitted; Core pending; Rollback unpublished",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 233285,
-    "sha256": "383BA011B876B9BDD320E4127183A8D2F642E45928279501F2C6304FBDF1F28F"
+    "bytes": 233935,
+    "sha256": "6DD5EEFAF1C497B14E02879997313D7FE7C59CCF7474B19ED810402544ADB07C"
   },
-  "sourceInputs": 1305,
+  "sourceInputs": 1308,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -48994,6 +48994,50 @@
       }
     ],
     "note": "Pinned n8n DTO max50 versus previous61-character fixture-only key label; actual captured-request regression corrected. Rollback WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1547RestoreHostedAcceptance": {
+    "base": "ab3e0af69f242a6ae6fa6273a4ba4d38dfbb41f3",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1545-restore-group-accepted.json",
+        "bytes": 2596,
+        "sha256": "0B3F3572D8582D8F91F912157216E87025697EE0185EDAB68BD309835587C839",
+        "blob": "1f380295aebd388a870c9d3bfe86fac01e8f118f"
+      },
+      {
+        "path": "docs/verification/gold-wave1546-restore-windows-accepted.json",
+        "bytes": 2073,
+        "sha256": "A1331D21F6CAA7EB87DB4EE1486FD87A26BD6B14ADFA0FAEF5935A13FAB8DE3B",
+        "blob": "57db1a230ecf9dfa9b4cb3911c53aa8103f21c80"
+      },
+      {
+        "path": "docs/verification/gold-wave1547-restore-product-accepted.json",
+        "bytes": 2913,
+        "sha256": "CC9702F30EF43EB638F5FC2A1824F81F3FAF11A45D7BDD72E3C895B46B6B3E21",
+        "blob": "733f7510e15293c4e3b9a7e758cca9eaf86115b1"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 421584,
+        "sha256": "58A673AF70C155B91F48AD55742B33BED297BB45B1720FD26B748E3D304459B6",
+        "blob": "8fccee7eea98c90c7ad23df117a4c73274f25e16"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1440515,
+        "sha256": "4B024C0C6C13EF8A505EF4A8E5CCC9C97A182DAEC732859662C61B39A20EC399",
+        "blob": "99dfb1235b569d5a7ee09ee3524379f7f642b525"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2051038,
+        "sha256": "34E98090B80A6246F63A8C7F8F8F098C3413C7D1113666609D3552736F1A1BE2",
+        "blob": "54cf63a8834ceac6ec015f87cc446fbfb6dc9a8b"
+      }
+    ],
+    "note": "Original hosted artifacts authenticated separately at exact producer00aa8660 for native cohorts and ab3e0af6 for product. No release/roadmap closure or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

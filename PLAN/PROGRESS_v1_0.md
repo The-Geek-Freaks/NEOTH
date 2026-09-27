@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1545-W1547 Restore hosted acceptance (2026-09-27):**
+Group36302995899 and Windows36302997586 at00aa8660 are admitted from original
+artifacts:1906/1906 and671/671 passed, with ordered identities, log hashes and
+303/111 distinct raw producer source bindings verified. Actual product
+36303853425 atab3e0af6 passed candidate-only Restore with13 workflows and1
+credential (decryption proven), plus13 workflows/0 credentials (no decryption
+claim). Both candidates were absent, two Restore targets and all Docker,
+bootstrap-secret and isolated-home cleanup passed. Original ZIP/API digest
+and39 product source bindings verify. Restore Core36302999480 still awaits
+full workspace Clippy; its slim Clippy/typecheck/CLI gates passed. Rollback
+source passed independent static review but is separate unpublished work;
+Purge/reinstall for Restore-owned Rollback volumes and actual Rollback product
+proof remain open. No ROAD closure or release claim; ROAD1324/1077done/
+245open/2partial and Portable2116/Group1906/Windows671 unchanged.
+Evidence: docs/verification/gold-wave1545-restore-group-accepted.json,
+ docs/verification/gold-wave1546-restore-windows-accepted.json and
+ docs/verification/gold-wave1547-restore-product-accepted.json.
+
 **W1544 Restore fixture-key label repair (2026-09-27):**
 Product36303000905 at00aa8660 now pinpoints mint HTTP400 after successful login.
 The exact pinned n8n DTO limits key labels to50 characters; the fixture sent61.

@@ -1,0 +1,75 @@
+{
+  "schema": "neoth-hosted-restore-product-admission/v1",
+  "decision": "admitted",
+  "capturedUtc": "2026-09-27T07:49:12Z",
+  "scope": "Compiled public CLI and actual pinned-image candidate-only Restore on isolated GitHub-hosted Linux",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36303853425,
+    "headSha": "ab3e0af69f242a6ae6fa6273a4ba4d38dfbb41f3",
+    "sourceRef": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36303853425"
+  },
+  "artifact": {
+    "id": 10925924073,
+    "name": "w1018-product-n8n-bootstrap-36303853425-1",
+    "sha256": "cd390cce0ef79bfee5ae990b5ea834c2999e963bf82148b51d1304bdfa5b9d52",
+    "apiDigestMatchesOriginalZip": true,
+    "receiptSha256": "cb59695f0f30604d58b70c29dcfcbe60697f0dd11cab0f4a8f7868952c1eacb7",
+    "entries": 1,
+    "unsafeOrDuplicateEntries": 0
+  },
+  "producerBindings": 39,
+  "allProducerBindingsMatch": true,
+  "binarySha256": "eb3f186088c78229c180ae2e5b4580a6ee499fad1e4c6c71f16fc0c756c29a9f",
+  "restoreWithCredential": {
+    "backup_job_id": "01a0e1d6-37c8-7e32-baaa-3fe7f9658003",
+    "candidate_absent": true,
+    "candidate_only": true,
+    "credential_count": 1,
+    "credential_decryption_proven": true,
+    "job_id": "01a0e1d6-5e2b-72d3-88be-55aee710a5b0",
+    "job_row_sha256": "be6fe5e92dd9c972a984fba5ac9072d9ea34ba80f1aae79c34de929db0b58227",
+    "restore_volume_sha256": "69d53835f654f2cd2e2410e1754ac8b6d496812919c1b937508f02c6c7d1246a",
+    "workflow_count": 13
+  },
+  "restoreWithoutCredential": {
+    "backup_job_id": "01a0e1d5-e464-70e3-ba9e-897cac4a6d52",
+    "candidate_absent": true,
+    "candidate_only": true,
+    "credential_count": 0,
+    "credential_decryption_proven": false,
+    "job_id": "01a0e1d6-0a27-7cb3-9674-e19de46db868",
+    "job_row_sha256": "75de2736dbb1d108218bc514bfe3b29e499f3185203c5bb86e297baf61922f2c",
+    "restore_volume_sha256": "4f105a2b622d5ea8981a05299c9e37c1be6d4749bb4724f932f04ba4bc3ca846",
+    "workflow_count": 13
+  },
+  "lifecycle": {
+    "workflowCount": 13,
+    "workflowImportRepeatReadOnly": true,
+    "runningBackupPreserved": true,
+    "stoppedBackupStayedStopped": true,
+    "healthyRepairAuthenticated": true,
+    "startedRepairAuthenticated": true,
+    "recreatedRepairAuthenticated": true,
+    "retainedReinstall": true,
+    "purgeVolumeAbsent": true
+  },
+  "cleanup": {
+    "restoreTargets": 2,
+    "restore": true,
+    "docker": true,
+    "bootstrapSecrets": true,
+    "isolatedHome": true,
+    "complete": true
+  },
+  "limitations": [
+    "Candidate-only Restore; does not prove live Rollback, Update or release readiness.",
+    "Runtime proof applies to the exact Linux producer and pinned image; Windows native fixtures are a separate admission.",
+    "Unpublished Rollback source is not covered."
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

@@ -1,0 +1,61 @@
+{
+  "schema": "neoth-wave1546-restore-windows671-admission/v1",
+  "run": {
+    "id": 36302997586,
+    "name": "Windows storage regressions",
+    "status": "completed",
+    "conclusion": "success",
+    "producer": "00aa8660a36938e69ac816ca8dfaa240835f3d32",
+    "producer_branch": "main",
+    "job": {
+      "id": 108574088161,
+      "name": "Exact storage, managed-browser and Paperless regressions",
+      "selected_step": "Compile and run exact selected regressions",
+      "selected_step_conclusion": "success"
+    }
+  },
+  "artifact": {
+    "id": 10926891219,
+    "name": "windows-storage-regressions-00aa8660a36938e69ac816ca8dfaa240835f3d32",
+    "api_digest": "sha256:fe75df4f86e94eb24db8796a1a8eb6924f456497054adb01f086f5604a003c6c",
+    "zip_sha256": "fe75df4f86e94eb24db8796a1a8eb6924f456497054adb01f086f5604a003c6c",
+    "safe_entries": 683,
+    "unsafe_entries": 0
+  },
+  "integrity": {
+    "source_head_matches_run_and_artifact": true,
+    "source_workflow_bindings": 671,
+    "unique_source_paths": 111,
+    "source_workflow_binding_mismatches": 0,
+    "git_blob_hash_object_mismatches": 0,
+    "input_bindings": 15,
+    "input_binding_mismatches": 0,
+    "evidence_manifest_entries": 10,
+    "evidence_hash_mismatches": 0,
+    "ordered_log_manifest_entries": 672,
+    "log_hash_mismatches": 0,
+    "per_result_log_files": 671,
+    "per_result_log_identity_or_pass_mismatches": 0
+  },
+  "counts": {
+    "expected": 671,
+    "selected": 671,
+    "listed": 671,
+    "executed": 671,
+    "passed": 671,
+    "failed": 0,
+    "missing": 0,
+    "selection_to_result_identity_mismatches": 0
+  },
+  "admission": {
+    "accepted": true,
+    "scope": "The exact hosted Windows671 selection at producer 00aa8660a36938e69ac816ca8dfaa240835f3d32 only.",
+    "limits": [
+      "Does not claim Group, Core, product, restore candidate, or rollback acceptance.",
+      "Does not prove behavior for later source changes.",
+      "Does not replace the remaining focused hosted gates."
+    ]
+  },
+  "capturedUtc": "2026-09-27T07:57:12Z",
+  "localExecutableValidationRan": false
+}
