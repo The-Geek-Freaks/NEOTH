@@ -396,6 +396,9 @@ pub trait ComposeExecutor: Send {
             "paperless_backup_stream_unsupported",
         ))
     }
+}
+#[async_trait]
+trait RetainedComposeExecutor: ComposeExecutor {
     /// Bounded secret/config stdin for a fixed Docker command. The caller owns
     /// exact bytes and must never place a credential in argv or environment.
     async fn run_with_stdin(
@@ -420,9 +423,6 @@ pub trait ComposeExecutor: Send {
             "paperless_archive_input_unsupported",
         ))
     }
-}
-#[async_trait]
-trait RetainedComposeExecutor: ComposeExecutor {
     async fn run_retained(
         &mut self,
         argv: &[String],
@@ -607,7 +607,9 @@ impl ComposeExecutor for DockerExecutor {
             }
         }
     }
-
+}
+#[async_trait]
+impl RetainedComposeExecutor for DockerExecutor {
     async fn run_with_stdin(
         &mut self,
         argv: &[String],
@@ -683,9 +685,6 @@ impl ComposeExecutor for DockerExecutor {
             .then_some(())
             .ok_or(LifecycleError::Command("paperless_archive_input_failed"))
     }
-}
-#[async_trait]
-impl RetainedComposeExecutor for DockerExecutor {
     async fn run_retained(
         &mut self,
         argv: &[String],
@@ -1568,7 +1567,7 @@ fn write_volume_set_snapshot_create_new(
 /// Publish a successor generation snapshot once its previous exact bytes are
 /// retained in Restore custody.  Restore owns the surrounding commit and
 /// compensation ordering; this helper only performs rooted replacement.
-pub(crate) fn write_volume_set_snapshot_replace(
+fn write_volume_set_snapshot_replace(
     root: &OwnedPaperlessRoot,
     snapshot: &PaperlessVolumeSetSnapshot,
 ) -> Result<(), LifecycleError> {
@@ -1605,7 +1604,7 @@ fn validate_install_receipt(
     receipt: &StoredPaperlessInstallReceipt,
     root: &Path,
 ) -> Result<(), LifecycleError> {
-    if !matches!(receipt.schema_version, 1 | 2 | 3)
+    if !matches!(receipt.schema_version, 1..=3)
         || receipt.operation != "install"
         || receipt.contract_id != paperless_staging::OCI_CONTRACT_ID
         || !receipt.authenticated_api_ready
@@ -1675,7 +1674,7 @@ fn validate_install_receipt(
     }
 }
 fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
-    if !matches!(custody.schema_version, 1 | 2 | 3)
+    if !matches!(custody.schema_version, 1..=3)
         || custody.operation != "paperless.safe_uninstall"
         || custody.project.is_empty()
         || custody.install_receipt_sha256.len() != 64

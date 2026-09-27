@@ -425,6 +425,41 @@ impl ComposeExecutor for RestoreFake {
             stdout: String::new(),
         })
     }
+    async fn run_stream_to_file(
+        &mut self,
+        argv: &[String],
+        _: &Path,
+        mut f: std::fs::File,
+        limit: u64,
+    ) -> Result<StreamedArchive, LifecycleError> {
+        self.commands.push(argv.to_vec());
+        let cp = argv
+            .iter()
+            .position(|x| x == "cp")
+            .ok_or(LifecycleError::Receipt)?;
+        let (_, dst) = argv
+            .get(cp + 1)
+            .ok_or(LifecycleError::Receipt)?
+            .split_once(':')
+            .ok_or(LifecycleError::Receipt)?;
+        let spec = paperless_staging::PAPERLESS_VOLUMES
+            .iter()
+            .find(|v| v.destination == dst)
+            .ok_or(LifecycleError::Receipt)?;
+        let b = format!("archive:{}", spec.logical_name).into_bytes();
+        if b.len() as u64 > limit {
+            return Err(LifecycleError::Receipt);
+        }
+        f.write_all(&b).map_err(|_| LifecycleError::Io)?;
+        f.sync_all().map_err(|_| LifecycleError::Io)?;
+        Ok(StreamedArchive {
+            bytes: b.len() as u64,
+            sha256: restore_digest(&b),
+        })
+    }
+}
+#[async_trait::async_trait]
+impl RetainedComposeExecutor for RestoreFake {
     async fn run_with_stdin(
         &mut self,
         argv: &[String],
@@ -462,41 +497,6 @@ impl ComposeExecutor for RestoreFake {
         }
         Ok(())
     }
-    async fn run_stream_to_file(
-        &mut self,
-        argv: &[String],
-        _: &Path,
-        mut f: std::fs::File,
-        limit: u64,
-    ) -> Result<StreamedArchive, LifecycleError> {
-        self.commands.push(argv.to_vec());
-        let cp = argv
-            .iter()
-            .position(|x| x == "cp")
-            .ok_or(LifecycleError::Receipt)?;
-        let (_, dst) = argv
-            .get(cp + 1)
-            .ok_or(LifecycleError::Receipt)?
-            .split_once(':')
-            .ok_or(LifecycleError::Receipt)?;
-        let spec = paperless_staging::PAPERLESS_VOLUMES
-            .iter()
-            .find(|v| v.destination == dst)
-            .ok_or(LifecycleError::Receipt)?;
-        let b = format!("archive:{}", spec.logical_name).into_bytes();
-        if b.len() as u64 > limit {
-            return Err(LifecycleError::Receipt);
-        }
-        f.write_all(&b).map_err(|_| LifecycleError::Io)?;
-        f.sync_all().map_err(|_| LifecycleError::Io)?;
-        Ok(StreamedArchive {
-            bytes: b.len() as u64,
-            sha256: restore_digest(&b),
-        })
-    }
-}
-#[async_trait::async_trait]
-impl RetainedComposeExecutor for RestoreFake {
     async fn run_retained(
         &mut self,
         argv: &[String],
@@ -635,6 +635,8 @@ async fn restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_c
         .position(|x| x.iter().any(|p| p == "up"))
         .unwrap();
     assert!(cps.iter().all(|(i, _)| *i < up));
+    let broker_candidate = f.candidate_ids[1].clone();
+    let mut saw_broker_copy = false;
     for (_, cp) in cps {
         let archived = cp.iter().position(|part| part == "-a").unwrap();
         let stream = cp.iter().position(|part| part == "-").unwrap();
@@ -645,7 +647,19 @@ async fn restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_c
                     && !destination.ends_with("/media")),
             "restore targets the parent mount so Docker does not nest the archived basename"
         );
+        if cp
+            .last()
+            .is_some_and(|destination| destination.starts_with(&format!("{broker_candidate}:")))
+        {
+            saw_broker_copy = true;
+            assert_eq!(
+                cp.last(),
+                Some(&format!("{broker_candidate}:/")),
+                "the archived broker /data must be copied into container root, never /data/data"
+            );
+        }
     }
+    assert!(saw_broker_copy, "all six restores include the broker archive");
 }
 
 #[tokio::test]

@@ -145,14 +145,31 @@ class CustodyTests(unittest.TestCase):
 
     def test_command_failure_allowlists_repair_and_generation_auth_markers_without_output(self) -> None:
         secret = "untrusted-command-output"
-        result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict " + secret).encode(), False, False)
-        for action, command in (("repair", "product_repair"), ("uninstall", "product_uninstall"), ("purge", "product_purge")):
+        result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict paperless_restore_journal_invalid paperless_restore_active_authority_invalid paperless_restore_historical_backup_invalid " + secret).encode(), False, False)
+        for action, command in (("restore", "product_restore"), ("repair", "product_repair"), ("uninstall", "product_uninstall"), ("purge", "product_purge")):
             encoded = json.dumps(canary.CommandFailure(["neoth", "--output", "json", "paperless", action], result).diagnostic)
             with self.subTest(action=action):
                 self.assertNotIn(secret, encoded)
                 self.assertIn("paperless_repair_start_outcome_ambiguous", encoded)
                 self.assertIn("paperless_generation_auth_token_conflict", encoded)
+                for marker in ("paperless_restore_journal_invalid", "paperless_restore_active_authority_invalid", "paperless_restore_historical_backup_invalid"):
+                    self.assertIn(marker, encoded)
                 self.assertIn(command, encoded)
+
+    def test_restore_journal_observation_redacts_contents_and_rejects_untrusted_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            journal = state / ".neoth-paperless-restore-journal.v1.json"
+            secret = "must-not-appear"
+            for phase in ("create_dispatched", "archive_copy_dispatched"):
+                with self.subTest(phase=phase):
+                    raw = json.dumps({"schema_version": 1, "operation": "paperless.restore", "phase": phase, "secret": secret}).encode()
+                    journal.write_bytes(raw); os.chmod(journal, 0o600)
+                    observed = canary.restore_journal_observation(home)
+                    self.assertEqual(observed, {"state": "present", "phase": phase, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+                    self.assertNotIn(secret, json.dumps(observed))
+            os.chmod(journal, 0o644)
+            self.assertEqual(canary.restore_journal_observation(home), {"state": "invalid"})
 
     def test_independent_image_admission_rejects_wrong_digest_or_config(self) -> None:
         reference, config = canary.admitted_images()["webserver"]

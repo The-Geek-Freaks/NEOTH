@@ -1886,7 +1886,7 @@ fn hold<T>(
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-pub(crate) fn restore_config_binding(
+pub(super) fn restore_config_binding(
     binding: &EnvBinding,
     credentials: &Credentials,
 ) -> Result<RestoreConfigBinding, LifecycleError> {

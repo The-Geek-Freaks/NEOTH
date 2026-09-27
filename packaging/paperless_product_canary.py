@@ -88,7 +88,7 @@ class CommandFailure(Failure):
         program = Path(argv[0]).name
         command = "docker" if program == "docker" else "other"
         if program == "neoth" and argv[1:4] == ["--output", "json", "paperless"]:
-            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status", "backup": "product_backup", "repair": "product_repair", "uninstall": "product_uninstall", "purge": "product_purge"}.get(argv[4], "other")
+            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status", "backup": "product_backup", "restore": "product_restore", "repair": "product_repair", "uninstall": "product_uninstall", "purge": "product_purge"}.get(argv[4], "other")
         elif program == "neoth" and argv[1:2] == ["init"]:
             command = "product_init"
         markers = (
@@ -122,6 +122,8 @@ class CommandFailure(Failure):
             "paperless_backup_copy_outcome_ambiguous", "paperless_backup_stream_limit",
             "paperless_backup_archive_readback_mismatch", "paperless_backup_readiness_failed",
             "paperless_backup_start_outcome_ambiguous", "paperless_backup_stop_failed",
+            "paperless_restore_journal_invalid", "paperless_restore_active_authority_invalid",
+            "paperless_restore_historical_backup_invalid",
             "paperless_generation_auth_config_invalid", "paperless_generation_auth_keychain",
             "paperless_generation_auth_new_token_changed", "paperless_generation_auth_new_token_unbound",
             "paperless_generation_auth_old_token_missing", "paperless_generation_auth_persist",
@@ -811,6 +813,24 @@ def restore_private_json(home: Path, name: str) -> tuple[bytes, dict]:
     return raw, read_json_bytes(raw, "restore_custody_invalid")
 
 
+def restore_journal_observation(home: Path) -> dict[str, object]:
+    """Return only fixed journal metadata after a failed Restore stage."""
+    name = ".neoth-paperless-restore-journal.v1.json"
+    path = home / "paperless" / "state" / name
+    if not path.exists() and not path.is_symlink():
+        return {"state": "absent"}
+    try:
+        private_path(path, False, "restore_journal_invalid")
+        raw = persisted_receipt_bytes(home, name, "restore_journal_invalid")
+        value = read_json_bytes(raw, "restore_journal_invalid")
+        phase = value.get("phase")
+        if set(value) and phase in {"prepared", "create_dispatched", "candidate_created", "archive_copy_dispatched", "archives_extracted", "candidate_ready", "old_stop_dispatched", "old_stopped", "active_created", "active_ready", "snapshot_published", "compensating", "source_restored", "committed", "held"}:
+            return {"state": "present", "phase": phase, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    except Exception:
+        pass
+    return {"state": "invalid"}
+
+
 def validate_restore_authority(home: Path, restore: dict, source_install: bytes, source_snapshot: bytes, restored_install: bytes, source_ids: tuple[str, ...], restored_ids: tuple[str, ...], config_ids: dict[str, str], port: int) -> None:
     name, restore_job_id = restore["rollback_custody_ref"], restore["restore_job_id"]
     if name != f".neoth-paperless-restore-{restore_job_id}.v1.json":
@@ -1033,6 +1053,7 @@ def main() -> int:
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
             if stopped_container_diagnostic(docker_json(identifier), identifier, project, service, args.port)["running"] is not False:
                 raise Failure("backup_stopped_source_not_retained")
+        receipt["backup"] = {"running_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "stopped_job_sha256": hashlib.sha256(stopped_backup_id.encode()).hexdigest(), "archives_per_backup": len(VOLUMES), "media_marker_in_archives": True, "source_identity_preserved": True, "stopped_source_retained": True, "recovered_by_repair": False}
         # The established Repair coordinator is the controlled recovery path;
         # it must retain the exact IDs and all retained marker bytes.
         resumed_backup_source = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "backup_recovery_repair_invalid")
@@ -1045,13 +1066,16 @@ def main() -> int:
         # receipt commit. Rebase only here; every later Repair assertion still
         # requires this exact post-recovery authority to remain unchanged.
         install_receipt_bytes, repair_volume_snapshot_bytes, credentials_before_repair = repair_history_baseline(home, (project, config_ids, identities, volume_set_id), args.port, volume_set_snapshot_bytes, credentials_before_backup)
+        receipt["backup"]["recovered_by_repair"] = True
         # Restore selects the older, immutable running-source Backup by its
         # canonical job ID. It must create a fresh managed generation while
         # retaining the exact old one stopped for rollback custody.
         restore_source_project, restore_source_ids, restore_source_volume_set = project, identities, volume_set_id
         restore_source_install = running_backup_install_receipt_bytes
+        receipt["restore_progress"] = {"stage": "before_restore", "selected_backup_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "running_backup_verified": True, "stopped_backup_verified": True}
         restored = read_json_bytes(run([str(binary), "--output", "json", "paperless", "restore", running_backup_id], timeout=900), "restore_json_invalid")
         restore_job_id, restore_project, restored_volume_set_id = validate_restore(restored, running_backup, restore_source_project, restore_source_volume_set, restore_source_install)
+        receipt["restore_progress"] = {"stage": "before_restore_repeat", "restore_job_sha256": hashlib.sha256(restore_job_id.encode()).hexdigest(), "selected_backup_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest()}
         repeated_restore = read_json_bytes(run([str(binary), "--output", "json", "paperless", "restore", running_backup_id], timeout=900), "restore_json_invalid")
         if repeated_restore != restored:
             raise Failure("restore_repeat_mutation")
@@ -1071,6 +1095,7 @@ def main() -> int:
                 raise Failure("restore_old_source_not_retained_stopped")
         retained_volumes(restore_source_project, restore_source_ids[3:], restore_source_volume_set)
         restore_retained = (restore_source_project, config_ids, restore_source_ids, restore_source_volume_set)
+        receipt["restore_progress"] = {"stage": "before_restored_backup", "restore_job_sha256": hashlib.sha256(restore_job_id.encode()).hexdigest(), "active_schema_version": 3, "active_authority_verified": True}
         restored_backup = read_json_bytes(run([str(binary), "--output", "json", "paperless", "backup"], timeout=900), "restore_backup_json_invalid")
         restored_backup_id, restored_archives = validate_backup(restored_backup, home, project, config_ids, identities, volume_set_id, install_receipt_bytes, volume_set_snapshot_bytes, True)
         if len(restored_archives) != len(VOLUMES):
@@ -1078,7 +1103,7 @@ def main() -> int:
         repair_volume_snapshot_bytes, credentials_before_repair = volume_set_snapshot_bytes, (home / "credentials.yaml").read_bytes()
         receipt["restore"] = {"restore_job_sha256": hashlib.sha256(restore_job_id.encode()).hexdigest(), "selected_backup_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "fresh_project": True, "fresh_volume_set": True, "candidate_authenticated": True, "active_authenticated": True, "old_generation_retained_stopped": True, "archives": len(VOLUMES)}
         receipt["restored_backup"] = {"job_sha256": hashlib.sha256(restored_backup_id.encode()).hexdigest(), "archives": len(restored_archives), "authenticated_active_generation": True, "media_marker_in_archives": True}
-        receipt["backup"] = {"running_job_sha256": hashlib.sha256(running_backup_id.encode()).hexdigest(), "stopped_job_sha256": hashlib.sha256(stopped_backup_id.encode()).hexdigest(), "archives_per_backup": len(VOLUMES), "running_source_restored": True, "stopped_source_retained": True, "media_marker_in_archives": True, "source_identity_preserved": True, "recovered_by_repair": True}
+        receipt["backup"]["running_source_restored"] = True
         receipt["repair_progress"] = {"phase": "healthy", "witness": "before_product_repair"}
         healthy_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(healthy_repair, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
@@ -1272,6 +1297,8 @@ def main() -> int:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"
         if isinstance(error, CommandFailure):
             receipt["command_failure"] = error.diagnostic
+        if "restore_progress" in receipt:
+            receipt["restore_journal"] = restore_journal_observation(home)
     finally:
         cleaned, cleanup_failure = (False, None)
         restore_cleaned, restore_cleanup_failure = (False, None)

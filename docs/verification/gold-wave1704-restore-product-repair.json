@@ -1,0 +1,106 @@
+{
+  "schema": "neoth-restore-product-repair/v1",
+  "capturedUtc": "2026-09-27T18:11:02.6129394Z",
+  "base": "95fc23eec1e1df1a4f11df16bf591aacfcde0b54",
+  "failedProduct": {
+    "run": 36338229910,
+    "artifact": 10937544698,
+    "zipSha256": "576f8d18fb2b510697f8abac9f1384a849c925f7f7fcc77dbb7285c6e4f2eb9c",
+    "rawProducerBindingsVerified": 29,
+    "outcome": "failed",
+    "runtimeStarted": true,
+    "exactFailedBranchProven": false,
+    "commandCategory": "other",
+    "errorCategory": "paperless_provenance_receipt_invalid"
+  },
+  "sourceEstablishedCorrection": "Top-level /data archive parent is /; copy preserves archive data basename without nesting",
+  "existingRegressionStrengthened": "restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_candidate_start",
+  "hostedClippyDiagnosticsRepaired": 10,
+  "hostedFormatImport": {
+    "schema": "neoth-hosted-format-import/v1",
+    "run": 36338227957,
+    "producer": "95fc23eec1e1df1a4f11df16bf591aacfcde0b54",
+    "artifact": 10938331646,
+    "zipSha256": "57542E39B041C6BA3D882D5786419F21A58B55E4D5E830B77B9543B607065A8C",
+    "patchSha256": "D887B63A582C0C3C7D320103A6B75C7C237BC03E437899DFE000214618290D9B",
+    "files": [
+      "SRC/neothd/src/installers/paperless_generation_auth.rs"
+    ],
+    "localFormatterRan": false,
+    "status": "Imported exact hosted patch; publication with W1703"
+  },
+  "reviews": "W1704 Rust and Python static PASS, including archive_copy_dispatched and fixed receipt marker corrections",
+  "workingTreeSourceHashes": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_backup.rs",
+      "sha256": "7E3032642CC77350197C498C1FDB7BBCA3653F7B0C3DE155BB7966BE57C42D9E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
+      "sha256": "F1D296B9D0A53620F4434A573D480DFDF458DB2F35B07ECD36547164D60C0B57"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "DD91D484C90AD3474D4819E736DAB73B5720364290D576FB9DB1F208FECAB89A"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "AA94AF0CCC1C491C532AD808C38293E069236415DBC693050EE234DAC89E4436"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+      "sha256": "0B2CE0718401ED7FC655DE1F60FD5B62ADEE1F13A9DE694BD9844CAE57012887"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "66FE9D742C3323EFB6AC832F1165947829B58C319DDB1BD24B0CFF49A2B36211"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "09C47DB5229C7B47B382E75D4CBAFB679F3D3E1D2632EAED611AADC07E5CBACD"
+    }
+  ],
+  "reports": [
+    {
+      "path": "work/gold-20260906/wave1702-hosted-restore-format/ADMISSION.json",
+      "sha256": "31A901F47CEA9F5AA308BA878396796CA0AE844CBBD9DA3BB1041827ED7A2B58"
+    },
+    {
+      "path": "work/gold-20260906/wave1703-restore-clippy-repair/REPORT.md",
+      "sha256": "CB8B56579F773D59F4FCE594D9F80A5838EF6EAB73B8FAF1CD0A830B1B163CC9"
+    },
+    {
+      "path": "work/gold-20260906/wave1704-restore-product-diagnosis/BACKEND.md",
+      "sha256": "90F6D16E800A9519343E46241431B3C67D8353243366A767632975BAF9A484C8"
+    },
+    {
+      "path": "work/gold-20260906/wave1704-restore-product-diagnosis/CANARY.md",
+      "sha256": "86AB7E5D8BDF23CC6531674D9B27B2054366DD7E9DE14ECCBECD6F37970B3628"
+    },
+    {
+      "path": "work/gold-20260906/wave1704-restore-product-diagnosis/RUST-REVIEW.md",
+      "sha256": "B2F136B3CE0D0FD8EC4EBA36C8528623D0B8A549F2AC0D856378495761D28AFC"
+    },
+    {
+      "path": "work/gold-20260906/wave1704-restore-product-diagnosis/PYTHON-REVIEW.md",
+      "sha256": "7390006360D89E893B37B57367B9098171336BB186CEBD8FB4E4AD8CD0DDDA71"
+    },
+    {
+      "path": "work/gold-20260906/wave1704-restore-product-diagnosis/source-bindings.json",
+      "sha256": "324E0FC863B370F15E575710B3F5E67BEB963FE514440A467E29FFA618A3F6D0"
+    }
+  ],
+  "nativeCounts": {
+    "portable": 2215,
+    "group": 2005,
+    "windows": 770
+  },
+  "road": {
+    "total": 1324,
+    "done": 1077,
+    "open": 245,
+    "partial": 2
+  },
+  "localExecutableValidationRan": false,
+  "hostedValidation": "Fresh Core/typecheck/CLI and actual-product pending; no new runtime/native acceptance"
+}

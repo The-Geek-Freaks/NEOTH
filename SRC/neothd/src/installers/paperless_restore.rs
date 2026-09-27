@@ -167,7 +167,7 @@ pub(crate) struct RestoreActiveAuthority {
 /// Authorize only an immutable, committed Restore generation. Lifecycle,
 /// Backup, Repair and Purge use this instead of trusting a schema-3 project
 /// string on its own.
-pub(crate) fn active_restore_authority_at(
+pub(super) fn active_restore_authority_at(
     root: &OwnedPaperlessRoot,
     receipt: &StoredPaperlessInstallReceipt,
 ) -> Result<RestoreActiveAuthority, LifecycleError> {
@@ -430,7 +430,7 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         return Err(LifecycleError::Command("paperless_backup_in_progress"));
     }
 
-    if let Some(mut existing) = read_restore_journal(&owned)? {
+    if let Some(mut existing) = read_restore_journal(&owned).map_err(restore_journal_stage_error)? {
         validate_restore_custody(&existing)?;
         if existing.phase == RestorePhase::ArchiveCopyDispatched {
             existing.phase = RestorePhase::Held;
@@ -452,15 +452,14 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
             // only with a fresh restore job; all committed generations stay
             // separately immutable.
         } else {
-            if let Ok((_, _, committed)) = read_active_restore_custody(&owned) {
-                if committed.restore_job_id == existing.restore_job_id
-                    && current_restore_semantically_valid(&owned, &committed)?
-                {
-                    let mut published = existing;
-                    published.phase = RestorePhase::Committed;
-                    write_restore_journal(&owned, &published)?;
-                    return receipt_from_committed_custody(&owned, &committed);
-                }
+            if let Ok((_, _, committed)) = read_active_restore_custody(&owned)
+                && committed.restore_job_id == existing.restore_job_id
+                && current_restore_semantically_valid(&owned, &committed)?
+            {
+                let mut published = existing;
+                published.phase = RestorePhase::Committed;
+                write_restore_journal(&owned, &published)?;
+                return receipt_from_committed_custody(&owned, &committed);
             }
             // Every nonterminal journal carries exact candidate and old-source
             // IDs.  Reconcile by compensating those IDs before allocating a
@@ -471,7 +470,9 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
             compensate_old_source(executor, &engine, &owned, &mut recovered).await?;
         }
     }
-    if let Some(existing) = active_restore_for_backup(&owned, backup_job_id)? {
+    if let Some(existing) =
+        active_restore_for_backup(&owned, backup_job_id).map_err(restore_active_stage_error)?
+    {
         if current_restore_semantically_valid(&owned, &existing)? {
             return receipt_from_committed_custody(&owned, &existing);
         }
@@ -480,7 +481,8 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         ));
     }
 
-    let historical = paperless_backup::resolve_completed_backup_at(&owned, backup_job_id)?;
+    let historical = paperless_backup::resolve_completed_backup_at(&owned, backup_job_id)
+        .map_err(restore_backup_stage_error)?;
     let current_binding = paperless_backup::restore_config_binding(&binding, credentials)?;
     if historical.restore_binding != current_binding {
         return Err(LifecycleError::Command(
@@ -650,12 +652,11 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         // so Docker's tar has that final basename at its root.  Extract into
         // the parent, with `-a`, to reconstruct `/mount` exactly instead of
         // nesting it as `/mount/mount` and to retain original ownership.
-        let parent = spec
-            .destination
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .filter(|parent| !parent.is_empty())
-            .ok_or(LifecycleError::Receipt)?;
+        let parent = match spec.destination.rsplit_once('/') {
+            Some(("", _)) => "/",
+            Some((parent, _)) if !parent.is_empty() => parent,
+            _ => return Err(LifecycleError::Receipt),
+        };
         custody.phase = RestorePhase::ArchiveCopyDispatched;
         write_restore_journal(&owned, &custody)?;
         match executor
@@ -1130,6 +1131,32 @@ fn valid_backup_job_id(value: &str) -> bool {
         && value["paperless-backup-".len()..]
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
+}
+
+// Fixed, content-free preflight diagnostics.  These preserve non-receipt
+// errors while making product evidence distinguish an initial source failure
+// from a repeated-restore journal or active-authority failure.
+fn restore_journal_stage_error(error: LifecycleError) -> LifecycleError {
+    match error {
+        LifecycleError::Receipt => LifecycleError::Command("paperless_restore_journal_invalid"),
+        other => other,
+    }
+}
+fn restore_active_stage_error(error: LifecycleError) -> LifecycleError {
+    match error {
+        LifecycleError::Receipt => {
+            LifecycleError::Command("paperless_restore_active_authority_invalid")
+        }
+        other => other,
+    }
+}
+fn restore_backup_stage_error(error: LifecycleError) -> LifecycleError {
+    match error {
+        LifecycleError::Receipt => {
+            LifecycleError::Command("paperless_restore_historical_backup_invalid")
+        }
+        other => other,
+    }
 }
 
 async fn verify_restore_generation<E: RetainedComposeExecutor>(

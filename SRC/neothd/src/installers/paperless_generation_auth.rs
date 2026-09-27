@@ -141,8 +141,7 @@ pub(crate) fn begin_fresh_generation_token(
         .map_err(|_| "paperless_generation_auth_receipt")?
         .is_some()
     {
-        read_install_receipt(root)
-            .map_err(|_| "paperless_generation_auth_receipt")?;
+        read_install_receipt(root).map_err(|_| "paperless_generation_auth_receipt")?;
         return Err("paperless_generation_auth_receipt");
     }
     let current_token = old_token.ok_or("paperless_generation_auth_old_token_missing")?;

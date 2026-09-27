@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1704 Restore archive-target and hosted-gate repairs (2026-09-27):**
+Product36338229910 at95fc23ee built the CLI and ran the real isolated flow,
+but returned generic Receipt failure; the original ZIP and29 raw producer
+bindings are verified. Source inspection found `/data` incorrectly rejected
+as having no archive parent. Restore now copies that tar into `/`, with an
+explicit broker-target regression in the existing six-copy test. The old
+runtime receipt does not establish its precise failing phase. Redacted command,
+progress and journal diagnostics now preserve completed Backup evidence and
+recognize archive-copy dispatch plus exact pre-Docker receipt boundaries.
+W1703 repairs10 hosted Clippy diagnostics by keeping root-capability methods
+on the private retained-executor trait; W1702 authentic one-line hosted format
+is included. No acceptance from static changes: fresh Core/typecheck/CLI and
+actual-product gates required before Group2005/Windows770 dispatch. ROAD remains
+1324/1077/245/2; no local executable validation and no .slint changes.
+Evidence: docs/verification/gold-wave1704-restore-product-repair.json.
+
 **W1700 Restore hosted-build repairs (2026-09-27):** Core36337439917 and Product36337441758 at36a329a7 failed with5 compile errors from3 causes: ambiguous returned borrow, missing optional receipt-reader name and ExpectedImage/VerifiedImage mismatch. Corrected the lifetime, reconciled every reader call including generation auth with strict NotFound-only absence, and retained full container checks against validated recorded image evidence. Product helper43/43 passed; the real runtime never started. Preflight/CodeQL at formatting9b28e59f passed. Fresh Core/product gates required; no native/runtime/ROAD acceptance and no local executable validation.
 Evidence: docs/verification/gold-wave1700-restore-build-repair.json.
 
