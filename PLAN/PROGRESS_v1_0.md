@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1860 Google Chat canary canonical-ID correction (2026-09-28; hosted pending):**
+Run36402186588 at4d605c46 passed normal96, the actual BlueBubbles CLI,
+both CLI builds and all11 Google Chat tests including the3 isolated guards.
+The Google Chat product then failed pending_index_invalid. Original10962347715
+ZIP/API digest is authenticated; all8 cleanup outcomes succeeded. The fixture
+sent google_chat in a private envelope that requires canonical gchat, so Rust
+rejected it before Pending. The same mismatch affected output, ChannelRef and
+material-hash expectations. These four fixture uses now match the production
+wire ID; public command google_chat and source googlechat stay unchanged.
+The receipt additionally binds the enum/registry sources, and a fixed material
+vector prevents repeating that alias error. Production validation is unchanged.
+New hosted product evidence is pending; LF00112 stays open. W1855 strict
+workspaceClippy36404410318 at896e4f7d continues after successful core types and
+CLI build. No local executable validation; ROAD1324/1081/241/2, WS-LF43/75.
+
 **W1855 Test fault-helper visibility repair (2026-09-28; hosted pending):**
 Scheduled CI36398949143 at8e7108e7 reported five private_bounds errors in
 cfg(test) migration fault helpers before the workspace-Clippy step timed out.
@@ -12,6 +27,7 @@ repeat the exact strict workspace command on the new source. No local
 executable validation ran and no roadmap leaf closes. ROAD1324/1081/241/2,
 WS-LF43/75 and all native selections remain unchanged. GChat36402186588 at
 4d605c46 continues independently and cannot prove this later visibility fix.
+
 **W1847/W1850 Google Chat public-CLI canary source (2026-09-28; hosted pending):**
 A default-off debug-only gchat-product-canary feature enables one canonical
 IP-loopback origin for synthetic service-account probes. Normal builds never

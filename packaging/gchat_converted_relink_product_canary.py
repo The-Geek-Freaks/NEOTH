@@ -26,7 +26,9 @@ ALLOWED_SENDER = "users/neoth-canary"
 SPACE = "spaces/AAAA_NEOTH_CANARY"
 WRONG_SPACE = "spaces/AAAA_WRONG"
 RELOAD = ".reload-requested"
-DESTINATION = {"channel_id": "google_chat", "account_id": "default"}
+# The relink CLI accepts google_chat; private envelopes, output, persisted
+# ChannelRef values and material commitments use ChannelKind's wire ID gchat.
+DESTINATION = {"channel_id": "gchat", "account_id": "default"}
 DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_relinks.json", ".channel-relink-google-chat.transaction.json")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -167,7 +169,7 @@ def make_key(root: Path, origin: str) -> Path:
 
 def envelope(key: Path) -> bytes:
     fields = {"url": str(key), "server": SUBSCRIPTION, "allowed_sender": ALLOWED_SENDER}
-    return json.dumps({"schema_version": 1, "channel": "google_chat", "fields": fields}, separators=(",", ":")).encode()
+    return json.dumps({"schema_version": 1, "channel": "gchat", "fields": fields}, separators=(",", ":")).encode()
 
 
 def argv(binary: Path, source_path: Path, target: str) -> list[str]:
@@ -202,7 +204,7 @@ def read_json(path: Path, failure: str) -> dict:
 
 def validate_output(value: dict, already_ready: bool, expected: str | None = None) -> str:
     required = {"channel", "account", "relink_id", "state", "already_ready", "reload_requested"}
-    if set(value) != required or value.get("channel") != "google_chat" or value.get("account") != "default":
+    if set(value) != required or value.get("channel") != "gchat" or value.get("account") != "default":
         raise Failure("cli_schema_invalid")
     identity = value.get("relink_id")
     if value.get("state") != "ready" or value.get("already_ready") is not already_ready or value.get("reload_requested") is not True or not isinstance(identity, str) or not SHA256.fullmatch(identity):
@@ -314,7 +316,7 @@ def material_commitment(key: Path, target: str) -> str:
     if not regular(key):
         raise Failure("service_account_missing")
     value = hashlib.sha256(b"neoth-converted-relink-material-v1\0")
-    value.update(b"google_chat\0")
+    value.update(b"gchat\0")
     value.update(target.encode())
     value.update(b"\0")
     for field in (key.read_bytes(), SUBSCRIPTION.encode(), ALLOWED_SENDER.encode()):
@@ -395,6 +397,8 @@ def source_bindings(workflow: Path) -> dict[str, str]:
         "SRC/neothd/src/channels/relink.rs",
         "SRC/neothd/src/channels/routing.rs",
         "SRC/neothd/src/channels/gchat.rs",
+        "SRC/neothd/src/channels/mod.rs",
+        "SRC/neothd/src/channels/registry.rs",
         "SRC/neothd/src/config/credentials.rs",
         "SRC/neothd/src/config/wal.rs",
         "SRC/neothd/src/wal/master_key.rs",

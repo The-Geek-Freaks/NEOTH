@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1855 source repair; exact hosted workspace Clippy pending; no local execution",
+  "status": "W1860 source review PASS; hosted GChat product rerun pending; no local execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 268561,
-    "sha256": "B79770B2051DA39D6591BF5059DF1A3C870A7A7401F80B38F76264F53F135252"
+    "bytes": 268563,
+    "sha256": "5989A1A22E154A3DD352314598D6F559F25789E7EB47D30787241EA56B629BDE"
   },
   "sourceInputs": 1489,
   "requiredNativeTests": [
@@ -56995,6 +56995,44 @@
       }
     ],
     "note": "Five cfg(test) method visibility reductions only; no production behavior or test assertions changed. ROAD1324/1081/241/2 and native selections unchanged. GChat36402186588 producer predates this fix.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1860CanonicalGChatCanary": {
+    "base": "896e4f7d373ef5f86fe24ed2b5d46a6504717248",
+    "sources": [
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 26639,
+        "sha256": "3D302C4DF29D44225DEB7D9E1F79AC8AF89E02C8C687A990BE3A2ADEFDD5D81A",
+        "blob": "9c0bd96a7b721311851b3f2bcdb01fa9d1d3061f"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 6867,
+        "sha256": "9484E9FDBFF7D21A8C0DF987201C1D721EA839759C8A14AF35F57360654A5342",
+        "blob": "282622404114baa9bc2b95ac4c45250cb0afc06e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 520508,
+        "sha256": "2C6E71F302709957A8414C15DDCE1B1CC1C3771357CFAE423542C09D6715BBEC",
+        "blob": "b3053cbda3047e5beed22e2eb4019a4d21e3ca9f"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1556938,
+        "sha256": "15B0A9441D7868348908CD30D777B255B337B38254E31AA5CDC07BE32F7DE9F1",
+        "blob": "57362b65e492424c28c5c7972a17e72ab0e1e46f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2167948,
+        "sha256": "B53B60F311A685682DAE4A7189B10747EACC328A93CE86A925B5B732752A77CB",
+        "blob": "10c22a827ce7e98228def908962069b8c7102652"
+      }
+    ],
+    "note": "Original36402186588 product refused alias before Pending; wire/output/ChannelRef/material fixtures now canonical gchat, public CLI google_chat unchanged. Sourcebindings31. ROAD1324/1081/241/2 unchanged. W1859 untracked WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

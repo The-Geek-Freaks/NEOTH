@@ -16,15 +16,15 @@ class GChatRelinkCanaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             key = Path(directory) / "key.json"
             payload = json.loads(canary.envelope(key))
-            self.assertEqual(payload, {"schema_version": 1, "channel": "google_chat", "fields": {"url": str(key), "server": canary.SUBSCRIPTION, "allowed_sender": canary.ALLOWED_SENDER}})
+            self.assertEqual(payload, {"schema_version": 1, "channel": "gchat", "fields": {"url": str(key), "server": canary.SUBSCRIPTION, "allowed_sender": canary.ALLOWED_SENDER}})
             arguments = canary.argv(Path("/bin/neoth"), Path("/tmp/openclaw.json"), canary.SPACE)
             self.assertEqual(arguments[-4:], ["--source-account", "work", "--target", canary.SPACE])
             self.assertIn("google_chat", arguments)
 
     def test_ready_output_rejects_wrong_channel_identity_and_retry(self):
-        good = {"channel": "google_chat", "account": "default", "relink_id": "a" * 64, "state": "ready", "already_ready": False, "reload_requested": True}
+        good = {"channel": "gchat", "account": "default", "relink_id": "a" * 64, "state": "ready", "already_ready": False, "reload_requested": True}
         self.assertEqual(canary.validate_output(good, False), "a" * 64)
-        for value in ({**good, "channel": "imessage_bluebubbles"}, {**good, "relink_id": "bad"}, {**good, "state": "pending"}, {**good, "extra": True}):
+        for value in ({**good, "channel": "google_chat"}, {**good, "channel": "imessage_bluebubbles"}, {**good, "relink_id": "bad"}, {**good, "state": "pending"}, {**good, "extra": True}):
             with self.subTest(value=value):
                 with self.assertRaises(canary.Failure):
                     canary.validate_output(value, False)
@@ -36,6 +36,9 @@ class GChatRelinkCanaryTests(unittest.TestCase):
             key = Path(directory) / "service-account.json"
             key.write_bytes(b"first")
             first = canary.material_commitment(key, canary.SPACE)
+            # Independent vector from relink.rs: canonical gchat wire ID,
+            # exact target, then three little-endian length-framed fields.
+            self.assertEqual(first, "2e42f746a3d15efd7dbcbdbbe1d385673c56e11ad8f6fd8e013f00054dea69f8")
             key.rename(Path(directory) / "renamed.json")
             renamed = Path(directory) / "renamed.json"
             self.assertEqual(first, canary.material_commitment(renamed, canary.SPACE))
