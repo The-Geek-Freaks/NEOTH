@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1796 Slack Core and generated CLI admitted (2026-09-28):**
+Run36373320839 at1da6281f passed slim production Clippy, default test-target
+typecheck, public CLI build and actual generated command reference. Original
+artifact10950232662 matches the GitHub API digest and internal producer/hash;
+the imported reference includes openclaw-migration plan/apply/status/rollback.
+Production CLI/generator blobs match current source; the sole intervening Rust
+change is hosted assertion formatting. Evidence:
+docs/verification/gold-wave1796-core-cli-admission.json.
+Native migration behavior is still pending: Windows831run36374304491 and
+focused56run36374440126 are active; Linux2068 follows this reference import.
+Single Slack/file-backend scope remains; full migration and ROAD counts stay
+1324/1077/245/2. No local executable validation under the BSOD hold.
+
 **W1758 / W1759 Custody and Archive Bridge product admitted (2026-09-28):**
 ArchiveBridge36358083834 atf3a7adef is successful. Original artifact10944434686
 ZIP7f68bff56219abb2942db9659bcf91a2d891b3fa4c40a386d80340acc55041eb

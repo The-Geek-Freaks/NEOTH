@@ -3212,6 +3212,39 @@ OH-02 — compact onboarding readiness snapshot.  Shows provider auth, enabled c
 
 - `--json` — Emit JSON instead of markdown
 
+## `neoth openclaw-migration`
+
+Plan, apply, inspect, and roll back one file-backed OpenClaw Slack account
+
+### `neoth openclaw-migration apply`
+
+Verify and apply the exact plan; resupply the same private inputs on retry
+
+- `--id <ID>`
+- `--config <CONFIG>`
+- `--request <REQUEST>`
+- `--confirm`
+
+### `neoth openclaw-migration plan`
+
+Bind one supported Slack source account and the current target pair
+
+- `--config <CONFIG>`
+- `--request <REQUEST>`
+
+### `neoth openclaw-migration rollback`
+
+Restore the exact prior pair only while this operation still owns it
+
+- `--id <ID>`
+- `--confirm`
+
+### `neoth openclaw-migration status`
+
+Inspect persisted evidence and the actual config/credentials generation
+
+- `--id <ID>`
+
 ## `neoth os`
 
 `os launch <program>` — launch a program through the PC-01 OS-tool gate: exec-allowlist (`freedom.yaml::tools.os.allowed_exec_paths`, exact canonical match, default deny-all) + autonomy gate (Full-only auto-allow) + WAL audit (`0xAC`/`0xAD`). No arguments, no shell. The gated alternative to an ungated process spawn

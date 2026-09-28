@@ -1,0 +1,70 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "decision": "accepted",
+  "scope": "slim-core production Clippy, default test-target typecheck, public CLI build and exact generated reference only",
+  "run": {
+    "id": 36373320839,
+    "producer_commit": "1da6281f07e3f6bdbf92ecb742bf2102e573e413",
+    "ref": "refs/heads/main",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "artifact": {
+    "id": 10950232662,
+    "zip_sha256": "f25ba51ea9a9854a5f379c3b7d41b4f05ef0a022349cb63a3db9ada4951b7671",
+    "api_digest_verified": true,
+    "inner_producer_verified": true,
+    "cli_reference_sha256": "bf9149f01c50874d47c0f70ddf19b4f97712e5e8c25db95a92f4aa9957923a8e"
+  },
+  "checks": [
+    "cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings",
+    "cargo check -p neoth --tests --locked --keep-going",
+    "cargo build -p neoth --bin neoth --locked",
+    "neoth completions --reference"
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "producer_blob": "dd183172702fb863737d3c874f77635841a30829",
+      "current_blob": "dd183172702fb863737d3c874f77635841a30829",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "producer_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+      "current_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
+      "producer_blob": "073a053943bf16b9c60a506bb4c1e14491dc4a28",
+      "current_blob": "073a053943bf16b9c60a506bb4c1e14491dc4a28",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/completions.rs",
+      "producer_blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "current_blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/docgen.rs",
+      "producer_blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "current_blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "match": true
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "producer_blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "current_blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "match": true
+    }
+  ],
+  "producer_delta": "Only hosted line-wrapping of one test assertion differs under SRC at b824be89; production source unchanged.",
+  "limits": [
+    "No native behavioral, external-provider, live-daemon or complete migration acceptance",
+    "No local compiler, formatter, parser, test or runtime execution",
+    "Focused56 workflow and later admission documentation not part of this producer"
+  ]
+}

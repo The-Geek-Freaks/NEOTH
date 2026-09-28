@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1796 Slack Core and generated CLI admitted (2026-09-28):**
+Run36373320839 at1da6281f passed slim production Clippy, default test-target
+typecheck, public CLI build and actual generated command reference. Original
+artifact10950232662 matches the GitHub API digest and internal producer/hash;
+the imported reference includes openclaw-migration plan/apply/status/rollback.
+Production CLI/generator blobs match current source; the sole intervening Rust
+change is hosted assertion formatting. Evidence:
+docs/verification/gold-wave1796-core-cli-admission.json.
+Native migration behavior is still pending: Windows831run36374304491 and
+focused56run36374440126 are active; Linux2068 follows this reference import.
+Single Slack/file-backend scope remains; full migration and ROAD counts stay
+1324/1077/245/2. No local executable validation under the BSOD hold.
+
 **W1795 Focused Slack/Relink gate expansion (2026-09-28):**
 The existing focused channel lane now runs all19 new migration identities
 first, followed by its37 prior channel cases and actual Relink CLI product.
