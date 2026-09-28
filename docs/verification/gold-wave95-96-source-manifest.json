@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T04:23:17.3074148Z",
-  "validationStatus": "Telegram Core Clippy passed; typecheck active; hosted format imported; parity classification corrected",
+  "capturedUtc": "2026-09-28T04:31:40.5295102Z",
+  "validationStatus": "W1806 exact Telegram Core/CLI producer admitted; native Windows848/focused75 active; Linux2086 ready for dispatch after reference publication",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -218,8 +218,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 258140,
-      "sha256": "BF9149F01C50874D47C0F70DDF19B4F97712E5E8C25DB95A92F4AA9957923A8E"
+      "bytes": 258157,
+      "sha256": "8329993C40BA1D55AD1C587FAC1E3E3827CBF318332C9B952DB2CDF9B25FDCF0"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -2737,6 +2737,11 @@
       "sha256": "5EDA887EB29B8AEEB002300A87204CB49574E2403CCA5EB584E925A182693C85"
     },
     {
+      "path": "docs/verification/gold-wave1806-core-cli-admission.json",
+      "bytes": 2600,
+      "sha256": "6567F794B228DC385AECB2E99BA8E2D3FA0DB25E7FA3B806C7B19FA4BCE7BF5E"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3778,18 +3783,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 499990,
-      "sha256": "727E89F48C2B697111D79C47BFD8427D4119051F79CA43C4BE79CF6C3510AE2A"
+      "bytes": 500880,
+      "sha256": "A2442CDC21DED1C0B6F0A09AE1CEDD4A4AF431B6F293D4681754ED5B99ACAA7A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1536186,
-      "sha256": "83EAB1522D537916BC2B83E443B84D38160ADE869B0AAF6508A9E36F45CE9A03"
+      "bytes": 1537076,
+      "sha256": "0793F245D0063FE389E0B5B96918CF10915C62703BD97CBA868430ADAD5D5990"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2146709,
-      "sha256": "7FC4C91663E0C79D5CF32C9850A3816FF9E6F4868D9CAA94D259A3C6E4B6A9F4"
+      "bytes": 2147599,
+      "sha256": "09C0E9B9F8DB34371BC6CC35620F9E48E726EFF847FDDE8CAF7DDB93F47F8040"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

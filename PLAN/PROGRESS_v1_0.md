@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1806 Telegram Core and generated CLI admitted (2026-09-28):**
+Core36376994007 at98331c12 passed slim production Clippy, default test-target
+typecheck and the actual public CLI build. Original10952041108 matches its
+GitHub API ZIP digest and inner producer/reference hashes. The imported CLI
+reference documents one file-backed Slack or Telegram account; its five
+CLI/generator/workflow source inputs match current. W1803 authenticated
+formatting and the test-only parity inventory remain explicit later changes.
+Evidence: docs/verification/gold-wave1806-core-cli-admission.json.
+Windows848run36377724690 and focused75/product36377726835 at9f5d96a9 are
+already active; Linux2086 dispatch follows this published reference. No current
+native behavior, external provider, daemon adoption or full migration closure
+is inferred. ROAD1324/1077/245/2 unchanged; no local executable validation.
+
 **W1801-W1803 Windows admission and Linux parity diagnosis (2026-09-28):**
 Windows831run36374304491 at308bf12a is fully admitted:831 exact identities
 and matching single-PASS logs,832 log/10 evidence hashes, API-authenticated

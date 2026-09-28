@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Telegram Core Clippy passed; typecheck active; hosted format imported; parity classification corrected",
+  "status": "W1806 exact Telegram Core/CLI producer admitted; native Windows848/focused75 active; Linux2086 ready for dispatch after reference publication",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 264334,
-    "sha256": "BA3550E633B28E8A92C4B38A574F25B1A58B5B3D780D60932801BB06F8BC3845"
+    "bytes": 264563,
+    "sha256": "DCE4EBE4675B142FA54F3BE3A122090AFF7DA1AE25E9BC4F2F58E1A92998EABD"
   },
-  "sourceInputs": 1467,
+  "sourceInputs": 1468,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -55884,6 +55884,44 @@
       }
     ],
     "note": "W1801 exact Windows831 accepted; priorLinux2068 one parity-inventory failure diagnosed, no group acceptance. Explicit CLI-only rationale and focused75 guard. Original hosted formatting authenticated; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1806CoreCliAdmission": {
+    "base": "9f5d96a97c406325922c660517932b81ba2d1419",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 258157,
+        "sha256": "8329993C40BA1D55AD1C587FAC1E3E3827CBF318332C9B952DB2CDF9B25FDCF0",
+        "blob": "8fcaf9c2a311c0e268dbd69103e4eebff45b5888"
+      },
+      {
+        "path": "docs/verification/gold-wave1806-core-cli-admission.json",
+        "bytes": 2600,
+        "sha256": "6567F794B228DC385AECB2E99BA8E2D3FA0DB25E7FA3B806C7B19FA4BCE7BF5E",
+        "blob": "ce2d822b11c4b1c5325c0a9584252704e87f9945"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 500880,
+        "sha256": "A2442CDC21DED1C0B6F0A09AE1CEDD4A4AF431B6F293D4681754ED5B99ACAA7A",
+        "blob": "f4139b16b58bb9111ca23401a96dcc18789246db"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1537076,
+        "sha256": "0793F245D0063FE389E0B5B96918CF10915C62703BD97CBA868430ADAD5D5990",
+        "blob": "250fa8920605a5bbaf23b673c11b7e47c4d4b7fb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2147599,
+        "sha256": "09C0E9B9F8DB34371BC6CC35620F9E48E726EFF847FDDE8CAF7DDB93F47F8040",
+        "blob": "ea4b7be264959da76f5780bfed55f645a02b02a4"
+      }
+    ],
+    "note": "Original ZIP/API/internal hashes and exact CLI/generator blobs verified. Runtime acceptance is limited to producer98331c12. No roadmap box closure or local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

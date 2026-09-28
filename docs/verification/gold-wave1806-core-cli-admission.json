@@ -1,0 +1,66 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "decision": "accepted",
+  "scope": "slim-core production Clippy, default test-target typecheck, public CLI build and exact generated reference only",
+  "run": {
+    "id": 36376994007,
+    "producer_commit": "98331c12c5fdc8c06352a6997cc8100bf03d1498",
+    "ref": "refs/heads/main",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "artifact": {
+    "id": 10952041108,
+    "zip_sha256": "648bd5f7e77cb89f2e7174173e53424c80aeecfd51b05ac6a74ef264d5d19e9c",
+    "api_digest_verified": true,
+    "inner_producer_verified": true,
+    "cli_reference_sha256": "8329993c40ba1d55ad1c587fac1e3e3827cbf318332c9b952db2cdf9b25fdcf0"
+  },
+  "successful_steps": [
+    "Check exact-source slim-core production Clippy",
+    "Type-check core test targets before native validation",
+    "Build current public CLI",
+    "Export generated reference",
+    "Upload generated reference"
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "producer_blob": "5a149c4df84801cecabb02c3f1d232b936b875df",
+      "current_blob": "5a149c4df84801cecabb02c3f1d232b936b875df",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "producer_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+      "current_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/completions.rs",
+      "producer_blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "current_blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/docgen.rs",
+      "producer_blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "current_blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "match": true
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "producer_blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "current_blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "match": true
+    }
+  ],
+  "producer_delta": "Seven Rust files carry previously authenticated W1803 hosted formatting only; parity_drift.rs adds the deliberate test-only CLI surface inventory. Five CLI/generator/workflow inputs are identical. Runtime/compiler claims apply to the producer, not to later edits.",
+  "limits": [
+    "Native Telegram behavior and Windows acceptance pending on separate runs",
+    "No external-provider, live-daemon or complete multi-account migration acceptance",
+    "No local executable validation"
+  ],
+  "localExecutableValidationRan": false
+}
