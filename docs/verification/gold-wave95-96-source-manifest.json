@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T01:41:36.5538880Z",
-  "validationStatus": "Exact hosted Clippy op_ref fix; behavior validation pending",
+  "capturedUtc": "2026-09-28T01:54:20.0103168Z",
+  "validationStatus": "Core4e1f5e44 accepted; reviewed CLI product gate published, native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 15324,
-      "sha256": "01A1A6931A6154811590998D013426F14153D7FDEEDF09D81633F415DE868E7C"
+      "bytes": 17329,
+      "sha256": "798739AC56C9A8A2357D8781709047C1EAEC09296822CFB641BA2C981F11E41C"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -218,8 +218,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 257028,
-      "sha256": "DED0A7B9EE8431F99AA249F578F5A84B77DDE711F3058FFB83D5C2CCCEA3978C"
+      "bytes": 257424,
+      "sha256": "70EC912B5029E9DAE4B1FDD9964210AEF8F782D656D0C5E2B5A02B5742B32992"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -2657,6 +2657,11 @@
       "sha256": "FCB0C0727283FF28B123B441D78D25C3FC5C2E4BA9E04C2A8391336F1B1B4E7F"
     },
     {
+      "path": "docs/verification/gold-wave1775-core-cli-admission.json",
+      "bytes": 1158,
+      "sha256": "DD84D76321C20DE4643B6C0D919C40001C55998CEBC1D339A505F8AFF2CB7752"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3492,6 +3497,11 @@
       "sha256": "351F42092541B08A9BC6C1F3F93BC3C8470E80F7585A376ACBD923ADC47F7A62"
     },
     {
+      "path": "packaging/converted_channel_relink_product_canary.py",
+      "bytes": 24535,
+      "sha256": "2BB5306CBB1B238A9EDD6BEA372A99825F6BB531B0C2935F8C3EEF66795AE9EF"
+    },
+    {
       "path": "packaging/linux/build-packages.sh",
       "bytes": 17526,
       "sha256": "DDD7CECB8194FFBC853D2B07AB11798D45283359701D7CB7D915B740A70A7182"
@@ -3585,6 +3595,11 @@
       "path": "packaging/tests/test_ci_cadence_contract.py",
       "bytes": 45089,
       "sha256": "E40CB484D233F71575E2FBF09534E273EBF0A41E523BFB9BFCE4547DDC6979F1"
+    },
+    {
+      "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
+      "bytes": 9231,
+      "sha256": "A4DBFE451501407D26DD48E18B8D1C5BA0C331C874811E11DDD1D2CDFF92965C"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3693,13 +3708,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1524196,
-      "sha256": "9B54EB516008B7AF6E05A52D2D6D5FADF03C938F89A914BBC39162B88EFE5862"
+      "bytes": 1525316,
+      "sha256": "5A95DA88AF7474D724498DB7D02C8034B0557E1479F7AB9B9EB85EBCF5731E13"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2134719,
-      "sha256": "D4E19B3860AD48E6BDAF993FE1C14BE9345ED8001E19A5B4AFD0EC1745B3BC8E"
+      "bytes": 2135839,
+      "sha256": "12DF63CA66D68F93E3408C3B97ACAAB5BDB1940902DFB4D0793EA5D16A432E30"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

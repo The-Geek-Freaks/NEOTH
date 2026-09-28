@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1774/W1776 public CLI Relink gate and W1775 Core (2026-09-28):**
+Core36367078660 at4e1f5e44 passed slim production Clippy, default test-target
+typecheck, public CLI build and reference export. Original CLI artifact10947069646
+ZIP1ca04f027e753fa4f55b2c98abe5d506e5ba260bbc02dcc504335b2b61d4d3f1
+is API-digest/inner-producer authenticated; generated cli-commands.md imported.
+Evidence: docs/verification/gold-wave1775-core-cli-admission.json.
+The existing gchat-live-regressions lane now includes a real compiled CLI
+BlueBubbles loopback lifecycle after37 exact native cases. Public init creates
+fresh homes; wrong target leaves only Pending; Ready/retry validates actual
+pair/route/target/request digests and encrypted byte retention. Eight helper
+contracts cover malformed records and evidence mutations. Independent Python
+product review PASS source-only; full hosted execution remains pending.
+Group2049/Windows813 and feature37+CLI product to run on this publication.
+No external BlueBubbles/Google provider or live-daemon reload claim, no ROAD
+closure;1324/1077/245/2 unchanged. Local BSOD hold remains absolute.
 **W1775 hosted Relink Clippy correction (2026-09-28):**
 Core36366770559 at3288deeb reached slim production Clippy and reported one
 clippy::op_ref in the Ready destination lookup. Removed only the two redundant

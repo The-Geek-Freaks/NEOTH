@@ -665,6 +665,15 @@ Private GUI approval for one already-selected pairing request
 - `<CHANNEL>`
 - `--account <ACCOUNT>`
 
+### `neoth channel relink-openclaw`
+
+Relink one selected OpenClaw account to a verified NEOTH transport. Read the private channel credential envelope from stdin
+
+- `<CHANNEL>` — Converted transports currently support only the default NEOTH account
+- `--config <CONFIG>`
+- `--source-account <SOURCE_ACCOUNT>`
+- `--target <TARGET>` — Exact BlueBubbles chat GUID or Google Chat space to verify
+
 ### `neoth channel remove`
 
 Remove a channel

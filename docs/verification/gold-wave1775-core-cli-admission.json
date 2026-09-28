@@ -1,0 +1,30 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "decision": "accepted",
+  "scope": "slim-core production Clippy, default test-target typecheck, public CLI build and exact generated reference only",
+  "run": {
+    "id": 36367078660,
+    "producer_commit": "4e1f5e44af324a8875d3ba5d41dc1aaea4acfe17",
+    "ref": "refs/heads/main",
+    "attempt": 1,
+    "conclusion": "success"
+  },
+  "artifact": {
+    "id": 10947069646,
+    "zip_sha256": "1ca04f027e753fa4f55b2c98abe5d506e5ba260bbc02dcc504335b2b61d4d3f1",
+    "api_digest_verified": true,
+    "inner_producer_verified": true,
+    "cli_reference_sha256": "70ec912b5029e9dae4b1fdd9964210aef8f782d656d0c5e2b5a02b5742b32992"
+  },
+  "checks": [
+    "cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings",
+    "cargo check -p neoth --tests --locked --keep-going",
+    "cargo build -p neoth --bin neoth --locked",
+    "neoth completions --reference"
+  ],
+  "limits": [
+    "No native behavioral or external-provider acceptance",
+    "No local compiler, formatter, parser, test or runtime execution",
+    "W1774 product helper/workflow not included in this producer"
+  ]
+}

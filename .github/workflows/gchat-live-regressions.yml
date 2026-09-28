@@ -57,6 +57,13 @@ jobs:
             SRC/neothd/src/cli/channel.rs \
             SRC/neothd/src/cli/channel/converted_relink.rs \
             SRC/neothd/src/cli/channel/converted_relink/tests.rs \
+            packaging/converted_channel_relink_product_canary.py \
+            packaging/tests/test_converted_channel_relink_product_canary.py \
+            SRC/neoth-openclaw-custody/src/pinned_inventory.rs \
+            SRC/neoth-openclaw-custody/src/pinned_schema.rs \
+            SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json \
+            SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json \
+            SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json \
             SRC/neothd/src/cli/channel_relink.rs \
             SRC/neothd/src/channels/relink.rs \
             SRC/neothd/src/config/credentials.rs \
@@ -77,6 +84,9 @@ jobs:
           : > "$W548_ROOT/receipt/passed.txt"
           : > "$W548_ROOT/receipt/failed.txt"
           : > "$W548_ROOT/receipt/executed.txt"
+
+      - name: Verify compiled-CLI relink canary contracts
+        run: python3 packaging/tests/test_converted_channel_relink_product_canary.py
 
       - name: Run focused channel and exact-target regressions
         working-directory: SRC
@@ -163,6 +173,35 @@ jobs:
           test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 37
           test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 37
           test ! -s "$W548_ROOT/receipt/failed.txt"
+
+      - name: Build exact public CLI for relink lifecycle
+        timeout-minutes: 20
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked --features gchat-channel,irc-channel,nostr-channel
+
+      - name: Exercise real public CLI relink against loopback BlueBubbles
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$W548_ROOT/product"
+          python3 packaging/converted_channel_relink_product_canary.py \
+            --binary "$PWD/SRC/target/debug/neoth" \
+            --root "$W548_ROOT/product" \
+            --home "$W548_ROOT/product/neoth-home" \
+            --source "$W548_ROOT/product/openclaw.yaml" \
+            --evidence-dir "$W548_ROOT/product/evidence" \
+            --receipt "$W548_ROOT/product/receipt/receipt.json" \
+            --workflow .github/workflows/gchat-live-regressions.yml
+
+      - name: Upload public CLI relink lifecycle receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: converted-relink-public-cli-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w548-gchat-live-regressions/product/evidence/
+            ${{ runner.temp }}/w548-gchat-live-regressions/product/receipt/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Save Cargo cache
         if: always()
