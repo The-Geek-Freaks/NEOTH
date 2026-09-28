@@ -128,15 +128,28 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
         .dir
         .create_dir(&stage_name)
         .map_err(|_| BridgeError::Io)?;
-    let binding = crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
+    let stage_mutation_binding =
+        crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
         .map_err(|_| BridgeError::UnsafePath)?;
-    let stage = crate::skills::store::open_bound_real_child_dir_for_read(
+    let stage_shared_dir = crate::skills::store::open_bound_real_child_dir_for_read(
         &parent.dir,
-        &binding,
+        &stage_mutation_binding,
         &stage_name,
         &stage_display,
     )
     .map_err(|_| BridgeError::UnsafePath)?;
+    let (stage, stage_read_binding) = crate::skills::store::bind_retained_real_child_dir(
+        &parent.dir,
+        &stage_name,
+        &stage_display,
+        stage_shared_dir,
+    )
+    .map_err(|_| BridgeError::UnsafePath)?;
+    // On Windows the mutation binding retains DELETE access to this directory.
+    // Releasing it before private child publication lets the child handle rename
+    // atomically, while the retained read binding continues to pin the exact
+    // staged directory until a fresh mutation binding is verified below.
+    drop(stage_mutation_binding);
 
     for (name, bytes) in owned_files(Generation::Current) {
         if crate::skills::store::atomic_write_private_child_create_new(
@@ -147,16 +160,27 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
         )
         .is_err()
         {
+            drop(stage);
             let _ = crate::skills::store::remove_bound_real_directory_tree(
                 &parent.dir,
                 &stage_name,
                 &stage_display,
-                binding.identity_token(),
+                stage_read_binding.identity_token(),
             );
             return Err(BridgeError::Io);
         }
     }
 
+    let binding =
+        crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
+            .map_err(|_| BridgeError::UnsafePath)?;
+    if binding.identity_token() != stage_read_binding.identity_token()
+        || !stage_read_binding
+            .matches_directory_child(&parent.dir, &stage_name, &stage_display)
+            .map_err(|_| BridgeError::UnsafePath)?
+    {
+        return Err(BridgeError::ForeignOrMismatch);
+    }
     #[cfg(test)]
     run_before_publish_for_test();
     if crate::skills::store::rename_bound_child(

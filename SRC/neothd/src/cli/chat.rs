@@ -25351,9 +25351,12 @@ template = "[REDACTED]"
         )));
         assert!(production.contains("let hooks = if args.incognito || replay_mode {"));
         assert!(production.contains("let mut journal = if args.incognito {"));
+        let engine_shape: String = engine_production
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
         assert!(
-            engine_production
-                .contains("|| (!args.incognito\n            && (config.refusal_recovery.enabled")
+            engine_shape.contains("||(!args.incognito&&(config.refusal_recovery.enabled")
         );
         let alternate_ingress = production
             .split("pub async fn run_chat_with(")

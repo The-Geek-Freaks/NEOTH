@@ -3,6 +3,30 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1866 Windows recovery batch and daemon provenance (2026-09-28; hosted pending):**
+Scheduled Windows run36398949143 at8e7108e7 compiled successfully but stopped
+with20 failures after8379 of18808 tests. W1863 repairs six stale contracts:
+three account-map error assertions, the whitespace-sensitive Incognito source
+guard, the already-approved Document* audit subtypes, and the EM-02 calendar
+starter label. Their existing no-write and rejection assertions remain intact.
+W1864 applies the existing Paperless Windows directory-handle pattern to
+Obsidian publication: retain read identity, release DELETE before child writes,
+then reacquire and verify the exact mutation binding before final rename.
+The six affected Obsidian cases require fresh Windows execution.
+The eight ArXiv failures still have no proven cause. W1862 adds one isolated
+mock-feed diagnostic that reports a redacted failure class and request count;
+no proxy workaround or production transport change is included.
+All20 original failures plus this diagnostic are added to the existing Windows
+lane:889 unique selected identities,15 newly registered portable requirements
+(total2331). Linux2106 and focused96 selections remain unchanged.
+W1859 now binds locked_file.rs and the real consent/cluster/PID/RPC dependency
+chain. Its daemon test is source-only until a hosted product receipt passes.
+Independent static review approved these changes; no local executable checks.
+GChat36408351275 atb4b43cac failed the actual product after normal96, BlueBubbles,
+all11 GChat tests and both CLI builds; W1867 diagnoses its authentic original.
+Strict workspaceClippy36409692729 ata1c640ff remains active and is not duplicated.
+ROAD1324/1081/241/2 and WS-LF43done/75open are unchanged; no leaf closes.
+
 **W1860 Google Chat canary canonical-ID correction (2026-09-28; hosted pending):**
 Run36402186588 at4d605c46 passed normal96, the actual BlueBubbles CLI,
 both CLI builds and all11 Google Chat tests including the3 isolated guards.

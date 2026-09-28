@@ -91,6 +91,22 @@ jobs:
             SRC/neothd/src/channels/readiness.rs \
             SRC/neothd/src/channels/routing.rs \
             SRC/neothd/src/cli/serve_tasks.rs \
+            SRC/neothd/src/cli/consent.rs \
+            SRC/neothd/src/consent.rs \
+            SRC/neothd/src/config/mod.rs \
+            SRC/neothd/src/cli/cluster.rs \
+            SRC/neothd/src/cluster/status_wire.rs \
+            SRC/neothd/src/cluster/membership.rs \
+            SRC/neothd/src/daemon/pidfile.rs \
+            SRC/neothd/src/util/locked_file.rs \
+            SRC/neothd/src/daemon/audit_rpc/mod.rs \
+            SRC/neothd/src/daemon/audit_rpc/client.rs \
+            SRC/neothd/src/daemon/audit_rpc/server.rs \
+            SRC/neothd/src/daemon/audit_rpc/sidecar.rs \
+            SRC/neothd/src/daemon/audit_rpc/token.rs \
+            SRC/neothd/src/daemon/audit_rpc/transport/mod.rs \
+            SRC/neothd/src/daemon/audit_rpc/transport/unix.rs \
+            SRC/neothd/src/skills/store.rs \
             SRC/neothd/src/daemon/channel_live_registry.rs \
             SRC/neothd/src/daemon/proactive_dispatcher.rs \
             SRC/neothd/src/daemon/proactive_egress.rs \

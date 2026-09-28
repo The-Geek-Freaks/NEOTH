@@ -765,6 +765,11 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     // W61 admits exactly this observational result receipt over the one-shot
     // RPC route. Its payload validator remains fail-closed below.
     let code_map_recall_resolved = crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8;
+    // ADOPT31-B7 — the synchronous accepted-document routes use the same
+    // daemon-owned audit transport for their metadata-only post-effect receipts.
+    let document_skill_applied = crate::wal::events::ExtendedSubtype::DocumentSkillApplied as u8;
+    let document_memory_applied = crate::wal::events::ExtendedSubtype::DocumentMemoryApplied as u8;
+    let document_note_applied = crate::wal::events::ExtendedSubtype::DocumentNoteApplied as u8;
     // GOLD-LF-P1-01 — os_tools::gate reaches the WAL over this RPC route via
     // AuditSink::DaemonRpc, so its intent/result pairs are admitted. The
     // channel and media pairs are deliberately NOT here: they hold an
@@ -794,6 +799,9 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             os_app_launch_result,
             trust_decision,
             code_map_recall_resolved,
+            document_skill_applied,
+            document_memory_applied,
+            document_note_applied,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
@@ -811,6 +819,9 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(is_allowed_client_event_pair(0x00, os_app_launch_result));
     assert!(is_allowed_client_event_pair(0x00, trust_decision));
     assert!(is_allowed_client_event_pair(0x00, code_map_recall_resolved));
+    assert!(is_allowed_client_event_pair(0x00, document_skill_applied));
+    assert!(is_allowed_client_event_pair(0x00, document_memory_applied));
+    assert!(is_allowed_client_event_pair(0x00, document_note_applied));
     // The pairs with no client caller must stay OUT — this is the half of the
     // contract that actually bounds the surface.
     assert!(!is_allowed_client_event_pair(

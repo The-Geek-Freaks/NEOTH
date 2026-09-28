@@ -7041,7 +7041,7 @@ mod tests {
         .unwrap_err();
         let error = format!("{error:#}");
         assert!(
-            error.contains("cannot modify a configured Telegram account map"),
+            error.contains("cannot modify a configured account map"),
             "{error}"
         );
         assert_telegram_map_files_unchanged(
@@ -7061,7 +7061,7 @@ mod tests {
         let error = run_remove_at(home.path(), "telegram", &OutputFormat::Json).unwrap_err();
         let error = format!("{error:#}");
         assert!(
-            error.contains("cannot modify a configured Telegram account map"),
+            error.contains("cannot modify a configured account map"),
             "{error}"
         );
         assert_telegram_map_files_unchanged(
@@ -7094,7 +7094,7 @@ mod tests {
         .unwrap_err();
         let error = format!("{error:#}");
         assert!(
-            error.contains("cannot modify a configured Telegram account map"),
+            error.contains("cannot modify a configured account map"),
             "{error}"
         );
         assert_telegram_map_files_unchanged(

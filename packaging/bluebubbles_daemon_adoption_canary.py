@@ -522,6 +522,7 @@ def source_bindings(workflow: Path) -> dict[str, str]:
         "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/openai_api.rs", "SRC/neoth-openclaw-custody/src/lib.rs", "SRC/neoth-openclaw-custody/src/pinned_inventory.rs", "SRC/neoth-openclaw-custody/src/pinned_schema.rs", "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json", "SRC/neoth-openclaw-custody/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/Cargo.lock",
     )
     paths = {item: Path(item) for item in relatives}
+    paths["SRC/neothd/src/util/locked_file.rs"] = Path("SRC/neothd/src/util/locked_file.rs")
     if workflow.resolve() != paths[".github/workflows/gchat-live-regressions.yml"].resolve() or any(not regular(path) for path in paths.values()):
         raise Failure("source_provenance_missing")
     return {item: digest(path) for item, path in paths.items()}

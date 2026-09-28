@@ -410,7 +410,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "calendar_morning_agenda",
         name: "Calendar morning agenda",
-        description: "Consented CalDAV local-day agenda and conflict summary; configure timezone and a calendar:read credential before activation.",
+        description: "EM-02 consented CalDAV local-day agenda and conflict summary; configure timezone and a calendar:read credential before activation.",
         cron: "0 8 * * 1-5",
         endpoint: "/api/calendar/agenda",
         method: "POST",

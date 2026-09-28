@@ -414,6 +414,59 @@ mod tests {
         mock
     }
 
+    fn redacted_arxiv_error_chain(error: &anyhow::Error) -> String {
+        error
+            .chain()
+            .map(|cause| {
+                let message = cause.to_string();
+                if message.contains("parse NEOTH_HTTP_PROXY") {
+                    "client-proxy-config-invalid"
+                } else if message.contains("external HTTP transport timed out") {
+                    "transport-timeout"
+                } else if message.contains("external HTTP transport failed") {
+                    "transport-unavailable"
+                } else if message.contains("arxiv API returned") {
+                    "http-non-success"
+                } else if message.contains("arxiv response exceeds") {
+                    "response-size-limit"
+                } else if message.contains("arxiv response is not valid UTF-8") {
+                    "response-invalid-utf8"
+                } else if message.contains("arxiv response contains an unterminated entry") {
+                    "atom-unterminated-entry"
+                } else if message.contains("sealed external HTTP request") {
+                    "sealed-request-rejected"
+                } else {
+                    "other-redacted"
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" <- ")
+    }
+
+    #[tokio::test]
+    async fn arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count() {
+        let mock = mock_arxiv(ONE_PAPER_ATOM, 200).await;
+        let http = crate::tools::external_http::ExternalHttpAuthorizer::test_allow();
+        let result = arxiv::search_against_authorized(&mock.uri(), "all:diagnostic", 1, &http).await;
+        let request_count = mock
+            .received_requests()
+            .await
+            .map(|requests| requests.len().to_string())
+            .unwrap_or_else(|| "unavailable".to_string());
+
+        match result {
+            Ok(papers) => assert_eq!(
+                papers.len(),
+                1,
+                "ArXiv diagnostic expected one parsed paper; mock_received_requests={request_count}"
+            ),
+            Err(error) => panic!(
+                "ArXiv diagnostic search failed; error_chain={}; mock_received_requests={request_count}",
+                redacted_arxiv_error_chain(&error)
+            ),
+        }
+    }
+
     fn label_exists(home: &Path, label: &str) -> bool {
         let conn = store::open(&home.join("views.db")).expect("open views.db");
         conn.query_row(

@@ -938,6 +938,27 @@ jobs:
           cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
           cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
           cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::arxiv_ingest_task::tests::falls_back_to_raw_abstract_when_provider_fails	neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::indexes_single_paper_without_provider	neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::reindex_same_paper_indexes_once_per_pass	neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::uses_provider_summary_when_available	neothd/src/cli/arxiv_ingest_task.rs
+          cli::channel::tests::flat_telegram_add_rejects_a_public_account_map_without_writing	neothd/src/cli/channel.rs
+          cli::channel::tests::flat_telegram_remove_rejects_a_secret_account_map_without_writing	neothd/src/cli/channel.rs
+          cli::channel::tests::json_telegram_replacement_rejects_an_account_map_without_writing	neothd/src/cli/channel.rs
+          cli::chat::tests::incognito_turn_boundary_is_central_and_production_only	neothd/src/cli/chat.rs
+          cli::obsidian::tests::bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings	neothd/src/cli/obsidian.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_inserts_groundtruth_rows_for_cs_ai_paper	neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_blank_oversized_and_four_line_completions	neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_oversized_feed_input_before_provider_or_insert	neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_skips_paper_when_provider_fails	neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::audit_rpc::tests::allowlist_contains_exactly_the_oneshot_codes	neothd/src/daemon/audit_rpc/tests.rs
+          installers::n8n_starter_workflows::tests::every_starter_pairs_with_a_session_item	neothd/src/installers/n8n_starter_workflows.rs
+          installers::obsidian_archive_bridge::tests::competing_slot_before_publish_is_preserved	neothd/src/installers/obsidian_archive_bridge.rs
+          installers::obsidian_archive_bridge::tests::drift_repairs_known_payload_and_preserves_settings	neothd/src/installers/obsidian_archive_bridge.rs
+          installers::obsidian_archive_bridge::tests::healthy_owned_slot_with_settings_is_idempotent_for_install_and_repair	neothd/src/installers/obsidian_archive_bridge.rs
+          installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled	neothd/src/installers/obsidian_archive_bridge.rs
+          installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot	neothd/src/installers/obsidian_archive_bridge.rs
+          cli::arxiv_ingest_task::tests::arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count	neothd/src/cli/arxiv_ingest_task.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -962,7 +983,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 868 ]]; then
+          if [[ "$expected" -ne 889 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1048,7 +1069,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 399 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 889 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0
