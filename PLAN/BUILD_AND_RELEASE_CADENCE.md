@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1844 Schema-policy admission (2026-09-28):**
+The original GitHub schema run36396494718 at9acf10f1 is fully successful:
+20 extractor tests, exact frozen-schema comparison,56 Custody tests, strict
+Clippy and format. The two original non-expired artifacts retain source-head,
+hash and terminal evidence. The policy covers3252 regular rows,150 derived
+SecretRef families and3 synthetic contracts; hosted exhaustive checks invoke
+the real classifier and reject incompatible ledger provenance. Core/CLI
+reference36396002270 also passed. GOLD-LF-001-02 is accepted;
+ROAD1324/1081/241/2 and WS-LF43done/75open. Evidence:
+`docs/verification/gold-wave1844-schema-policy-admission.json`. This is not
+live-provider, adapter-qualification or daemon-adoption evidence. No local
+executable validation ran.
+
 **W1843 Root-composition policy correction (2026-09-28):**
 Run36395999380 compiled and passed55/56 Custody tests. The full schema sweep
 exposed Twitch root-level anyOf branches:3 direct credential fields and14

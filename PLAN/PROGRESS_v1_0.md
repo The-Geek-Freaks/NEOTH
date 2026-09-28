@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1844 Schema-policy admission (2026-09-28):**
+GitHub run36396494718 at9acf10f1 completed successfully:20 extractor tests,
+the exact frozen-schema comparison,56 Custody tests, Clippy and format. Its two
+original non-expired artifacts retain source-head/hash and test evidence. The
+policy closes every one of3252 regular schema identities,150 SecretRef families
+and3 synthetic contracts; the exhaustive tests call the real runtime classifier
+and reject outcome/action/target disagreement. Core/CLI reference36396002270
+also completed successfully. GOLD-LF-001-02 is accepted; ROAD1324/1081/241/2
+and WS-LF43done/75open. Evidence:
+`docs/verification/gold-wave1844-schema-policy-admission.json`. This is schema
+classification/CI evidence only; live providers, adapter qualification, daemon
+adoption and the remaining Plan001 leaves stay open. No local executable
+validation ran.
+
 **W1843 Root-composition policy correction (2026-09-28):**
 Run36395999380 compiled and passed55/56 Custody tests. The full schema sweep
 exposed Twitch root-level anyOf branches:3 direct credential fields and14

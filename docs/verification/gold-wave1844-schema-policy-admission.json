@@ -1,0 +1,75 @@
+{
+  "schema": "neoth-openclaw-schema-policy-admission/v1",
+  "decision": "accepted_for_gold_lf_001_02",
+  "scope": "Complete pinned OpenClaw schema-leaf classification and its CI enforcement only. This does not qualify live providers, adapter behavior, daemon adoption, or the remaining Plan 001 leaves.",
+  "roadmap_leaf": "GOLD-LF-001-02",
+  "roadmap_closure": true,
+  "producer": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "schema_run": {
+      "id": 36396494718,
+      "workflow": "OpenClaw schema inventory",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36396494718",
+      "commit": "9acf10f161ce931ed33ce4c30fea1c0572e331b2",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "core_cli_run": {
+      "id": 36396002270,
+      "workflow": "Core CLI reference",
+      "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36396002270",
+      "commit": "f110c7aae469a164a0edabc9b9b6e19523c8438b",
+      "status": "completed",
+      "conclusion": "success",
+      "scope_note": "The later 9acf10f1 change is policy data and its pin only; no Core/CLI source changed."
+    }
+  },
+  "schema_run_receipt": {
+    "extractor_source_tests": { "passed": 20, "failed": 0 },
+    "frozen_schema_byte_comparison": "passed",
+    "custody_tests": { "passed": 56, "failed": 0, "single_threaded": true },
+    "custody_clippy": "passed_with_D_warnings",
+    "custody_format": "passed",
+    "required_runtime_contracts": [
+      "every_frozen_policy_row_agrees_with_the_real_runtime_ledger",
+      "every_secret_ref_family_and_account_container_agrees_with_runtime",
+      "validated_policy_has_required_synthetic_contracts",
+      "policy_outcome_contract_rejects_incoherent_pairs_and_empty_targets"
+    ],
+    "policy_inventory": {
+      "regular_rows": 3252,
+      "secret_ref_families": 150,
+      "synthetic_contracts": 3
+    }
+  },
+  "artifacts": [
+    {
+      "id": 10958064305,
+      "name": "openclaw-schema-inventory-4c667aac",
+      "api_zip_sha256": "82831cd6619c2f92b3956dac5021a290d9689fb8d6b0030723c62cd075fc17e5",
+      "bytes": 20729,
+      "expired": false
+    },
+    {
+      "id": 10958585673,
+      "name": "openclaw-schema-custody-9acf10f161ce931ed33ce4c30fea1c0572e331b2",
+      "api_zip_sha256": "3a8a1adf12505e742100cbf4ef7022cb1faea6e57db178ba64389c838a1f30c8",
+      "bytes": 5880,
+      "expired": false
+    }
+  ],
+  "source_bindings": [
+    { "path": "scripts/extract_openclaw_channel_schema.py", "sha256": "44CE6C71450CF8C4A6A74334947D70C52B8D3E42BE5DD02EE76EA902081B3C9D", "git_blob": "63a11cb23613bbd197a44abebd8922299f265b0a" },
+    { "path": "scripts/test_extract_openclaw_channel_schema.py", "sha256": "3D02C1AE7CC9EEC4C63CB7796A6F08747CACD9B5ABE54D70870C051BAE961D43", "git_blob": "b1b393a1f16238dfab815e08dfefa1bf2bc39304" },
+    { "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json", "sha256": "A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F", "git_blob": "b695cf8e1bbedf82025441e54227f080060d42a3" },
+    { "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json", "sha256": "C79A1B00173BFA8E620D0AC55B791426900405F0F0C779C6BA6F500D8C84F25B", "git_blob": "f762610b64b188a120b512826bfcf35a063b02d3" },
+    { "path": "SRC/neoth-openclaw-custody/src/lib.rs", "sha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D", "git_blob": "618a68c062c33f033bb99efc0ba6f4fb80b3ab48" },
+    { "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs", "sha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B", "git_blob": "98a4a6ed5aa282ffa11b045f8aa9204309865aae" },
+    { "path": ".github/workflows/openclaw-schema-inventory.yml", "sha256": "5F6D958C3DDE9C2C2710B3B455D8ABCB868B96BCD02DD8D6C8D49329F19571CB", "git_blob": "2563021d3e9e21ee6fff7e7dab7766e808335dcf" }
+  ],
+  "limits": [
+    "No local compiler, Cargo, Rustfmt, Node, Python, parser, test, fixture, GUI, Docker, or product runtime was executed.",
+    "The GitHub evidence proves the pinned schema-policy contract and hosted package checks only.",
+    "The original upstream schema fixture remains separately byte-pinned; the migration policy is NEOTH-local data."
+  ]
+}
