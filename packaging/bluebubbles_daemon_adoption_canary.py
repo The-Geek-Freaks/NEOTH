@@ -290,27 +290,6 @@ def grant_loopback_provider_consent(binary: Path, env: dict[str, str]) -> None:
         raise Failure("provider_consent_grant_invalid")
 
 
-def enable_encryption(home: Path) -> None:
-    config = home / "freedom.yaml"
-    key = home / "wal" / "master.key"
-    if not regular(config) or config.stat().st_size > LIMIT or not regular(key):
-        raise Failure("encryption_setup_input_invalid")
-    key_before = snapshot(key)
-    raw = config.read_bytes()
-    old = b"wal:\n  compression: none\n  encryption: none\n"
-    new = b"wal:\n  compression: none\n  encryption: aes256_gcm_siv\n"
-    stanzas = len(re.findall(rb"(?m)^wal:", raw))
-    if stanzas == 0:
-        updated = raw + (b"" if raw.endswith(b"\n") else b"\n") + new
-    elif stanzas == 1 and raw.count(old) == 1:
-        updated = raw.replace(old, new, 1)
-    else:
-        raise Failure("encryption_setup_policy_invalid")
-    config.write_bytes(updated)
-    if snapshot(key) != key_before:
-        raise Failure("encryption_setup_identity_changed")
-
-
 def source(path: Path) -> None:
     if path.exists() or path.is_symlink() or path.name != "openclaw.json":
         raise Failure("source_path_invalid")
@@ -515,9 +494,9 @@ def stop_daemon(process: subprocess.Popen[bytes]) -> None:
 def source_bindings(workflow: Path) -> dict[str, str]:
     relatives = (
         "packaging/bluebubbles_daemon_adoption_canary.py", "packaging/tests/test_bluebubbles_daemon_adoption_canary.py", "packaging/converted_channel_relink_product_canary.py", ".github/workflows/gchat-live-regressions.yml",
-        "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs",
+        "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/cli/init/types.rs", "SRC/neothd/src/cli/init/io.rs", "SRC/neothd/src/cli/init/first_install_identity.rs", "SRC/neothd/src/cli/init/steps_identity.rs", "SRC/neothd/src/cli/init/steps_provider.rs",
-        "SRC/neothd/src/channels/imessage_bluebubbles.rs", "SRC/neothd/src/channels/relink.rs", "SRC/neothd/src/channels/routing.rs", "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs", "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs",
+        "SRC/neothd/src/channels/imessage_bluebubbles.rs", "SRC/neothd/src/channels/relink.rs", "SRC/neothd/src/channels/routing.rs", "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs", "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs",
         "SRC/neothd/src/cluster/status_wire.rs", "SRC/neothd/src/cluster/membership.rs", "SRC/neothd/src/daemon/pidfile.rs", "SRC/neothd/src/daemon/audit_rpc/mod.rs", "SRC/neothd/src/daemon/audit_rpc/client.rs", "SRC/neothd/src/daemon/audit_rpc/server.rs", "SRC/neothd/src/daemon/audit_rpc/sidecar.rs", "SRC/neothd/src/daemon/audit_rpc/token.rs", "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs", "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs", "SRC/neothd/src/skills/store.rs",
         "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/openai_api.rs", "SRC/neoth-openclaw-custody/src/lib.rs", "SRC/neoth-openclaw-custody/src/pinned_inventory.rs", "SRC/neoth-openclaw-custody/src/pinned_schema.rs", "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json", "SRC/neoth-openclaw-custody/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/Cargo.lock",
     )
@@ -575,7 +554,10 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
     try:
         services.start()
         init_home(binary, home, env, services.port)
-        enable_encryption(home)
+        # `init` supplies the valid default WAL policy.  Do not enable the
+        # currently unwired at-rest sealing policy here: the mandatory
+        # standalone WAL audit for `consent grant` must be acknowledged before
+        # the daemon may start, and the writer correctly refuses that policy.
         grant_loopback_provider_consent(binary, env)
         process = start_daemon(binary, home, env, log)
         state["daemon"] = process

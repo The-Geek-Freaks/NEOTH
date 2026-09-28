@@ -149,7 +149,7 @@ mod tests {
         std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
         std::fs::write(
             dir.path().join("freedom.yaml"),
-            "operator_id: test\nprovider_kind: openai_api\n",
+            "operator_id: test\nprovider_kind: openai_api\ntelegram_user_id: 42\n",
         )
         .unwrap();
         std::fs::write(
@@ -162,6 +162,30 @@ mod tests {
         assert!(
             !dir.path().join("proactive_queue.json").exists(),
             "no item should be enqueued when fully ready"
+        );
+    }
+
+    #[tokio::test]
+    async fn token_only_telegram_enqueues_a_readiness_nudge() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "operator_id: test\nprovider_kind: openai_api\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "provider_key: \"sk-test\"\ntelegram_token: \"123:abc\"\n",
+        )
+        .unwrap();
+        run_post_init_check(dir.path()).await;
+        let queue_path = dir.path().join("proactive_queue.json");
+        let queue = crate::proactive::ProactiveQueue::load_from(&queue_path).unwrap();
+        assert_eq!(
+            queue.len(),
+            1,
+            "token-only Telegram must retain the readiness nudge"
         );
     }
 }

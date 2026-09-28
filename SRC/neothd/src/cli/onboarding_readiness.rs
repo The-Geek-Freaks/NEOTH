@@ -11,9 +11,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
+use crate::channels::registry::channel_descriptors;
 use crate::cli::init::ProviderKind;
-use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
+use crate::config::FreedomConfig;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OnboardingReadiness {
@@ -56,7 +58,7 @@ pub(crate) fn load(home: &Path) -> Result<(FreedomConfig, OnboardingReadiness)> 
 pub(crate) fn evaluate(cfg: &FreedomConfig, credentials: &Credentials) -> OnboardingReadiness {
     OnboardingReadiness {
         provider_gap: provider_gap(cfg),
-        channel_names: configured_channels(credentials),
+        channel_names: configured_channels(cfg, credentials),
     }
 }
 
@@ -141,100 +143,16 @@ fn provider_gap(cfg: &FreedomConfig) -> Option<String> {
     }
 }
 
-fn configured_channels(credentials: &Credentials) -> Vec<&'static str> {
-    let mut channels = Vec::new();
-    if credentials.telegram_token.is_some() {
-        channels.push("Telegram");
-    }
-    if credentials.whatsapp_token.is_some()
-        && credentials.whatsapp_phone_id.is_some()
-        && credentials.whatsapp_verify_token.is_some()
-        && credentials.whatsapp_app_secret.is_some()
-        && credentials
-            .whatsapp_allowed_sender
-            .as_deref()
-            .is_some_and(|value| {
-                crate::channels::whatsapp_webhook::normalize_allowed_sender(value).is_ok()
-            })
-    {
-        channels.push("WhatsApp Cloud");
-    }
-    if credentials.whatsapp_baileys_url.is_some()
-        && credentials.whatsapp_baileys_token.is_some()
-        && credentials.whatsapp_baileys_allowed_senders.is_some()
-    {
-        channels.push("WhatsApp Baileys");
-    }
-    if credentials.slack_bot_token.is_some()
-        && credentials.slack_app_token.is_some()
-        && credentials
-            .slack_allowed_user_id
-            .as_deref()
-            .is_some_and(|value| crate::channels::slack::normalize_allowed_user_id(value).is_ok())
-    {
-        channels.push("Slack");
-    }
-    if credentials.discord_bot_token.is_some()
-        && credentials
-            .discord_allowed_user_id
-            .as_deref()
-            .is_some_and(|id| crate::channels::discord::normalize_allowed_sender_id(id).is_ok())
-    {
-        channels.push("Discord");
-    }
-    if credentials.signal_cli_url.is_some()
-        && credentials.signal_phone_number.is_some()
-        && credentials
-            .signal_allowed_sender
-            .as_deref()
-            .is_some_and(|value| crate::channels::signal_api::validate_signal_number(value).is_ok())
-    {
-        channels.push("Signal");
-    }
-    if credentials.matrix_homeserver.is_some()
-        && credentials.matrix_user_id.is_some()
-        && (credentials.matrix_access_token.is_some() || credentials.matrix_password.is_some())
-    {
-        channels.push("Matrix");
-    }
-    if credentials.line_channel_access_token.is_some()
-        && credentials.line_channel_secret.is_some()
-        && credentials
-            .line_allowed_sender
-            .as_deref()
-            .is_some_and(|value| crate::channels::line_api::normalize_allowed_sender(value).is_ok())
-    {
-        channels.push("LINE");
-    }
-    if credentials.irc_server.is_some()
-        && credentials.irc_nick.is_some()
-        && credentials.irc_channels.is_some()
-    {
-        channels.push("IRC");
-    }
-    if credentials.mattermost_url.is_some() && credentials.mattermost_token.is_some() {
-        channels.push("Mattermost");
-    }
-    if credentials.twitch_username.is_some()
-        && credentials.twitch_oauth_token.is_some()
-        && credentials.twitch_channels.is_some()
-    {
-        channels.push("Twitch");
-    }
-    if credentials.nostr_secret_key.is_some() && credentials.nostr_relays.is_some() {
-        channels.push("Nostr");
-    }
-    if credentials.bluebubbles_url.is_some()
-        && credentials.bluebubbles_password.is_some()
-        && credentials.bluebubbles_chat_guid.is_some()
-    {
-        channels.push("iMessage/BlueBubbles");
-    }
-    if credentials.gchat_service_account_json.is_some() && credentials.gchat_subscription.is_some()
-    {
-        channels.push("Google Chat");
-    }
-    channels
+fn configured_channels(cfg: &FreedomConfig, credentials: &Credentials) -> Vec<&'static str> {
+    let view = ChannelCredsView::from_config(Some(cfg), credentials);
+    channel_descriptors()
+        .iter()
+        .zip(probe_all(&view))
+        .filter_map(|(descriptor, health)| {
+            matches!(health.status, ProbeStatus::Ok | ProbeStatus::Warn)
+                .then_some(descriptor.display_name)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -263,7 +181,8 @@ mod tests {
 
     #[test]
     fn metered_provider_requires_an_actual_provider_key() {
-        let cfg = cfg(ProviderKind::OpenaiApi);
+        let mut cfg = cfg(ProviderKind::OpenaiApi);
+        cfg.telegram_user_id = Some(42);
         let credentials = Credentials {
             telegram_token: Some(SecretString::from("123:abc")),
             ..Credentials::default()
@@ -283,14 +202,55 @@ mod tests {
     }
 
     #[test]
-    fn all_shipped_channel_families_are_visible_to_readiness() {
+    fn token_only_telegram_is_not_ready() {
         let credentials = Credentials {
-            matrix_homeserver: Some("https://matrix.example".to_string()),
-            matrix_user_id: Some("@neoth:example".to_string()),
-            matrix_access_token: Some(SecretString::from("matrix-token")),
+            telegram_token: Some(SecretString::from("123:abc")),
             ..Credentials::default()
         };
-        assert_eq!(configured_channels(&credentials), vec!["Matrix"]);
+        assert!(
+            !configured_channels(&FreedomConfig::default(), &credentials).contains(&"Telegram")
+        );
+
+        let mut cfg = FreedomConfig::default();
+        cfg.telegram_user_id = Some(42);
+        assert!(configured_channels(&cfg, &credentials).contains(&"Telegram"));
+    }
+
+    #[test]
+    fn descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones() {
+        assert!(configured_channels(&FreedomConfig::default(), &Credentials::default()).is_empty());
+
+        let mut cfg = FreedomConfig::default();
+        cfg.telegram_user_id = Some(42);
+        let credentials = Credentials {
+            telegram_token: Some(SecretString::from("123:abc")),
+            slack_bot_token: Some(SecretString::from("slack-token")),
+            keet_bridge_url: Some("http://127.0.0.1:8123".to_string()),
+            keet_topic: Some(SecretString::from("topic")),
+            keet_allowed_senders: Some("peer-1".to_string()),
+            keet_bridge_bearer_token: Some(SecretString::from("bearer")),
+            discord_bot_token: Some(SecretString::from("discord-token")),
+            discord_allowed_user_id: Some("123456789012345678".to_string()),
+            ..Credentials::default()
+        };
+        assert_eq!(
+            configured_channels(&cfg, &credentials),
+            vec!["Telegram", "Keet", "Discord"]
+        );
+    }
+
+    #[test]
+    fn feature_gated_irc_readiness_matches_the_compiled_runtime() {
+        let credentials = Credentials {
+            irc_server: Some("irc.example".to_string()),
+            irc_nick: Some("neoth".to_string()),
+            irc_allowed_account: Some("operator".to_string()),
+            ..Credentials::default()
+        };
+        assert_eq!(
+            configured_channels(&FreedomConfig::default(), &credentials).contains(&"IRC"),
+            cfg!(feature = "irc-channel")
+        );
     }
 
     #[test]
@@ -299,12 +259,12 @@ mod tests {
             discord_bot_token: Some(SecretString::from("discord-token")),
             ..Credentials::default()
         };
-        assert!(!configured_channels(&token_only).contains(&"Discord"));
+        assert!(!configured_channels(&FreedomConfig::default(), &token_only).contains(&"Discord"));
 
         let complete = Credentials {
             discord_allowed_user_id: Some("123456789012345678".into()),
             ..token_only
         };
-        assert!(configured_channels(&complete).contains(&"Discord"));
+        assert!(configured_channels(&FreedomConfig::default(), &complete).contains(&"Discord"));
     }
 }

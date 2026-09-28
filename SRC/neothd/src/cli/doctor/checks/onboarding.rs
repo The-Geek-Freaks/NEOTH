@@ -115,10 +115,11 @@ mod tests {
     fn passes_when_initialized_and_credentials_present() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
-        // Write a minimal freedom.yaml with a non-local provider
+        // Write a minimal freedom.yaml with a non-local provider and Telegram's
+        // mandatory inbound sender policy.
         std::fs::write(
             dir.path().join("freedom.yaml"),
-            "operator_id: test\nprovider_kind: openai_api\n",
+            "operator_id: test\nprovider_kind: openai_api\ntelegram_user_id: 42\n",
         )
         .unwrap();
         // Both the provider key and a channel token are required for this
@@ -131,6 +132,25 @@ mod tests {
         let out = check_post_init_readiness(dir.path());
         assert_eq!(out.status, CheckStatus::Pass, "detail: {}", out.detail);
         assert!(out.detail.contains("ready"));
+    }
+
+    #[test]
+    fn token_only_telegram_is_warn_not_ready() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(".initialized"), b"{}").unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "operator_id: test\nprovider_kind: openai_api\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "provider_key: \"sk-test\"\ntelegram_token: \"123:abc\"\n",
+        )
+        .unwrap();
+        let out = check_post_init_readiness(dir.path());
+        assert_eq!(out.status, CheckStatus::Warn, "detail: {}", out.detail);
+        assert!(out.detail.contains("channel"));
     }
 
     #[test]

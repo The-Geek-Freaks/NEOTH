@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted rustfmt patch imported; fresh Preflight and native/product gates pending",
+  "status": "W1870/W1871 source reviewed; fresh hosted native and product evidence pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269127,
-    "sha256": "E052ADA8EF2A4B33AD9C7099A452EB6C5385364B666C8431BB583A0DC571B3D2"
+    "bytes": 269477,
+    "sha256": "A46745BA640E5F88478E8991CD0F86C1DABE12720FD1E592100F51977A5DFBFA"
   },
-  "sourceInputs": 1492,
+  "sourceInputs": 1494,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -486,7 +486,7 @@
     {
       "test": "channels::probe::tests::telegram_account_projection_distinguishes_exact_pairing_policy",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "0EADA3708B76EF42FE08EC46FCFC5181E086BCA0255185685715E6A411D936FE",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
       "junitClass": "neoth"
     },
     {
@@ -7830,13 +7830,13 @@
     {
       "test": "channels::probe::tests::slack_account_projection_is_sorted_and_secret_free",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "0EADA3708B76EF42FE08EC46FCFC5181E086BCA0255185685715E6A411D936FE",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
       "junitClass": "neoth"
     },
     {
       "test": "channels::probe::tests::slack_account_projection_refuses_orphaned_policy_map",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "0EADA3708B76EF42FE08EC46FCFC5181E086BCA0255185685715E6A411D936FE",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
       "junitClass": "neoth"
     },
     {
@@ -13993,6 +13993,138 @@
       "test": "cli::arxiv_ingest_task::tests::arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count",
       "sourcePath": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
       "sourceSha256": "53D20C92E76FE86EC20468E20FDC359426284521AA2DF6CD96605E271E5EF7BE",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::token_only_telegram_is_not_ready",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::no_initialized_marker_is_warn",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::initialized_marker_with_no_config_is_warn",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::passes_when_initialized_and_credentials_present",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::token_only_telegram_is_warn_not_ready",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::warns_when_initialized_but_no_channel",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::local_and_cli_providers_do_not_need_credentials_file",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::onboarding::tests::docs_cover_the_check_name",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+      "sourceSha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::post_init_cron::tests::skips_when_no_initialized_marker",
+      "sourcePath": "SRC/neothd/src/daemon/post_init_cron.rs",
+      "sourceSha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::post_init_cron::tests::enqueues_when_not_ready",
+      "sourcePath": "SRC/neothd/src/daemon/post_init_cron.rs",
+      "sourceSha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::post_init_cron::tests::idempotent_on_second_call",
+      "sourcePath": "SRC/neothd/src/daemon/post_init_cron.rs",
+      "sourceSha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::post_init_cron::tests::no_enqueue_when_fully_ready",
+      "sourcePath": "SRC/neothd/src/daemon/post_init_cron.rs",
+      "sourceSha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::post_init_cron::tests::token_only_telegram_enqueues_a_readiness_nudge",
+      "sourcePath": "SRC/neothd/src/daemon/post_init_cron.rs",
+      "sourceSha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::probe::tests::credential_view_preserves_authorization_identity_validation",
+      "sourcePath": "SRC/neothd/src/channels/probe.rs",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present",
+      "sourcePath": "SRC/neothd/src/channels/probe.rs",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors",
+      "sourcePath": "SRC/neothd/src/channels/probe.rs",
+      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
       "junitClass": "neoth"
     }
   ],
@@ -57369,6 +57501,114 @@
       }
     ],
     "note": "Original10966837414@23b049b3 ZIP/API SHA verified; exact patch and both Git postimages matched. No local executable validation, no ROAD checkbox closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1870OnboardingReadiness": {
+    "requiredTests": [
+      "cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml",
+      "cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key",
+      "cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model",
+      "cli::onboarding_readiness::tests::token_only_telegram_is_not_ready",
+      "cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones",
+      "cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime",
+      "cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy",
+      "cli::doctor::checks::onboarding::tests::no_initialized_marker_is_warn",
+      "cli::doctor::checks::onboarding::tests::initialized_marker_with_no_config_is_warn",
+      "cli::doctor::checks::onboarding::tests::passes_when_initialized_and_credentials_present",
+      "cli::doctor::checks::onboarding::tests::token_only_telegram_is_warn_not_ready",
+      "cli::doctor::checks::onboarding::tests::warns_when_initialized_but_no_channel",
+      "cli::doctor::checks::onboarding::tests::local_and_cli_providers_do_not_need_credentials_file",
+      "cli::doctor::checks::onboarding::tests::docs_cover_the_check_name",
+      "daemon::post_init_cron::tests::skips_when_no_initialized_marker",
+      "daemon::post_init_cron::tests::enqueues_when_not_ready",
+      "daemon::post_init_cron::tests::idempotent_on_second_call",
+      "daemon::post_init_cron::tests::no_enqueue_when_fully_ready",
+      "daemon::post_init_cron::tests::token_only_telegram_enqueues_a_readiness_nudge",
+      "channels::probe::tests::credential_view_preserves_authorization_identity_validation",
+      "channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present",
+      "channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors"
+    ],
+    "status": "reviewed source; hosted execution pending",
+    "note": "Shared descriptor/probe readiness; preserve five typed sender validators; Doctor/post-init behavioral coverage. No full LF00105 closure."
+  },
+  "wave1870SourceBindings": {
+    "base": "913a57ab3b99dc8e187b2509d915bc4b19674939",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 44151,
+        "sha256": "4B5DF7C77EA92CE5FCFFCE0B57D0A43E1FC8D70829A16ED43C7CF039B211BBC1",
+        "blob": "45075dd8d8da756c4279932081108d8063dc0421"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29613,
+        "sha256": "9F6744DE0D1DA2DB3B7410C845ECB6227F58894C3F2B49E29FE8541FA18E367C",
+        "blob": "ecea9101c5e7f9f537fedf5ab6fa4ef1c190c827"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 156971,
+        "sha256": "4316774FF99992D34E401DA89259E62A5EA0A3628806574C1FDA17B4434BBCF9",
+        "blob": "27056c16597e20d306a3e2d0aa7393b6a16c0d23"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 34292,
+        "sha256": "A76648AD04C62C65BF6581667E51EFBF7C5A670603CF448AC41198AC7598DE93",
+        "blob": "bf2bf65e9eb9eb58b5c9657debdc37c26b6c3e1d"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 9946,
+        "sha256": "56C5010E977765E8EFAEE5FA23586B0D8C71B6F0AD09D4574DB63934994FAFCA",
+        "blob": "8296a2ea5514a548a3a81061c3a3d1089e9be03e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 527432,
+        "sha256": "691D10287B803403C6304DBB8F907332F47548D525FA80593EC976269646BEB8",
+        "blob": "ed79b47c8a57c00712d2e56d1c0f2382e9623451"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1563862,
+        "sha256": "B9B227979300E108D47B29106E308F165F2712B41FA8CB2EB4E26B2F899E1D11",
+        "blob": "11e14a3aa74b1b556c316849ec5ae4bf1139ee15"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2174872,
+        "sha256": "4A93EB7C1243C5B8C64664844AFB94EB07D782327F472C2A9E90A858044D5D43",
+        "blob": "8bfc1e619c1612476fbdbc350134b05a3afc6b1f"
+      },
+      {
+        "path": "SRC/neothd/src/channels/probe.rs",
+        "bytes": 51977,
+        "sha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+        "blob": "91ed06c49eaec82c13f8e4316dbb071cd2d6f466"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
+        "bytes": 8482,
+        "sha256": "5FBE07DE867AC19D906626797DAC2B970906579B34464D53F058C4DA1C1FAAF9",
+        "blob": "25cfe34c8f92201d2389759c73facc6221c88c51"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
+        "bytes": 9847,
+        "sha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+        "blob": "85b37acbc2f30c15b9170b6400bd40c770f2fed3"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/post_init_cron.rs",
+        "bytes": 7038,
+        "sha256": "9385D7334C1FDB6F4D29D0F0B436DE1B1C53A41B5A4206935BAC4A950324CE2F",
+        "blob": "0ac90ca703e023f3f653ae7043fa49345f346576"
+      }
+    ],
+    "note": "Descriptor-derived readiness retains typed identity validation and real Doctor/post-init effects. 22 exact cases registered:2353portable/2128Linux/911Windows/118channel. Daemon canary keeps actual OpenaiCompat consent; removes unsupported test WAL policy; product failures remain independent/fatal. No local executable validation; no ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

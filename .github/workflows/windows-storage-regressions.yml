@@ -959,6 +959,28 @@ jobs:
           installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled	neothd/src/installers/obsidian_archive_bridge.rs
           installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot	neothd/src/installers/obsidian_archive_bridge.rs
           cli::arxiv_ingest_task::tests::arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count	neothd/src/cli/arxiv_ingest_task.rs
+          cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::token_only_telegram_is_not_ready	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime	neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy	neothd/src/cli/onboarding_readiness.rs
+          cli::doctor::checks::onboarding::tests::no_initialized_marker_is_warn	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::initialized_marker_with_no_config_is_warn	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::passes_when_initialized_and_credentials_present	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::token_only_telegram_is_warn_not_ready	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::warns_when_initialized_but_no_channel	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::local_and_cli_providers_do_not_need_credentials_file	neothd/src/cli/doctor/checks/onboarding.rs
+          cli::doctor::checks::onboarding::tests::docs_cover_the_check_name	neothd/src/cli/doctor/checks/onboarding.rs
+          daemon::post_init_cron::tests::skips_when_no_initialized_marker	neothd/src/daemon/post_init_cron.rs
+          daemon::post_init_cron::tests::enqueues_when_not_ready	neothd/src/daemon/post_init_cron.rs
+          daemon::post_init_cron::tests::idempotent_on_second_call	neothd/src/daemon/post_init_cron.rs
+          daemon::post_init_cron::tests::no_enqueue_when_fully_ready	neothd/src/daemon/post_init_cron.rs
+          daemon::post_init_cron::tests::token_only_telegram_enqueues_a_readiness_nudge	neothd/src/daemon/post_init_cron.rs
+          channels::probe::tests::credential_view_preserves_authorization_identity_validation	neothd/src/channels/probe.rs
+          channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present	neothd/src/channels/probe.rs
+          channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors	neothd/src/channels/probe.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -983,7 +1005,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 889 ]]; then
+          if [[ "$expected" -ne 911 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1069,7 +1091,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 889 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 911 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

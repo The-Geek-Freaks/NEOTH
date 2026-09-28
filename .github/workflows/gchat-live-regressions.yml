@@ -72,6 +72,15 @@ jobs:
             SRC/neothd/src/cli/channel_relink.rs \
             SRC/neothd/src/channels/relink.rs \
             SRC/neothd/src/channels/registry.rs \
+            SRC/neothd/src/channels/probe.rs \
+            SRC/neothd/src/cli/doctor/checks/onboarding.rs \
+            SRC/neothd/src/cli/onboarding_readiness.rs \
+            SRC/neothd/src/daemon/post_init_cron.rs \
+            SRC/neothd/src/channels/slack.rs \
+            SRC/neothd/src/channels/whatsapp_webhook.rs \
+            SRC/neothd/src/channels/discord.rs \
+            SRC/neothd/src/channels/signal_api.rs \
+            SRC/neothd/src/channels/line_api.rs \
             SRC/neothd/src/config/credentials.rs \
             SRC/neothd/src/cli/channel/openclaw_migration.rs \
             SRC/neothd/src/cli/channel/openclaw_migration/tests.rs \
@@ -92,6 +101,8 @@ jobs:
             SRC/neothd/src/channels/routing.rs \
             SRC/neothd/src/cli/serve_tasks.rs \
             SRC/neothd/src/cli/consent.rs \
+            SRC/neothd/src/cli/consent_outbox.rs \
+            SRC/neothd/src/wal/writer.rs \
             SRC/neothd/src/consent.rs \
             SRC/neothd/src/config/mod.rs \
             SRC/neothd/src/cli/cluster.rs \
@@ -165,6 +176,28 @@ jobs:
             fi
           }
 
+          run_case 97 lib cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml --lib
+          run_case 98 lib cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key --lib
+          run_case 99 lib cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model --lib
+          run_case 100 lib cli::onboarding_readiness::tests::token_only_telegram_is_not_ready cli::onboarding_readiness::tests::token_only_telegram_is_not_ready --lib
+          run_case 101 lib cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones --lib
+          run_case 102 lib cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime --lib
+          run_case 103 lib cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy --lib
+          run_case 104 lib cli::doctor::checks::onboarding::tests::no_initialized_marker_is_warn cli::doctor::checks::onboarding::tests::no_initialized_marker_is_warn --lib
+          run_case 105 lib cli::doctor::checks::onboarding::tests::initialized_marker_with_no_config_is_warn cli::doctor::checks::onboarding::tests::initialized_marker_with_no_config_is_warn --lib
+          run_case 106 lib cli::doctor::checks::onboarding::tests::passes_when_initialized_and_credentials_present cli::doctor::checks::onboarding::tests::passes_when_initialized_and_credentials_present --lib
+          run_case 107 lib cli::doctor::checks::onboarding::tests::token_only_telegram_is_warn_not_ready cli::doctor::checks::onboarding::tests::token_only_telegram_is_warn_not_ready --lib
+          run_case 108 lib cli::doctor::checks::onboarding::tests::warns_when_initialized_but_no_channel cli::doctor::checks::onboarding::tests::warns_when_initialized_but_no_channel --lib
+          run_case 109 lib cli::doctor::checks::onboarding::tests::local_and_cli_providers_do_not_need_credentials_file cli::doctor::checks::onboarding::tests::local_and_cli_providers_do_not_need_credentials_file --lib
+          run_case 110 lib cli::doctor::checks::onboarding::tests::docs_cover_the_check_name cli::doctor::checks::onboarding::tests::docs_cover_the_check_name --lib
+          run_case 111 lib daemon::post_init_cron::tests::skips_when_no_initialized_marker daemon::post_init_cron::tests::skips_when_no_initialized_marker --lib
+          run_case 112 lib daemon::post_init_cron::tests::enqueues_when_not_ready daemon::post_init_cron::tests::enqueues_when_not_ready --lib
+          run_case 113 lib daemon::post_init_cron::tests::idempotent_on_second_call daemon::post_init_cron::tests::idempotent_on_second_call --lib
+          run_case 114 lib daemon::post_init_cron::tests::no_enqueue_when_fully_ready daemon::post_init_cron::tests::no_enqueue_when_fully_ready --lib
+          run_case 115 lib daemon::post_init_cron::tests::token_only_telegram_enqueues_a_readiness_nudge daemon::post_init_cron::tests::token_only_telegram_enqueues_a_readiness_nudge --lib
+          run_case 116 lib channels::probe::tests::credential_view_preserves_authorization_identity_validation channels::probe::tests::credential_view_preserves_authorization_identity_validation --lib
+          run_case 117 lib channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present --lib
+          run_case 118 lib channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors --lib
           run_case 76 lib config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses --lib
           run_case 77 lib config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration --lib
           run_case 78 lib config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback --lib
@@ -268,12 +301,13 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 96
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 96
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 96
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 118
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 118
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 118
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle
+        id: public-cli-build
         timeout-minutes: 20
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked --features gchat-channel,irc-channel,nostr-channel
@@ -303,6 +337,7 @@ jobs:
           retention-days: 14
 
       - name: Exercise running daemon adoption of a public BlueBubbles relink
+        if: ${{ !cancelled() && steps.public-cli-build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           mkdir -p "$W548_ROOT/daemon-product"
@@ -327,6 +362,8 @@ jobs:
           retention-days: 14
 
       - name: Verify isolated Google Chat canary guards
+        id: gchat-guards
+        if: ${{ !cancelled() && steps.public-cli-build.outcome == 'success' }}
         timeout-minutes: 20
         working-directory: SRC
         run: |
@@ -341,11 +378,14 @@ jobs:
             channels::gchat::tests:: -- --test-threads=1 2>&1 | tee "$W548_ROOT/gchat-guards/tests.log"
 
       - name: Build isolated Google Chat canary CLI
+        id: gchat-cli-build
+        if: ${{ !cancelled() && steps.gchat-guards.outcome == 'success' }}
         timeout-minutes: 20
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked --features gchat-product-canary,irc-channel,nostr-channel
 
       - name: Exercise public Google Chat relink against authenticated loopback
+        if: ${{ !cancelled() && steps.gchat-cli-build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           mkdir -p "$W548_ROOT/gchat-product"

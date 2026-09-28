@@ -246,12 +246,22 @@ impl ChannelCredsView {
             telegram_user_id: cfg.is_some_and(|c| c.telegram_user_id.is_some()),
             slack_bot: secret_present(creds.slack_bot_token.as_ref()),
             slack_app: secret_present(creds.slack_app_token.as_ref()),
-            slack_allowed_user: text_present(creds.slack_allowed_user_id.as_deref()),
+            slack_allowed_user: creds
+                .slack_allowed_user_id
+                .as_deref()
+                .is_some_and(|value| {
+                    crate::channels::slack::normalize_allowed_user_id(value).is_ok()
+                }),
             whatsapp_token: secret_present(creds.whatsapp_token.as_ref()),
             whatsapp_phone_id: text_present(creds.whatsapp_phone_id.as_deref()),
             whatsapp_verify_token: secret_present(creds.whatsapp_verify_token.as_ref()),
             whatsapp_app_secret: secret_present(creds.whatsapp_app_secret.as_ref()),
-            whatsapp_allowed_sender: text_present(creds.whatsapp_allowed_sender.as_deref()),
+            whatsapp_allowed_sender: creds
+                .whatsapp_allowed_sender
+                .as_deref()
+                .is_some_and(|value| {
+                    crate::channels::whatsapp_webhook::normalize_allowed_sender(value).is_ok()
+                }),
             whatsapp_baileys_url: text_present(creds.whatsapp_baileys_url.as_deref()),
             whatsapp_baileys_token: secret_present(creds.whatsapp_baileys_token.as_ref()),
             whatsapp_baileys_allowed_senders: text_present(
@@ -266,9 +276,19 @@ impl ChannelCredsView {
             keet_bearer: secret_present(creds.keet_bridge_bearer_token.as_ref()),
             keet_seed: secret_present(creds.keet_seed_phrase.as_ref()),
             discord_bot: secret_present(creds.discord_bot_token.as_ref()),
-            discord_allowed_sender: text_present(creds.discord_allowed_user_id.as_deref()),
+            discord_allowed_sender: creds
+                .discord_allowed_user_id
+                .as_deref()
+                .is_some_and(|value| {
+                    crate::channels::discord::normalize_allowed_sender_id(value).is_ok()
+                }),
             signal_cli_url: text_present(creds.signal_cli_url.as_deref()),
-            signal_allowed_sender: text_present(creds.signal_allowed_sender.as_deref()),
+            signal_allowed_sender: creds
+                .signal_allowed_sender
+                .as_deref()
+                .is_some_and(|value| {
+                    crate::channels::signal_api::validate_signal_number(value).is_ok()
+                }),
             bluebubbles_url: text_present(creds.bluebubbles_url.as_deref()),
             bluebubbles_password: secret_present(creds.bluebubbles_password.as_ref()),
             bluebubbles_allowed_sender: text_present(creds.imessage_allowed_sender.as_deref()),
@@ -281,7 +301,12 @@ impl ChannelCredsView {
             matrix_encryption_required: creds.matrix_requires_encryption(),
             line_access_token: secret_present(creds.line_channel_access_token.as_ref()),
             line_channel_secret: secret_present(creds.line_channel_secret.as_ref()),
-            line_allowed_sender: text_present(creds.line_allowed_sender.as_deref()),
+            line_allowed_sender: creds
+                .line_allowed_sender
+                .as_deref()
+                .is_some_and(|value| {
+                    crate::channels::line_api::normalize_allowed_sender(value).is_ok()
+                }),
             irc_server: text_present(creds.irc_server.as_deref()),
             irc_nick: text_present(creds.irc_nick.as_deref()),
             irc_allowed_account: text_present(creds.irc_allowed_account.as_deref()),
@@ -1187,6 +1212,39 @@ mod tests {
         assert!(!view.twitch_channels);
         assert!(!view.nostr_relays);
         assert!(!view.gchat_subscription);
+    }
+
+    #[test]
+    fn credential_view_preserves_authorization_identity_validation() {
+        let valid = Credentials {
+            slack_allowed_user_id: Some("U123ABC".to_string()),
+            whatsapp_allowed_sender: Some("+491701234567".to_string()),
+            discord_allowed_user_id: Some("123456789012345678".to_string()),
+            signal_allowed_sender: Some("+491701234567".to_string()),
+            line_allowed_sender: Some("Ualice123".to_string()),
+            ..Credentials::default()
+        };
+        let valid_view = ChannelCredsView::from_config(None, &valid);
+        assert!(valid_view.slack_allowed_user);
+        assert!(valid_view.whatsapp_allowed_sender);
+        assert!(valid_view.discord_allowed_sender);
+        assert!(valid_view.signal_allowed_sender);
+        assert!(valid_view.line_allowed_sender);
+
+        let invalid = Credentials {
+            slack_allowed_user_id: Some("alex".to_string()),
+            whatsapp_allowed_sender: Some("+123".to_string()),
+            discord_allowed_user_id: Some("not-a-snowflake".to_string()),
+            signal_allowed_sender: Some("+123".to_string()),
+            line_allowed_sender: Some("alice".to_string()),
+            ..Credentials::default()
+        };
+        let invalid_view = ChannelCredsView::from_config(None, &invalid);
+        assert!(!invalid_view.slack_allowed_user);
+        assert!(!invalid_view.whatsapp_allowed_sender);
+        assert!(!invalid_view.discord_allowed_sender);
+        assert!(!invalid_view.signal_allowed_sender);
+        assert!(!invalid_view.line_allowed_sender);
     }
 
     #[test]

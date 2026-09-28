@@ -3,6 +3,36 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1870/W1871 canonical readiness and product-gate follow-up (2026-09-28; hosted pending):**
+The shared onboarding projection now derives channel order, labels and static
+readiness from the canonical descriptor/probe. Telegram without its required
+sender ID is excluded; complete Keet is visible; unavailable feature builds
+remain excluded. Existing typed Slack/WhatsApp/Discord/Signal/LINE sender
+validation is preserved in the shared credential view. Doctor and the real
+post-init queue path have matching positive/negative regressions. Independent
+static review approved. The22 focused cases are registered in portable2353,
+Linux2128, Windows911 and channel118 selections; none is yet runtime-accepted.
+Run36415349535 at913a57ab passed96 exact channel cases and the public BlueBubbles
+relink, then failed before daemon launch with provider_consent_grant_failed.
+Original10968271486 matches API ZIP digest
+bfc0cb37d78f208221f25d4c300f1b302d7c1e76c037ac1b08a9a27643af889d;
+all5 cleanup flags passed. The canary forced unsupported WAL encryption;
+writer.rs refuses it before the consent-outbox audit can ACK. W1871 keeps the
+valid init WAL policy and the real public OpenaiCompat consent grant. This
+provider remains consent-gated even at loopback. No production guard changes.
+GChat was skipped in that run. Independent product-step conditions now allow
+both canaries to report after the required successful build; failures still
+fail the job. Native Windows889/macOS21 on913a57ab remain active.
+No ROAD checkbox closes; LF00105/LF00112 and release acceptance remain open.
+
+**W1868 hosted recovery gates dispatched (2026-09-28; runtime pending):**
+Source commit913a57ab3b99dc8e187b2509d915bc4b19674939 is confirmed on main.
+Preflight36415119217 and CodeQuality36415118739 both passed. Exactly one new
+hosted run each: Windows889 run36415338533; macOS21 run36415343627; normal96
+channel/public-CLI/BlueBubbles-daemon/GChat product run36415349535. The latter
+passed its canary contract step and is executing the Rust selection; native
+lanes are compiling. No fullCI duplicate, local execution or leaf closure.
+
 **W1868 hosted formatter follow-up (2026-09-28):**
 Preflight36414419707 at23b049b3 found only two rustfmt differences in the
 macOS proactive/recall test fixtures. Original10966837414 matches API ZIP

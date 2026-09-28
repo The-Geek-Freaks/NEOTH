@@ -80,6 +80,43 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
         self.assertNotEqual(actual, canary.material_commitment(1234, "iMessage;-;+491709999999", canary.TARGET))
         self.assertNotEqual(actual, canary.material_commitment(1234, canary.TARGET, "iMessage;-;+491709999999"))
 
+    def test_loopback_provider_consent_uses_exact_public_cli_receipt_contract(self):
+        binary = Path("/tmp/neoth")
+        env = {"NEOTH_HOME": "/tmp/neoth-home"}
+        output = {
+            "provider": "openai_compat",
+            "action": "granted",
+            "status": "applied",
+            "marker_path": "/tmp/neoth-home/consent/openai_compat.granted",
+            "configured_endpoint_origins": ["http://127.0.0.1:43123"],
+            "endpoint_origins": ["http://127.0.0.1:43123"],
+            "added_endpoint_origins": ["http://127.0.0.1:43123"],
+            "removed_endpoint_origins": [],
+            "endpoint_delta_known": True,
+            "marker_source_malformed": False,
+            "audit_pending": False,
+            "operation_id": "operation-id",
+            "authority_persisted": True,
+            "failure": None,
+            "config_sha256": None,
+            "route_set_sha256": None,
+            "routes": [{"endpoint_origin": "http://127.0.0.1:43123"}],
+        }
+        completed = subprocess.CompletedProcess([], 0, json.dumps(output).encode(), b"")
+        with patch.object(canary, "command", return_value=completed) as invoked:
+            canary.grant_loopback_provider_consent(binary, env)
+        invoked.assert_called_once_with([str(binary), "--output", "json", "consent", "grant", "openai_compat"], env)
+
+    def test_loopback_provider_consent_rejects_cli_failure_or_unpersisted_authority(self):
+        binary = Path("/tmp/neoth")
+        with patch.object(canary, "command", return_value=subprocess.CompletedProcess([], 1, b"", b"")):
+            with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_failed"):
+                canary.grant_loopback_provider_consent(binary, {})
+        incomplete = {"provider": "openai_compat", "status": "applied", "authority_persisted": False, "failure": None}
+        with patch.object(canary, "command", return_value=subprocess.CompletedProcess([], 0, json.dumps(incomplete).encode(), b"")):
+            with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_invalid"):
+                canary.grant_loopback_provider_consent(binary, {})
+
     def test_readiness_accepts_only_public_live_status_between_stable_owner_probes(self):
         process = self._Process(4242)
         home, binary, env = Path("/tmp/neoth-home"), Path("/tmp/neoth"), {"NEOTH_HOME": "/tmp/neoth-home"}
