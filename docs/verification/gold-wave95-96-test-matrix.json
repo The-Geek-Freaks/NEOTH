@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Pinned fixture admitted; canonical progress count synchronized; Focused94 behavior pending",
+  "status": "Pinned fixture accepted; QA and WhatsApp identity gates pending; batch fixtures repaired",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266627,
-    "sha256": "0A8DA2624DE070A7B7585B3153B1AF742C819BCA75B77AB397054D5F50ECC039"
+    "bytes": 266625,
+    "sha256": "EFCB05461D1F66771A42E6EF7E55C075A8852AA40218F8664112CC7307A2F2F2"
   },
   "sourceInputs": 1479,
   "requiredNativeTests": [
@@ -13895,6 +13895,12 @@
     },
     {
       "test": "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime",
+      "sourcePath": "SRC/neothd/src/channels/registry.rs",
+      "sourceSha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport",
       "sourcePath": "SRC/neothd/src/channels/registry.rs",
       "sourceSha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE",
       "junitClass": "neoth"
@@ -56447,6 +56453,57 @@
       }
     ],
     "note": "Preflight36386262972 identified the stale canonical progress count. Corrected40done/78open without changing tests, rules or executed source. Focused94 continues onb5eb32e7.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1829WhatsAppIdentity": {
+    "requiredTests": [
+      "channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport"
+    ],
+    "status": "Existing production alias regression selected; hosted execution pending",
+    "note": "Operator whatsapp remains Business; OpenClaw migration whatsapp is Baileys. Registry uniqueness/serialization already runs in wave680 for Linux, and is now also in Windows/Focused selections. Pair this with authenticated custody non-Business evidence. LF00111 remains open; no live-provider claim."
+  },
+  "wave1829IdentitySelection": {
+    "base": "48e8d5610bd1d1101ad17c2d44a20bacd8a065ee",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 33999,
+        "sha256": "DE798C3D8EB31C10B93695A869B975BCD6063D3846AB78DD4D97A78787BF3DDF",
+        "blob": "8671cbd41a014c5acd90121f9dc2ba18a7143f5b"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29564,
+        "sha256": "24CC927AEE68304C2C1112FAFBC5C483DA091E0715B23CB60614CF1A1094E75D",
+        "blob": "3f9cc59d86815d3b7d08c676bda88b00aa50bbbd"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 151315,
+        "sha256": "F71F7AC783462DDF2CB46674DC45C9D29921684A608802C567DDE5227CD7FF11",
+        "blob": "ec72fe09a8c7f6817273fdadf4d886eb4c2eba97"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 508988,
+        "sha256": "063B37F70A1EF0B617F1A603F7048D57ECB262F475BADFA7D85F63F56739A530",
+        "blob": "332d850624f05240ab9563308a8a4d103199ac4c"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1545221,
+        "sha256": "9E5F1867D4D1AD672E3FCB7F88E57D60774085C19E118A51C30F019BF6951071",
+        "blob": "daa35aec5e7b94e844dcad12b37354c6b58f1497"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2156036,
+        "sha256": "380E36A67D49031B2CCB83ED0DD297D9695BA190BEDF509CB31C9C870B74791A",
+        "blob": "2fe6d54cb98715074c8442a2ba876d8494a3c09d"
+      }
+    ],
+    "note": "Select existing WhatsApp operator/migration alias invariant plus canonical registry proof. Linux2106, Windows868, Focused96, Portable2316. No production/Rust test changes. LF00111 open; no live-provider or transport qualification inferred.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -158,6 +158,8 @@ jobs:
           run_case 90 lib cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation --lib
           run_case 91 lib cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody --lib
           run_case 92 lib cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success --lib
+          run_case 95 lib channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids --lib
+          run_case 96 lib channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport --lib
           run_case 94 lib channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime --lib
           run_case 93 lib cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct --lib
           run_case 75 lib cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity --lib
@@ -242,9 +244,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 94
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 94
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 94
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 96
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 96
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 96
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T06:26:02.8815675Z",
-  "validationStatus": "Pinned fixture admitted; canonical progress count synchronized; Focused94 behavior pending",
+  "capturedUtc": "2026-09-28T06:38:48.2748481Z",
+  "validationStatus": "Pinned fixture accepted; QA and WhatsApp identity gates pending; batch fixtures repaired",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 33555,
-      "sha256": "C1256D38B6526AF7682596B75D6D2998BD75005659DCE014089321D430241EB1"
+      "bytes": 33999,
+      "sha256": "DE798C3D8EB31C10B93695A869B975BCD6063D3846AB78DD4D97A78787BF3DDF"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29519,
-      "sha256": "F7ED33E8ECB1DF3DA4DB238698B4D34154D9D5987285B40A6883C5019678DAD5"
+      "bytes": 29564,
+      "sha256": "24CC927AEE68304C2C1112FAFBC5C483DA091E0715B23CB60614CF1A1094E75D"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 151041,
-      "sha256": "1A40CF92514BD120E96DC9F8D54CF57F9A03F8F34ABE05D4E2191453E5F0B150"
+      "bytes": 151315,
+      "sha256": "F71F7AC783462DDF2CB46674DC45C9D29921684A608802C567DDE5227CD7FF11"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3823,18 +3823,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 508091,
-      "sha256": "2906745FC3D3D66EBBDC582E8AFB20616623EBB769935F1F1A2479FF5D5F5127"
+      "bytes": 508988,
+      "sha256": "063B37F70A1EF0B617F1A603F7048D57ECB262F475BADFA7D85F63F56739A530"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1544324,
-      "sha256": "C193FFBCB01BDD7AA0BA72C7C42E4D495A4F74DEEE6D8CB3BC7DE9F27ADF1925"
+      "bytes": 1545221,
+      "sha256": "9E5F1867D4D1AD672E3FCB7F88E57D60774085C19E118A51C30F019BF6951071"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2155139,
-      "sha256": "8F80AAFEE47935DBF5FDF11277C5309124ECF36F881AC6F7B00E7BC0A16523E2"
+      "bytes": 2156036,
+      "sha256": "380E36A67D49031B2CCB83ED0DD297D9695BA190BEDF509CB31C9C870B74791A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

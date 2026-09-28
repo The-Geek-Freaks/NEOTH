@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1829 WhatsApp identity acceptance selection (2026-09-28):**
+The existing production alias regression is now required: operator whatsapp
+resolves to Business; OpenClaw migration whatsapp resolves to Baileys. The
+canonical registry uniqueness/serialization test, already in Linux wave680,
+is added to Focused and Windows as well. No production or Rust test changed.
+W1827 bounded review keeps LF00111 open pending this joined identity/import
+execution evidence; full adapter qualification remains a separate leaf.
+Registry: Portable2316 / Linux2106 / Windows868 / Focused96. Focused94 on
+b5eb32e7 continues without duplicate dispatch; fresh gates await its result.
+Preflight36386610374 on48e8d561 passed. W1826 authentic Windows865 diagnosis
+confirms863 passed/2 already-repaired fixture failures, not native admission.
+ROAD1324/1078/244/2 remains unchanged. No local executable validation ran.
+
 **W1828 Canonical progress count synchronized (2026-09-28):**
 Preflight36386262972 found the older canonical PROGRESS WS-LF paragraph still
 at39done/79open after the W1823 leaf closure. It now matches ROAD40done/78open;
