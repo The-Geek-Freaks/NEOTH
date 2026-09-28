@@ -23,11 +23,13 @@ fn write_encrypted_first_use_home(home: &Path) {
         serde_yaml::Value::String("wal".into()),
         serde_yaml::from_str("encryption: aes256_gcm_siv\n").unwrap(),
     );
-    std::fs::write(home.join("freedom.yaml"), serde_yaml::to_string(&config).unwrap()).unwrap();
-    crate::wal::master_key::load_or_init_master_key(
-        &crate::wal::master_key::master_key_path(home),
+    std::fs::write(
+        home.join("freedom.yaml"),
+        serde_yaml::to_string(&config).unwrap(),
     )
     .unwrap();
+    crate::wal::master_key::load_or_init_master_key(&crate::wal::master_key::master_key_path(home))
+        .unwrap();
     assert!(!home.join("credentials.yaml").exists());
 }
 
@@ -99,7 +101,11 @@ async fn prepare_ok(home: &Path, request: ConvertedRelinkRequest) -> PreparedCon
 
 fn assert_no_publication(home: &Path, destination: ChannelId) {
     assert!(!home.join("credentials.yaml").exists());
-    assert!(!home.join(crate::channels::routing::CHANNEL_ROUTING_FILE).exists());
+    assert!(
+        !home
+            .join(crate::channels::routing::CHANNEL_ROUTING_FILE)
+            .exists()
+    );
     assert!(!matches!(
         relink::gate_for_at(home, &ChannelRef::default_account(destination)).unwrap(),
         RelinkGate::Ready(_)
@@ -126,23 +132,33 @@ async fn every_durable_checkpoint_recovers_the_same_encrypted_first_use_request(
         std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
         let prepared = prepare_ok(
             &home,
-            request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567"),
+            request(
+                &source,
+                ConvertedRelinkChannel::IMessage,
+                None,
+                "iMessage;-;+491701234567",
+            ),
         )
         .await;
-        let stopped = commit_prepared_converted_relink_with_checkpoint_at(
-            &home,
-            prepared,
-            |checkpoint| {
+        let stopped =
+            commit_prepared_converted_relink_with_checkpoint_at(&home, prepared, |checkpoint| {
                 if checkpoint == stop_at {
                     anyhow::bail!("injected crash at {checkpoint:?}");
                 }
                 Ok(())
-            },
+            });
+        assert!(
+            stopped.is_err(),
+            "checkpoint {stop_at:?} did not stop the coordinator"
         );
-        assert!(stopped.is_err(), "checkpoint {stop_at:?} did not stop the coordinator");
         let resumed = prepare_ok(
             &home,
-            request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567"),
+            request(
+                &source,
+                ConvertedRelinkChannel::IMessage,
+                None,
+                "iMessage;-;+491701234567",
+            ),
         )
         .await;
         let outcome = commit_prepared_converted_relink_at(&home, resumed).unwrap();
@@ -152,7 +168,11 @@ async fn every_durable_checkpoint_recovers_the_same_encrypted_first_use_request(
             "only a stop after the terminal Ready transition may resume idempotently"
         );
         assert!(matches!(
-            relink::gate_for_at(&home, &ChannelRef::default_account(ChannelId::IMessageBlueBubbles)).unwrap(),
+            relink::gate_for_at(
+                &home,
+                &ChannelRef::default_account(ChannelId::IMessageBlueBubbles)
+            )
+            .unwrap(),
             RelinkGate::Ready(_)
         ));
         let encrypted = std::fs::read(home.join("credentials.yaml")).unwrap();
@@ -168,10 +188,18 @@ async fn ready_retry_is_idempotent_but_changed_request_material_is_refused() {
     write_encrypted_first_use_home(&home);
     let source = temp.path().join("openclaw.yaml");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
-    let same = || request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567");
+    let same = || {
+        request(
+            &source,
+            ConvertedRelinkChannel::IMessage,
+            None,
+            "iMessage;-;+491701234567",
+        )
+    };
     commit_prepared_converted_relink_at(&home, prepare_ok(&home, same()).await).unwrap();
     let pair = std::fs::read(home.join("credentials.yaml")).unwrap();
-    let retry = commit_prepared_converted_relink_at(&home, prepare_ok(&home, same()).await).unwrap();
+    let retry =
+        commit_prepared_converted_relink_at(&home, prepare_ok(&home, same()).await).unwrap();
     assert!(retry.already_ready());
     assert_eq!(std::fs::read(home.join("credentials.yaml")).unwrap(), pair);
 
@@ -181,14 +209,23 @@ async fn ready_retry_is_idempotent_but_changed_request_material_is_refused() {
     assert!(commit_prepared_converted_relink_at(&home, changed_candidate).is_err());
     let changed_target = prepare_ok(
         &home,
-        request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491700000000"),
+        request(
+            &source,
+            ConvertedRelinkChannel::IMessage,
+            None,
+            "iMessage;-;+491700000000",
+        ),
     )
     .await;
     assert!(commit_prepared_converted_relink_at(&home, changed_target).is_err());
     std::fs::write(&source, "channels:\n  imessage:\n    accounts:\n      personal:\n        cliPath: /usr/local/bin/imsg\n").unwrap();
-    assert!(prepare_converted_relink_with_probe_at(&home, same(), |candidate, _| {
-        Box::pin(async move { Ok(probe_ok(candidate.channel_id.as_str().into())) })
-    }).await.is_err());
+    assert!(
+        prepare_converted_relink_with_probe_at(&home, same(), |candidate, _| {
+            Box::pin(async move { Ok(probe_ok(candidate.channel_id.as_str().into())) })
+        })
+        .await
+        .is_err()
+    );
     assert_eq!(std::fs::read(home.join("credentials.yaml")).unwrap(), pair);
 }
 
@@ -204,13 +241,30 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
         let home_for_probe = home.clone();
         let prepared = prepare_converted_relink_with_probe_at(
             &home,
-            request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567"),
+            request(
+                &source,
+                ConvertedRelinkChannel::IMessage,
+                None,
+                "iMessage;-;+491701234567",
+            ),
             move |candidate, _| {
                 Box::pin(async move {
                     match drift {
-                        "freedom" => std::fs::write(home_for_probe.join("freedom.yaml"), "# changed during probe\n").unwrap(),
-                        "credentials" => std::fs::write(home_for_probe.join("credentials.yaml"), "unknown: changed\n").unwrap(),
-                        "routing" => std::fs::write(home_for_probe.join(crate::channels::routing::CHANNEL_ROUTING_FILE), "{\"destinations\":{}}\n").unwrap(),
+                        "freedom" => std::fs::write(
+                            home_for_probe.join("freedom.yaml"),
+                            "# changed during probe\n",
+                        )
+                        .unwrap(),
+                        "credentials" => std::fs::write(
+                            home_for_probe.join("credentials.yaml"),
+                            "unknown: changed\n",
+                        )
+                        .unwrap(),
+                        "routing" => std::fs::write(
+                            home_for_probe.join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+                            "{\"destinations\":{}}\n",
+                        )
+                        .unwrap(),
                         _ => unreachable!(),
                     }
                     Ok(probe_ok(candidate.channel_id.as_str().into()))
@@ -221,7 +275,11 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
         .unwrap();
         assert!(commit_prepared_converted_relink_at(&home, prepared).is_err());
         assert!(!matches!(
-            relink::gate_for_at(&home, &ChannelRef::default_account(ChannelId::IMessageBlueBubbles)).unwrap(),
+            relink::gate_for_at(
+                &home,
+                &ChannelRef::default_account(ChannelId::IMessageBlueBubbles)
+            )
+            .unwrap(),
             RelinkGate::Ready(_)
         ));
     }
@@ -234,14 +292,37 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
     let failed = prepare_converted_relink_with_probe_at(
         &home,
-        request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567"),
-        |candidate, _| Box::pin(async move { Ok(ChannelTestResult { channel: candidate.channel_id.as_str().into(), account: None, status: "fail", detail: "mock target refusal".into() }) }),
+        request(
+            &source,
+            ConvertedRelinkChannel::IMessage,
+            None,
+            "iMessage;-;+491701234567",
+        ),
+        |candidate, _| {
+            Box::pin(async move {
+                Ok(ChannelTestResult {
+                    channel: candidate.channel_id.as_str().into(),
+                    account: None,
+                    status: "fail",
+                    detail: "mock target refusal".into(),
+                })
+            })
+        },
     )
     .await;
     assert!(failed.is_err());
     assert_no_publication(&home, ChannelId::IMessageBlueBubbles);
 
-    let mut expired = prepare_ok(&home, request(&source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567")).await;
+    let mut expired = prepare_ok(
+        &home,
+        request(
+            &source,
+            ConvertedRelinkChannel::IMessage,
+            None,
+            "iMessage;-;+491701234567",
+        ),
+    )
+    .await;
     expired.probe_started = Instant::now() - PROBE_VALIDITY;
     assert!(commit_prepared_converted_relink_at(&home, expired).is_err());
     assert_no_publication(&home, ChannelId::IMessageBlueBubbles);
@@ -254,25 +335,57 @@ async fn sequential_imessage_and_gchat_relinks_remain_independently_ready() {
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
     let imessage_source = temp.path().join("imessage-openclaw.yaml");
-    std::fs::write(&imessage_source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
+    std::fs::write(
+        &imessage_source,
+        source_body(ConvertedRelinkChannel::IMessage),
+    )
+    .unwrap();
     commit_prepared_converted_relink_at(
         &home,
-        prepare_ok(&home, request(&imessage_source, ConvertedRelinkChannel::IMessage, None, "iMessage;-;+491701234567")).await,
+        prepare_ok(
+            &home,
+            request(
+                &imessage_source,
+                ConvertedRelinkChannel::IMessage,
+                None,
+                "iMessage;-;+491701234567",
+            ),
+        )
+        .await,
     )
     .unwrap();
     let gchat_source = temp.path().join("gchat-openclaw.json5");
-    std::fs::write(&gchat_source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    std::fs::write(
+        &gchat_source,
+        source_body(ConvertedRelinkChannel::GoogleChat),
+    )
+    .unwrap();
     let service_account = temp.path().join("service-account.json");
-    std::fs::write(&service_account, "{\"type\":\"service_account\",\"project_id\":\"neoth-test\"}").unwrap();
+    std::fs::write(
+        &service_account,
+        "{\"type\":\"service_account\",\"project_id\":\"neoth-test\"}",
+    )
+    .unwrap();
     commit_prepared_converted_relink_at(
         &home,
-        prepare_ok(&home, request(&gchat_source, ConvertedRelinkChannel::GoogleChat, Some(&service_account), "spaces/AAAA-converted-relink")).await,
+        prepare_ok(
+            &home,
+            request(
+                &gchat_source,
+                ConvertedRelinkChannel::GoogleChat,
+                Some(&service_account),
+                "spaces/AAAA-converted-relink",
+            ),
+        )
+        .await,
     )
     .unwrap();
     for destination in [ChannelId::IMessageBlueBubbles, ChannelId::GoogleChat] {
-        assert!(relink::traffic_binding_at(&home, &ChannelRef::default_account(destination))
-            .unwrap()
-            .is_some());
+        assert!(
+            relink::traffic_binding_at(&home, &ChannelRef::default_account(destination))
+                .unwrap()
+                .is_some()
+        );
     }
 }
 
@@ -324,9 +437,13 @@ async fn guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_r
         },
     )
     .unwrap();
-    assert!(relink::traffic_binding_at(
-        &home, &ChannelRef::default_account(ChannelId::IMessageBlueBubbles),
-    ).is_err());
+    assert!(
+        relink::traffic_binding_at(
+            &home,
+            &ChannelRef::default_account(ChannelId::IMessageBlueBubbles),
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -359,7 +476,11 @@ async fn gchat_key_replaced_during_successful_probe_is_rejected_before_publicati
     .await;
     assert!(result.is_err());
     assert!(!home.join("credentials.yaml").exists());
-    assert!(!home.join(crate::channels::routing::CHANNEL_ROUTING_FILE).exists());
+    assert!(
+        !home
+            .join(crate::channels::routing::CHANNEL_ROUTING_FILE)
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -370,32 +491,36 @@ async fn reserved_ambiguous_request_rejects_changed_password_but_recovers_exactl
     write_encrypted_first_use_home(&home);
     let source = temp.path().join("openclaw.yaml");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
-    let same = || request(
-        &source,
-        ConvertedRelinkChannel::IMessage,
-        None,
-        "iMessage;-;+491701234567",
-    );
+    let same = || {
+        request(
+            &source,
+            ConvertedRelinkChannel::IMessage,
+            None,
+            "iMessage;-;+491701234567",
+        )
+    };
 
     let first = prepare_ok(&home, same()).await;
-    assert!(commit_prepared_converted_relink_with_checkpoint_at(
-        &home,
-        first,
-        |checkpoint| {
+    assert!(
+        commit_prepared_converted_relink_with_checkpoint_at(&home, first, |checkpoint| {
             if checkpoint == RelinkCommitCheckpoint::RequestReserved {
                 anyhow::bail!("injected interruption after durable request reservation");
             }
             Ok(())
-        },
-    )
-    .is_err());
+        },)
+        .is_err()
+    );
 
     let mut changed = same();
     changed.fields.password = Some("different-after-ambiguous-reservation".into());
     let changed = prepare_ok(&home, changed).await;
     assert!(commit_prepared_converted_relink_at(&home, changed).is_err());
     assert!(!home.join("credentials.yaml").exists());
-    assert!(!home.join(crate::channels::routing::CHANNEL_ROUTING_FILE).exists());
+    assert!(
+        !home
+            .join(crate::channels::routing::CHANNEL_ROUTING_FILE)
+            .exists()
+    );
 
     commit_prepared_converted_relink_at(&home, prepare_ok(&home, same()).await).unwrap();
     assert!(matches!(

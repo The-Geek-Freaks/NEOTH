@@ -341,10 +341,12 @@ impl ConnectionBoundProactivePermit {
             }
         }
         if let Some((home, channel_ref, expected)) = &self.traffic_fence {
-            let current = crate::channels::relink::traffic_binding_at(home, channel_ref)
-                .map_err(|_| ChannelError::Transport(
-                    "converted channel relink is not ready at proactive transport".to_string(),
-                ))?;
+            let current =
+                crate::channels::relink::traffic_binding_at(home, channel_ref).map_err(|_| {
+                    ChannelError::Transport(
+                        "converted channel relink is not ready at proactive transport".to_string(),
+                    )
+                })?;
             if current != *expected {
                 return Err(ChannelError::Transport(
                     "converted channel relink generation changed before proactive transport"
@@ -462,12 +464,7 @@ mod tests {
         let lease = registry.begin_replacement(channel_ref.clone(), 71).await;
         assert!(registry.publish(&lease, channel.clone()).await);
         let permit = registry
-            .acquire_with_traffic_binding(
-                &channel_ref,
-                71,
-                home.path().to_path_buf(),
-                None,
-            )
+            .acquire_with_traffic_binding(&channel_ref, 71, home.path().to_path_buf(), None)
             .await
             .expect("unimported channel obtains its initial permit");
 
@@ -478,8 +475,17 @@ mod tests {
             b"{not-json",
         )
         .unwrap();
-        assert!(permit.send_once("space".into(), "body".into()).await.is_err());
-        assert_eq!(channel.0.load(Ordering::SeqCst), 0, "corrupt relink never reaches transport");
+        assert!(
+            permit
+                .send_once("space".into(), "body".into())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            channel.0.load(Ordering::SeqCst),
+            0,
+            "corrupt relink never reaches transport"
+        );
     }
 
     #[tokio::test]
@@ -498,16 +504,20 @@ mod tests {
                 Some("stale-ready-material-binding".to_string())
             };
             let permit = registry
-                .acquire_with_traffic_binding(
-                    &channel_ref,
-                    72,
-                    home.path().to_path_buf(),
-                    expected,
-                )
+                .acquire_with_traffic_binding(&channel_ref, 72, home.path().to_path_buf(), expected)
                 .await
                 .expect("published converted handle obtains permit");
-            assert!(permit.send_once("space".into(), "body".into()).await.is_err());
-            assert_eq!(channel.0.load(Ordering::SeqCst), 0, "{state} reached transport");
+            assert!(
+                permit
+                    .send_once("space".into(), "body".into())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                channel.0.load(Ordering::SeqCst),
+                0,
+                "{state} reached transport"
+            );
         }
     }
 

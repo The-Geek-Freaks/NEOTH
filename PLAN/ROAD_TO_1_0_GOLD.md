@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1773 hosted Relink formatting imported (2026-09-28):**
+Preflight36366546217 at53cd01af passed metadata but required formatting.
+Original10947178125 ZIP02961790f994a68e1620152841f58c80348392f4f7dcd000f41dadf6d7fe4171
+matches the API digest; inner source/SHA256SUMS and all12 Rust target paths
+verified before applying the exact GitHub rustfmt patch. Two unreferenced
+superseded private helpers removed; traffic uses the stronger binding fence.
+No local formatter, compiler or test ran. Hosted compiler/Clippy and the
+new2049/813/37 cohorts remain pending. ROAD counts unchanged.
 **W1772 converted-channel relink source published (2026-09-28):**
 The explicit channel relink-openclaw command now connects pinned OpenClaw
 source custody to real BlueBubbles/GChat target probes, private stdin

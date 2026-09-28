@@ -2215,14 +2215,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 source_account,
                 target,
             } => {
-                channel_relink::run(
-                    &channel,
-                    &config,
-                    &source_account,
-                    target,
-                    &global_output,
-                )
-                .await?;
+                channel_relink::run(&channel, &config, &source_account, target, &global_output)
+                    .await?;
             }
             ChannelAction::ImportOpenclawTelegram {
                 config,

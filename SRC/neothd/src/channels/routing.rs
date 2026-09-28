@@ -27,8 +27,8 @@
 //!   the operator asked for.
 
 use std::collections::BTreeMap;
-use std::marker::PhantomData;
 use std::ffi::OsStr;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
@@ -254,12 +254,9 @@ fn read_converted_relink_routing_raw(
 /// Empty/missing has the same opt-in semantics as [`ChannelRouting::load_from`],
 /// while every existing file is a bounded regular child (never a link).
 pub(crate) fn load_for_converted_relink_at(home: &Path) -> Result<(Vec<u8>, ChannelRouting)> {
-    let bound = crate::skills::store::open_bound_directory(
-        home,
-        false,
-        "converted relink routing home",
-    )?
-    .context("converted relink routing home absent")?;
+    let bound =
+        crate::skills::store::open_bound_directory(home, false, "converted relink routing home")?
+            .context("converted relink routing home absent")?;
     let raw = read_converted_relink_routing_raw(&bound)?;
     let routing = if raw.is_empty() {
         ChannelRouting::default()
@@ -282,18 +279,16 @@ pub(crate) fn save_for_converted_relink_if_raw_matches_at(
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| anyhow::anyhow!("converted relink routing mutex is poisoned"))?;
-    let bound = crate::skills::store::open_bound_directory(
-        home,
-        false,
-        "converted relink routing home",
-    )?
-    .context("converted relink routing home absent")?;
+    let bound =
+        crate::skills::store::open_bound_directory(home, false, "converted relink routing home")?
+            .context("converted relink routing home absent")?;
     let actual = read_converted_relink_routing_raw(&bound)?;
     anyhow::ensure!(
         actual == expected_raw,
         "channel routing changed while converted relink target was being verified; pending relink remains blocked"
     );
-    let postimage = serde_json::to_vec_pretty(routing).context("serialize converted relink route")?;
+    let postimage =
+        serde_json::to_vec_pretty(routing).context("serialize converted relink route")?;
     anyhow::ensure!(
         postimage.len() <= MAX_CONVERTED_RELINK_ROUTING_BYTES,
         "converted relink routing postimage exceeds bound"
@@ -353,7 +348,9 @@ impl ChannelRouting {
 
     /// Atomic tmp+rename save (mirrors `ProactiveQueue::save_to`).
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        let parent = path.parent().context("channel routing path has no parent")?;
+        let parent = path
+            .parent()
+            .context("channel routing path has no parent")?;
         // Preserve first-save behavior before the shared authority opens its
         // lock file inside the routing home.
         std::fs::create_dir_all(parent)

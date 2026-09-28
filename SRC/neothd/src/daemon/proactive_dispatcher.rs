@@ -520,9 +520,11 @@ impl crate::channels::Channel for RelinkCheckedChannel {
         text: &str,
     ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
         let current = crate::channels::relink::traffic_binding_at(&self.home, &self.channel_ref)
-            .map_err(|_| crate::channels::ChannelError::Transport(
-                "converted channel relink is not ready at proactive transport".to_string(),
-            ))?;
+            .map_err(|_| {
+                crate::channels::ChannelError::Transport(
+                    "converted channel relink is not ready at proactive transport".to_string(),
+                )
+            })?;
         if current != self.traffic_binding {
             return Err(crate::channels::ChannelError::Transport(
                 "converted channel relink generation changed before proactive transport"
@@ -586,9 +588,12 @@ async fn deliver_live_route(
                 == crate::channels::registry::ChannelId::GoogleChat)
                 .then(|| crate::channels::relink::traffic_binding_at(egress.home(), &channel_ref))
                 .transpose()
-                .map_err(|_| LiveRouteError::AdapterConfiguration(
-                    "converted channel relink is not ready; proactive traffic is blocked".to_string(),
-                ))?;
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "converted channel relink is not ready; proactive traffic is blocked"
+                            .to_string(),
+                    )
+                })?;
             let Some(fingerprint) = live.channel_fingerprints.get(&channel_ref).copied() else {
                 return crate::daemon::proactive_egress::record_sidecar_only_once(
                     egress,
@@ -604,7 +609,10 @@ async fn deliver_live_route(
             // material rotation must not borrow an earlier live permit.
             if let Some(binding) = &traffic_binding {
                 let current = crate::cli::serve_tasks::channel_account_fingerprints(
-                    live.config, live.credentials, &[], egress.home(),
+                    live.config,
+                    live.credentials,
+                    &[],
+                    egress.home(),
                 );
                 if current.get(&channel_ref).copied() != Some(fingerprint) {
                     return Err(LiveRouteError::AdapterConfiguration(
@@ -615,9 +623,16 @@ async fn deliver_live_route(
                 let _ = binding;
             }
             let permit = match traffic_binding {
-                Some(binding) => live.live_channels.acquire_with_traffic_binding(
-                    &channel_ref, fingerprint, egress.home().to_path_buf(), binding,
-                ).await,
+                Some(binding) => {
+                    live.live_channels
+                        .acquire_with_traffic_binding(
+                            &channel_ref,
+                            fingerprint,
+                            egress.home().to_path_buf(),
+                            binding,
+                        )
+                        .await
+                }
                 None => live.live_channels.acquire(&channel_ref, fingerprint).await,
             };
             match permit {
@@ -867,24 +882,37 @@ async fn deliver_live_route(
             let channel_ref = crate::channels::registry::ChannelRef::default_account(
                 crate::channels::registry::ChannelId::IMessageBlueBubbles,
             );
-            let traffic_binding = crate::channels::relink::traffic_binding_at(egress.home(), &channel_ref)
-                .map_err(|_| LiveRouteError::AdapterConfiguration(
-                    "converted channel relink is not ready; proactive traffic is blocked".to_string(),
-                ))?;
+            let traffic_binding =
+                crate::channels::relink::traffic_binding_at(egress.home(), &channel_ref).map_err(
+                    |_| {
+                        LiveRouteError::AdapterConfiguration(
+                            "converted channel relink is not ready; proactive traffic is blocked"
+                                .to_string(),
+                        )
+                    },
+                )?;
             // Imported state must use credentials and the selected destination
             // from a pair loaded after its binding was observed.  The second
             // capture rejects a commit that races this reconstruction.
             let fresh_credentials = if traffic_binding.is_some() {
                 let runtime = crate::config::load_runtime_config_pair_from_path(
                     &egress.home().join("freedom.yaml"),
-                ).map_err(|_| LiveRouteError::AdapterConfiguration(
-                    "load fresh converted iMessage runtime pair".to_string(),
-                ))?;
+                )
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "load fresh converted iMessage runtime pair".to_string(),
+                    )
+                })?;
                 let routing = crate::channels::routing::ChannelRouting::load_from(
-                    &egress.home().join(crate::channels::routing::CHANNEL_ROUTING_FILE),
-                ).map_err(|_| LiveRouteError::AdapterConfiguration(
-                    "load fresh converted iMessage route".to_string(),
-                ))?;
+                    &egress
+                        .home()
+                        .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+                )
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "load fresh converted iMessage route".to_string(),
+                    )
+                })?;
                 if routing.destinations.imessage_chat_guid.as_deref() != Some(chat_guid.as_str())
                     || crate::channels::relink::traffic_binding_at(egress.home(), &channel_ref)
                         .map_err(|_| LiveRouteError::AdapterConfiguration(
@@ -913,22 +941,21 @@ async fn deliver_live_route(
                         "BlueBubbles proactive route lost its password".to_string(),
                     )
                 })?;
-            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                RelinkCheckedChannel {
-                    inner: Arc::new(
-                crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
-                    url, password, None, None,
-                )
-                .map_err(|_| {
-                    LiveRouteError::AdapterConfiguration(
-                        "construct BlueBubbles proactive adapter: rejected".to_string(),
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(RelinkCheckedChannel {
+                inner: Arc::new(
+                    crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                        url, password, None, None,
                     )
-                })?),
-                    home: egress.home().to_path_buf(),
-                    channel_ref,
-                    traffic_binding,
-                },
-            );
+                    .map_err(|_| {
+                        LiveRouteError::AdapterConfiguration(
+                            "construct BlueBubbles proactive adapter: rejected".to_string(),
+                        )
+                    })?,
+                ),
+                home: egress.home().to_path_buf(),
+                channel_ref,
+                traffic_binding,
+            });
             execute!(&chat_guid, channel)
         }
         #[cfg(feature = "matrix-channel")]
@@ -1765,7 +1792,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index() {
+    async fn reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index()
+     {
         let channel_ref = crate::channels::registry::ChannelRef::default_account(
             crate::channels::registry::ChannelId::IMessageBlueBubbles,
         );
@@ -1778,7 +1806,11 @@ mod tests {
             traffic_binding: None,
         };
         assert!(healthy.send_proactive("chat", "body").await.is_ok());
-        assert_eq!(transport.sends(), 1, "absent relink index preserves scalar send");
+        assert_eq!(
+            transport.sends(),
+            1,
+            "absent relink index preserves scalar send"
+        );
 
         for state in ["pending", "corrupt"] {
             let home = TempDir::new().unwrap();
@@ -1798,7 +1830,11 @@ mod tests {
                 .unwrap();
             }
             assert!(guarded.send_proactive("chat", "body").await.is_err());
-            assert_eq!(transport.sends(), 1, "{state} relink reached iMessage transport");
+            assert_eq!(
+                transport.sends(),
+                1,
+                "{state} relink reached iMessage transport"
+            );
         }
     }
 

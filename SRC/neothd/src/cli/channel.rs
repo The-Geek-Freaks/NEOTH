@@ -1802,7 +1802,10 @@ pub(crate) fn read_converted_relink_fields_from(
     destination: ChannelId,
 ) -> Result<ChannelAddFields> {
     anyhow::ensure!(
-        matches!(destination, ChannelId::IMessageBlueBubbles | ChannelId::GoogleChat),
+        matches!(
+            destination,
+            ChannelId::IMessageBlueBubbles | ChannelId::GoogleChat
+        ),
         "only canonical iMessage BlueBubbles and Google Chat destinations support converted relink"
     );
     let request = read_channel_credential_request_from(reader)?;

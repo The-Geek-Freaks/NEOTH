@@ -22,9 +22,10 @@ pub(crate) async fn run(
     output: &OutputFormat,
 ) -> Result<()> {
     let (source_channel, destination) = match channel {
-        "imessage_bluebubbles" => {
-            (ConvertedRelinkChannel::IMessage, ChannelId::IMessageBlueBubbles)
-        }
+        "imessage_bluebubbles" => (
+            ConvertedRelinkChannel::IMessage,
+            ChannelId::IMessageBlueBubbles,
+        ),
         "google_chat" => (ConvertedRelinkChannel::GoogleChat, ChannelId::GoogleChat),
         _ => anyhow::bail!("converted relink requires imessage_bluebubbles or google_chat"),
     };
@@ -57,9 +58,8 @@ pub(crate) async fn run(
     )
     .await?;
     let outcome = commit_prepared_converted_relink_at(&home, prepared)?;
-    crate::cli::reload::request_reload_at(&home).context(
-        "channel relink committed, but live reload was not requested; run neoth reload",
-    )?;
+    crate::cli::reload::request_reload_at(&home)
+        .context("channel relink committed, but live reload was not requested; run neoth reload")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",

@@ -5622,10 +5622,7 @@ impl FileSnapshot {
     }
 }
 
-fn relink_pair_commitment(
-    freedom: &FileSnapshot,
-    credentials: &FileSnapshot,
-) -> String {
+fn relink_pair_commitment(freedom: &FileSnapshot, credentials: &FileSnapshot) -> String {
     let mut hash = Sha256::new();
     hash.update(b"neoth-converted-relink-pair-v1\0");
     for (name, snapshot) in [("freedom.yaml", freedom), ("credentials.yaml", credentials)] {
@@ -7896,10 +7893,15 @@ mod tests {
         assert!(format!("{error:#}").contains("reject prepared relink receipt"));
         assert_eq!(calls.get(), 1);
         assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
-        assert_eq!(std::fs::read(&credentials_path).unwrap(), credentials_before);
-        assert!(std::str::from_utf8(&credentials_before)
-            .unwrap()
-            .contains("future_secret: retain-me"));
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(
+            std::str::from_utf8(&credentials_before)
+                .unwrap()
+                .contains("future_secret: retain-me")
+        );
     }
 
     #[test]
