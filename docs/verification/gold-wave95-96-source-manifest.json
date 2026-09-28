@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T06:38:48.2748481Z",
-  "validationStatus": "Pinned fixture accepted; QA and WhatsApp identity gates pending; batch fixtures repaired",
+  "capturedUtc": "2026-09-28T06:52:47.7389318Z",
+  "validationStatus": "Focused94 file-batch andQA exclusion admitted; Linux2106/Windows868 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2782,6 +2782,11 @@
       "sha256": "92AC0E51C54F3BC19B3A53AE610A208984FA45C47DBD2BCA59E807219D929D7D"
     },
     {
+      "path": "docs/verification/gold-wave1831-focused94-admission.json",
+      "bytes": 96364,
+      "sha256": "004058B6563280F67577290466A4B684A8ED50ABFBC9FBD767E0637909A67E8A"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3823,18 +3828,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 508988,
-      "sha256": "063B37F70A1EF0B617F1A603F7048D57ECB262F475BADFA7D85F63F56739A530"
+      "bytes": 510304,
+      "sha256": "55866E187DEB0FF890BACADDE6477D1FDDA2BDB6A2B1546B4F3619AD838B45CA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1545221,
-      "sha256": "9E5F1867D4D1AD672E3FCB7F88E57D60774085C19E118A51C30F019BF6951071"
+      "bytes": 1546572,
+      "sha256": "C57A9AB3482F4C8AE534EB19EEC663EFDA1471089C2B548CE2A14CB0AB8C381D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2156036,
-      "sha256": "380E36A67D49031B2CCB83ED0DD297D9695BA190BEDF509CB31C9C870B74791A"
+      "bytes": 2157675,
+      "sha256": "5DE844EBFEA1C6CB20BD8D8C8235218F662B5071364C13C4186CDABEC4CAFF03"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3848,8 +3853,8 @@
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
-      "bytes": 55058,
-      "sha256": "D501672193C31D9B5C15A4BE32FCB2DB13FE2B16B3FB9B92F299CBC8CED5A69F"
+      "bytes": 55303,
+      "sha256": "626A8D257CB59E9833D1A61DB16AE9A2A0F1A1C3477DFDC5C736AA50D875D4D1"
     },
     {
       "path": "README.md",

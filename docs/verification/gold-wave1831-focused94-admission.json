@@ -1,0 +1,1923 @@
+{
+  "schema": "neoth-focused94-file-batch-and-relink-admission/v1",
+  "decision": "accepted_for_hosted_file_batch_regressions_qa_exclusion_and_loopback_relink_product",
+  "run": 36386346752,
+  "producer": "b5eb32e713a32570200107a019f7fc06574efae6",
+  "current_source_bridge": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+  "native": {
+    "executed": 94,
+    "batch_tests": 18,
+    "all_exact_one_test_terminals": true,
+    "duplicates": 0,
+    "selected": 94,
+    "started": 94,
+    "failed": 0,
+    "passed": 94,
+    "listed": 94
+  },
+  "tests": [
+    {
+      "ordinal": 76,
+      "id": "config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses",
+      "test": "config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "8832c539338a3b086b100fe5a3b48d636dc10c03cf10a1bbdd17102a99efe24c",
+      "actual_sha256": "313283a70326e5bc6d8d974706f01e87b477cc7e7829985c1ac9c483eddbf0e3"
+    },
+    {
+      "ordinal": 77,
+      "id": "config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration",
+      "test": "config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "b8a4c6b87709ffbeb8433eaea8057577a8353e6dfb3e6da7ff26a213937b24d1",
+      "actual_sha256": "5fd6999b719e431b2e6012088b9ba6c39daadf9ee93ae70a16660bbb8ea285c2"
+    },
+    {
+      "ordinal": 78,
+      "id": "config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback",
+      "test": "config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "8d275f50759dcc24aae4ff257e6fe751471e3b02e88d2111a896f0df4972efe7",
+      "actual_sha256": "8804e5d1b71242d4e693bb5b6afcc934f1b04cd3b458f68fbc1b8fbae0a0ad4e"
+    },
+    {
+      "ordinal": 79,
+      "id": "config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack",
+      "test": "config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "4aa9e813aa80e76f825befed5230240183d3e6b358b7791924c8924d2df19a6c",
+      "actual_sha256": "dbe56f8b2a03d4e0c0957b6293454fc1e375de3b82389420ff7a2a5bd6e61ff6"
+    },
+    {
+      "ordinal": 80,
+      "id": "config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody",
+      "test": "config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "40ccd61ddb97b62e3648cb720d5b7fbd5c93ad99fe5c948695b97a3b988e3ba6",
+      "actual_sha256": "da3c16742038f81ef1febbfbc93bcb50a960910bcf26b9dcb93c918c28f6060c"
+    },
+    {
+      "ordinal": 81,
+      "id": "config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite",
+      "test": "config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "31992024a958581ea0796ed4f975f77453f3ab2705c0e2cc4a2a3b2a267da6cc",
+      "actual_sha256": "527009127ed9451fcf2cab317f08abf0fbc9279f9e71a4c3f9b706d32b80e848"
+    },
+    {
+      "ordinal": 82,
+      "id": "config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes",
+      "test": "config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "6377b51271b0fe52b85e38621a88e5bbe8cd6812cee617ce654164169c6178db",
+      "actual_sha256": "f7bf024a1b7538bd0ce7a2d60e2464ed1dcc320b4b5b0dbb11a92eca0ee2612a"
+    },
+    {
+      "ordinal": 83,
+      "id": "config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely",
+      "test": "config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "f6c36a10f362a4e80ff7f5ab31db3d274676b42e8a94321291e2464ace36d531",
+      "actual_sha256": "0f35a56820e53b15aa48f719677d55202b235d7524b7ef3b24267c323d0f7acd"
+    },
+    {
+      "ordinal": 84,
+      "id": "config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction",
+      "test": "config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "8b59f9f693eabd3cd63e6940680de0bf2406598f3b7af30acef9af705b718757",
+      "actual_sha256": "710f1c9244ccd0fda8182ed6411e019890f49d08f6980ce22d84b85b284b8621"
+    },
+    {
+      "ordinal": 85,
+      "id": "config::credentials::file_migration_batch::tests::symlinked_pair_is_rejected",
+      "test": "config::credentials::file_migration_batch::tests::symlinked_pair_is_rejected",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "5aa2647f59978611f00d5168ee0240c11b39eaca2bf05bf07757d116fec213b6",
+      "actual_sha256": "ba69a12fe581b7e6a1e44941a1e04202405e5693b4869dd8b46a4dd7625b4c2a"
+    },
+    {
+      "ordinal": 86,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "a531ef3921257f4e5bfbb7c3d8c793e1915765169c951ceff6796ca3b15c0564",
+      "actual_sha256": "08332cc7c6a586df1939fb882b14327768bf9217a2e07fec4f522831e8c29106"
+    },
+    {
+      "ordinal": 87,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "9fd64be4f8d48343891b5ab27429acdb9146f8abb13a651f242842b004b87cb0",
+      "actual_sha256": "6be99da53e1596dc0c7689a47092400cefb681c5752bd076879a6d4fdb192f11"
+    },
+    {
+      "ordinal": 88,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "475998830e28af429fd04a1bff455a8ba5a0ce067ea8f7b90c9a2cb167ca60e2",
+      "actual_sha256": "5ca6f400f1871c36e58a4d37ad0a42f9b8d4123c3963d3bd4908008c4289ebe0"
+    },
+    {
+      "ordinal": 89,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "9d0dc6f8a3bf391dd755b2e5fe1a200f6058f10070130dcd9bf524a2479870cb",
+      "actual_sha256": "7766430be0f6b25da7b0cafe2af7db3bf1bede6e9f26599601d9df2e37d76be1"
+    },
+    {
+      "ordinal": 90,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "0984c157225be87d950c7c843b34979d29aa587644b8e341dd9460a9c4e54b4d",
+      "actual_sha256": "259d2addde44ebe49c0427dc01b642d36797291a311c30f6f34ce0e8717c4f85"
+    },
+    {
+      "ordinal": 91,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "43864830b3af2fe7ab910d1322cf1af89ca4a768fb143f67e41111d634db7ab2",
+      "actual_sha256": "67d3ffb9e4930face70cf0409f81a1f3a657a47c0b35524936118ed2452a490e"
+    },
+    {
+      "ordinal": 92,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "9564e0530524c093b071df6abb009d0bd5d36a5a872e5350dd089ea2621f9bb3",
+      "actual_sha256": "651754a7eb80c2a1746608b482bb908769a097013b37f6d80908fea7f12293dd"
+    },
+    {
+      "ordinal": 94,
+      "id": "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime",
+      "test": "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "2a85ea967b137ab3cb6e3d403bc7ebf96954796d73af39d6590673a0cc4e7412",
+      "actual_sha256": "427d480ce749be04f5c27ed08895562017ab33eb814e6573022f3e9e7851f8a4"
+    },
+    {
+      "ordinal": 93,
+      "id": "cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct",
+      "test": "cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "34bc360a80f231936bb4d2969a9b07cf4064e005e4debcaeb5a0d8cb264698a6",
+      "actual_sha256": "143521521512c37a62bdc2e01634935658dd5451d7173dfedd785010df764d7a"
+    },
+    {
+      "ordinal": 75,
+      "id": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+      "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "29d27adea3702bfa7a6b1c81b07d414d9e127c84a0fa16b5ed09cd1c3a31b474",
+      "actual_sha256": "4ef67fe6f47f71fcefa7c8991fce73e2601f0bfd30c4b49b323149a3c700d61f"
+    },
+    {
+      "ordinal": 57,
+      "id": "config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly",
+      "test": "config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "193984ffe919642fcc55dee2b0e0d7bd4070c77d2909205294c96752b4eb1534",
+      "actual_sha256": "f1f4217a7890f8e4786a8cf98d13458c1ba711ba36a74bf8befefbc47a8d96bc"
+    },
+    {
+      "ordinal": 58,
+      "id": "config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair",
+      "test": "config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "24c9a99d5e85f73313e1bc556753094dc962262005569900d105a45ec8a9f207",
+      "actual_sha256": "2ad7e14ec04b1289d0e243d11f5a192c38bc53d0129bececf8b4c040623918c6"
+    },
+    {
+      "ordinal": 59,
+      "id": "config::credentials::telegram_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image",
+      "test": "config::credentials::telegram_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "e2d12cc54ba907fe7a996bd7ac4f33b85f42c8175146399868f49a086617c06e",
+      "actual_sha256": "fedf0b82a86b8086e5d3767444be9c5461f1a561ae9fc2ba9a4738948655508a"
+    },
+    {
+      "ordinal": 60,
+      "id": "config::credentials::telegram_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability",
+      "test": "config::credentials::telegram_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "ecf2780903fe04a758a6ffee7474d6ea8f9bb66acafc8176c7410fb164b9e82e",
+      "actual_sha256": "7a89aa3bea3f8f0d29acc9c382102f444be115c84bdb5fec8c818d8cb4c151ce"
+    },
+    {
+      "ordinal": 61,
+      "id": "config::credentials::telegram_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it",
+      "test": "config::credentials::telegram_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "fb5f5aa9b6efa60978c6dcab3c7fdf930b20350221a0de0f41bf6a8efdea31e7",
+      "actual_sha256": "ef1e9caaee5add39c52651500c2d15b2b584035de58d98f9d4e10186cbd30512"
+    },
+    {
+      "ordinal": 62,
+      "id": "config::credentials::telegram_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it",
+      "test": "config::credentials::telegram_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "47689f8aeb0eb986fffab9c429061a3f9f026ff6d905f11d5d4f398afd1737c7",
+      "actual_sha256": "43739de1de8b4f18b495618dc6fdd71525485644e7b19cb1646ee0c9f817b67d"
+    },
+    {
+      "ordinal": 63,
+      "id": "config::credentials::telegram_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches",
+      "test": "config::credentials::telegram_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "25c5da9f7aca6307663bcb6b8f1c1182c0cd60096af8e39d165d0c2561356b2a",
+      "actual_sha256": "ade7d3dc0d4d2fbe7c0eb751c9d976ed57aecb15b1aa18dddcbf00f679d21ad2"
+    },
+    {
+      "ordinal": 64,
+      "id": "config::credentials::telegram_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback",
+      "test": "config::credentials::telegram_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "4a7797359e1fa7bc59fcaa33d0dd9edf86608c00b1c3da00fdfa325bfb6928aa",
+      "actual_sha256": "3aab931d64c85bcade417fae496b071db33fd33004e3e4b72ada967de0fbce1b"
+    },
+    {
+      "ordinal": 65,
+      "id": "config::credentials::telegram_migration::tests::keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody",
+      "test": "config::credentials::telegram_migration::tests::keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "43619e34a14e2aed4b4956be199519dce118aebcc9e6c4ee1def05405cdf7793",
+      "actual_sha256": "a24f636af769dab3315bd6987b28534cfe26faf8fe5dfdb89337660876c61d11"
+    },
+    {
+      "ordinal": 66,
+      "id": "config::credentials::telegram_migration::tests::existing_account_incarnation_and_unselected_account_survive_migration_and_rollback",
+      "test": "config::credentials::telegram_migration::tests::existing_account_incarnation_and_unselected_account_survive_migration_and_rollback",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "dc7f2fe7af581f22879c5ac79ef5d12649c18145711fe41900a4e7658cef5506",
+      "actual_sha256": "22d760e8e376070cc82653de8a4c9e2dea68b6771a1da13367221859d2956036"
+    },
+    {
+      "ordinal": 67,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_encrypted_lifecycle_preserves_incarnation_retry_and_exact_rollback",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_encrypted_lifecycle_preserves_incarnation_retry_and_exact_rollback",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "3b951ebd64c7e4a7d8c65bd168cdd7dc4358faf976bd3da15b5061b67a6f0e6c",
+      "actual_sha256": "cad7b14e29f772e315b653eb7a34b71972f83d8f36ce5af46f242d5e8fabf20e"
+    },
+    {
+      "ordinal": 68,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_keychain_and_invalid_typed_requests_reject_before_publication",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_keychain_and_invalid_typed_requests_reject_before_publication",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "02f653921a37d66bf3fb7b39ec7712450d8692ead483c52203b914247b0d32b7",
+      "actual_sha256": "f7415643a2b05a245412adeff8bcf5e6e256ae377af048a8d63d40f58e19c096"
+    },
+    {
+      "ordinal": 69,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_failed_wrong_kind_and_timed_out_probes_publish_nothing",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_failed_wrong_kind_and_timed_out_probes_publish_nothing",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "e80ba8827f333cecdb227ea0c7fa872bc6efe80258bf1f076515d84f2215bb5a",
+      "actual_sha256": "4df2e33c294e8006b2da4ef84817861a081159bd8291eb6ef90d0975ba755e41"
+    },
+    {
+      "ordinal": 70,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_source_include_request_and_pair_drift_refuse_publication",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_source_include_request_and_pair_drift_refuse_publication",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "ccce535e4cc156d435166848245cf8923ccf3509363284516204157c514118a2",
+      "actual_sha256": "b3383e00d1cf0bbba653aadaddc43087167204867af9b29195400b57f7da75e6"
+    },
+    {
+      "ordinal": 71,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "154e8946cc12dfe19c8d8cddef836f169622ee6d102eb420184c6e063b65a80a",
+      "actual_sha256": "7c6edb3f8e5648ae391f9e535f122b41bd58ce8225d0dcb81b2806d2af66d05a"
+    },
+    {
+      "ordinal": 72,
+      "id": "cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success",
+      "test": "cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "7c92395acae297acb42f4e7ba3c340aedc623015b430ae78818d2bfa9afe52d5",
+      "actual_sha256": "275f5b5ebab6d85dc127f84f8525ca57224b4f50268d7feb0340774687fa1321"
+    },
+    {
+      "ordinal": 73,
+      "id": "cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization",
+      "test": "cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "30976c0d440274504c131ef3732e66327476cdcc575548e190a757c8f66aebb0",
+      "actual_sha256": "e3c37f07781e42fb695d14d723f8dc200c3fca2e3d179d0b94fd793a80e1b905"
+    },
+    {
+      "ordinal": 74,
+      "id": "config::credentials::telegram_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf",
+      "test": "config::credentials::telegram_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "5dd777ee7baf59e5405461af93f6956c0179eee94183fe8f7110127e0d79abbc",
+      "actual_sha256": "e8f74f2315bb31df3c2fa8a194c2442154be376228e3718eca7755d1a18cd1b3"
+    },
+    {
+      "ordinal": 38,
+      "id": "config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it",
+      "test": "config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "272aa3db5503418d81bebd98322057414d412594769bc1aab1e09afb8c351436",
+      "actual_sha256": "e55e940954b5bc71e2c745b68bc5fe63bec856a734175285a0009007936dbdcd"
+    },
+    {
+      "ordinal": 39,
+      "id": "config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly",
+      "test": "config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "dc7ec2fc3bb0131cc01fe80498571f940f705cfb6f8e87009cf3950aa4011b27",
+      "actual_sha256": "303e7102f0036c0d4197e44ade7fe2360e634a89f9d0ddc2f5f6956b00600b8e"
+    },
+    {
+      "ordinal": 40,
+      "id": "config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair",
+      "test": "config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "558f85e156201dee1c0648eee541a79e0d5f9b169395e59d888a45306673d4b6",
+      "actual_sha256": "255a970498e2b983602b337e273e8a0f8f46d9804a6151d18e81223949b2c026"
+    },
+    {
+      "ordinal": 41,
+      "id": "config::credentials::slack_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image",
+      "test": "config::credentials::slack_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "66ba28ad8e0ac55bd2af9d9fefd4f2a0f5aa270d77de624c48bb54c6364a8a7b",
+      "actual_sha256": "8b3dad798420fc704d544ea631d9d216f9061c8ee0c0fe4c8d6ce14fcd891f1a"
+    },
+    {
+      "ordinal": 42,
+      "id": "config::credentials::slack_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability",
+      "test": "config::credentials::slack_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "accb735c3d56f187490a333941d550a8f4d63616ef0328267e35c7210cd599f2",
+      "actual_sha256": "3e15a74d669851e8a58b80f6a401f7127e017c2356698842280ab4f494b1f99f"
+    },
+    {
+      "ordinal": 43,
+      "id": "config::credentials::slack_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it",
+      "test": "config::credentials::slack_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "603e8e0e8015bacd247222bc84b7b512a09f4baec61d5b94ddaa49e9dbcefc1f",
+      "actual_sha256": "6dbcc914006a81fea78d18b1f6bd4a456f83b4cc0982b7694a3d15b54dd23edc"
+    },
+    {
+      "ordinal": 44,
+      "id": "config::credentials::slack_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it",
+      "test": "config::credentials::slack_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "801980851cc5fa0787adb3178007e42f97c6890174a22da0dc8fc9c7f6273ac3",
+      "actual_sha256": "9ed2ac91bd04135aa3b1861bc4c4732e11b2ae0e254d16a32a04c62238bba650"
+    },
+    {
+      "ordinal": 45,
+      "id": "config::credentials::slack_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches",
+      "test": "config::credentials::slack_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "12d674162ba4edd09d2665941f38120b9c7cab45902bae851d7bc63e4fea4bf2",
+      "actual_sha256": "e28329ae0332f50f24039d44e9e813af00fbaf42f90a708126c3df279c3d345c"
+    },
+    {
+      "ordinal": 46,
+      "id": "config::credentials::slack_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback",
+      "test": "config::credentials::slack_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "c28b5bd93b352587143da7da3301aef0361f74de497111ff03f1b8d3d42980a4",
+      "actual_sha256": "a95a93162c8e9e1d5a3d8d3c37c5312ead003aeb79899a746f7bb99c9147c4bc"
+    },
+    {
+      "ordinal": 47,
+      "id": "cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before",
+      "test": "cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "afadae1a4c78fe4d5d584f5816f7a2b0090c452bf2243a214847c8b5bdb571e5",
+      "actual_sha256": "54adeac3f14ec252e2a05c8bec1922ada53d6985a6507a4868c837c3db398fad"
+    },
+    {
+      "ordinal": 48,
+      "id": "cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication",
+      "test": "cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "cf09c665a33813c350ff6a089928781294606f2bb07b2228c0df0fcd79f917c1",
+      "actual_sha256": "5d0597c98af83aeef94f27e1c87b3c7c7db81e34823e0ee4e56ea30fc0690593"
+    },
+    {
+      "ordinal": 49,
+      "id": "cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair",
+      "test": "cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "95f21aeba26da1afcf08098f942d25bf99d0de7fdda75fc7a251684d31864c54",
+      "actual_sha256": "30da5faa53b41465a3dd7adcf3974f2009e6e1a0c250c4e2c506100ea7508cea"
+    },
+    {
+      "ordinal": 50,
+      "id": "cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication",
+      "test": "cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "92e1526678a49236c12a1e0d41bf6c1197bdb617afa54899ddd8d75168f035a2",
+      "actual_sha256": "c5ff9b4c0227aedba1482e8dc58790bc2a893735a41a186ab6e499ea7fe6df1c"
+    },
+    {
+      "ordinal": 51,
+      "id": "cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success",
+      "test": "cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "fb8d4c6deba8af2788ed32de65bad3925366ca2ddc6f1550a02fcc4cd796b5de",
+      "actual_sha256": "db37bee361978b95ddcd68a2351f3b1bc0e5500477caacce0bfb51e1d1615846"
+    },
+    {
+      "ordinal": 52,
+      "id": "cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions",
+      "test": "cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "cdd8d3844a40d441a819f980d75cfac5fa7295ed8c74ad25c3a24bec547384cf",
+      "actual_sha256": "c8d9df087aaffa7a41d6eb069cc8269be7bb3ba6a6418f33e381a3f8e1bc1bce"
+    },
+    {
+      "ordinal": 53,
+      "id": "cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound",
+      "test": "cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "f99e5d038ef9024871749afce9f359b95fb1c6e747dbd5d84b2d118d34a92eca",
+      "actual_sha256": "2dfc82c76076b1a5eb3cd71f42cafa04e076ec9a5d3e71f429ca64ae298be140"
+    },
+    {
+      "ordinal": 54,
+      "id": "cli::default_invocation_tests::openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation",
+      "test": "cli::default_invocation_tests::openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "7e7195c0c1847e1b9d6fcae34eca3604d2ca22be5f0e5bfa629dc58b976c2ef5",
+      "actual_sha256": "ff247b9b966b9425f7bb66638eb167792e9bbd2a8bbb7b83ca0ff84d960d670c"
+    },
+    {
+      "ordinal": 55,
+      "id": "config::credentials::slack_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf",
+      "test": "config::credentials::slack_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "0bf741610bd5e1bb13a562ca0de554b44fa10f7dfa0efacda36b64fc70de77e6",
+      "actual_sha256": "5c12eeb06a6503290221c71f48389dcadecf1fd1a9d70ee5b6d71704027167e5"
+    },
+    {
+      "ordinal": 56,
+      "id": "cli::channel::openclaw_migration::tests::provider_failures_missing_workspace_and_timeout_publish_nothing",
+      "test": "cli::channel::openclaw_migration::tests::provider_failures_missing_workspace_and_timeout_publish_nothing",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "899452ec4d7491d409faa8bbbde095a8c72c742805ea8ced7b0cac7fda44bb1a",
+      "actual_sha256": "550a641c1194133b4bdb92138c25e677b98ca783238eccf4c7ffb5e4716b8eac"
+    },
+    {
+      "ordinal": 1,
+      "id": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "test": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "65dd2dc2e3973f0475044561f8f0e1df6eec10a848fe58d5c873c43298f13b22",
+      "actual_sha256": "f035a50d9241da3dbff86261b9e69482014c3e49e22f5d771fd028453f87c509"
+    },
+    {
+      "ordinal": 2,
+      "id": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "test": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "9b16aef76810c2226a075617766795f5fdda6a0b811658d5f40b4a42788b3950",
+      "actual_sha256": "eb6eb0d9ca9568343d9d47357476988d856c09158395d1355514ad21e0797db4"
+    },
+    {
+      "ordinal": 3,
+      "id": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "test": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "37c47580a586685e2dd8b0e3e889be7b280743e154194b8981febc2c780f86e2",
+      "actual_sha256": "c4986efb7b18db384a6d6184aaadb30759f498d94c36abd987f8df70c03ca01d"
+    },
+    {
+      "ordinal": 4,
+      "id": "proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance",
+      "test": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "e6d125e94709d034c7187754de15a1be8dffea8f69b7d9c8c100685b72465b53",
+      "actual_sha256": "6d2691f799417c3709bf631b132b9fa787a52d2f986cad05ee73f1f3ba37577f"
+    },
+    {
+      "ordinal": 5,
+      "id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "test": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "ecc1ee9be841179a18ce3c8b2441c266e3adff105d0be60deaf461563c89ec8c",
+      "actual_sha256": "1c5592d4cfcb9595ecf92c7062011100cfc7f81d3223734a450991efc1593408"
+    },
+    {
+      "ordinal": 6,
+      "id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "test": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "b3f596ab6998775bd3ebde4fd5c4994d0ac38dff84749362d3c2348f5a46a833",
+      "actual_sha256": "37b965f447891bff348f643b1797c30b4fae5f4e8053b2232fdba8fa0648fb40"
+    },
+    {
+      "ordinal": 7,
+      "id": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "test": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "8f56bb06c097fc74fd8d35d4c8da2acf3d4ebba943b00097b0f12a8cfa73fbc0",
+      "actual_sha256": "ba4e775a2a2579a959517a6a7d0fba183f8354db32d938ed8a4d98ea7e067ced"
+    },
+    {
+      "ordinal": 8,
+      "id": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
+      "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "27765fa2e2365f7f3fa3f18126f71f79d3159ac9ca20693344dc01ee6acc8417",
+      "actual_sha256": "afb551fbcf214b8e1a5cb7ecef2d66c931e90c52d6119e4dc4d4e7e884511ff7"
+    },
+    {
+      "ordinal": 9,
+      "id": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
+      "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "c4ad4c97c9955de45f5acab93fed16a9a4f31d6d56ceac5390ddcb3219c875fb",
+      "actual_sha256": "1d9cb9e5e3b7882a6a346868330b4ca68d680c4abba5d10a1d03f95c81b80985"
+    },
+    {
+      "ordinal": 10,
+      "id": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "test": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "fd678570c5e14aa7873ce0fb22f73de32816b4dfaa291f797416f27b57ce2512",
+      "actual_sha256": "d75a4cff9c46015a4e264f7bed91c13fe1f2b9087bfb31474e40763ad2dd692a"
+    },
+    {
+      "ordinal": 11,
+      "id": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "test": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "a2cf9745f1bfeff7576a97420ec7e925a085cc17eae6bd9a12ecf64f976c7a60",
+      "actual_sha256": "1f0422e7940652d0167f2fc4fbeab0902fb8ed27b96b9ea798bb6b4f4ac93183"
+    },
+    {
+      "ordinal": 12,
+      "id": "channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space",
+      "test": "channels::gchat::tests::space_target_probe_reads_only_the_exact_configured_space",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "46ca3f36e0678badf2b4dcb24bfcab8f1250ed81edb856003502133bf1080637",
+      "actual_sha256": "92589f4fda9a852eeff91d02d473f83d3e831c06ba095945eaa5e07c30df81c6"
+    },
+    {
+      "ordinal": 13,
+      "id": "channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password",
+      "test": "channels::imessage_bluebubbles::tests::chat_target_probe_reads_only_the_exact_routed_guid_and_redacts_password",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "8b2bda3a9be33655b90480e0a0582ae84291f3b1a7cb25088e5cd4402e3225d5",
+      "actual_sha256": "0812ba4a520f7067f6f4640a6a2c975fcbec5395cb0f18677d144cb22ddf9227"
+    },
+    {
+      "ordinal": 14,
+      "id": "cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files",
+      "test": "cli::channel::tests::channel_test_imessage_reads_the_routed_target_without_writing_files",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "df02973c1da9974887a8a3895c5f9358596745b5ae341f366ede6d539af835d7",
+      "actual_sha256": "74bdc59923bfdee2cb3533ea5c93c02108aee02f6b0f08891d2e853a5ede20b8"
+    },
+    {
+      "ordinal": 15,
+      "id": "cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files",
+      "test": "cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "6a21530459f030b92adbc9876a32bddcc48d7ac052d9538416b95f37f06b3e29",
+      "actual_sha256": "544d5873419b4c24b30a4de15a6fd3b370460d401b3724359c2f34bc76ab0bdf"
+    },
+    {
+      "ordinal": 16,
+      "id": "cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior",
+      "test": "cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "b1d85d166d0234d2298863c67935eefbcdb79bfdcbc8530863dbf59dbb257a59",
+      "actual_sha256": "921a84e2cdc8495a4be7cffbceae29e0d0b1f6fcf5c558ff6f222d2e5c5ccb0c"
+    },
+    {
+      "ordinal": 17,
+      "id": "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
+      "test": "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "68f872f1c3bb3eb1c2b7c268def54511082d6f8aae9673063137f0b4d5c4488a",
+      "actual_sha256": "3e336e8e24a3531f137d102b73a266d75bcf7be723352ec914c4b360199e95bd"
+    },
+    {
+      "ordinal": 18,
+      "id": "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
+      "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "2ba83dbfda35b49d667b220a19e81e0cb6e51ec09131403878d6318495865fd1",
+      "actual_sha256": "c98d89a433c526cfe88fe844211e3498f50f4cc5f969e8c83d99145360ed239f"
+    },
+    {
+      "ordinal": 19,
+      "id": "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
+      "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "6a1c61243912cb16a04dc5727dd0612221b712512c5619791829c31a3e1e81b9",
+      "actual_sha256": "e8ae4d020eaf93fd3e25a49263506a6b28fe3b41c3fc2b8c217775c8df181d7a"
+    },
+    {
+      "ordinal": 20,
+      "id": "daemon::proactive_dispatcher::tests::reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index",
+      "test": "daemon::proactive_dispatcher::tests::reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "2cb62f5022f892a3f28d160cb78be417c84f3f9ab5043365ced83182ad5a86f5",
+      "actual_sha256": "32f9aba478f3ab73c3cb726f003270d349e423832763a2aa87ccd2c13b34a9ec"
+    },
+    {
+      "ordinal": 21,
+      "id": "daemon::channel_live_registry::tests::converted_traffic_permit_rechecks_index_at_transport_and_never_sends",
+      "test": "daemon::channel_live_registry::tests::converted_traffic_permit_rechecks_index_at_transport_and_never_sends",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "5f0d5820956c3e47f09b30e33e9701650e3ce99c89297e0ef63d9bbe1b158421",
+      "actual_sha256": "f5719232acba0a25a3fd8ba0b95c26270ef2137691a85b6cd2f4bdc0396abb5e"
+    },
+    {
+      "ordinal": 22,
+      "id": "daemon::channel_live_registry::tests::converted_traffic_permit_blocks_pending_and_stale_generation_before_transport",
+      "test": "daemon::channel_live_registry::tests::converted_traffic_permit_blocks_pending_and_stale_generation_before_transport",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "40951c134c7df6bc3aa2ccf5882020fa103e5dca45e72dafac0285fe8835bae2",
+      "actual_sha256": "3a7753042d974fe15312d1e0f20ac0b6fc811e46af3184a639531d5c976e620b"
+    },
+    {
+      "ordinal": 23,
+      "id": "channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate",
+      "test": "channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "5c31523037b98deb24305af5c46a428d9574879f6fc2b7d576d9198eac796cc1",
+      "actual_sha256": "581cc011e28a032e9c2abc3f890c798e2e3051f460355eeae16a77269e5764fc"
+    },
+    {
+      "ordinal": 24,
+      "id": "channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused",
+      "test": "channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "73498499ef0391d919c21563e10c255ae2514f9f08da015d40c2e1e244b777c2",
+      "actual_sha256": "ab1ba0bfda7f94a65d4e34dc431d19822a460c55479e2765aef5ab04c3136a31"
+    },
+    {
+      "ordinal": 25,
+      "id": "channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite",
+      "test": "channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "48e527d238f36e261173b76ee6560d6d4e9937364ddbe28ded9f19f9fb20ad02",
+      "actual_sha256": "e30741a3b3cbbf01de50f8c3053e7ccf3409de6c14b13ea12fe20d024c3a3dde"
+    },
+    {
+      "ordinal": 26,
+      "id": "channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages",
+      "test": "channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "387802820a0f27d401a2ea2d13354522237c1d082136b1a8c582e1ecdbc29605",
+      "actual_sha256": "b5f08e07184d862f0ad975a719e639ced3921ddbd22b5fc723eed745358f4715"
+    },
+    {
+      "ordinal": 27,
+      "id": "channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked",
+      "test": "channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "3c9c6a98bd6b67a11ea82d4de1970d3d2253a63add1e4ddb2f10edabb929965d",
+      "actual_sha256": "35b2f14a2466f665161fbff80ff444d0548ca7191ffa2c12d2f2b33e91b63b2f"
+    },
+    {
+      "ordinal": 28,
+      "id": "config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage",
+      "test": "config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "14efcc2d3b9a4f2f44458afd08d5a568a295b0617d86a35377f9bdc1d534d482",
+      "actual_sha256": "b6de71ef332642c22d1e563d3218c3778da26a07f4f7ad3cc9ea9454cef6427a"
+    },
+    {
+      "ordinal": 29,
+      "id": "config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged",
+      "test": "config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "fbda93cc61034e1d3b4437bf29c99ddccb9e6f5880c11d593734d7f9e79d1a2a",
+      "actual_sha256": "89fc2d4ed342a42596ef2a95d0c19c28305aee58643ae4a50c930fa0f86cf373"
+    },
+    {
+      "ordinal": 30,
+      "id": "cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials",
+      "test": "cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "820fa5a1787163fc3b8be6fb97e4035d7b25ee21ff43ee68616262665488aa0b",
+      "actual_sha256": "44497fe65787f37a870753fd5f0a350ef00273da0e31fe08b40f621a14080de2"
+    },
+    {
+      "ordinal": 31,
+      "id": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
+      "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "83a437803e0fd3ad4c91ddf26e50458b55711ecdce0298f0b14e01a34fbd393a",
+      "actual_sha256": "3cbc57f72237fa587091f58b4f9b5a4242d2ca23b213777d8f5206fab384c5e8"
+    },
+    {
+      "ordinal": 32,
+      "id": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
+      "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "bb9d9b19189297f1861612606bbb3456e325a15bca89ce6aa9bce469b2c35205",
+      "actual_sha256": "60ffcc11f013511c5c559da2ad6baca0c2b9bb12d7cda07badaca934a123fa47"
+    },
+    {
+      "ordinal": 33,
+      "id": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
+      "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "9a4e9f25c88281d9bfce206c70eb38dbee805c63dc66fe0f658fa240ded8e9df",
+      "actual_sha256": "aada490dba7f79fd41a8e4d17fd89d8002cbb668af58aded00cee0290a6226e6"
+    },
+    {
+      "ordinal": 34,
+      "id": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
+      "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "a2e4cea7fffd50c95a232a86bb1d98a8a8cf020c5dc24a54361ff4a4d34fd3ac",
+      "actual_sha256": "18b9474d02da037de9a6f0cb3a31bbb03bed7f969ee08b8c1503127b03a37e1d"
+    },
+    {
+      "ordinal": 35,
+      "id": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
+      "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "feb892fe9e26328556396de8f68bb1c1750ff1a511d439b0e7ea373ea8e34e1b",
+      "actual_sha256": "d27ac89e7676b006457940edd4871124e5edfeb1b7bdfd722c5a463b1d088338"
+    },
+    {
+      "ordinal": 36,
+      "id": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
+      "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "bf74ef56a6c16dc8e683f49d3ea01512616aeacdd429ac7c4e3b08a4957b3c2b",
+      "actual_sha256": "63271a03c83276c63a624f4df050762b1b08bc9d81d54e7481d1f3062ca062eb"
+    },
+    {
+      "ordinal": 37,
+      "id": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
+      "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
+      "listed": 1,
+      "passed": 1,
+      "discovery_sha256": "d816660df08ed1fc8000e96ea2241c5de88b6759ce89b0272d6726e66ee8d029",
+      "actual_sha256": "1c0e7cea7630ee6be70ac5ec501261e9aeea025ac950a62861642568eeafaf84"
+    }
+  ],
+  "original_artifacts": [
+    {
+      "id": 10954889182,
+      "kind": "receipt",
+      "zip_sha256": "e329c5b4ec4ed120e79cbe26944811f028e54cfe49964903509f7f75798bd0ae",
+      "members": 4,
+      "bytes": 31593
+    },
+    {
+      "id": 10954814654,
+      "kind": "source",
+      "zip_sha256": "14aae48ee5a1fa2ed0ace831202e69bba0231779f55312c40f3354c4bd964e73",
+      "members": 2,
+      "bytes": 4491
+    },
+    {
+      "id": 10954794562,
+      "kind": "product",
+      "zip_sha256": "7ca052901df9a0febd3c7c5b2e37c052d60e99714a3d4a381c21fceb5c450444",
+      "members": 2,
+      "bytes": 9852
+    },
+    {
+      "id": 10954749940,
+      "kind": "log",
+      "zip_sha256": "9a6b7bd61a0b0670b527e8275f050b8a581fa6c15099f893d4f40c73bcc4479f",
+      "members": 188,
+      "bytes": 1243622
+    }
+  ],
+  "raw_producer_bindings": {
+    "schema_version": 1,
+    "workflow_run": 36386346752,
+    "producer_commit": "b5eb32e713a32570200107a019f7fc06574efae6",
+    "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "source_manifest_entries": 39,
+    "product_receipt_source_binding_entries": 28,
+    "unique_git_paths": 49,
+    "producer_sha256_matches": 49,
+    "git_hash_object_no_filters_matches": 49,
+    "current_changed_paths": [
+      ".github/workflows/gchat-live-regressions.yml"
+    ],
+    "current_unchanged_paths": 48,
+    "excluded_generated_or_nonpath_receipt_digests": [
+      {
+        "receipt_key": "binary",
+        "reason": "Generated test executable digest, not a repository path; excluded from raw Git-blob binding."
+      },
+      {
+        "receipt_key": "openclaw_source_fixture",
+        "reason": "Generated runtime fixture digest, not a repository path; excluded from raw Git-blob binding."
+      }
+    ],
+    "bindings": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "c8beeaf7f393fb4e37e068b861bef0e12b224456",
+        "extracted_sha256": "c1256d38b6526af7682596b75d6d2998bd75005659dce014089321d430241eb1",
+        "manifest_sha256": "c1256d38b6526af7682596b75d6d2998bd75005659dce014089321d430241eb1",
+        "receipt_sha256": "c1256d38b6526af7682596b75d6d2998bd75005659dce014089321d430241eb1",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "c8beeaf7f393fb4e37e068b861bef0e12b224456",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "8671cbd41a014c5acd90121f9dc2ba18a7143f5b",
+        "current_exists": true,
+        "changed_at_current_head": true,
+        "byte_count": 33555
+      },
+      {
+        "path": "packaging/converted_channel_relink_product_canary.py",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "20be27ca34fb6d352b327ced8f8a2af50221bf62",
+        "extracted_sha256": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+        "manifest_sha256": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+        "receipt_sha256": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "20be27ca34fb6d352b327ced8f8a2af50221bf62",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "20be27ca34fb6d352b327ced8f8a2af50221bf62",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 26146
+      },
+      {
+        "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "072eca898bd3128fce63579afe0fe71fecf24e3c",
+        "extracted_sha256": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91",
+        "manifest_sha256": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91",
+        "receipt_sha256": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "072eca898bd3128fce63579afe0fe71fecf24e3c",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "072eca898bd3128fce63579afe0fe71fecf24e3c",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 11201
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+        "extracted_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+        "manifest_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+        "receipt_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 385403
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/Cargo.toml",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "86b02711188fd588fc598a578f3b8d7a1567bafa",
+        "extracted_sha256": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+        "manifest_sha256": null,
+        "receipt_sha256": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "86b02711188fd588fc598a578f3b8d7a1567bafa",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "86b02711188fd588fc598a578f3b8d7a1567bafa",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 490
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "b695cf8e1bbedf82025441e54227f080060d42a3",
+        "extracted_sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+        "manifest_sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+        "receipt_sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "b695cf8e1bbedf82025441e54227f080060d42a3",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "b695cf8e1bbedf82025441e54227f080060d42a3",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 384625
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "139ecaf877f9756d3095fab0d1f04745235c0fc2",
+        "extracted_sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+        "manifest_sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+        "receipt_sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "139ecaf877f9756d3095fab0d1f04745235c0fc2",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "139ecaf877f9756d3095fab0d1f04745235c0fc2",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 6225
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "8119f09318695dd97bb4f051f28e42294105b51e",
+        "extracted_sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+        "manifest_sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+        "receipt_sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "8119f09318695dd97bb4f051f28e42294105b51e",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "8119f09318695dd97bb4f051f28e42294105b51e",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 16729
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929",
+        "extracted_sha256": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+        "manifest_sha256": null,
+        "receipt_sha256": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "fbeaf6adc96c262a5682732f4d3b9d9606faf929",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 105244
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13",
+        "extracted_sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+        "manifest_sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+        "receipt_sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 14873
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8",
+        "extracted_sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+        "manifest_sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+        "receipt_sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "4bf85ff9bc115afb4921a73e0ac244cc43568df8",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 22524
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+        "extracted_sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+        "manifest_sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+        "receipt_sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 46356
+      },
+      {
+        "path": "SRC/neothd/src/channels/gchat.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "5762ace8c3311f9f1b07002034939b1a7915939c",
+        "extracted_sha256": "22e952f89c39284aa4ad7ed9acb3f3e4f6e0a883a4f7477325f8145892071f13",
+        "manifest_sha256": "22e952f89c39284aa4ad7ed9acb3f3e4f6e0a883a4f7477325f8145892071f13",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "5762ace8c3311f9f1b07002034939b1a7915939c",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "5762ace8c3311f9f1b07002034939b1a7915939c",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 33355
+      },
+      {
+        "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "664678368a6f21332253924f6cb09e40445cdd20",
+        "extracted_sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+        "manifest_sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+        "receipt_sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "664678368a6f21332253924f6cb09e40445cdd20",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "664678368a6f21332253924f6cb09e40445cdd20",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 45305
+      },
+      {
+        "path": "SRC/neothd/src/channels/readiness.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "2967d3fe2db55b280c87013a3003d839908dd623",
+        "extracted_sha256": "fdea04b1e19e724b8b8704d48b4325d90f1e9219361deefd017cebe4678f2d93",
+        "manifest_sha256": "fdea04b1e19e724b8b8704d48b4325d90f1e9219361deefd017cebe4678f2d93",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "2967d3fe2db55b280c87013a3003d839908dd623",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "2967d3fe2db55b280c87013a3003d839908dd623",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 7340
+      },
+      {
+        "path": "SRC/neothd/src/channels/registry.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "630ca32862f82283866df705158dfc57cfd9889d",
+        "extracted_sha256": "c1369cf88a582542094299c66cd675a89275a68bbd0502b4598809672104f2de",
+        "manifest_sha256": "c1369cf88a582542094299c66cd675a89275a68bbd0502b4598809672104f2de",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "630ca32862f82283866df705158dfc57cfd9889d",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "630ca32862f82283866df705158dfc57cfd9889d",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 39628
+      },
+      {
+        "path": "SRC/neothd/src/channels/relink.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8",
+        "extracted_sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+        "manifest_sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+        "receipt_sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 62987
+      },
+      {
+        "path": "SRC/neothd/src/channels/routing.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "f6f08083ee1a6747f3ba7469a787540064a3ecdd",
+        "extracted_sha256": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+        "manifest_sha256": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+        "receipt_sha256": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "f6f08083ee1a6747f3ba7469a787540064a3ecdd",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "f6f08083ee1a6747f3ba7469a787540064a3ecdd",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 43011
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel_relink.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "74a0243d1122cf33d97cb5a8827a4572168ccdda",
+        "extracted_sha256": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+        "manifest_sha256": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+        "receipt_sha256": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "74a0243d1122cf33d97cb5a8827a4572168ccdda",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "74a0243d1122cf33d97cb5a8827a4572168ccdda",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 2937
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+        "extracted_sha256": "0583ceecfa29abddf8104522581c572a1dcaf033ba290b34b5da068a434c7f05",
+        "manifest_sha256": "0583ceecfa29abddf8104522581c572a1dcaf033ba290b34b5da068a434c7f05",
+        "receipt_sha256": "0583ceecfa29abddf8104522581c572a1dcaf033ba290b34b5da068a434c7f05",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "d0a9bebda6b3e7bf5f258f8715af1cfd218a3291",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 363645
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "358ff8824872b5c4af063c737f66ca080c83e351",
+        "extracted_sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+        "manifest_sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+        "receipt_sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "358ff8824872b5c4af063c737f66ca080c83e351",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "358ff8824872b5c4af063c737f66ca080c83e351",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 14493
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "0022464767bec442b7ac84529aca23df977621d2",
+        "extracted_sha256": "75fd27b611cf5e9a71d2ade4b9fde176e213a1b7f6c9ae1fea9ba9a4f40b661a",
+        "manifest_sha256": "75fd27b611cf5e9a71d2ade4b9fde176e213a1b7f6c9ae1fea9ba9a4f40b661a",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "0022464767bec442b7ac84529aca23df977621d2",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "0022464767bec442b7ac84529aca23df977621d2",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 18951
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "6ab835033602be6dfbb302325d64cc2544dda17c",
+        "extracted_sha256": "a298c53b3ee84caa62faa497db7d70493bd44fe1d2984cc3799a6bfbae4ccd9f",
+        "manifest_sha256": "a298c53b3ee84caa62faa497db7d70493bd44fe1d2984cc3799a6bfbae4ccd9f",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "6ab835033602be6dfbb302325d64cc2544dda17c",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "6ab835033602be6dfbb302325d64cc2544dda17c",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 33238
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "98228e81bd055396d95b8852ce2198c571fafe13",
+        "extracted_sha256": "f2a12c8b80d0e37ebea477ae5dbcaac7d1843830be30a1d1365dd12032a061aa",
+        "manifest_sha256": "f2a12c8b80d0e37ebea477ae5dbcaac7d1843830be30a1d1365dd12032a061aa",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "98228e81bd055396d95b8852ce2198c571fafe13",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "98228e81bd055396d95b8852ce2198c571fafe13",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 18993
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/participants.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "02ff66fc19b7ed222fa478350d6f22d610dc7a06",
+        "extracted_sha256": "74b86604a035585b99f343bc5dae1a46e27c27f227ff0a6c61ccaeaa6e81b09a",
+        "manifest_sha256": "74b86604a035585b99f343bc5dae1a46e27c27f227ff0a6c61ccaeaa6e81b09a",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "02ff66fc19b7ed222fa478350d6f22d610dc7a06",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "02ff66fc19b7ed222fa478350d6f22d610dc7a06",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 28502
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "32149bb19ecceb25e3132bc28369f71207210ac1",
+        "extracted_sha256": "5164f1b2d04a887147c0484ff5a63cad9213775f306eef31360995175704083b",
+        "manifest_sha256": "5164f1b2d04a887147c0484ff5a63cad9213775f306eef31360995175704083b",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "32149bb19ecceb25e3132bc28369f71207210ac1",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "32149bb19ecceb25e3132bc28369f71207210ac1",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 15943
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "926e8f6ed9fa5388dea75d77a8816dadfe6d1f29",
+        "extracted_sha256": "75fcdf32a06a221c83b16a6d6fba53b00a2695d85a008200bcb97962b440d7bf",
+        "manifest_sha256": "75fcdf32a06a221c83b16a6d6fba53b00a2695d85a008200bcb97962b440d7bf",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "926e8f6ed9fa5388dea75d77a8816dadfe6d1f29",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "926e8f6ed9fa5388dea75d77a8816dadfe6d1f29",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 24575
+      },
+      {
+        "path": "SRC/neothd/src/cli/init.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "19b94663f34755bba0560b74c79c54396b8c0658",
+        "extracted_sha256": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+        "manifest_sha256": null,
+        "receipt_sha256": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "19b94663f34755bba0560b74c79c54396b8c0658",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "19b94663f34755bba0560b74c79c54396b8c0658",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 136759
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "411efb49c119920ec81c69f253405ab8a5bb692d",
+        "extracted_sha256": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+        "manifest_sha256": null,
+        "receipt_sha256": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "411efb49c119920ec81c69f253405ab8a5bb692d",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "411efb49c119920ec81c69f253405ab8a5bb692d",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 30536
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/io.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+        "extracted_sha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+        "manifest_sha256": null,
+        "receipt_sha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "d7646518596245a7c86137fd46f6e7619a73cc90",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 73804
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/steps_identity.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "62928810ff3a68af0441a548e7dd9bca672b1512",
+        "extracted_sha256": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+        "manifest_sha256": null,
+        "receipt_sha256": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "62928810ff3a68af0441a548e7dd9bca672b1512",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "62928810ff3a68af0441a548e7dd9bca672b1512",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 12965
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/steps_provider.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3",
+        "extracted_sha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+        "manifest_sha256": null,
+        "receipt_sha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "425868fd09b61d7a2df443d5a60ca5cc545236c3",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 33305
+      },
+      {
+        "path": "SRC/neothd/src/cli/mod.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "353d4f568040faad633a63c02e1ee4e4b8487fc0",
+        "extracted_sha256": "07ba442d577d029cfd8a919ce796ad580f6a29e67267f72a7bb68de34e57f164",
+        "manifest_sha256": "07ba442d577d029cfd8a919ce796ad580f6a29e67267f72a7bb68de34e57f164",
+        "receipt_sha256": "07ba442d577d029cfd8a919ce796ad580f6a29e67267f72a7bb68de34e57f164",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "353d4f568040faad633a63c02e1ee4e4b8487fc0",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "353d4f568040faad633a63c02e1ee4e4b8487fc0",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 125733
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "e695b098095f22669c31087721d55a0b06316f74",
+        "extracted_sha256": "9abdad49fc1fe5f9089f235f398c33c700d62d3e26c13f5b5b627663b56a6d66",
+        "manifest_sha256": "9abdad49fc1fe5f9089f235f398c33c700d62d3e26c13f5b5b627663b56a6d66",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "e695b098095f22669c31087721d55a0b06316f74",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "e695b098095f22669c31087721d55a0b06316f74",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 82291
+      },
+      {
+        "path": "SRC/neothd/src/cli/reload.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "8183066d2f3873d42bc9bf661e01ddda7ddb2e7b",
+        "extracted_sha256": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+        "manifest_sha256": null,
+        "receipt_sha256": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "8183066d2f3873d42bc9bf661e01ddda7ddb2e7b",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "8183066d2f3873d42bc9bf661e01ddda7ddb2e7b",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 4632
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "ea6a8b8f588f37ec7204b116efb6c8d3c204f553",
+        "extracted_sha256": "3f3ec3e8a359ba8cffae712d012c54b1b5dbc0c72fbeaa4ab3781bfd38aff6ad",
+        "manifest_sha256": "3f3ec3e8a359ba8cffae712d012c54b1b5dbc0c72fbeaa4ab3781bfd38aff6ad",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "ea6a8b8f588f37ec7204b116efb6c8d3c204f553",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "ea6a8b8f588f37ec7204b116efb6c8d3c204f553",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 568474
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials.rs",
+        "sources": [
+          "source/SHA256SUMS.txt",
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "237606471f0fa49bab37cf0a2319f5ec07c71d0f",
+        "extracted_sha256": "301e3bbdbefa7f486e6e32b7bada80af2cbaf5466fe5b4d103fc2ee5313d8eae",
+        "manifest_sha256": "301e3bbdbefa7f486e6e32b7bada80af2cbaf5466fe5b4d103fc2ee5313d8eae",
+        "receipt_sha256": "301e3bbdbefa7f486e6e32b7bada80af2cbaf5466fe5b4d103fc2ee5313d8eae",
+        "manifest_match": true,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "237606471f0fa49bab37cf0a2319f5ec07c71d0f",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "237606471f0fa49bab37cf0a2319f5ec07c71d0f",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 436727
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "2b1526db970be54b43944aa8e063dd37d9b5a7f6",
+        "extracted_sha256": "2553c3e7f164952738be3a04365e88ffa4be318cffabce1ad5cea336a5094d45",
+        "manifest_sha256": "2553c3e7f164952738be3a04365e88ffa4be318cffabce1ad5cea336a5094d45",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "2b1526db970be54b43944aa8e063dd37d9b5a7f6",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "2b1526db970be54b43944aa8e063dd37d9b5a7f6",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 37284
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "858a234f243717250188b606a5eb9bdfdfb90e85",
+        "extracted_sha256": "5ffdbeed9d8ada3919b083cd4b9d5366ebcd201baeafd1666e6d4d309d953c13",
+        "manifest_sha256": "5ffdbeed9d8ada3919b083cd4b9d5366ebcd201baeafd1666e6d4d309d953c13",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "858a234f243717250188b606a5eb9bdfdfb90e85",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "858a234f243717250188b606a5eb9bdfdfb90e85",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 20580
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "619d063eec337b19e21fc395e1c90a844633a4ac",
+        "extracted_sha256": "4acb8a1bb6b44484b431a427ab7da238b0640b301a399d90171fa21ff1b69c12",
+        "manifest_sha256": "4acb8a1bb6b44484b431a427ab7da238b0640b301a399d90171fa21ff1b69c12",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "619d063eec337b19e21fc395e1c90a844633a4ac",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "619d063eec337b19e21fc395e1c90a844633a4ac",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 32890
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/slack_migration/tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "17ff334ea643a3a7f8bb63969193410e9dce9f4d",
+        "extracted_sha256": "6967287db54d9a6452ec6ba01e899e0f3154293bc4edd8a7827edac74665d983",
+        "manifest_sha256": "6967287db54d9a6452ec6ba01e899e0f3154293bc4edd8a7827edac74665d983",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "17ff334ea643a3a7f8bb63969193410e9dce9f4d",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "17ff334ea643a3a7f8bb63969193410e9dce9f4d",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 15485
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/telegram_migration.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "17f2d19d23ea2cb8279ebb77c939172cc1c176db",
+        "extracted_sha256": "23633cf11555ad41dc13ec01a9530e6afbfc871ff6ec4212982edd4f7575c5f8",
+        "manifest_sha256": "23633cf11555ad41dc13ec01a9530e6afbfc871ff6ec4212982edd4f7575c5f8",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "17f2d19d23ea2cb8279ebb77c939172cc1c176db",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "17f2d19d23ea2cb8279ebb77c939172cc1c176db",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 32932
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/telegram_migration/tests.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "5ebfe267b010489f8bab6b62ea76411cac349226",
+        "extracted_sha256": "8caac6c1b24659fe0009ff49f50853727450e4fb96fc0ba3e2c56f403ded01dc",
+        "manifest_sha256": "8caac6c1b24659fe0009ff49f50853727450e4fb96fc0ba3e2c56f403ded01dc",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "5ebfe267b010489f8bab6b62ea76411cac349226",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "5ebfe267b010489f8bab6b62ea76411cac349226",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 19169
+      },
+      {
+        "path": "SRC/neothd/src/config/wal.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "ccbb9827a78905555a9e222a3e4b5103a8a074a2",
+        "extracted_sha256": "c71194429b5bccbd5be098c8343c9841c70f3c7e67afdf2c7386f7f5c10ef888",
+        "manifest_sha256": null,
+        "receipt_sha256": "c71194429b5bccbd5be098c8343c9841c70f3c7e67afdf2c7386f7f5c10ef888",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "ccbb9827a78905555a9e222a3e4b5103a8a074a2",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "ccbb9827a78905555a9e222a3e4b5103a8a074a2",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 7317
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "6b8a8aa30a29fa3cb1653ee12a6c4911b183e2c3",
+        "extracted_sha256": "4760057ff856915bf6f2b2cd3d8deaf4fe57512c5d3a7b5d852d92ac6630b094",
+        "manifest_sha256": "4760057ff856915bf6f2b2cd3d8deaf4fe57512c5d3a7b5d852d92ac6630b094",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "6b8a8aa30a29fa3cb1653ee12a6c4911b183e2c3",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "6b8a8aa30a29fa3cb1653ee12a6c4911b183e2c3",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 23730
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "37718626051d545a84454287ba838e5e91de4378",
+        "extracted_sha256": "a0b20623559b987f73be6d2b7e519b4c2679975736693b108e515c96593aeb66",
+        "manifest_sha256": "a0b20623559b987f73be6d2b7e519b4c2679975736693b108e515c96593aeb66",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "37718626051d545a84454287ba838e5e91de4378",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "37718626051d545a84454287ba838e5e91de4378",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 183140
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "2f70adfdb5b0efcb42961d879844c7b72be14ab9",
+        "extracted_sha256": "029098d7abd6944e461f44f44cd73476b1de1c7b0aca394e4a96f80748682736",
+        "manifest_sha256": "029098d7abd6944e461f44f44cd73476b1de1c7b0aca394e4a96f80748682736",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "2f70adfdb5b0efcb42961d879844c7b72be14ab9",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "2f70adfdb5b0efcb42961d879844c7b72be14ab9",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 430244
+      },
+      {
+        "path": "SRC/neothd/src/wal/master_key.rs",
+        "sources": [
+          "product/receipt/receipt.json#source_bindings"
+        ],
+        "producer_blob": "b6e7d83e72ee1f8b517ff5c9e9523e94bfcf3eb3",
+        "extracted_sha256": "45d34471f65a2f5007b4968801ed36d8dd91c473fd6085cbd2536953cd1b1ed5",
+        "manifest_sha256": null,
+        "receipt_sha256": "45d34471f65a2f5007b4968801ed36d8dd91c473fd6085cbd2536953cd1b1ed5",
+        "manifest_match": null,
+        "receipt_match": true,
+        "git_hash_object_no_filters": "b6e7d83e72ee1f8b517ff5c9e9523e94bfcf3eb3",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "b6e7d83e72ee1f8b517ff5c9e9523e94bfcf3eb3",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 16649
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "sources": [
+          "source/SHA256SUMS.txt"
+        ],
+        "producer_blob": "219e564be5201c75c9ee3b7ee805003c9a118591",
+        "extracted_sha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+        "manifest_sha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+        "receipt_sha256": null,
+        "manifest_match": true,
+        "receipt_match": null,
+        "git_hash_object_no_filters": "219e564be5201c75c9ee3b7ee805003c9a118591",
+        "git_hash_match": true,
+        "current_head": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+        "current_blob": "219e564be5201c75c9ee3b7ee805003c9a118591",
+        "current_exists": true,
+        "changed_at_current_head": false,
+        "byte_count": 59661
+      }
+    ]
+  },
+  "product": {
+    "initial_setup": {
+      "at_rest_encryption": "aes256_gcm_siv",
+      "created_without_restore": true,
+      "method": "neoth_init_cli_license_provider_skip",
+      "policy_set_after_init": true
+    },
+    "requests": {
+      "ping": 3,
+      "post": 0,
+      "target": 2,
+      "unexpected_get": 0,
+      "wrong_target": 1
+    },
+    "first": {
+      "already_ready": false,
+      "reload_requested": true
+    },
+    "wrong_target": {
+      "credentials_absent": true,
+      "pending_record_present": true,
+      "ready_transaction_absent": true,
+      "reload_absent": true,
+      "routing_absent": true
+    },
+    "cleanup": {
+      "evidence_retained": true,
+      "home_removed": true,
+      "source_removed": true,
+      "wrong_target_home_removed": true
+    },
+    "retry": {
+      "already_ready": true,
+      "reload_requested": true
+    },
+    "outcome": "passed"
+  },
+  "roadmap": {
+    "closed_leaf": "GOLD-LF-001-10",
+    "qa_test": "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime",
+    "parent_stays_open": true,
+    "harness": "Executed18 batch regressions retain deterministic4-account fixtures, collisions, drift, failure and recovery"
+  },
+  "limits": [
+    "Public product is an iMessage/BlueBubbles loopback exercise; no external provider or daemon reload-adoption acceptance",
+    "Full Keychain, routing/Ready, traffic cutover and overall Plan001 remain open",
+    "Linux2106 andWindows868 are still pending on9fc9e065",
+    "The only bridged file difference is workflow selection94 to96; no claim that96 already ran",
+    "No local executable validation"
+  ],
+  "localExecutableValidationRan": false
+}

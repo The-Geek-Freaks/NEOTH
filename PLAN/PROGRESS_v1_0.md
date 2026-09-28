@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1831 File-batch behavior and QA exclusion accepted (2026-09-28):**
+Focused94run36386346752 onb5eb32e7 completed successfully, including the
+actual public CLI loopback relink product. Root authenticated all4 original
+ZIPs and checked94 exact discovery/one-test success terminals,18 of them
+file-batch regressions. Independent raw verification proves49 producer Git
+paths bySHA256 plus git hash-object;48 are unchanged at9fc9e065 and the only
+change is the workflow's extra2 existing identity selections (94 to96).
+GOLD-LF-001-10 is closed: the actual pinned QA identity is rejected by both
+resolvers, typed ChannelId and runtime ChannelRef; deterministic four-account
+batch fixtures execute collision, provider/drift refusal and crash recovery.
+Evidence: docs/verification/gold-wave1831-focused94-admission.json.
+The Relink product proves initial setup, first apply, idempotent retry,
+wrong-target blocking and4 cleanup results. It does not prove external
+Google Chat or daemon reload adoption; LF00112 and full migration stay open.
+Linux2106run36387777581 and Windows868run36387780331 continue on9fc9e065;
+no duplicate96 run is needed before their identity results. No Keychain
+implementation is approved. ROAD1324/1079/243/2:245 raw/244 pre-tag blockers;
+WS-LF41done/77open. No local executable validation ran.
+
 **W1829 WhatsApp identity acceptance selection (2026-09-28):**
 The existing production alias regression is now required: operator whatsapp
 resolves to Business; OpenClaw migration whatsapp resolves to Baileys. The
@@ -10013,7 +10032,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture accepted: **40 done / 78
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture and LF-001-10 QA exclusion/harness accepted: **41 done / 77
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

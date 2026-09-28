@@ -524,7 +524,7 @@ Additionally:
 - [ ] All 12 missing official adapters are implemented and clean-machine qualified.
 - [ ] Voice Call and WebChat are first-class, fully gated surfaces.
 - [ ] WeChat, Yuanbao, and Zalo ClawBot are either source-verified and fully managed or carry an explicit evidence-backed release decision; docs-only support claims are forbidden.
-- [ ] QA Channel remains excluded from runtime while its deterministic multi-account harness patterns are adopted.
+- [x] QA Channel remains excluded from runtime while its deterministic multi-account harness patterns are adopted. **Accepted 2026-09-28 (W1831):** the pinned QA resolver/typed-reference boundary and18 four-account migration regressions passed in authentic Focused94; see `docs/verification/gold-wave1831-focused94-admission.json` for source bridge and scope.
 - [ ] WhatsApp Baileys and WhatsApp Business remain distinct; OpenClaw WhatsApp never maps to Business.
 - [ ] iMessage and Google Chat transport conversions are guided relinks with blocked-until-probed activation.
 - [ ] OpenClaw migration supports plan/apply/status/rollback, exact source binding, atomicity, crash resume, idempotency, and secret-redacted audit.

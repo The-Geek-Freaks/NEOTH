@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Pinned fixture accepted; QA and WhatsApp identity gates pending; batch fixtures repaired",
+  "status": "Focused94 file-batch andQA exclusion admitted; Linux2106/Windows868 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266625,
-    "sha256": "EFCB05461D1F66771A42E6EF7E55C075A8852AA40218F8664112CC7307A2F2F2"
+    "bytes": 266804,
+    "sha256": "05C259E28D5196111B7605C938BF55FF88DC5232EF3681DCBB4648BBDC0E25A9"
   },
-  "sourceInputs": 1479,
+  "sourceInputs": 1480,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -56353,8 +56353,8 @@
     "requiredTests": [
       "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime"
     ],
-    "status": "Source registered; hosted behavior pending",
-    "note": "Canonical, alias, migration, typed-channel and runtime ChannelRef exclusion with positive Telegram control. QA leaf stays open pending targeted hosted receipt and batch harness evidence."
+    "status": "Accepted in authenticFocused94 run36386346752 atb5eb32e7; unchanged Rust source bridged to9fc9e065",
+    "note": "QA canonical/alias/migration/typed-reference exclusions and Telegram positive control executed. W1831 also proves18 batch harness regressions; LF00110 closed. Native2106/868 remain separate pending gates."
   },
   "wave1825BatchFixtures": {
     "base": "1bfcf4f09cd0c3e67936945faf8807285d275bba",
@@ -56504,6 +56504,44 @@
       }
     ],
     "note": "Select existing WhatsApp operator/migration alias invariant plus canonical registry proof. Linux2106, Windows868, Focused96, Portable2316. No production/Rust test changes. LF00111 open; no live-provider or transport qualification inferred.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1831Focused94Admission": {
+    "base": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1831-focused94-admission.json",
+        "bytes": 96364,
+        "sha256": "004058B6563280F67577290466A4B684A8ED50ABFBC9FBD767E0637909A67E8A",
+        "blob": "8b86c669c8690514290b482470a6e82582a11b28"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 510304,
+        "sha256": "55866E187DEB0FF890BACADDE6477D1FDDA2BDB6A2B1546B4F3619AD838B45CA",
+        "blob": "7dc10315b4a3203e9881ee41df35d8f0fb6930d1"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1546572,
+        "sha256": "C57A9AB3482F4C8AE534EB19EEC663EFDA1471089C2B548CE2A14CB0AB8C381D",
+        "blob": "9bbed5f8e2225e8e1763a2150074d2656461b2bd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2157675,
+        "sha256": "5DE844EBFEA1C6CB20BD8D8C8235218F662B5071364C13C4186CDABEC4CAFF03",
+        "blob": "57149caa9c7ff5394c19f04c37256e3d381ad92f"
+      },
+      {
+        "path": "plans/001-openclaw-channel-migration-parity.md",
+        "bytes": 55303,
+        "sha256": "626A8D257CB59E9833D1A61DB16AE9A2A0F1A1C3477DFDC5C736AA50D875D4D1",
+        "blob": "b020d8224812e8392ec69e130b2e0b82044dce7d"
+      }
+    ],
+    "note": "Four original API-digest ZIPs,94 named discovery/one-test terminals,49 raw producerbindings.18 batch cases andQA94 prove LF00110. Loopback CLI Relink passes but does not prove externalprovider or reloadadoption. Onlyworkflow94to96 differs fromproducer tocurrent; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1831 File-batch behavior and QA exclusion accepted (2026-09-28):**
+Focused94run36386346752 onb5eb32e7 completed successfully, including the
+actual public CLI loopback relink product. Root authenticated all4 original
+ZIPs and checked94 exact discovery/one-test success terminals,18 of them
+file-batch regressions. Independent raw verification proves49 producer Git
+paths bySHA256 plus git hash-object;48 are unchanged at9fc9e065 and the only
+change is the workflow's extra2 existing identity selections (94 to96).
+GOLD-LF-001-10 is closed: the actual pinned QA identity is rejected by both
+resolvers, typed ChannelId and runtime ChannelRef; deterministic four-account
+batch fixtures execute collision, provider/drift refusal and crash recovery.
+Evidence: docs/verification/gold-wave1831-focused94-admission.json.
+The Relink product proves initial setup, first apply, idempotent retry,
+wrong-target blocking and4 cleanup results. It does not prove external
+Google Chat or daemon reload adoption; LF00112 and full migration stay open.
+Linux2106run36387777581 and Windows868run36387780331 continue on9fc9e065;
+no duplicate96 run is needed before their identity results. No Keychain
+implementation is approved. ROAD1324/1079/243/2:245 raw/244 pre-tag blockers;
+WS-LF41done/77open. No local executable validation ran.
+
 **W1829 WhatsApp identity acceptance selection (2026-09-28):**
 The existing production alias regression is now required: operator whatsapp
 resolves to Business; OpenClaw migration whatsapp resolves to Baileys. The
