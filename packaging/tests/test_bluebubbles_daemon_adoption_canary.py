@@ -20,8 +20,17 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
         def __init__(self, pid: int, returncode: int | None = None) -> None:
             self.pid = pid
             self.returncode = returncode
+            self.signals: list[int] = []
 
         def poll(self) -> int | None:
+            return self.returncode
+
+        def send_signal(self, value: int) -> None:
+            self.signals.append(value)
+
+        def wait(self, timeout: float) -> int:
+            if self.returncode is None:
+                self.returncode = 0
             return self.returncode
 
     @staticmethod
@@ -142,6 +151,59 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             process = self._Process(os.getpid(), returncode=1)
             with self.assertRaisesRegex(canary.Failure, "daemon_exited_early"):
                 canary.require_daemon_pid_lock(process, Path(directory))
+
+    def test_nonzero_daemon_exit_is_retained_as_lifecycle_failure_but_not_reported_live(self):
+        process = self._Process(4242, returncode=1)
+        with self.assertRaisesRegex(canary.Failure, "daemon_stop_failed"):
+            canary.stop_daemon(process)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home, source_path, log, evidence = root / "home", root / "source", root / "daemon.log", root / "evidence"
+            home.mkdir()
+            source_path.write_text("{}", encoding="utf-8")
+            log.write_text("redacted", encoding="utf-8")
+            evidence.mkdir()
+            flags = canary.cleanup(root, home, source_path, log, process, evidence)
+        self.assertTrue(flags["daemon_reaped"])
+
+    def test_execute_preserves_primary_failure_over_all_teardown_failures(self):
+        class Services:
+            port = 43123
+
+            def start(self) -> None:
+                return
+
+            def stop(self) -> bool:
+                return False
+
+        process = self._Process(4242)
+
+        def stopped_nonzero(child: _Process) -> None:
+            child.returncode = 1
+            raise canary.Failure("daemon_stop_failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home, source_path, evidence = root / "neoth-home", root / "openclaw.json", root / "evidence"
+            state = {"daemon": None}
+            with patch.object(canary, "source_bindings", return_value={}), patch.object(canary, "LoopbackServices", return_value=Services()), patch.object(canary, "source"), patch.object(canary, "init_home"), patch.object(canary, "grant_loopback_provider_consent"), patch.object(canary, "start_daemon", return_value=process), patch.object(canary, "wait_for_daemon_ready", side_effect=canary.Failure("daemon_ready_timeout")), patch.object(canary, "stop_daemon", side_effect=stopped_nonzero):
+                with self.assertRaisesRegex(canary.Failure, "daemon_ready_timeout"):
+                    canary.execute(Path("/tmp/neoth"), root, home, source_path, evidence, Path("workflow.yml"), state)
+            diagnostic = json.loads((evidence / "daemon-diagnostics.json").read_text(encoding="utf-8"))
+            self.assertEqual(diagnostic["primary_failure"], "daemon_ready_timeout")
+            self.assertEqual(diagnostic["primary_phase"], "readiness")
+            self.assertEqual(diagnostic["stop_failure"], "daemon_stop_failed")
+            self.assertEqual(diagnostic["loopback_failure"], "loopback_cleanup_failed")
+            self.assertIsNone(state["daemon"])
+            flags = canary.cleanup(root, home, source_path, root / "daemon.log", state["daemon"], evidence)
+            self.assertTrue(flags["daemon_reaped"])
+            self.assertEqual(canary.receipt_payload(None, "daemon_ready_timeout", flags, "0" * 40)["outcome"], "failed")
+
+    def test_teardown_failures_remain_fatal_in_daemon_then_loopback_order(self):
+        with self.assertRaisesRegex(canary.Failure, "daemon_stop_failed"):
+            canary.raise_teardown_failure(canary.Failure("daemon_stop_failed"), canary.Failure("loopback_cleanup_failed"))
+        with self.assertRaisesRegex(canary.Failure, "loopback_cleanup_failed"):
+            canary.raise_teardown_failure(None, canary.Failure("loopback_cleanup_failed"))
 
     @unittest.skipUnless(canary.fcntl is not None, "Unix flock proof is hosted on Linux")
     def test_unlocked_pidfile_is_rejected_even_when_its_pid_is_live(self):

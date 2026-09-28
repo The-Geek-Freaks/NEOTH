@@ -201,7 +201,14 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
         );
         return Err(BridgeError::ForeignOrMismatch);
     }
-    if !requested_slot_still_names(vault, binding.identity_token()) {
+    let published_identity = binding.identity_token().to_owned();
+    // The mutation binding requests DELETE access on Windows. Release it before
+    // reopening the published slot through cap-std, whose directory handle does
+    // not share DELETE access; the captured identity remains the revalidation
+    // fence for the newly opened slot.
+    drop(binding);
+    drop(stage);
+    if !requested_slot_still_names(vault, &published_identity) {
         return Err(BridgeError::ForeignOrMismatch);
     }
     Ok(view(BridgeStatus::InstalledDisabled))

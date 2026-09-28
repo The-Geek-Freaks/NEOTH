@@ -29,6 +29,13 @@ neoth status
 | `neoth doctor` | Diagnose setup, providers, channels, local models, WAL, policy. |
 | `neoth status` | Show daemon, memory, provider, channel, cluster, and model status. |
 
+`neoth onboarding-status` shows setup readiness and all configured messaging
+channels that pass the shared configuration probe, including Slack, Keet and
+Discord. The Markdown list and the JSON `enabled_channels` array use the same
+order. Existing JSON fields `telegram_enabled` and `whatsapp_enabled` remain
+available for older scripts. This is a setup snapshot; use `neoth status` to
+check the running daemon and listeners.
+
 ## Chat and recall
 
 ```bash

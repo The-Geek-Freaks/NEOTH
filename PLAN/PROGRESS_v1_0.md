@@ -2,6 +2,35 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1874-W1877 Windows recovery, complete status projection and daemon diagnostics (2026-09-28; hosted pending):**
+Root authenticated Windows889 run36415338533 at913a57ab against original10968977368
+ZIP/API SHA256 cb1c8bf514c950e8672ac3fc4a7bc41683ec572213720587098b0c68961603e4:
+889 exact discovery/terminal pairs,900 receipt hashes,140 unique raw producer/input
+bindings agree. It executed874PASS/15FAIL/0missing (9ArXiv,5Obsidian,1n8n).
+W1873 ArXiv repair aaefb26b is published; Preflight36421408265 is green and
+macOS25 run36421784463 was dispatched once on that source, still active.
+W1876 releases the Windows DELETE mutation handle after a successful bound rename
+before reopening the slot, preserving captured identity/no-follow revalidation.
+The n8n starter descriptions retain their bounded semantics and restore their
+four documented backlog references; the existing classification test is retained.
+W1875 fixes onboarding-status losing Slack/Keet/Discord after canonical readiness:
+full ordered Markdown/additive JSON enabled_channels, legacy booleans preserved.
+Independent source review approved. Eight new catalog entries + two existing
+status cases select portable2365/Linux2140/Windows925/channel128/macOS41.
+Fresh executable validation of these repairs remains pending; no local runtime ran.
+Channel118 run36419695485 atd820f919 passed the focused test step and real public
+CLI relink step; original final acceptance is pending. Daemon original10969846555
+ZIP f84e3fff03f6ac49ad49f0e0d30686b41c60cd5d6e42d429553466bc7a984311 contains
+only daemon_stop_failed and no adoption summary. Adoption success is NOT proved:
+teardown could mask the primary failure. W1877 retains redacted primary phase/error,
+stop error and exit code, preserves the primary exception and correctly distinguishes
+an exited child from a clean exit; nonzero stop remains fatal. GChat reached its
+independent product step and failed refusal_probe_contract_invalid at wrong_target
+with all8 request counters zero (original10970450014 authenticated). Cause remains
+under bounded read-only review; no probe threshold is weakened. No duplicate
+native/channel dispatch, no ROAD checkbox closure.
+ROAD1324/1081done/241open/2partial;WS-LF43done/75open;243raw/242pre-tag unchanged.
+
 **W1872/W1873 ArXiv canonical request and macOS admission (2026-09-28):**
 Original macOS run36415343627 at913a57ab artifact10968766151 is authenticated
 against its API ZIP SHA256 f91514667fcf5332582c7cbc7ea17daf7502098c2595f7a7d9fb4087e738a7b1.

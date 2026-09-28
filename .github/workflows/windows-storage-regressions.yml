@@ -985,6 +985,16 @@ jobs:
           tools::arxiv::tests::search_clamps_max_results_to_50	neothd/src/tools/arxiv.rs
           tools::arxiv::tests::search_propagates_non_2xx_as_error	neothd/src/tools/arxiv.rs
           tools::arxiv::tests::search_does_not_follow_redirects	neothd/src/tools/arxiv.rs
+          cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_fully_configured_contains_ready_yes	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_shows_device_tier	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_channels_none_when_both_disabled	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::render_channels_telegram_when_enabled	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json	neothd/src/cli/onboarding_status.rs
+          cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json	neothd/src/cli/onboarding_status.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -1009,7 +1019,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 915 ]]; then
+          if [[ "$expected" -ne 925 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1095,7 +1105,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 915 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 925 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

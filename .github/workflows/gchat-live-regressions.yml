@@ -75,6 +75,7 @@ jobs:
             SRC/neothd/src/channels/probe.rs \
             SRC/neothd/src/cli/doctor/checks/onboarding.rs \
             SRC/neothd/src/cli/onboarding_readiness.rs \
+            SRC/neothd/src/cli/onboarding_status.rs \
             SRC/neothd/src/daemon/post_init_cron.rs \
             SRC/neothd/src/channels/slack.rs \
             SRC/neothd/src/channels/whatsapp_webhook.rs \
@@ -176,6 +177,16 @@ jobs:
             fi
           }
 
+          run_case 119 lib cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim --lib
+          run_case 120 lib cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory --lib
+          run_case 121 lib cli::onboarding_status::tests::render_fully_configured_contains_ready_yes cli::onboarding_status::tests::render_fully_configured_contains_ready_yes --lib
+          run_case 122 lib cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker --lib
+          run_case 123 lib cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker --lib
+          run_case 124 lib cli::onboarding_status::tests::render_shows_device_tier cli::onboarding_status::tests::render_shows_device_tier --lib
+          run_case 125 lib cli::onboarding_status::tests::render_channels_none_when_both_disabled cli::onboarding_status::tests::render_channels_none_when_both_disabled --lib
+          run_case 126 lib cli::onboarding_status::tests::render_channels_telegram_when_enabled cli::onboarding_status::tests::render_channels_telegram_when_enabled --lib
+          run_case 127 lib cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json --lib
+          run_case 128 lib cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json --lib
           run_case 97 lib cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml --lib
           run_case 98 lib cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key --lib
           run_case 99 lib cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model --lib
@@ -301,9 +312,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 118
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 118
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 118
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 128
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 128
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 128
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

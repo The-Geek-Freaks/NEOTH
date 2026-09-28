@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1873 ArXiv canonical URL reviewed; fresh hosted native gates pending",
+  "status": "W1875 status/W1876 Windows repairs/W1877 diagnostic preservation; fresh native and product execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269469,
-    "sha256": "B56A532886BAF04C843D67CB3901C23992699B2D943EC75F32AA9C27BA62B9CB"
+    "bytes": 269667,
+    "sha256": "DA704B5410D7B8FF988C50ED9BD1E7E0A8E8FDA65FCF21A7DE1EFC191F2FBC1E"
   },
-  "sourceInputs": 1494,
+  "sourceInputs": 1495,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7302,55 +7302,55 @@
     {
       "test": "installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::missing_vault_or_plugins_reports_absent",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::drift_repairs_known_payload_and_preserves_settings",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::foreign_slot_is_never_overwritten",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_keeps_data_and_foreign_extensions",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_removes_an_empty_authenticated_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::healthy_owned_slot_with_settings_is_idempotent_for_install_and_repair",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::competing_slot_before_publish_is_preserved",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
@@ -7464,25 +7464,25 @@
     {
       "test": "installers::obsidian_archive_bridge::tests::update_exact_predecessor_preserves_settings_extensions_and_vault",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::update_rejects_tampered_predecessor_without_mutating_any_file",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::repair_resumes_panic_interrupted_predecessor_update_without_losing_additions",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::repair_recovers_concurrent_payload_replacement_during_update",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
@@ -7560,13 +7560,13 @@
     {
       "test": "installers::obsidian_archive_bridge::tests::update_exact_0_1_1_predecessor_preserves_settings_extensions_and_vault",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::update_exact_0_1_1_predecessor_recovery_preserves_unknown_files",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+      "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
       "junitClass": "neoth"
     },
     {
@@ -8118,13 +8118,13 @@
     {
       "test": "cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "DFF611EDFBD47E69E059B7DAC13F42CED682DB66323077B1E2A1BF02EA508167",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "DFF611EDFBD47E69E059B7DAC13F42CED682DB66323077B1E2A1BF02EA508167",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
       "junitClass": "neoth"
     },
     {
@@ -10224,73 +10224,73 @@
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_has_its_required_trigger_configuration_and_http_wiring",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -11124,7 +11124,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::email_threat_starter_uses_pinned_text_only_imap_contract",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -11190,7 +11190,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::paperless_consult_starter_is_manual_question_lookup_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -11310,7 +11310,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::dream_obsidian_starter_syncs_previous_utc_day_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -11646,7 +11646,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::reflection_starter_exports_current_utc_iso_week_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -13986,7 +13986,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::every_starter_pairs_with_a_session_item",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "733593CD0F903B2CA17163B4380726FD5C970170DAE5BE55D8E523473B7EE22E",
+      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
       "junitClass": "neoth"
     },
     {
@@ -14149,6 +14149,54 @@
       "test": "tools::arxiv::tests::search_does_not_follow_redirects",
       "sourcePath": "SRC/neothd/src/tools/arxiv.rs",
       "sourceSha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_fully_configured_contains_ready_yes",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_shows_device_tier",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_channels_none_when_both_disabled",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::render_channels_telegram_when_enabled",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
+      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
       "junitClass": "neoth"
     }
   ],
@@ -16258,25 +16306,25 @@
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
@@ -16698,25 +16746,25 @@
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "F61246E3911F89C44EC7D047A61D3C43C49C442A01D8973AC7032E3A0D4902EB",
+        "sourceSha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
         "junitClass": "neoth"
       },
       {
@@ -57917,6 +57965,850 @@
       }
     ],
     "note": "Same canonical URL binds descriptor and sealed GET;4 real HTTP cases registered2357portable/2132Linux/915Windows/macOS25. macOS21 prior producer authentically12pass9Arxivfail. No transport policy weakening/no local validation/no ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1875StatusProjection": {
+    "requiredTests": [
+      "cli::onboarding_status::tests::render_fully_configured_contains_ready_yes",
+      "cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker",
+      "cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker",
+      "cli::onboarding_status::tests::render_shows_device_tier",
+      "cli::onboarding_status::tests::render_channels_none_when_both_disabled",
+      "cli::onboarding_status::tests::render_channels_telegram_when_enabled",
+      "cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json",
+      "cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json"
+    ],
+    "allFocusedTests": [
+      "cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim",
+      "cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory",
+      "cli::onboarding_status::tests::render_fully_configured_contains_ready_yes",
+      "cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker",
+      "cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker",
+      "cli::onboarding_status::tests::render_shows_device_tier",
+      "cli::onboarding_status::tests::render_channels_none_when_both_disabled",
+      "cli::onboarding_status::tests::render_channels_telegram_when_enabled",
+      "cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json",
+      "cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json"
+    ],
+    "status": "independent static review approved; hosted pending",
+    "note": "Status Markdown and additive JSON enabled_channels preserve canonical readiness names/order; legacy booleans retained. Eight newly registered tests plus two existing WebChat cases."
+  },
+  "wave1874WindowsRecovery": {
+    "schema": "neoth-windows-recovery-root-admission/v1",
+    "run": 36415338533,
+    "artifact": 10968977368,
+    "producer": "913a57ab3b99dc8e187b2509d915bc4b19674939",
+    "zipSha256": "cb1c8bf514c950e8672ac3fc4a7bc41683ec572213720587098b0c68961603e4",
+    "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+    "selected": 889,
+    "executed": 889,
+    "passed": 874,
+    "failed": 15,
+    "missing": 0,
+    "verifiedReceiptHashes": 900,
+    "sourceBindings": [
+      {
+        "path": "SRC/Cargo.lock",
+        "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+        "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+        "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa",
+        "sha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+        "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8",
+        "sha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+        "blob": "f122c72624db63558f07fc550cf02f00ea54b486",
+        "sha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "blob": "5f0f8849d1d4a628b8719519b4e9424af697a7f8",
+        "sha256": "b13cb479f79ce37a6f287f77a564a41322d5acf3702ff2ff1d6442b7e8d733ac"
+      },
+      {
+        "path": "SRC/neothd/src/channels/registry.rs",
+        "blob": "630ca32862f82283866df705158dfc57cfd9889d",
+        "sha256": "c1369cf88a582542094299c66cd675a89275a68bbd0502b4598809672104f2de"
+      },
+      {
+        "path": "SRC/neothd/src/channels/relink.rs",
+        "blob": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8",
+        "sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e"
+      },
+      {
+        "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
+        "blob": "3fe6f17f774376f885398d9da7db0128f110a6fe",
+        "sha256": "53d20c92e76fe86ec20468e20fdc359426284521aa2df6cd96605e271e5ef7be"
+      },
+      {
+        "path": "SRC/neothd/src/cli/bg_session.rs",
+        "blob": "a01dfbf0c40d1c88d118c77a420353120a3e362c",
+        "sha256": "47d01054dcc146faa19d0a865543fa3c8ef508c5736d6123f20bdb6e8867b104"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel.rs",
+        "blob": "2aa9a8113960a22cfb3528c936e31596180b1740",
+        "sha256": "08516a520f1bb3909b77ab3968cd95ea9057f5e5284da6fbc74ec79102da4381"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "blob": "0022464767bec442b7ac84529aca23df977621d2",
+        "sha256": "75fd27b611cf5e9a71d2ade4b9fde176e213a1b7f6c9ae1fea9ba9a4f40b661a"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
+        "blob": "6ab835033602be6dfbb302325d64cc2544dda17c",
+        "sha256": "a298c53b3ee84caa62faa497db7d70493bd44fe1d2984cc3799a6bfbae4ccd9f"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
+        "blob": "98228e81bd055396d95b8852ce2198c571fafe13",
+        "sha256": "f2a12c8b80d0e37ebea477ae5dbcaac7d1843830be30a1d1365dd12032a061aa"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/participants.rs",
+        "blob": "02ff66fc19b7ed222fa478350d6f22d610dc7a06",
+        "sha256": "74b86604a035585b99f343bc5dae1a46e27c27f227ff0a6c61ccaeaa6e81b09a"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs",
+        "blob": "32149bb19ecceb25e3132bc28369f71207210ac1",
+        "sha256": "5164f1b2d04a887147c0484ff5a63cad9213775f306eef31360995175704083b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
+        "blob": "926e8f6ed9fa5388dea75d77a8816dadfe6d1f29",
+        "sha256": "75fcdf32a06a221c83b16a6d6fba53b00a2695d85a008200bcb97962b440d7bf"
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat.rs",
+        "blob": "df5839e49fd65fff749fa6ccc0ae45b8bfee78ea",
+        "sha256": "025a2222c14853553f7749488cfc69f7905df4f924c6a4f84017367dc6033055"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "blob": "411efb49c119920ec81c69f253405ab8a5bb692d",
+        "sha256": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4"
+      },
+      {
+        "path": "SRC/neothd/src/cli/memory.rs",
+        "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72",
+        "sha256": "51595ecbcbb45914d85fe49a8d506ce8365c53d1395e0d978a30ac99e8ca7602"
+      },
+      {
+        "path": "SRC/neothd/src/cli/mod.rs",
+        "blob": "353d4f568040faad633a63c02e1ee4e4b8487fc0",
+        "sha256": "07ba442d577d029cfd8a919ce796ad580f6a29e67267f72a7bb68de34e57f164"
+      },
+      {
+        "path": "SRC/neothd/src/cli/n8n.rs",
+        "blob": "c3d20d04f9fcaee55a20f7994ee435c0f4a0f89c",
+        "sha256": "63a4ac9587e46b81b1cdb1871d32be8d952ef052bc2f439739b7838e3cfcf161"
+      },
+      {
+        "path": "SRC/neothd/src/cli/obsidian.rs",
+        "blob": "fc4ceb9621b1ec580c4edbc7034f6d641b47029c",
+        "sha256": "90f95b50eea7fbf15f04d4627560931c839064af788ca3413076848abc625078"
+      },
+      {
+        "path": "SRC/neothd/src/cli/paperless.rs",
+        "blob": "bf63ef81cba25def0cb5438be0f5c0d2875bf1b7",
+        "sha256": "91efe887cc68ad356c96d7fe4e25ec819dbd40db9c08a4f5044494f850bd425f"
+      },
+      {
+        "path": "SRC/neothd/src/cli/proactive.rs",
+        "blob": "9c39fdbfc4471bbae4c9404b6698a240d44db223",
+        "sha256": "ab2e714b0b41f332a41ccd981415fcb9b4fc2a45c6e4f835cae8f3e282455a26"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+        "blob": "60d5cd315472eb9b6d04538d535494ecaccd88b1",
+        "sha256": "9b8a3c751a07df2b1ddf934e22b1a3f4c1948c58dba3ebb3d440772de97a7e5b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "blob": "ea6a8b8f588f37ec7204b116efb6c8d3c204f553",
+        "sha256": "3f3ec3e8a359ba8cffae712d012c54b1b5dbc0c72fbeaa4ab3781bfd38aff6ad"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "blob": "374572f329f230c5b738a4874dab1b6c20c86d9e",
+        "sha256": "f27b1ac9c6960eef9a1ebc7864811eea5cc558156a80f5ec8b4a4a0c14b4deb7"
+      },
+      {
+        "path": "SRC/neothd/src/cli/skills.rs",
+        "blob": "c756a898f03473d9ee6e8da318d287de530d03e4",
+        "sha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c"
+      },
+      {
+        "path": "SRC/neothd/src/config/automation.rs",
+        "blob": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+        "sha256": "3bfa5c39dbfdb0c45fc541c615bbc6f7a098607ed3def2248e21b13df232e668"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials.rs",
+        "blob": "237606471f0fa49bab37cf0a2319f5ec07c71d0f",
+        "sha256": "301e3bbdbefa7f486e6e32b7bada80af2cbaf5466fe5b4d103fc2ee5313d8eae"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
+        "blob": "f96c8e059264bbaf825e9aa8758c3a0fb4dd29c3",
+        "sha256": "1520fac7a101e178bf264bff8dfa773784b64b9c31056ebc274dc70fb9376932"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
+        "blob": "858a234f243717250188b606a5eb9bdfdfb90e85",
+        "sha256": "5ffdbeed9d8ada3919b083cd4b9d5366ebcd201baeafd1666e6d4d309d953c13"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/slack_migration/tests.rs",
+        "blob": "17ff334ea643a3a7f8bb63969193410e9dce9f4d",
+        "sha256": "6967287db54d9a6452ec6ba01e899e0f3154293bc4edd8a7827edac74665d983"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/telegram_migration/tests.rs",
+        "blob": "5ebfe267b010489f8bab6b62ea76411cac349226",
+        "sha256": "8caac6c1b24659fe0009ff49f50853727450e4fb96fc0ba3e2c56f403ded01dc"
+      },
+      {
+        "path": "SRC/neothd/src/config/inline_tests.rs",
+        "blob": "943f5180b6e14d13a93ef9868cb2165f38af35e7",
+        "sha256": "7e0fdde99c153c460fd4cd99ae5860d3242cc6ba9a7c4e3e8a2286105dd00a22"
+      },
+      {
+        "path": "SRC/neothd/src/config/keychain.rs",
+        "blob": "4027f4882543303f08b7c14575a10bd0cc921f8e",
+        "sha256": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f"
+      },
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+        "sha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072"
+      },
+      {
+        "path": "SRC/neothd/src/connectors/local_import/windows_source.rs",
+        "blob": "943b63748eb75391708b8d4da5ca75563341b6c5",
+        "sha256": "d04f297c44832528c44b884af1d8725ef8077bf83f7c1b95a0d71dea036b5c94"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs",
+        "blob": "d494227d1a10d3287e1cbcf73e548dfecf87beb1",
+        "sha256": "9b8cf1bc6650480e9590ba66db6f9826241e36669a553286a06c289e311f7637"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+        "blob": "38706f93d5bf38cf32d30ef2e5650694ad98705a",
+        "sha256": "4700f7485c87af7d002276e644831b14ffa5bbb05c0a09c9e863c8bca635d74e"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+        "blob": "c92a23e78d58037b733ac34c98001451855a807d",
+        "sha256": "36cc4a1e39e13c7d7bbcb9980d66264592115fa53ce5f998ca48859962cfaf66"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+        "blob": "6b8a8aa30a29fa3cb1653ee12a6c4911b183e2c3",
+        "sha256": "4760057ff856915bf6f2b2cd3d8deaf4fe57512c5d3a7b5d852d92ac6630b094"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
+        "blob": "b7402df92da5a6a99ec44b8ae801f70e052e8b69",
+        "sha256": "4a0f9af0d48bd221283de2a61f46bfc054fb300b12ae5b40265f461f08a240a9"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/dreaming_obsidian.rs",
+        "blob": "5a850fb9c2d0146750a1478a60d60b338a66e50d",
+        "sha256": "9c4b4bd0fa7c176e7902492d2be576b7598e5ede98ed3e356d9b60bba0e7ea17"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/dreaming.rs",
+        "blob": "382533434c2753ed8a712237b3a81f191e5dbe7c",
+        "sha256": "1e1c5cab51e6176e4d6f1e51672cf54e1cc14acbb8681bc9a526555db4be4703"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "blob": "37718626051d545a84454287ba838e5e91de4378",
+        "sha256": "a0b20623559b987f73be6d2b7e519b4c2679975736693b108e515c96593aeb66"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/reflection_cron_weekly_tests.rs",
+        "blob": "99e51dee848360a99b868544c12b7cbc948fb9ea",
+        "sha256": "cbb49dea5c50a5796a274099e09718cb3dfd673176ed0fd3a79553bb9842c3e7"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/reflection_cron.rs",
+        "blob": "bdfee26fcbaf058a7978d320a63b9d06f201796b",
+        "sha256": "ea83ac75f5045ac885e8acfb07c5d739bfaa7b2af926879d0dfd3fb07b802e81"
+      },
+      {
+        "path": "SRC/neothd/src/email/calendar.rs",
+        "blob": "5f9ae539180572e3df45d3d114666f13b55c5ae6",
+        "sha256": "5ab3edb3d9069596f84d8f0f153ce9fe511762820a89add4ab47a4fa970b9b26"
+      },
+      {
+        "path": "SRC/neothd/src/email/draft.rs",
+        "blob": "ff06c7a43f7a6115a5223f5ee949fdceaf1e8b52",
+        "sha256": "b38cc2e255db643c2e7dc9630ca935d32ed03e21ae358120006bbf6312e1fa85"
+      },
+      {
+        "path": "SRC/neothd/src/email/workflow_triage.rs",
+        "blob": "215a86b2d0b200ca4386f4a6a8b617bda977305e",
+        "sha256": "2e5cae30b62398011f42d6d10999270b0c093f86bfee9af9657245df0daa0789"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "blob": "c5abf3a2edbcda76ddb9687678f8e37b6a1aab0e",
+        "sha256": "733593cd0f903b2ca17163b4380726fd5c970170dae5be55d8e523473b7ee22e"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+        "blob": "7e0f040bbf3ab5dd2e301ff7f7b428df15368460",
+        "sha256": "f3e7fb2f481cfce01ce9d865cd700a9e180855a176b5218501f57a3fa395e846"
+      },
+      {
+        "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+        "blob": "0e6a6c4d6e68254b32d3cee8da8f667192a74175",
+        "sha256": "f61246e3911f89c44ec7d047a61d3c43c49c442a01d8973ac7032e3a0d4902eb"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_backup_tests.rs",
+        "blob": "d48dad44b194df16c20c1c8efa98ee71a9e0d06c",
+        "sha256": "c628b732c3282f5b27aeddc467c9f376a2e408dcdb429150097f9262f0cb4d7b"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+        "blob": "ffb16a480b3fe5bf16894ac3b634ca0c5b99a7ca",
+        "sha256": "73285c1d16b44647172d1e1ba12fa909362c207a4c66a4c4275cc9dfd7b20d8b"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
+        "blob": "1a2f714fcc9114b1cba227a52c53003dacdc9647",
+        "sha256": "1c9e97d2b51d01b07dc4b70143536a629d372429a77c0412e926426713c75b15"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
+        "blob": "d75db8b75a19ca01f9aa03c85c0584ccbf01c0eb",
+        "sha256": "f1d296b9d0a53620f4434a573d480dfdf458db2f35b07ecd36547164d60c0b57"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+        "blob": "7bc6db96e2964cf27342339bf958a74c27d49f0e",
+        "sha256": "06125d840c0ed1eb1a812764cc09eff2a93a0b97b339f00a3ed285a7b3f3e38e"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+        "blob": "92fcc83706303c0bd42291f63f5693518cf373c5",
+        "sha256": "d1101f99fd8ca4c85c8aef85522db0686a3b7bf7d2da4d60e9a23243ee0c98d1"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "blob": "43cf63b173b1e3d5a5007235f00d07a66269dddb",
+        "sha256": "ff55bf3408e77b0fac4dc691f36538ac87f2fb991606022e966a3c84fec5d4fc"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
+        "blob": "1f54bc96db97a1c0da7468cbe905dbb7fc5f1b69",
+        "sha256": "532925c1408ae87d1c88017fd754c617ca56b0c3cfd7814e9d02781bb86a4f78"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+        "blob": "091ce1be57f055d25ce1ade80daa6bc9d01812f0",
+        "sha256": "70b526414ce65e79c1a2eed83d20576cca2a2b52be8de7093b0d6111dc97cb66"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_purge.rs",
+        "blob": "6b4cd32e5fcb142ee47f2e7771ac2ea2af4510ac",
+        "sha256": "6971c2c0d02042f52f2f59829bb5ecd99a2b8ea80efbc1ad150a2f9b1498d2d3"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+        "blob": "804cb2de0de64d6aae2d67f18fb9c8aa901e925b",
+        "sha256": "50373746652d9302301c09027b884bf3a86d4f06bd117e3f3288d4bc46739804"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_repair.rs",
+        "blob": "a658304b17098d7539923ba38b89384c765bbd2d",
+        "sha256": "6f657ef07527a06430d780cbfceadc3d714f36ab62ce736c496a5d0c8365dfb3"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_restore_tests.rs",
+        "blob": "82a965d169769cd1b6a8951ac0a6c3e4dadf54b8",
+        "sha256": "09d398b1bba83e14a79607e820b4fc73d5898b4750252fa9f0d89c28c332391e"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_staging.rs",
+        "blob": "b076c9b5103d76b1d7086d922d6182105e9cd46f",
+        "sha256": "f906157f37a71301f86c0bbf4c1e4f6a3ca2bccade68cd465a828467e49ef247"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+        "blob": "defb633e933522aada50007bf75f1b34a74adc83",
+        "sha256": "75d4ec7388700fde4d86986241cce8ed623d177fe5b8f3cd6b5bb35792fa6df3"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/jobs.rs",
+        "blob": "f1db5c0321dafee0fc477cb8acdc4457cd05d060",
+        "sha256": "e535a8dfbdef24dd2523a9d03b91d631ad8d587e8ca98297cd02d15355cd397e"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+        "blob": "b96552c097349295ae140b0904a61fd74d039319",
+        "sha256": "a290c9305312a3dbf5a406bfddff921a51a4bb0f93eac88b3aabbeab1714da56"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+        "blob": "e9bd63f07a664ae6988ed3d5872c25f13a169c67",
+        "sha256": "efedfb5665ca6d3ab1c6a7bf9c9c2339d7f17be0c79bfd58c40a1d20d12bba38"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+        "blob": "58a3f39c8b3e3346de3bb853705a931871c42e5c",
+        "sha256": "f5d9921c9dfe2dc91fd26324fb485ce92cf7817b97900e5fb9776995609c03f2"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+        "blob": "facf00a48a2c6ae55949c84d84b9417827337883",
+        "sha256": "ec5617541704078918257e4fc0dbd0aee25fbfeefbc769b8daf9c4ff12535d2c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",
+        "blob": "713ba53b5865a896458c7ac28844e023784dc4b4",
+        "sha256": "6c2b81bfe57585daa8e54bc86adbba5219bf3ece31ec618bd7906625d4603c62"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+        "blob": "7d661e65a513ed6b69e0b8b9c20b13d66b54918c",
+        "sha256": "b064c8ceb1f504e7597c34169fcb5936c151151855c7562702a3e7851debfde6"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+        "blob": "7c037f8ca912a8d293a82ae149522acd9f18e7ef",
+        "sha256": "62c91889100a973c881eb2037ab8e878606862cd91a7b901f0d0a0d31f902f65"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_content.rs",
+        "blob": "214ff28ef4f74e6571b67c1bfeabcb21376c1b7d",
+        "sha256": "2da6f1ce7f52c938ca898e729f1eb67fc71161140007120cd81a6c81ce5d4bc0"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_io.rs",
+        "blob": "85d906f3603e14707c65b46cb435778cbc3436d9",
+        "sha256": "71570971e16ca8378ae9760d5a9af7c4998f5a0cc90289c7470b21b32667faab"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
+        "blob": "b2e2ab5c14e66f54e9de956c2b9f7a09080f770b",
+        "sha256": "cc69df68a0cef72300ff171baed370e0690413fb497a560770e3ef50b916d21c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+        "blob": "0aebc1265e65f34c3c722b50d427be56b8e83ec5",
+        "sha256": "820caf27812e50491697760bc9d18afa87942fd3921ebc83d5f0d1cc06384d00"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+        "blob": "861c96cee21408938fc14b24a0ff4cb17aea2935",
+        "sha256": "1a748071199d4e30d5cf05e0133531c5b47ba361ee895ce2f666b82231a2ed3c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+        "blob": "163a09467e6a76e2bc31d189f99aa0081a8869aa",
+        "sha256": "1043068895f3acd10e15844b77047dbe36ad58d4a806560e6297fd5861c2dc9e"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+        "blob": "00d6ba280671da1d908ecf15b795f0497804e049",
+        "sha256": "75f92363b32d608efc8a5fd3d7ad48fad69af7de284d538e3c3ff37ece4ba5eb"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+        "blob": "ef65c38f2248761243b07aa331b4063212630166",
+        "sha256": "460c54f5f8099bd3b8a287c9a5f43d5e5dd70fcdc449cb72b87c6980829cfc97"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
+        "blob": "8a2973865c0cc28925d91381e9a60003a7e1785d",
+        "sha256": "da98c9349571dbbab1e890b3af4b710d3b2866939e6f2303c3d2cc7e74f09754"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_content.rs",
+        "blob": "ca1ffb326a420b0b5480711a2e9bd9a0e25ff5bb",
+        "sha256": "3a9cd949703b246d0e9901015461a70816dc5c74530bfab3f5e8721b7f563051"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_target_tests.rs",
+        "blob": "9268ac0730f3a953489ea82003233da0cad208cc",
+        "sha256": "65c67df3331929536eaebbbe50fb76594aaf867cbb4cb62f5eee76e4e335c33d"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
+        "blob": "81ff04050108c64bbad7812b606e65607ed2835d",
+        "sha256": "d303a1f8b99741c528a41789d8ca2cc8e3ac12895d42b6fbd7c849beb9c279f9"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
+        "blob": "21bb0ecb21e6d31b4e7ccc010eb498ea122db119",
+        "sha256": "5f3b30b13a778e99ba10e412d1e9ca11f0b5cda2fff072ec8bead87a19403ecd"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/state.rs",
+        "blob": "c8ab0c1c7f953147d0456d4e0b95f32d9ffd1c36",
+        "sha256": "5d9089c66f023aeb6069e2493bd0d78f799523ba7ab0cb097a024c8cdf512b11"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
+        "blob": "99b3f6a246909ea4314c824815ebd3e4b53cba66",
+        "sha256": "1f0fc63cd3948366ec25d99aef1fc732f38665673486e83fb3e49eebab9c3551"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/gate.rs",
+        "blob": "412c22c08c222e1df7839a63022f8f2dc7da8c1f",
+        "sha256": "ea9cca87a177fc22fac080999f56a8be2c42fab726a412bdb8624d584e71677d"
+      },
+      {
+        "path": "SRC/neothd/src/memory/document_claims.rs",
+        "blob": "2adf08fe8a6c69fb6472c46cba176c40820d3331",
+        "sha256": "99519ddbf331f075549f6447a5379c28836b60e07c5cb830dd044dc157ec2d74"
+      },
+      {
+        "path": "SRC/neothd/src/memory/drift.rs",
+        "blob": "b25eb2b570796a3a467b810e1288bef8c1739152",
+        "sha256": "a36c2164fdfdb23718d61800eb82ca4d0c2f8f0c9482c3a497f77f2389aed506"
+      },
+      {
+        "path": "SRC/neothd/src/memory/migrations/mod.rs",
+        "blob": "6dbde9f5348426b387a6ddce2a9fbd488cea158e",
+        "sha256": "dfd7dd1063669149711d109aae9d21e289f1fed41543faf5d61fe0b82cf5068b"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
+        "blob": "708844424cf0db566c73703f6583ef29b8d612e9",
+        "sha256": "e7dcd58832d7304e24ceeba15b25f5e08a467561070cb0ed34534316fd12cb2c"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "blob": "4d2b16c1d19e7f19558d576ec9bbba157d9b1d8d",
+        "sha256": "0436956e048817ff0dc842688271a61ba19b7bd2c1af76c8ccb15430adc66f90"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers.rs",
+        "blob": "87561717fb5bdaeb5eb9b05bcbc66f59c24cee0d",
+        "sha256": "8c1298f3041fd898ffc90216bb97123d03ce9d6f315770749afd79e8391d0786"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
+        "blob": "3004e79bc05fa136682c337d7b82251d318c1a93",
+        "sha256": "a25f4e3a1285175f7f062cee856e96172f8181a53fb5a67df71b4e05c32fb18f"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/calendar_route.rs",
+        "blob": "91156a27326c39c2f3f04f6c122b46b6b2845a0f",
+        "sha256": "07c26033e1f02c60ed9732d7d20d05da96b334ff5f6e756501de2be8f4728985"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/dream_obsidian_sync.rs",
+        "blob": "b0eeb30331aa621ab3151554fa44bf7eeb12b4b4",
+        "sha256": "cd0a3324ce94c224b82496e4a49693a454f67b1145eb1f390acea8fb62611536"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/pending_drafts.rs",
+        "blob": "8e9c8aa9e0c3c16489253eb3b84e18c4c952b3ff",
+        "sha256": "454fa32b8613c4cd7c2d90883352721a899d56d9aa8ecd0c2e5167a10b487692"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/pending_proposals.rs",
+        "blob": "c535171a3cb6f627515d01b25a72d4deddf93642",
+        "sha256": "d8c421fc7114c1a89740ab92bf264262c9f57f1ed456db60eb9b48a610c76038"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/permission_audit.rs",
+        "blob": "de2f43791c02668f680cd87f28ec877b415d4152",
+        "sha256": "0b3cb6336224310726da7fd2e09352d6084e1a6bc71db421acb6c53952144362"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs",
+        "blob": "34d043e200434178bc671a164cfd6fd0f5a130f9",
+        "sha256": "f863bd77e96a65388504e534744ab1e2e84670166d5693ac0dacf841d365ccc7"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs",
+        "blob": "af119b91f46c5d981a6b783627166d35a889e265",
+        "sha256": "fcbf5529022a1c8cd19f80962cd4e0b9cf91e105d0190d5f3eca8729e29f95d5"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "blob": "d4b4e9983e632d9907759be756b84ab9a3a9241c",
+        "sha256": "fe5554f26433a64135e77e610d5adea7962f31e3b5b5943a4e550165e1766ef4"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs",
+        "blob": "34b49fae117b25b2c00211f2dc1e932ae5cef8dc",
+        "sha256": "1ef4c0442c5dcb6c69e40f806f2b0a6ae7dcc0039799ae7314a77fd7456060f6"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/server.rs",
+        "blob": "b676d2bf31126fef954dc4c797d96e487d24e379",
+        "sha256": "fae2c1ab5a34d55c5c581e14a191b08e3e537361b95a94a3443280701c93dc6d"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/consult.rs",
+        "blob": "4b2cf8a2490199f406f3f18907af2ea15a16da03",
+        "sha256": "0c0d05f16c89668835a33dc307993b8123cd0ad72fd4b933dac2ea5a6524266c"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/findings.rs",
+        "blob": "08c38a7b01fa3d5c4429f9a7467470881b55fae2",
+        "sha256": "1dcfc4fafeb4072f0245a5c1f7568a062de96b6cfaabad29708b3d94a8e9b816"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/webhook_server.rs",
+        "blob": "904db7dba3d38d6df51f35c27876269da8227c64",
+        "sha256": "6d803560cb8b1546386131e45298b5916cdffbfe014acf70bcc3071926cd8f11"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/webhook.rs",
+        "blob": "26b47491c1a3c84f2caaa5bf8507de7e27e82127",
+        "sha256": "59cd22f950aaf1beae4e0c21aade1e99328f873c5fe52e39319bec4f693fffd0"
+      },
+      {
+        "path": "SRC/neothd/src/permissions/ifc.rs",
+        "blob": "9d4fe9604822628c5de923d696baa77fee7022f5",
+        "sha256": "6301af4eee45c4104dc440c919753a4c740dd6476d1c4e0deb3ae59c6557f651"
+      },
+      {
+        "path": "SRC/neothd/src/permissions/trust_ledger.rs",
+        "blob": "b78bf913ca36950782a4935815619a9f4a24765c",
+        "sha256": "f020f66f05e5a6cfa918b81abc47540539a90115bb137cbe3131b2df39fa4fcc"
+      },
+      {
+        "path": "SRC/neothd/src/proactive/action_staging.rs",
+        "blob": "28c5c0965b5f64daa23796f8ec27fa5edd7f317e",
+        "sha256": "2cb44d6ee5513694bb1ce1c574af08442a11f38d456ba093aee72132044f5ff3"
+      },
+      {
+        "path": "SRC/neothd/src/proactive/document_note.rs",
+        "blob": "3dcb9a48790c8abc0f067ba00541d5134ffff5be",
+        "sha256": "0825b340f35df08e1c6fde758c0de4b33f350b3a2ad171dfb42f036256f81db6"
+      },
+      {
+        "path": "SRC/neothd/src/proactive/mod.rs",
+        "blob": "19cf02930e7660d04a46ab487536137273490d1f",
+        "sha256": "6987ecac8a118e14c4b3b9d1f7cd277316a676f7a7c08b8c112faca591f77a30"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/mod.rs",
+        "blob": "3dd8b2690461a88eed51cf3befedf844a1570ad8",
+        "sha256": "5c16eb074788f063a73ff70bc24614825ec86dab3ae2758507871a886bf28bf7"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/periodic.rs",
+        "blob": "df4819842fbe54205978ea2385b5710f95ed902a",
+        "sha256": "168ac0e1905d4352d234738fcb0e4a3538974b1cdb07b8f7c0532a3f03814a7f"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+        "blob": "7d111771053bc9161a7f800099812505c0d8bd44",
+        "sha256": "2b90a61e0aa8138e41aef8f87db9b1f464a4af78ca30ee0fa543d45f71b6ca63"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+        "blob": "9f79c405ac6d19f494bf9b616912cb8dbe04459a",
+        "sha256": "e0b5dde36653203b8c629d27b231657d6964fffc95b83d56cb948198a00bbc60"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/weekly_obsidian.rs",
+        "blob": "9e2aa00a439dabbb12359c314453bbc3a5ca425c",
+        "sha256": "703a9b09f6e5cc6b861c642ee6c2562389dd6141fe983595a03ae4841f639b83"
+      },
+      {
+        "path": "SRC/neothd/src/security/api_tokens.rs",
+        "blob": "2132d8f9d999855f51349af30ce29404b582a284",
+        "sha256": "fca709891281753aa0ef4082ee0a8d3888ef116ce99f8276d67d8a3f82fcebbe"
+      },
+      {
+        "path": "SRC/neothd/src/security/paperless_ingest.rs",
+        "blob": "cb1b35ce8d530bb7e7b0a82b25f424eea229ad77",
+        "sha256": "26d31cdbd78b6bdb58ffc1515bf70d028da63a807afdb62407994aecdb16bfaa"
+      },
+      {
+        "path": "SRC/neothd/src/security/refusal_abliterated.rs",
+        "blob": "629efcfc9cabdc53536354de7d02b8c658bedb2a",
+        "sha256": "8332e8726b04bfbc6685ddfbc4ec40cdc5d7752b3c4a0fecbfa841db82dddd1b"
+      },
+      {
+        "path": "SRC/neothd/src/skills/creator.rs",
+        "blob": "d667a6c89d009b2ffbf3dd48cf40d724a2057272",
+        "sha256": "4748692cab76269ce9dc3525b032d3f21de6e66b549d501b59d19124865057e2"
+      },
+      {
+        "path": "SRC/neothd/src/skills/doc_distill.rs",
+        "blob": "3bd6f92fef383d2ecf14fb47a62f0bf574ae73dd",
+        "sha256": "1bfda2dd9cc60abffa5e9afa15f3248ba3658148626c2876ba7f2dbd25dda272"
+      },
+      {
+        "path": "SRC/neothd/src/skills/document_staging.rs",
+        "blob": "cfdeda0a9650e03e184d4ebabba1e9f9f99526a4",
+        "sha256": "9d84016b6e9ea70b38eac2af9658e23e168d374370071b366ea1391976eadea0"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "blob": "fa035e2f19cba845b386212b78e7aa29c856b8b3",
+        "sha256": "408950d2a75d40356a65c0f89e73a6d9742bfba9934eb2b4d6d923307ff762c0"
+      },
+      {
+        "path": "SRC/neothd/src/skills/teacher.rs",
+        "blob": "77135bbfca472b5755ae76591a4bfee9f1613f99",
+        "sha256": "d58139b4f20faae47609ec93ca1acb3470d763fde41d8f6d8e5d690695d69b6a"
+      },
+      {
+        "path": "SRC/neothd/src/sources/hackernews.rs",
+        "blob": "c72d11e1808435b013068f2a544d54531ec2c572",
+        "sha256": "68772309d9bbaedaea7b1d8ecd918d09fd3b29ddecbff9c143ef5775f4d8d3c3"
+      },
+      {
+        "path": "SRC/neothd/src/tools/caldav_account.rs",
+        "blob": "12f342e8b3b6e53adaed47e5afd7354c86eb5c05",
+        "sha256": "bb8f7984646a08439ea8109c1db908fa6f59f1ae1cb0438e316f2c42bb12c1b9"
+      },
+      {
+        "path": "SRC/neothd/src/tools/caldav_calendar.rs",
+        "blob": "9680cc017de2b846922af22387d6947b4c00bfe2",
+        "sha256": "caa424e4e59b9c4e689561c48f7635b6211fb15e8bd0808e68729c1cafaaf547"
+      },
+      {
+        "path": "SRC/neothd/src/tools/citation_http.rs",
+        "blob": "78c0ec90c2c5b4758c4214b8161a167df1d84b20",
+        "sha256": "98774ae6ed91fe77913ec331e8b7fd699ffbf6e974d6fb1c5d89128debb2295c"
+      },
+      {
+        "path": "SRC/neothd/src/tools/external_http.rs",
+        "blob": "3feacf8baae5799a8352fce4b765cd931c14e102",
+        "sha256": "27f66539ad02364c413d224d3a0bef8f5f9908a3f3ce94b429c93091e3e6dff4"
+      },
+      {
+        "path": "SRC/neothd/src/tools/managed_browser.rs",
+        "blob": "725b5bc00442652e13f0d84924418290f148166e",
+        "sha256": "3c6347a8a399126ea2139d8d1bb948765385b1c3734020642ef6bf210905db5c"
+      },
+      {
+        "path": "SRC/neothd/src/updater/process_containment.rs",
+        "blob": "7da47ec6b71877d9df580a8fd5fa600c69e3d970",
+        "sha256": "a451b5e0908acf4e0144c9b81f2107c18bcf034e861ffe3e79b35fd71d641507"
+      },
+      {
+        "path": "SRC/neothd/src/wal/redact.rs",
+        "blob": "1d4f652dbafb054605f294e83d4ed118273658c2",
+        "sha256": "b1564c3555aa338b3e99b0d5f85ff26ed67dca1b2e37be3800ff24e97f5d6c9b"
+      }
+    ],
+    "failureGroups": {
+      "n8n": 1,
+      "obsidian": 5,
+      "arxiv": 9
+    },
+    "localExecutableValidationRan": false
+  },
+  "wave1877DaemonDiagnostics": {
+    "run": 36419695485,
+    "producer": "d820f9194ada2f6595b80fa8d3e305162027666c",
+    "artifact": 10969846555,
+    "zipSha256": "f84e3fff03f6ac49ad49f0e0d30686b41c60cd5d6e42d429553466bc7a984311",
+    "observedFailure": "daemon_stop_failed",
+    "adoptionProven": false,
+    "status": "diagnostics repair pending hosted execution",
+    "note": "Only failure receipt retained, no summary. Preserve primary failure phase and teardown evidence; do not infer adoption success or waive nonzero stop."
+  },
+  "wave1875To1877SourceBindings": {
+    "base": "aaefb26b8bd3fdaf80381ba5c86d703e61ac975c",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 46197,
+        "sha256": "CF4D8D27D780AC185E6E637511D5B6FE5172CA8399DF184B4BF7BF973F2B8011",
+        "blob": "9ad4def821d1a768491e9704080d9ae6fd2ac8bf"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 10446,
+        "sha256": "AC8B506DAA31D5E148377C6A08D2E19B88467C60F244170E1BD4DF2D5F53E14D",
+        "blob": "3f5ca2479aa63d0923a3f950108570b8955628fa"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29704,
+        "sha256": "229CEA1E8A86E375B32AA41E50E364960C1A6EC1E029802096FE7394FEC3E512",
+        "blob": "fefb8304b6eef35372a17878e580b754012b3f41"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 158629,
+        "sha256": "3DB23A3ED14CE6F8F2859CEC937ECF70C45F11E9056C20C90C4607D636EE63C1",
+        "blob": "4f6ed1f87cc61763552b3843022e542361c8027b"
+      },
+      {
+        "path": "docs/cli-reference.md",
+        "bytes": 27389,
+        "sha256": "A258BB1323221933024F00CFC233923ECD7593E6A68ECC6406EACAC4741CB6DE",
+        "blob": "2110627d115da06ee75ed769f05ad2828e0bec92"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 36776,
+        "sha256": "C1CD452B4D569FC62DDD9638C0871724A471FB46B43AE4FC8FF29518974A53E2",
+        "blob": "8b699ea0372ece11c3dddcfca69cdec7cdeaa949"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 13587,
+        "sha256": "5F9EB8720CC292AD43FAEE72D64573B1EC34924296C0663ED7F33702A51DD4A1",
+        "blob": "3faad9aeef8845cd23afa747db4c9921a1013935"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 531579,
+        "sha256": "31A63237DE73FAF6A78DBDC8FF692CE4C476E23FF0318666D501689BE910B99C",
+        "blob": "3994011c8599be03c5e727adcee726a9b9985bc7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1568009,
+        "sha256": "91D8D1DF84FE975F6448F79B2F124706C67F682C336601F093770E0504CE1EA7",
+        "blob": "e2ce9a18d037a30b85c063ad7289230705a177f6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2179019,
+        "sha256": "1270E169A12D7674A72A57E81C615726B6054164965963F941B1D0663335604F",
+        "blob": "33a113efbd96538dd258c30ce96bd654604def36"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_status.rs",
+        "bytes": 19185,
+        "sha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+        "blob": "d848afcf2978a732cc7470277c4aa336de5b05c6"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "bytes": 64870,
+        "sha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+        "blob": "c05557575cb14daaffa3c0c3dc0a3b4e3b00bcf2"
+      },
+      {
+        "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+        "bytes": 41476,
+        "sha256": "C2859C12D7F02CBCE9D983F02091BBDDD03F5FFA1CBD20F79474980D487F6523",
+        "blob": "cffc78b1f67c6b7c2f7acf29a04ee8dfea02f49a"
+      }
+    ],
+    "note": "2365portable/2140Linux/925Windows/128channel/41macOS selection. OriginalWindows889 authenticated874pass15fail across140rawsources/900receipt hashes. Channel118/publicCLI step success only; daemon primary error masked in prior artifact, GChat wrong_target all8counts0. Preserve primary/daemon/loopback failure precedence; no runtime acceptance/no local validation/no ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

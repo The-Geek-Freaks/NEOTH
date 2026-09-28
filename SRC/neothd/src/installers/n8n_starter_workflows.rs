@@ -47,9 +47,9 @@
 //!   4. proposal_review_reminder — OB-03 — nudge after 24 h pending
 //!   5. dream_obsidian_sync — OB-01 — nightly write trigger
 //!   6. reflection_weekly_sync — OB-02 — Sunday write trigger
-//!   7. consent_audit_export — KF-06 — vault export of decisions
+//!   7. consent_audit_export — KF-06 — scoped permission-decision metadata
 //!   8. memory_decay_report — KF-07 — flag near-forget memories
-//!   9. paperless_threat_alert — PL-04 — injection-marker in OCR
+//!   9. paperless_threat_alert — PL-04 — recorded quarantine metadata
 //!  10. drafts_pending_review — EM-04 — nudge after 48 h pending
 
 use std::sync::OnceLock;
@@ -418,7 +418,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "proposal_review_reminder",
         name: "Proposal review reminder (24 h)",
-        description: "Read pending proposal metadata after 24 hours; review and approval remain in NEOTH.",
+        description: "OB-03 read pending proposal metadata after 24 hours; review and approval remain in NEOTH.",
         cron: "0 17 * * *",
         endpoint: "/api/proactive/proposals/pending",
         method: "POST",
@@ -442,7 +442,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "consent_audit_export",
         name: "Typed permission-decision audit export",
-        description: "Partial typed permission-decision audit: read authenticated TrustDecision metadata for one explicit subject. This does not export the broader legacy consent audit.",
+        description: "KF-06 partial typed permission-decision audit: read authenticated TrustDecision metadata for one explicit subject. This does not export the broader legacy consent audit.",
         cron: "0 20 * * 0",
         endpoint: "/api/permissions/audit",
         method: "POST",
@@ -458,7 +458,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "paperless_threat_alert",
         name: "Paperless prompt-injection alert",
-        description: "Read recorded Paperless quarantines from the last 15 minutes; inactive by default and does not send alerts or take action.",
+        description: "PL-04 read recorded Paperless quarantines from the last 15 minutes; inactive by default and does not send alerts or take action.",
         cron: "*/15 * * * *",
         endpoint: "/api/paperless/findings/recent",
         method: "POST",
@@ -466,7 +466,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "drafts_pending_review",
         name: "Email drafts pending review (48 h)",
-        description: "Read pending email-draft metadata after 48 hours; review and sending remain in NEOTH.",
+        description: "EM-04 read pending email-draft metadata after 48 hours; review and sending remain in NEOTH.",
         cron: "0 9,17 * * *",
         endpoint: "/api/email/drafts/pending",
         method: "POST",

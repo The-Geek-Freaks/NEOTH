@@ -33,10 +33,19 @@ SENDER = "+491701234567"
 RELOAD = ".reload-requested"
 DESTINATION = {"channel_id": "imessage_bluebubbles", "account_id": "default"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
+FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 
 
 class Failure(RuntimeError):
     pass
+
+
+def failure_code(error: Failure | None) -> str | None:
+    """Expose only fixed canary failure codes in retained diagnostics."""
+    if error is None:
+        return None
+    value = str(error)
+    return value if FAILURE_CODE.fullmatch(value) else "unexpected_failure"
 
 
 def regular(path: Path) -> bool:
@@ -507,13 +516,17 @@ def source_bindings(workflow: Path) -> dict[str, str]:
     return {item: digest(path) for item, path in paths.items()}
 
 
-def retain_daemon_diagnostics(evidence: Path, log: Path, process: subprocess.Popen[bytes] | None) -> None:
+def retain_daemon_diagnostics(evidence: Path, log: Path, process: subprocess.Popen[bytes] | None, primary_failure: Failure | None = None, primary_phase: str | None = None, stop_failure: Failure | None = None, loopback_failure: Failure | None = None) -> None:
     """Keep only redacted lifecycle facts; the daemon log itself is removed."""
     diagnostic = {
         "log_present": regular(log),
         "log_size": log.stat().st_size if regular(log) else 0,
         "log_sha256": digest(log) if regular(log) else None,
         "returncode": process.returncode if process is not None else None,
+        "primary_failure": failure_code(primary_failure),
+        "primary_phase": primary_phase if primary_failure is not None else None,
+        "stop_failure": failure_code(stop_failure),
+        "loopback_failure": failure_code(loopback_failure),
     }
     (evidence / "daemon-diagnostics.json").write_text(json.dumps(diagnostic, sort_keys=True), encoding="utf-8")
 
@@ -525,7 +538,10 @@ def cleanup(root: Path, home: Path, source_path: Path, log: Path, process: subpr
             stop_daemon(process)
         flags["daemon_reaped"] = True
     except Exception:
-        flags["daemon_reaped"] = False
+        # Exit status and process containment are separate facts. A daemon
+        # that exited non-zero after SIGTERM is still reaped; reporting it as
+        # live would both misstate cleanup and obscure the retained diagnostic.
+        flags["daemon_reaped"] = process is not None and process.poll() is not None
     for name, path in (("home_removed", home), ("source_removed", source_path), ("log_removed", log)):
         try:
             if not contained(path, root) or path.is_symlink():
@@ -541,8 +557,18 @@ def cleanup(root: Path, home: Path, source_path: Path, log: Path, process: subpr
     return flags
 
 
+def raise_teardown_failure(stop_failure: Failure | None, loopback_failure: Failure | None) -> None:
+    """Keep daemon-stop failure ahead of later loopback cleanup failure."""
+    if stop_failure is not None:
+        raise stop_failure
+    if loopback_failure is not None:
+        raise loopback_failure
+
+
 def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: Path, workflow: Path, state: dict) -> dict:
-    bindings = source_bindings(workflow)
+    phase = "provenance"
+    primary_failure = None
+    bindings = {}
     services = LoopbackServices()
     process = None
     log = root / "daemon.log"
@@ -552,19 +578,25 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
     env = dict(os.environ)
     env["NEOTH_HOME"] = str(home)
     try:
+        bindings = source_bindings(workflow)
+        phase = "init"
         services.start()
         init_home(binary, home, env, services.port)
         # `init` supplies the valid default WAL policy.  Do not enable the
         # currently unwired at-rest sealing policy here: the mandatory
         # standalone WAL audit for `consent grant` must be acknowledged before
         # the daemon may start, and the writer correctly refuses that policy.
+        phase = "consent"
         grant_loopback_provider_consent(binary, env)
+        phase = "start"
         process = start_daemon(binary, home, env, log)
         state["daemon"] = process
         # The process must cross an authenticated daemon-ready barrier before a
         # relink can claim a reload rather than initial startup adoption.
+        phase = "readiness"
         wait_for_daemon_ready(process, home, binary, env)
         before = {name: snapshot(home / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
+        phase = "pending"
         wrong = command(relink_argv(binary, source_path, WRONG_TARGET), env, envelope(services.port))
         if wrong.returncode == 0:
             raise Failure("wrong_target_accepted")
@@ -572,6 +604,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         observe_pending_supervisor_window(process, services)
         source_digest = digest(source_path)
         polls_before_reload = services.counts()["empty_poll"]
+        phase = "relink"
         ready = command(relink_argv(binary, source_path, TARGET), env, envelope(services.port))
         if ready.returncode:
             raise Failure("relink_failed")
@@ -579,8 +612,10 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         pair_before = pair_from_snapshots(before["freedom.yaml"], before["credentials.yaml"])
         routing_before = sha256(before["channel_routing.json"][1])
         durable = require_ready(home, identity, material_commitment(services.port, TARGET, TARGET), source_digest, pair_before, routing_before)
+        phase = "adoption"
         wait_for_reload_adoption(home, process, services, polls_before_reload)
         before_retry = ready_bytes(home)
+        phase = "retry"
         retry = command(relink_argv(binary, source_path, TARGET), env, envelope(services.port))
         if retry.returncode:
             raise Failure("retry_failed")
@@ -593,15 +628,39 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         result = {"relink_id": identity, "pending_negative": pending, "ready": durable, "requests": counts, "daemon_adoption": {"proven": True, "witness": "authenticated_empty_message_query"}, "source_bindings": bindings, "binary_sha256": digest(binary)}
         (evidence / "receipt-summary.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
         return result
+    except Failure as caught:
+        primary_failure = caught
+        raise
+    except Exception:
+        primary_failure = Failure("unexpected_failure")
+        raise
     finally:
-        try:
-            if process is not None:
+        stop_failure = None
+        loopback_failure = None
+        if process is not None:
+            try:
                 stop_daemon(process)
+            except Failure as caught:
+                stop_failure = caught
+            except Exception:
+                stop_failure = Failure("daemon_stop_unexpected")
+            if process.poll() is not None:
                 state["daemon"] = None
-            retain_daemon_diagnostics(evidence, log, process)
-        finally:
+        try:
             if not services.stop():
-                raise Failure("loopback_cleanup_failed")
+                loopback_failure = Failure("loopback_cleanup_failed")
+        except Exception:
+            loopback_failure = Failure("loopback_cleanup_failed")
+        retain_daemon_diagnostics(evidence, log, process, primary_failure, phase, stop_failure, loopback_failure)
+        if primary_failure is None:
+            raise_teardown_failure(stop_failure, loopback_failure)
+
+
+def receipt_payload(result: dict | None, error: str | None, flags: dict[str, bool], source_head: str) -> dict:
+    payload = {"schema_version": 1, "outcome": "passed" if result and all(flags.values()) else "failed", "failure": error, "cleanup": flags, "source_head": source_head}
+    if result:
+        payload["daemon_adoption"] = result
+    return payload
 
 
 def main() -> int:
@@ -626,9 +685,7 @@ def main() -> int:
     except Exception:
         error = "unexpected_failure"
     flags = cleanup(root, home, source_path, log, state["daemon"], evidence)
-    payload = {"schema_version": 1, "outcome": "passed" if result and all(flags.values()) else "failed", "failure": error, "cleanup": flags, "source_head": os.environ.get("GITHUB_SHA", "")}
-    if result:
-        payload["daemon_adoption"] = result
+    payload = receipt_payload(result, error, flags, os.environ.get("GITHUB_SHA", ""))
     rendered = json.dumps(payload, sort_keys=True)
     if PASSWORD in rendered:
         raise Failure("receipt_secret_leak")

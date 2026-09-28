@@ -59,6 +59,8 @@ pub struct OnboardingSnapshot {
     pub provider_auth_present: bool,
     pub telegram_enabled: bool,
     pub whatsapp_enabled: bool,
+    /// Descriptor-derived external messaging channels usable for onboarding.
+    pub enabled_channels: Vec<String>,
     pub webchat: WebChatOnboardingState,
     pub autonomy_level: String,
     pub review_gate_enabled: bool,
@@ -91,6 +93,11 @@ impl OnboardingSnapshot {
             .channel_names
             .iter()
             .any(|name| name.starts_with("WhatsApp"));
+        let enabled_channels = readiness
+            .channel_names
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
 
         // ── Autonomy ──────────────────────────────────────────────────────
         let autonomy_level = format!("{:?}", cfg.autonomy);
@@ -117,7 +124,7 @@ impl OnboardingSnapshot {
         } else if !readiness.channel_ready() {
             (
                 false,
-                "No channel enabled — configure Telegram or WhatsApp via `neoth init`.".to_string(),
+                "No channel enabled — configure a messaging channel via `neoth init`.".to_string(),
             )
         } else {
             (true, String::new())
@@ -129,6 +136,7 @@ impl OnboardingSnapshot {
             provider_auth_present,
             telegram_enabled,
             whatsapp_enabled,
+            enabled_channels,
             webchat: webchat_onboarding_state(cfg),
             autonomy_level,
             review_gate_enabled: cfg.review_gate_enabled,
@@ -164,17 +172,10 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
         "no (no API key or binary path set)"
     };
 
-    let mut channels: Vec<&str> = Vec::new();
-    if snapshot.telegram_enabled {
-        channels.push("Telegram");
-    }
-    if snapshot.whatsapp_enabled {
-        channels.push("WhatsApp");
-    }
-    let channels_str = if channels.is_empty() {
+    let channels_str = if snapshot.enabled_channels.is_empty() {
         "none".to_string()
     } else {
-        channels.join(", ")
+        snapshot.enabled_channels.join(", ")
     };
 
     let operator_str = snapshot.operator_id.as_deref().unwrap_or("(not set)");
@@ -273,6 +274,7 @@ mod tests {
             provider_auth_present: true,
             telegram_enabled: true,
             whatsapp_enabled: false,
+            enabled_channels: vec!["Telegram".to_string()],
             webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
@@ -293,6 +295,7 @@ mod tests {
             provider_auth_present: true,
             telegram_enabled: false,
             whatsapp_enabled: false,
+            enabled_channels: Vec::new(),
             webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
@@ -303,7 +306,7 @@ mod tests {
             gpu_detected: false,
             ready: false,
             not_ready_reason:
-                "No channel enabled — configure Telegram or WhatsApp via `neoth init`.".to_string(),
+                "No channel enabled — configure a messaging channel via `neoth init`.".to_string(),
         }
     }
 
@@ -314,6 +317,7 @@ mod tests {
             provider_auth_present: false,
             telegram_enabled: true,
             whatsapp_enabled: false,
+            enabled_channels: vec!["Telegram".to_string()],
             webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
@@ -348,6 +352,7 @@ mod tests {
         assert_eq!(snapshot.ready, unchanged.ready);
         assert_eq!(snapshot.telegram_enabled, unchanged.telegram_enabled);
         assert_eq!(snapshot.whatsapp_enabled, unchanged.whatsapp_enabled);
+        assert_eq!(snapshot.enabled_channels, unchanged.enabled_channels);
         assert_eq!(
             serde_json::to_value(&snapshot).unwrap()["webchat"],
             "configured_needs_serve"
@@ -417,7 +422,10 @@ mod tests {
     #[test]
     fn render_channels_none_when_both_disabled() {
         let out = render_status(&no_channel_snapshot());
-        assert!(out.contains("none"), "expected 'none' for channels:\n{out}");
+        assert!(
+            out.contains("| Channels enabled | none |"),
+            "expected no configured channels:\n{out}"
+        );
     }
 
     #[test]
@@ -426,6 +434,63 @@ mod tests {
         assert!(
             out.contains("Telegram"),
             "expected Telegram in channels:\n{out}"
+        );
+    }
+
+    #[test]
+    fn slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json() {
+        let mut cfg = FreedomConfig::default();
+        cfg.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("provider-key"));
+        let credentials = crate::config::credentials::Credentials {
+            slack_bot_token: Some(crate::secret::SecretString::from("slack-bot-token")),
+            slack_app_token: Some(crate::secret::SecretString::from("slack-app-token")),
+            slack_allowed_user_id: Some("U123ABC".to_string()),
+            ..crate::config::credentials::Credentials::default()
+        };
+
+        let readiness = crate::cli::onboarding_readiness::evaluate(&cfg, &credentials);
+        let snapshot = OnboardingSnapshot::from_readiness(&cfg, &readiness);
+
+        assert!(snapshot.ready);
+        assert_eq!(snapshot.enabled_channels, vec!["Slack"]);
+        assert!(render_status(&snapshot).contains("| Channels enabled | Slack |"));
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["enabled_channels"],
+            serde_json::json!(["Slack"])
+        );
+    }
+
+    #[test]
+    fn mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json() {
+        let mut cfg = FreedomConfig::default();
+        cfg.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("provider-key"));
+        cfg.telegram_user_id = Some(42);
+        let credentials = crate::config::credentials::Credentials {
+            telegram_token: Some(crate::secret::SecretString::from("123:abc")),
+            keet_bridge_url: Some("http://127.0.0.1:8123".to_string()),
+            keet_topic: Some(crate::secret::SecretString::from("topic")),
+            keet_allowed_senders: Some("peer-1".to_string()),
+            keet_bridge_bearer_token: Some(crate::secret::SecretString::from("bearer")),
+            discord_bot_token: Some(crate::secret::SecretString::from("discord-token")),
+            discord_allowed_user_id: Some("123456789012345678".to_string()),
+            ..crate::config::credentials::Credentials::default()
+        };
+
+        let readiness = crate::cli::onboarding_readiness::evaluate(&cfg, &credentials);
+        let snapshot = OnboardingSnapshot::from_readiness(&cfg, &readiness);
+
+        assert!(snapshot.ready);
+        assert_eq!(snapshot.enabled_channels, vec!["Telegram", "Keet", "Discord"]);
+        assert!(snapshot.telegram_enabled);
+        assert!(!snapshot.whatsapp_enabled);
+        assert!(
+            render_status(&snapshot).contains("| Channels enabled | Telegram, Keet, Discord |")
+        );
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["enabled_channels"],
+            serde_json::json!(["Telegram", "Keet", "Discord"])
         );
     }
 }
