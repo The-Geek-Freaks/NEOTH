@@ -50,6 +50,16 @@ pub enum CredentialStoreStatus {
     KeyUnavailable,
 }
 
+/// SHA-256 commitments of the exact raw `freedom.yaml`/`credentials.yaml`
+/// pair immediately before and after a prepared publication. The values are
+/// deliberately opaque: callers can bind their own durable receipt without
+/// receiving configuration or credential bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RelinkPairCommitments {
+    pub(crate) before_sha256: String,
+    pub(crate) after_sha256: String,
+}
+
 impl CredentialStoreStatus {
     /// Short lowercase label suitable for log messages and JSON fields.
     pub fn as_str(self) -> &'static str {
@@ -321,6 +331,18 @@ pub(crate) fn with_coherent_pair_transaction_lock<T>(
         let credentials_path = sibling_credentials_path(freedom_path);
         with_legacy_pair_locks(freedom_path, &credentials_path, action)
     })
+}
+
+/// Narrow coordinator authority for mutations which must keep a third private
+/// receipt coherent with the established freedom/credentials journal.  The
+/// closure receives no file handles or raw secret material; it merely runs
+/// while the existing recovery and pair locks remain held.  It is synchronous
+/// by contract and must not perform probes or other external effects.
+pub(crate) fn with_coherent_pair_transaction_at<T>(
+    freedom_path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    with_coherent_pair_transaction_lock(freedom_path, action)
 }
 
 /// Run a config/credential operation behind the crash-recovery boundary.
@@ -4501,6 +4523,33 @@ impl Credentials {
         )
     }
 
+    /// Credentials-only channel replacement with a receipt callback over the
+    /// exact prepared pair. The callback runs once after lossless rendering
+    /// (including any AEAD encryption) and before the PREPARED journal or
+    /// either file can be published. An error therefore leaves both file
+    /// members unchanged.
+    pub(crate) fn update_with_freedom_read_at_before_publish<F, R, B>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+        before_publish: B,
+    ) -> Result<R>
+    where
+        F: FnOnce(&super::FreedomConfig, &mut Self) -> Result<R>,
+        B: FnOnce(&RelinkPairCommitments) -> Result<()>,
+    {
+        Self::update_with_freedom_at_using_and_fault(
+            freedom_path,
+            credentials_path,
+            |freedom, credentials| mutation(freedom, credentials),
+            None::<fn(&Path, &[u8]) -> Result<()>>,
+            InlineTelegramTokenPolicy::Preserve,
+            None,
+            |_| Ok(()),
+            before_publish,
+        )
+    }
+
     fn update_with_freedom_at_using<F, R, W>(
         freedom_path: &Path,
         credentials_path: &Path,
@@ -4521,10 +4570,11 @@ impl Credentials {
             inline_telegram_token,
             expected_freedom_source,
             |_| Ok(()),
+            |_| Ok(()),
         )
     }
 
-    fn update_with_freedom_at_using_and_fault<F, R, W, H>(
+    fn update_with_freedom_at_using_and_fault<F, R, W, H, B>(
         freedom_path: &Path,
         credentials_path: &Path,
         mutation: F,
@@ -4532,11 +4582,13 @@ impl Credentials {
         inline_telegram_token: InlineTelegramTokenPolicy,
         expected_freedom_source: Option<&[u8]>,
         fault: H,
+        before_publish: B,
     ) -> Result<R>
     where
         F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
         W: FnOnce(&Path, &[u8]) -> Result<()>,
         H: FnMut(DualFileFaultPoint) -> Result<()>,
+        B: FnOnce(&RelinkPairCommitments) -> Result<()>,
     {
         let freedom_dir = transaction_directory(freedom_path);
         anyhow::ensure!(
@@ -4590,6 +4642,13 @@ impl Credentials {
                         credentials_path,
                         &credentials_before,
                     )?;
+
+                    before_publish(&relink_pair_commitments(
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                    ))?;
 
                     publish_prepared_file_pair(
                         freedom_path,
@@ -5560,6 +5619,39 @@ impl FileSnapshot {
             (Self::Present(left), Self::Present(right)) => left.as_slice() == right.as_slice(),
             _ => false,
         }
+    }
+}
+
+fn relink_pair_commitment(
+    freedom: &FileSnapshot,
+    credentials: &FileSnapshot,
+) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"neoth-converted-relink-pair-v1\0");
+    for (name, snapshot) in [("freedom.yaml", freedom), ("credentials.yaml", credentials)] {
+        hash.update(name.as_bytes());
+        hash.update([0]);
+        match snapshot {
+            FileSnapshot::Present(bytes) => {
+                hash.update([1]);
+                hash.update((bytes.len() as u64).to_le_bytes());
+                hash.update(bytes.as_slice());
+            }
+            FileSnapshot::Missing => hash.update([0]),
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn relink_pair_commitments(
+    freedom_before: &FileSnapshot,
+    freedom_after: &FileSnapshot,
+    credentials_before: &FileSnapshot,
+    credentials_after: &FileSnapshot,
+) -> RelinkPairCommitments {
+    RelinkPairCommitments {
+        before_sha256: relink_pair_commitment(freedom_before, credentials_before),
+        after_sha256: relink_pair_commitment(freedom_after, credentials_after),
     }
 }
 
@@ -6737,6 +6829,7 @@ mod tests {
                 }
                 Ok(())
             },
+            |_| Ok(()),
         )
         .unwrap_err();
         assert_eq!(
@@ -7437,6 +7530,7 @@ mod tests {
                 }
                 Ok(())
             },
+            |_| Ok(()),
         )
         .unwrap_err();
 
@@ -7698,6 +7792,114 @@ mod tests {
             persisted["cluster_passphrase"].as_str(),
             Some("encrypted-cluster-secret")
         );
+    }
+
+    #[test]
+    fn relink_before_publish_observes_the_actual_encrypted_pair_postimage() {
+        use std::cell::RefCell;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut freedom = serde_yaml::to_value(crate::config::FreedomConfig::default()).unwrap();
+        freedom.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String("wal".to_string()),
+            serde_yaml::from_str("encryption: aes256_gcm_siv\n").unwrap(),
+        );
+        std::fs::write(&freedom_path, serde_yaml::to_string(&freedom).unwrap()).unwrap();
+        let freedom_before = std::fs::read(&freedom_path).unwrap();
+
+        let key_path = crate::wal::master_key::master_key_path(dir.path());
+        crate::wal::master_key::load_or_init_master_key(&key_path).unwrap();
+        let key = crate::wal::master_key::config_subkey_at(dir.path()).unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &credentials_path,
+            &encrypt_credentials_body(
+                &key,
+                "telegram_token: 111111111:old-token\nfuture_secret: keep-me\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let pair_before = relink_pair_commitment(
+            &FileSnapshot::capture(&freedom_path).unwrap(),
+            &FileSnapshot::capture(&credentials_path).unwrap(),
+        );
+        let observed = RefCell::new(None);
+
+        Credentials::update_with_freedom_read_at_before_publish(
+            &freedom_path,
+            &credentials_path,
+            |_, credentials| {
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            |commitments| {
+                *observed.borrow_mut() = Some(commitments.clone());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let observed = observed.into_inner().expect("callback ran once");
+        let credentials_after = std::fs::read(&credentials_path).unwrap();
+        assert!(credentials_after.starts_with(CONF_MAGIC));
+        assert_eq!(observed.before_sha256, pair_before);
+        assert_eq!(
+            observed.after_sha256,
+            relink_pair_commitment(
+                &FileSnapshot::capture(&freedom_path).unwrap(),
+                &FileSnapshot::capture(&credentials_path).unwrap(),
+            )
+        );
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        let plaintext = decrypt_credentials_body(&key, &credentials_after).unwrap();
+        let persisted: serde_yaml::Value = serde_yaml::from_str(&plaintext).unwrap();
+        assert_eq!(persisted["future_secret"].as_str(), Some("keep-me"));
+    }
+
+    #[test]
+    fn relink_before_publish_rejection_keeps_the_exact_pair_unchanged() {
+        use std::cell::Cell;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            &credentials_path,
+            "telegram_token: 111111111:old-token\nfuture_secret: retain-me\n",
+        )
+        .unwrap();
+        let freedom_before = std::fs::read(&freedom_path).unwrap();
+        let credentials_before = std::fs::read(&credentials_path).unwrap();
+        let calls = Cell::new(0);
+
+        let error = Credentials::update_with_freedom_read_at_before_publish(
+            &freedom_path,
+            &credentials_path,
+            |_, credentials| {
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            |_| {
+                calls.set(calls.get() + 1);
+                anyhow::bail!("reject prepared relink receipt")
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("reject prepared relink receipt"));
+        assert_eq!(calls.get(), 1);
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), credentials_before);
+        assert!(std::str::from_utf8(&credentials_before)
+            .unwrap()
+            .contains("future_secret: retain-me"));
     }
 
     #[test]

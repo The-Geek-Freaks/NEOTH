@@ -28,6 +28,8 @@ use crate::config::credentials::Credentials;
 use crate::daemon::channel_runtime_health::{AccountRuntimeState, BindingTag, read_active};
 use crate::secret::SecretString;
 
+pub(crate) mod converted_relink;
+
 const MAX_PRIVATE_PAIRING_APPROVAL_BYTES: u64 = 1024;
 
 /// Strict private GUI request. Deliberately has no `Debug` implementation:
@@ -1789,6 +1791,26 @@ fn read_channel_credential_request_from(
         );
     }
     parse_channel_credential_request(&body)
+}
+
+/// Relink accepts the same bounded, strict private credential envelope as
+/// channel add, but only for the canonical conversion destinations.  The
+/// public relink CLI supplies the destination independently, so a stale or
+/// hand-written envelope cannot switch adapter family.
+pub(crate) fn read_converted_relink_fields_from(
+    reader: impl Read,
+    destination: ChannelId,
+) -> Result<ChannelAddFields> {
+    anyhow::ensure!(
+        matches!(destination, ChannelId::IMessageBlueBubbles | ChannelId::GoogleChat),
+        "only canonical iMessage BlueBubbles and Google Chat destinations support converted relink"
+    );
+    let request = read_channel_credential_request_from(reader)?;
+    anyhow::ensure!(
+        request.channel_id == destination,
+        "converted relink credential envelope channel does not match requested destination"
+    );
+    Ok(request.fields)
 }
 
 fn read_telegram_account_credential_request_from(
@@ -3631,6 +3653,40 @@ pub(crate) fn commit_prepared_channel_add_at(
     home: &std::path::Path,
     prepared: PreparedChannelAdd,
 ) -> Result<()> {
+    commit_prepared_channel_add_with_before_publish_at(home, prepared, |_| Ok(()))
+}
+
+/// Commit a verified converted-channel candidate and hand the exact raw pair
+/// commitments to a durable relink receipt immediately before publication.
+/// The callback has no access to credential bytes and a callback error keeps
+/// both configuration files unchanged; keychain mutations retain the existing
+/// rollback path in `persist_channel_replacement_at`.
+pub(crate) fn commit_prepared_channel_add_with_relink_before_publish_at<B>(
+    home: &std::path::Path,
+    prepared: PreparedChannelAdd,
+    before_publish: B,
+) -> Result<()>
+where
+    B: FnOnce(&crate::config::credentials::RelinkPairCommitments) -> Result<()>,
+{
+    anyhow::ensure!(
+        matches!(
+            prepared.channel_id,
+            ChannelId::IMessageBlueBubbles | ChannelId::GoogleChat
+        ),
+        "relink pair commitments are only available for converted iMessage BlueBubbles and Google Chat candidates"
+    );
+    commit_prepared_channel_add_with_before_publish_at(home, prepared, before_publish)
+}
+
+fn commit_prepared_channel_add_with_before_publish_at<B>(
+    home: &std::path::Path,
+    prepared: PreparedChannelAdd,
+    before_publish: B,
+) -> Result<()>
+where
+    B: FnOnce(&crate::config::credentials::RelinkPairCommitments) -> Result<()>,
+{
     persist_channel_replacement_at(
         home,
         prepared.channel_id,
@@ -3640,6 +3696,7 @@ pub(crate) fn commit_prepared_channel_add_at(
             credentials: prepared.expected_credentials,
             keychain: prepared.expected_keychain,
         }),
+        before_publish,
     )
     .with_context(|| {
         format!(
@@ -3694,7 +3751,7 @@ fn persist_channel_add_fields_at(
     let chan = channel_id.as_str();
     let path = home.join("credentials.yaml");
     let freedom_path = home.join("freedom.yaml");
-    persist_channel_replacement_at(home, channel_id, fields, None)?;
+    persist_channel_replacement_at(home, channel_id, fields, None, |_| Ok(()))?;
 
     if channel_id == ChannelId::Telegram {
         crate::cli::reload::request_reload_at(home).with_context(|| {
@@ -4141,12 +4198,16 @@ fn reject_flat_telegram_mutation_when_account_map_active(
     Ok(())
 }
 
-fn persist_channel_replacement_at(
+fn persist_channel_replacement_at<B>(
     home: &std::path::Path,
     channel_id: ChannelId,
     fields: &ChannelAddFields,
     expected: Option<ChannelStateFingerprint>,
-) -> Result<()> {
+    before_publish: B,
+) -> Result<()>
+where
+    B: FnOnce(&crate::config::credentials::RelinkPairCommitments) -> Result<()>,
+{
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
     let initial_config = FreedomConfig::load_from_path(&freedom_path)
@@ -4215,10 +4276,11 @@ fn persist_channel_replacement_at(
             },
         )
     } else {
-        Credentials::update_with_freedom_read_at(
+        Credentials::update_with_freedom_read_at_before_publish(
             &freedom_path,
             &credentials_path,
             |config, credentials| apply(config, credentials),
+            before_publish,
         )
     }
     .with_context(|| format!("atomically replace `{}` channel state", channel_id.as_str()));

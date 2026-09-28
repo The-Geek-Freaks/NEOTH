@@ -80,6 +80,7 @@ pub mod nostr_api;
 pub mod probe;
 pub mod rate_limit;
 pub(crate) mod readiness;
+pub(crate) mod relink;
 pub mod registry;
 pub mod routing;
 pub mod send_gate;

@@ -55,6 +55,11 @@ jobs:
           git -C SRC rev-parse HEAD > "$W548_ROOT/source/head.txt"
           sha256sum \
             SRC/neothd/src/cli/channel.rs \
+            SRC/neothd/src/cli/channel/converted_relink.rs \
+            SRC/neothd/src/cli/channel/converted_relink/tests.rs \
+            SRC/neothd/src/cli/channel_relink.rs \
+            SRC/neothd/src/channels/relink.rs \
+            SRC/neothd/src/config/credentials.rs \
             SRC/neothd/src/channels/imessage_bluebubbles.rs \
             SRC/neothd/src/channels/gchat.rs \
             SRC/neothd/src/channels/readiness.rs \
@@ -133,9 +138,30 @@ jobs:
           run_case 15 lib cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files cli::channel::tests::channel_test_imessage_wrong_routed_target_fails_without_writing_files --lib
           run_case 16 lib cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior cli::channel::tests::channel_test_imessage_without_a_route_keeps_transport_only_behavior --lib
 
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 16
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 16
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 16
+          run_case 17 lib cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable --lib
+          run_case 18 lib cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline --lib
+          run_case 19 lib cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies --lib
+          run_case 20 lib daemon::proactive_dispatcher::tests::reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index daemon::proactive_dispatcher::tests::reconstructed_imessage_transport_blocks_pending_and_corrupt_relink_but_keeps_absent_index --lib
+          run_case 21 lib daemon::channel_live_registry::tests::converted_traffic_permit_rechecks_index_at_transport_and_never_sends daemon::channel_live_registry::tests::converted_traffic_permit_rechecks_index_at_transport_and_never_sends --lib
+          run_case 22 lib daemon::channel_live_registry::tests::converted_traffic_permit_blocks_pending_and_stale_generation_before_transport daemon::channel_live_registry::tests::converted_traffic_permit_blocks_pending_and_stale_generation_before_transport --lib
+          run_case 23 lib channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate --lib
+          run_case 24 lib channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused --lib
+          run_case 25 lib channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite --lib
+          run_case 26 lib channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages --lib
+          run_case 27 lib channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked --lib
+          run_case 28 lib config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage --lib
+          run_case 29 lib config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged --lib
+          run_case 30 lib cli::tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials cli::tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials --lib
+          run_case 31 lib cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request --lib
+          run_case 32 lib cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused --lib
+          run_case 33 lib cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes --lib
+          run_case 34 lib cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready --lib
+          run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
+          run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
+          run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 37
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 37
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 37
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Save Cargo cache

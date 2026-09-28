@@ -8,6 +8,7 @@
 //! proactive effect boundary.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -207,7 +208,25 @@ impl ChannelLiveRegistry {
             fingerprint,
             closed: Arc::clone(&self.closed),
             closing_gate: Arc::clone(&self.closing_gate),
+            traffic_fence: None,
         })
+    }
+
+    /// Acquire a live permit whose eventual provider call is also bound to
+    /// the exact converted-relink material generation observed by the caller.
+    /// The outer `Some` means this is a converted family; its inner `None`
+    /// preserves the historical no-index state and still rejects a later
+    /// conversion before transport.
+    pub(super) async fn acquire_with_traffic_binding(
+        &self,
+        channel_ref: &ChannelRef,
+        fingerprint: u64,
+        home: PathBuf,
+        traffic_binding: Option<String>,
+    ) -> Option<ConnectionBoundProactivePermit> {
+        let mut permit = self.acquire(channel_ref, fingerprint).await?;
+        permit.traffic_fence = Some((home, channel_ref.clone(), traffic_binding));
+        Some(permit)
     }
 
     /// Refuse future acquisitions for one reference, retain already-acquired
@@ -267,6 +286,7 @@ pub(super) struct ConnectionBoundProactivePermit {
     fingerprint: u64,
     closed: Arc<std::sync::atomic::AtomicBool>,
     closing_gate: Arc<AsyncMutex<()>>,
+    traffic_fence: Option<(PathBuf, ChannelRef, Option<String>)>,
 }
 
 #[cfg(test)]
@@ -317,6 +337,18 @@ impl ConnectionBoundProactivePermit {
             {
                 return Err(ChannelError::Transport(
                     "connection-owned proactive channel was revoked".to_string(),
+                ));
+            }
+        }
+        if let Some((home, channel_ref, expected)) = &self.traffic_fence {
+            let current = crate::channels::relink::traffic_binding_at(home, channel_ref)
+                .map_err(|_| ChannelError::Transport(
+                    "converted channel relink is not ready at proactive transport".to_string(),
+                ))?;
+            if current != *expected {
+                return Err(ChannelError::Transport(
+                    "converted channel relink generation changed before proactive transport"
+                        .to_string(),
                 ));
             }
         }
@@ -397,6 +429,86 @@ mod tests {
 
     fn irc_ref() -> ChannelRef {
         ChannelRef::default_account(ChannelKind::Irc)
+    }
+
+    fn begin_gchat_pending(home: &std::path::Path) {
+        let source = home.join("openclaw-source.json5");
+        std::fs::write(
+            &source,
+            "{ channels: { googlechat: { accounts: { work: { serviceAccount: { source: 'env', provider: 'default', id: 'test' } } } } } }",
+        )
+        .unwrap();
+        let selected = neoth_openclaw_custody::select_converted_relink_account(
+            &source,
+            neoth_openclaw_custody::ConvertedRelinkChannel::GoogleChat,
+            "work",
+            &neoth_openclaw_custody::canonical_known_channel_inventory_sha256(),
+        )
+        .unwrap();
+        crate::channels::relink::begin_pending_at(
+            home,
+            &selected,
+            ChannelRef::default_account(ChannelKind::GoogleChat),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn converted_traffic_permit_rechecks_index_at_transport_and_never_sends() {
+        let home = tempfile::tempdir().unwrap();
+        let registry = ChannelLiveRegistry::new();
+        let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
+        let channel = Arc::new(CountingChannel(AtomicUsize::new(0)));
+        let lease = registry.begin_replacement(channel_ref.clone(), 71).await;
+        assert!(registry.publish(&lease, channel.clone()).await);
+        let permit = registry
+            .acquire_with_traffic_binding(
+                &channel_ref,
+                71,
+                home.path().to_path_buf(),
+                None,
+            )
+            .await
+            .expect("unimported channel obtains its initial permit");
+
+        // This models a corrupt converted index after permit acquisition but
+        // before the durable executor calls the provider transport.
+        std::fs::write(
+            home.path().join(crate::channels::relink::RELINK_INDEX_FILE),
+            b"{not-json",
+        )
+        .unwrap();
+        assert!(permit.send_once("space".into(), "body".into()).await.is_err());
+        assert_eq!(channel.0.load(Ordering::SeqCst), 0, "corrupt relink never reaches transport");
+    }
+
+    #[tokio::test]
+    async fn converted_traffic_permit_blocks_pending_and_stale_generation_before_transport() {
+        for state in ["pending", "stale"] {
+            let home = tempfile::tempdir().unwrap();
+            let registry = ChannelLiveRegistry::new();
+            let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
+            let channel = Arc::new(CountingChannel(AtomicUsize::new(0)));
+            let lease = registry.begin_replacement(channel_ref.clone(), 72).await;
+            assert!(registry.publish(&lease, channel.clone()).await);
+            let expected = if state == "pending" {
+                begin_gchat_pending(home.path());
+                None
+            } else {
+                Some("stale-ready-material-binding".to_string())
+            };
+            let permit = registry
+                .acquire_with_traffic_binding(
+                    &channel_ref,
+                    72,
+                    home.path().to_path_buf(),
+                    expected,
+                )
+                .await
+                .expect("published converted handle obtains permit");
+            assert!(permit.send_once("space".into(), "body".into()).await.is_err());
+            assert_eq!(channel.0.load(Ordering::SeqCst), 0, "{state} reached transport");
+        }
     }
 
     #[tokio::test]

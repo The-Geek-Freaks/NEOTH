@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1772 converted-channel relink source published (2026-09-28):**
+The explicit channel relink-openclaw command now connects pinned OpenClaw
+source custody to real BlueBubbles/GChat target probes, private stdin
+credentials, exact-render encrypted pair receipts, routing CAS and Ready.
+Recovery reserves one semantic request before possible keychain effects;
+per-destination receipts resume verified raw before/after images without
+inventing ciphertext. Identical Ready retries preserve ciphertext; optional
+inbound GUID and bounded no-follow GChat key bytes remain authority-bound.
+Runtime gates check Pending/corruption/generation before and after async
+inbound work and immediately before proactive transport. Ordinary unimported
+channels retain their paths. Backend/coordinator and runtime independent
+source reviews passed.21 focused cases registered: Portable2262/Group2049/
+Windows813; feature gate37 includes real target-probe contract cases.
+Hosted formatting, compile/Clippy, generated CLI and native feature execution
+are pending. External provider and GUI acceptance remain open. No ROAD box
+closed;1324/1077/245/2. No local executable validation or .slint changes.
 **W1771 Windows first-use regressions admitted (2026-09-28):**
 Windows792run36362252138 attempt1 at7a9ae772 completed success. Original
 artifact10947131150 ZIP60521f9bc2e173193a842a0c84e184d6316e2f5b17a07c44bfc8ee0fdfb388f5

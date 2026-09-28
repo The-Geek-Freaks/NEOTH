@@ -5915,6 +5915,195 @@ fn spawn_shared_channel_run_for_ref<C: Channel + 'static>(
     channel_tasks.entry(channel_ref).or_default().push(task);
 }
 
+/// Reject converted iMessage/Google Chat traffic until its explicit relink
+/// transaction has reached Ready. The check is deliberately in the per-event
+/// handler as well as startup: a Pending record may be committed after the
+/// receive adapter is already live.
+fn converted_relink_traffic_handler(
+    neoth_home: &Path,
+    channel_ref: ChannelRef,
+    traffic_binding: Option<String>,
+    handler: PipelineHandler,
+) -> PipelineHandler {
+    let neoth_home = neoth_home.to_path_buf();
+    let handler = Arc::new(handler);
+    Box::new(move |inbound| {
+        let neoth_home = neoth_home.clone();
+        let channel_ref = channel_ref.clone();
+        let traffic_binding = traffic_binding.clone();
+        let handler = Arc::clone(&handler);
+        Box::pin(async move {
+            let current = crate::channels::relink::traffic_binding_at(&neoth_home, &channel_ref)
+                .map_err(|_| anyhow::anyhow!("converted channel relink is not ready; inbound traffic is blocked"))?;
+            anyhow::ensure!(
+                current == traffic_binding,
+                "converted channel relink generation changed; inbound traffic is blocked pending adapter restart"
+            );
+            let reply = (handler)(inbound).await?;
+            let current = crate::channels::relink::traffic_binding_at(&neoth_home, &channel_ref)
+                .map_err(|_| anyhow::anyhow!("converted channel relink is not ready; inbound reply is blocked"))?;
+            anyhow::ensure!(
+                current == traffic_binding,
+                "converted channel relink generation changed; inbound reply is blocked pending adapter restart"
+            );
+            Ok(reply)
+        })
+    })
+}
+
+/// Admission counterpart for the selected converted channel families. A
+/// missing relink index stays compatible with ordinary scalar installations;
+/// malformed or Pending converted state prevents adapter startup.
+fn converted_relink_traffic_binding(
+    neoth_home: &Path,
+    channel_ref: &ChannelRef,
+) -> anyhow::Result<Option<String>> {
+    crate::channels::relink::traffic_binding_at(neoth_home, channel_ref)
+        .map_err(|_| anyhow::anyhow!("converted channel relink is not ready; adapter startup is blocked"))
+}
+
+/// Imported adapter construction must never combine a newly observed Ready
+/// generation with credentials loaded for an older runtime snapshot.  The
+/// no-index path deliberately retains the scalar compatibility behavior.
+fn fresh_converted_relink_credentials(
+    neoth_home: &Path,
+    channel_ref: &ChannelRef,
+    traffic_binding: &Option<String>,
+    fallback: &crate::config::credentials::Credentials,
+) -> anyhow::Result<crate::config::credentials::Credentials> {
+    if traffic_binding.is_none() {
+        return Ok(fallback.clone());
+    }
+    let runtime = crate::config::load_runtime_config_pair_from_path(
+        &neoth_home.join("freedom.yaml"),
+    )
+    .map_err(|_| anyhow::anyhow!("load fresh converted channel runtime pair"))?;
+    anyhow::ensure!(
+        converted_relink_traffic_binding(neoth_home, channel_ref)? == *traffic_binding,
+        "converted channel relink generation changed while loading adapter credentials"
+    );
+    Ok(credentials_for_channel(&runtime.credentials, channel_ref.channel_id))
+}
+
+#[cfg(test)]
+mod converted_relink_traffic_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn inbound(kind: ChannelKind) -> crate::channels::InboundMessage {
+        crate::channels::InboundMessage {
+            channel: kind,
+            chat_id: "chat".into(),
+            thread_id: None,
+            sender_id: "sender".into(),
+            sender_display: None,
+            text: Some("test".into()),
+            media: None,
+            reply_to: None,
+            message_id: None,
+            edit_unix: None,
+            mention_kind: None,
+            channel_ts_unix: 0,
+            raw_ts_ms: None,
+            human_uuid: None,
+        }
+    }
+
+    fn begin_real_pending(home: &Path, kind: ChannelKind) {
+        let source = home.join("openclaw-source.json5");
+        let (source_kind, label, body) = match kind {
+            ChannelKind::IMessageBlueBubbles => (
+                neoth_openclaw_custody::ConvertedRelinkChannel::IMessage,
+                "personal",
+                "{ channels: { imessage: { accounts: { personal: { cliPath: '/usr/bin/imsg' } } } } }",
+            ),
+            ChannelKind::GoogleChat => (
+                neoth_openclaw_custody::ConvertedRelinkChannel::GoogleChat,
+                "work",
+                "{ channels: { googlechat: { accounts: { work: { serviceAccount: { source: 'env', provider: 'default', id: 'test' } } } } } }",
+            ),
+            _ => unreachable!("only converted families are test inputs"),
+        };
+        std::fs::write(&source, body).unwrap();
+        let selected = neoth_openclaw_custody::select_converted_relink_account(
+            &source,
+            source_kind,
+            label,
+            &neoth_openclaw_custody::canonical_known_channel_inventory_sha256(),
+        )
+        .unwrap();
+        crate::channels::relink::begin_pending_at(
+            home,
+            &selected,
+            ChannelRef::default_account(kind),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unimported_scalar_channels_remain_startable() {
+        let home = tempfile::tempdir().unwrap();
+        for kind in [ChannelKind::IMessageBlueBubbles, ChannelKind::GoogleChat] {
+            assert!(
+                converted_relink_traffic_binding(
+                    home.path(),
+                    &ChannelRef::default_account(kind),
+                )
+                .is_ok(),
+                "missing converted index must not block {kind:?}",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_relink_blocks_both_converted_families_before_pipeline() {
+        for kind in [ChannelKind::IMessageBlueBubbles, ChannelKind::GoogleChat] {
+            let home = tempfile::tempdir().unwrap();
+            let channel_ref = ChannelRef::default_account(kind);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::clone(&calls);
+            let handler: PipelineHandler = Box::new(move |_inbound| {
+                let observed = Arc::clone(&observed);
+                Box::pin(async move {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Ok(Some(crate::channels::OutboundMessage {
+                        recipient_id: "chat".into(),
+                        text: "reply".into(),
+                    }))
+                })
+            });
+            let guarded = converted_relink_traffic_handler(
+                home.path(), channel_ref, None, handler,
+            );
+            begin_real_pending(home.path(), kind);
+            assert!(guarded(inbound(kind)).await.is_err());
+            assert_eq!(calls.load(Ordering::SeqCst), 0, "{kind:?} Pending reached pipeline");
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_committed_during_pipeline_suppresses_both_replies() {
+        for kind in [ChannelKind::IMessageBlueBubbles, ChannelKind::GoogleChat] {
+            let home = Arc::new(tempfile::tempdir().unwrap());
+            let pending_home = Arc::clone(&home);
+            let handler: PipelineHandler = Box::new(move |_inbound| {
+                let pending_home = Arc::clone(&pending_home);
+                Box::pin(async move {
+                    begin_real_pending(pending_home.path(), kind);
+                    Ok(Some(crate::channels::OutboundMessage {
+                        recipient_id: "chat".into(),
+                        text: "must-not-reply".into(),
+                    }))
+                })
+            });
+            let guarded = converted_relink_traffic_handler(
+                home.path(), ChannelRef::default_account(kind), None, handler,
+            );
+            assert!(guarded(inbound(kind)).await.is_err(), "{kind:?} returned post-await reply");
+        }
+    }
+}
+
 /// Run a live-instance-owned adapter and retire its proactive publication as
 /// soon as its receive task ends. The fleet supervisor repeats this revocation
 /// as a crash/reload backstop; doing it here closes the completed-task window.
@@ -6203,6 +6392,26 @@ pub(crate) fn channel_account_fingerprints_with_slack(
         hash_framed_slack_fingerprint_field(&mut hasher, &app_token);
         app_token.zeroize();
         fingerprints.insert(account.channel_ref.clone(), hasher.finish());
+    }
+    // Converted iMessage/Google Chat imports have an authority generation that
+    // is independent from config/credential bytes. Fold its opaque current
+    // binding (or a fail-closed marker) into the existing lifecycle token so
+    // the normal reconciler retires an old scalar adapter on Pending/Ready or
+    // material drift and rebuilds only this default account.
+    for kind in [ChannelKind::IMessageBlueBubbles, ChannelKind::GoogleChat] {
+        let channel_ref = ChannelRef::default_account(kind);
+        let Some(base) = fingerprints.get(&channel_ref).copied() else {
+            continue;
+        };
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        hasher.write(b"neoth/converted-relink-traffic-generation/v1");
+        hasher.write_u64(base);
+        match crate::channels::relink::traffic_binding_at(neoth_home, &channel_ref) {
+            Ok(None) => hasher.write(b"unimported"),
+            Ok(Some(binding)) => hasher.write(binding.as_bytes()),
+            Err(_) => hasher.write(b"unavailable-or-pending"),
+        }
+        fingerprints.insert(channel_ref, hasher.finish());
     }
     fingerprints
 }
@@ -6684,56 +6893,95 @@ pub(crate) async fn spawn_channel_adapters(
             .filter(|value| !value.trim().is_empty()),
         shared_provider.as_ref(),
     ) {
-        (Some(url), Some(password), Some(allowed_sender), Some(provider)) => {
-            // Parse optional comma-separated chat GUID allowlist.
-            let chat_guid_allowlist: Option<Vec<String>> =
-                creds.bluebubbles_chat_guid.as_deref().map(|s| {
-                    s.split(',')
-                        .map(|g| g.trim().to_string())
-                        .filter(|g| !g.is_empty())
-                        .collect()
-                });
-            match crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
-                url,
-                password,
-                chat_guid_allowlist,
-                Some(allowed_sender),
-            ) {
-                Ok(channel) => {
-                    let channel = channel.with_gate_writer(writer.clone());
-                    let handler: PipelineHandler = build_channel_handler(
-                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                            ChannelKind::IMessageBlueBubbles,
-                        )),
-                        provider.clone(),
-                        config,
-                        writer,
-                        provider_meter,
-                        rate_limiter,
-                        segment_path,
-                        neoth_home,
-                        shared_views_conn,
-                        reload_controller,
-                        confirm_bus.clone(),
-                        views_executor.clone(),
-                    );
-                    spawn_channel_run(
-                        channel,
-                        handler,
-                        ChannelKind::IMessageBlueBubbles,
-                        "BlueBubbles",
-                        channel_tasks,
-                    );
-                    info!(
-                        channel = "imessage_bluebubbles",
-                        status = "LIVE",
-                        "channel: spawned (bluebubbles REST poll loop)"
-                    );
+        (Some(_), Some(_), Some(_), Some(provider)) => {
+            let channel_ref = ChannelRef::default_account(ChannelKind::IMessageBlueBubbles);
+            match converted_relink_traffic_binding(neoth_home, &channel_ref) {
+                Ok(traffic_binding) => {
+                    'imessage_adapter: {
+                    let fresh_creds = match fresh_converted_relink_credentials(
+                        neoth_home, &channel_ref, &traffic_binding, creds,
+                    ) {
+                        Ok(credentials) => credentials,
+                        Err(error) => {
+                            warn!(channel = "imessage_bluebubbles", status = "RELINK-CHANGED", error = %error, "BlueBubbles relink changed before fresh credentials could bind; channel not started");
+                            break 'imessage_adapter;
+                        }
+                    };
+                    let (Some(url), Some(password), Some(allowed_sender)) = (
+                        fresh_creds.bluebubbles_url.clone(),
+                        fresh_creds.bluebubbles_password.clone(),
+                        fresh_creds.imessage_allowed_sender.clone().filter(|value| !value.trim().is_empty()),
+                    ) else {
+                        warn!(channel = "imessage_bluebubbles", status = "RELINK-CHANGED", "fresh converted BlueBubbles credentials are incomplete; channel not started");
+                        break 'imessage_adapter;
+                    };
+                    // Parse optional comma-separated chat GUID allowlist.
+                    let chat_guid_allowlist: Option<Vec<String>> =
+                        fresh_creds.bluebubbles_chat_guid.as_deref().map(|s| {
+                            s.split(',')
+                                .map(|g| g.trim().to_string())
+                                .filter(|g| !g.is_empty())
+                                .collect()
+                        });
+                    match crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                        url,
+                        password,
+                        chat_guid_allowlist,
+                        Some(allowed_sender),
+                    ) {
+                        Ok(channel) => {
+                            if converted_relink_traffic_binding(neoth_home, &channel_ref).ok()
+                                != Some(traffic_binding.clone())
+                            {
+                                warn!(channel = "imessage_bluebubbles", status = "RELINK-CHANGED", "BlueBubbles relink changed during construction; channel not started");
+                            } else {
+                                let channel = channel.with_gate_writer(writer.clone());
+                            let handler: PipelineHandler = converted_relink_traffic_handler(
+                                neoth_home,
+                                channel_ref.clone(),
+                                traffic_binding.clone(),
+                                build_channel_handler(
+                                    AuthenticatedInboundBinding::for_account(channel_ref.clone()),
+                                    provider.clone(),
+                                    config,
+                                    writer,
+                                    provider_meter,
+                                    rate_limiter,
+                                    segment_path,
+                                    neoth_home,
+                                    shared_views_conn,
+                                    reload_controller,
+                                    confirm_bus.clone(),
+                                    views_executor.clone(),
+                                ),
+                            );
+                            spawn_channel_run(
+                                channel,
+                                handler,
+                                ChannelKind::IMessageBlueBubbles,
+                                "BlueBubbles",
+                                channel_tasks,
+                            );
+                            info!(
+                                channel = "imessage_bluebubbles",
+                                status = "LIVE",
+                                "channel: spawned (bluebubbles REST poll loop)"
+                            );
+                            }
+                        }
+                        Err(e) => warn!(
+                            channel = "imessage_bluebubbles",
+                            error = %e,
+                            "BlueBubbles configured but adapter construction failed; channel not started"
+                        ),
+                    }
+                    }
                 }
-                Err(e) => warn!(
+                Err(error) => warn!(
                     channel = "imessage_bluebubbles",
-                    error = %e,
-                    "BlueBubbles configured but adapter construction failed; channel not started"
+                    status = "RELINK-PENDING",
+                    error = %error,
+                    "BlueBubbles converted relink is not ready; channel not started"
                 ),
             }
         }
@@ -7288,15 +7536,55 @@ pub(crate) async fn spawn_channel_adapters(
                 .filter(|value| !value.trim().is_empty()),
             shared_provider.as_ref(),
         ) {
-            (Some(sa_path), Some(subscription), Some(allowed_sender), Some(provider)) => {
-                match crate::channels::gchat::GChatChannel::new(
-                    std::path::Path::new(&sa_path),
-                    subscription,
-                ) {
+            (Some(_), Some(_), Some(_), Some(provider)) => {
+                let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
+                match converted_relink_traffic_binding(neoth_home, &channel_ref) {
+                    Err(error) => warn!(
+                        channel = "gchat",
+                        status = "RELINK-PENDING",
+                        error = %error,
+                        "Google Chat converted relink is not ready; channel not started"
+                    ),
+                    Ok(traffic_binding) => {
+                    'gchat_adapter: {
+                    let fresh_creds = match fresh_converted_relink_credentials(
+                        neoth_home, &channel_ref, &traffic_binding, creds,
+                    ) {
+                        Ok(credentials) => credentials,
+                        Err(error) => {
+                            warn!(channel = "gchat", status = "RELINK-CHANGED", error = %error, "Google Chat relink changed before fresh credentials could bind; channel not started");
+                            break 'gchat_adapter;
+                        }
+                    };
+                    let (Some(sa_path), Some(subscription), Some(allowed_sender)) = (
+                        fresh_creds.gchat_service_account_json.clone(),
+                        fresh_creds.gchat_subscription.clone(),
+                        fresh_creds.gchat_allowed_sender.clone().filter(|value| !value.trim().is_empty()),
+                    ) else {
+                        warn!(channel = "gchat", status = "RELINK-CHANGED", "fresh converted Google Chat credentials are incomplete; channel not started");
+                        break 'gchat_adapter;
+                    };
+                    let fresh_fingerprint = channel_account_fingerprints(
+                        config, &fresh_creds, &[], neoth_home,
+                    )
+                    .get(&channel_ref)
+                    .copied();
+                    if fresh_fingerprint != channel_fingerprints.get(&channel_ref).copied() {
+                        warn!(channel = "gchat", status = "RELINK-CHANGED", "fresh Google Chat runtime differs from the captured lifecycle; channel not started");
+                        break 'gchat_adapter;
+                    }
+                    match crate::channels::gchat::GChatChannel::new(
+                        std::path::Path::new(&sa_path),
+                        subscription,
+                    ) {
                     Ok(channel) => {
-                        let channel =
+                        if converted_relink_traffic_binding(neoth_home, &channel_ref).ok()
+                            != Some(traffic_binding.clone())
+                        {
+                            warn!(channel = "gchat", status = "RELINK-CHANGED", "Google Chat relink changed during construction; channel not started");
+                        } else {
+                            let channel =
                             Arc::new(channel.with_allowlist(Some(allowed_sender), writer.clone()));
-                        let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
                         if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
                             let lease = live_channels
                                 .begin_replacement(channel_ref.clone(), fingerprint)
@@ -7314,7 +7602,11 @@ pub(crate) async fn spawn_channel_adapters(
                                 "Google Chat has no current lifecycle fingerprint; proactive publication skipped"
                             );
                         }
-                        let handler: PipelineHandler = build_channel_handler(
+                        let handler: PipelineHandler = converted_relink_traffic_handler(
+                            neoth_home,
+                            channel_ref.clone(),
+                            traffic_binding.clone(),
+                            build_channel_handler(
                             AuthenticatedInboundBinding::for_account(channel_ref.clone()),
                             provider.clone(),
                             config,
@@ -7327,6 +7619,7 @@ pub(crate) async fn spawn_channel_adapters(
                             reload_controller,
                             confirm_bus.clone(),
                             views_executor.clone(),
+                            ),
                         );
                         spawn_live_instance_channel_run_for_ref(
                             channel,
@@ -7341,6 +7634,7 @@ pub(crate) async fn spawn_channel_adapters(
                             status = "LIVE",
                             "channel: spawned (google chat pubsub pull loop)"
                         );
+                        }
                     }
                     Err(e) => warn!(
                         channel = "gchat",
@@ -7348,6 +7642,9 @@ pub(crate) async fn spawn_channel_adapters(
                         error = %e,
                         "Google Chat service-account key unreadable; channel not started"
                     ),
+                    }
+                    }
+                    }
                 }
             }
             (Some(_), Some(_), Some(_), None) => warn!(

@@ -28,7 +28,9 @@
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
+use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use serde::de::{MapAccess, Visitor};
@@ -224,6 +226,92 @@ pub struct ChannelRouting {
 
 /// The filename inside `~/.neoth/` that persists the routing config.
 pub const CHANNEL_ROUTING_FILE: &str = "channel_routing.json";
+const MAX_CONVERTED_RELINK_ROUTING_BYTES: usize = 64 * 1024;
+
+// This is deliberately private to the converted-relink coordinator.  It is
+// not a substitute for the raw-byte comparison below: older processes do not
+// take this mutex, so the comparison immediately before publication is the
+// cross-process authority.
+static CONVERTED_RELINK_ROUTING_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn read_converted_relink_routing_raw(
+    home: &crate::skills::store::BoundDirectory,
+) -> Result<Vec<u8>> {
+    let path = home.physical_display_path.join(CHANNEL_ROUTING_FILE);
+    match home.dir.symlink_metadata(OsStr::new(CHANNEL_ROUTING_FILE)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+        Ok(_) => crate::skills::store::read_regular_file_bounded(
+            &home.dir,
+            OsStr::new(CHANNEL_ROUTING_FILE),
+            &path,
+            MAX_CONVERTED_RELINK_ROUTING_BYTES,
+        ),
+    }
+}
+
+/// Capability-bound routing snapshot for the converted-relink coordinator.
+/// Empty/missing has the same opt-in semantics as [`ChannelRouting::load_from`],
+/// while every existing file is a bounded regular child (never a link).
+pub(crate) fn load_for_converted_relink_at(home: &Path) -> Result<(Vec<u8>, ChannelRouting)> {
+    let bound = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "converted relink routing home",
+    )?
+    .context("converted relink routing home absent")?;
+    let raw = read_converted_relink_routing_raw(&bound)?;
+    let routing = if raw.is_empty() {
+        ChannelRouting::default()
+    } else {
+        serde_json::from_slice(&raw).context("parse converted relink routing")?
+    };
+    Ok((raw, routing))
+}
+
+/// Publish a relink route only if the exact preparation snapshot still owns
+/// the routing member.  The private atomic writer provides no-follow and
+/// durable child publication; callers receive the exact postimage for their
+/// durable receipt rather than reserialising a second time.
+pub(crate) fn save_for_converted_relink_if_raw_matches_at(
+    home: &Path,
+    expected_raw: &[u8],
+    routing: &ChannelRouting,
+) -> Result<Vec<u8>> {
+    let _guard = CONVERTED_RELINK_ROUTING_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("converted relink routing mutex is poisoned"))?;
+    let bound = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "converted relink routing home",
+    )?
+    .context("converted relink routing home absent")?;
+    let actual = read_converted_relink_routing_raw(&bound)?;
+    anyhow::ensure!(
+        actual == expected_raw,
+        "channel routing changed while converted relink target was being verified; pending relink remains blocked"
+    );
+    let postimage = serde_json::to_vec_pretty(routing).context("serialize converted relink route")?;
+    anyhow::ensure!(
+        postimage.len() <= MAX_CONVERTED_RELINK_ROUTING_BYTES,
+        "converted relink routing postimage exceeds bound"
+    );
+    let path = bound.physical_display_path.join(CHANNEL_ROUTING_FILE);
+    crate::skills::store::atomic_write_private_child(
+        &bound.dir,
+        OsStr::new(CHANNEL_ROUTING_FILE),
+        &path,
+        &postimage,
+    )?;
+    let observed = read_converted_relink_routing_raw(&bound)?;
+    anyhow::ensure!(
+        observed == postimage,
+        "converted relink routing postimage changed during publication"
+    );
+    Ok(postimage)
+}
 
 impl ChannelRouting {
     /// Resolve source, failure, then default in that order. A selected route is
@@ -265,6 +353,26 @@ impl ChannelRouting {
 
     /// Atomic tmp+rename save (mirrors `ProactiveQueue::save_to`).
     pub fn save_to(&self, path: &Path) -> Result<()> {
+        let parent = path.parent().context("channel routing path has no parent")?;
+        // Preserve first-save behavior before the shared authority opens its
+        // lock file inside the routing home.
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create parent dir for {}", path.display()))?;
+        // All production routing writers share the authoritative pair lock
+        // with converted-relink finalization. The routing member is still
+        // independently atomic, but it cannot interleave between relink's
+        // raw-CAS and Ready receipt publication.
+        crate::config::credentials::with_coherent_pair_transaction_at(
+            &parent.join("freedom.yaml"),
+            || self.save_to_under_shared_writer_lock(path),
+        )
+    }
+
+    fn save_to_under_shared_writer_lock(&self, path: &Path) -> Result<()> {
+        let _guard = CONVERTED_RELINK_ROUTING_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| anyhow::anyhow!("channel routing writer mutex is poisoned"))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create parent dir for {}", path.display()))?;

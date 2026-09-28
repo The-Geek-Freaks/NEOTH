@@ -21,6 +21,7 @@ pub mod browser;
 pub mod buddy;
 pub mod catalog;
 pub mod channel;
+pub(crate) mod channel_relink;
 pub mod chat;
 pub mod chat_display;
 pub(crate) mod chat_turn_pipeline;
@@ -1215,6 +1216,20 @@ pub enum ProviderAction {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 pub enum ChannelAction {
+    /// Relink one selected OpenClaw account to a verified NEOTH transport.
+    /// Read the private channel credential envelope from stdin.
+    RelinkOpenclaw {
+        /// Converted transports currently support only the default NEOTH account.
+        #[arg(value_parser = ["imessage_bluebubbles", "google_chat"])]
+        channel: String,
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        source_account: String,
+        /// Exact BlueBubbles chat GUID or Google Chat space to verify.
+        #[arg(long)]
+        target: String,
+    },
     /// Import one explicitly selected OpenClaw Telegram token into one explicit NEOTH account.
     ImportOpenclawTelegram {
         #[arg(long)]
@@ -2194,6 +2209,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             self_dev::run(&home, args, None, global_output).await?;
         }
         Commands::Channel { action } => match action {
+            ChannelAction::RelinkOpenclaw {
+                channel,
+                config,
+                source_account,
+                target,
+            } => {
+                channel_relink::run(
+                    &channel,
+                    &config,
+                    &source_account,
+                    target,
+                    &global_output,
+                )
+                .await?;
+            }
             ChannelAction::ImportOpenclawTelegram {
                 config,
                 source_account,
@@ -2798,6 +2828,62 @@ mod default_invocation_tests {
                 "add-slack",
                 "--allowed-user-id",
                 "U123PRIVATE",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn converted_relink_requires_explicit_source_target_and_private_stdin_credentials() {
+        for channel in ["imessage_bluebubbles", "google_chat"] {
+            let args = [
+                "neoth",
+                "channel",
+                "relink-openclaw",
+                channel,
+                "--config",
+                "openclaw.json",
+                "--source-account",
+                "work",
+                "--target",
+                "explicit-target",
+            ];
+            let parsed = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(
+                parsed.command,
+                Commands::Channel {
+                    action: ChannelAction::RelinkOpenclaw {
+                        source_account, target, ..
+                    }
+                } if source_account == "work" && target == "explicit-target"
+            ));
+            for flag_position in [4, 6, 8] {
+                let incomplete: Vec<_> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != flag_position && *index != flag_position + 1)
+                    .map(|(_, arg)| *arg)
+                    .collect();
+                assert!(Cli::try_parse_from(incomplete).is_err());
+            }
+            for forbidden in ["--token", "--password", "--service-account", "--account"] {
+                let mut extra = args.to_vec();
+                extra.extend([forbidden, "private-sentinel"]);
+                assert!(Cli::try_parse_from(extra).is_err());
+            }
+        }
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "relink-openclaw",
+                "slack",
+                "--config",
+                "openclaw.json",
+                "--source-account",
+                "work",
+                "--target",
+                "explicit-target",
             ])
             .is_err()
         );
