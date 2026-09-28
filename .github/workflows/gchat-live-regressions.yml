@@ -61,6 +61,8 @@ jobs:
             packaging/tests/test_converted_channel_relink_product_canary.py \
             packaging/gchat_converted_relink_product_canary.py \
             packaging/tests/test_gchat_converted_relink_product_canary.py \
+            packaging/bluebubbles_daemon_adoption_canary.py \
+            packaging/tests/test_bluebubbles_daemon_adoption_canary.py \
             SRC/neoth-openclaw-custody/src/pinned_inventory.rs \
             SRC/neoth-openclaw-custody/src/pinned_schema.rs \
             SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json \
@@ -106,6 +108,7 @@ jobs:
         run: |
           python3 packaging/tests/test_converted_channel_relink_product_canary.py
           python3 packaging/tests/test_gchat_converted_relink_product_canary.py
+          python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py
 
       - name: Run focused channel and exact-target regressions
         working-directory: SRC
@@ -280,6 +283,30 @@ jobs:
           path: |
             ${{ runner.temp }}/w548-gchat-live-regressions/product/evidence/
             ${{ runner.temp }}/w548-gchat-live-regressions/product/receipt/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Exercise running daemon adoption of a public BlueBubbles relink
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$W548_ROOT/daemon-product"
+          python3 packaging/bluebubbles_daemon_adoption_canary.py \
+            --binary "$PWD/SRC/target/debug/neoth" \
+            --root "$W548_ROOT/daemon-product" \
+            --home "$W548_ROOT/daemon-product/neoth-home" \
+            --source "$W548_ROOT/daemon-product/openclaw.json" \
+            --evidence-dir "$W548_ROOT/daemon-product/evidence" \
+            --receipt "$W548_ROOT/daemon-product/receipt/receipt.json" \
+            --workflow .github/workflows/gchat-live-regressions.yml
+
+      - name: Upload BlueBubbles daemon adoption evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bluebubbles-daemon-adoption-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w548-gchat-live-regressions/daemon-product/evidence/
+            ${{ runner.temp }}/w548-gchat-live-regressions/daemon-product/receipt/
           if-no-files-found: warn
           retention-days: 14
 
