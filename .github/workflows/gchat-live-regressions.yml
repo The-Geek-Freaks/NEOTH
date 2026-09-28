@@ -180,6 +180,7 @@ jobs:
             fi
           }
 
+          run_case 145 lib cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary --lib
           run_case 140 lib cli::privacy::tests::audit_lists_no_channels_when_credentials_empty cli::privacy::tests::audit_lists_no_channels_when_credentials_empty --lib
           run_case 141 lib cli::privacy::tests::audit_warns_and_lists_configured_channels cli::privacy::tests::audit_warns_and_lists_configured_channels --lib
           run_case 142 lib cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only --lib
@@ -331,9 +332,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 144
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 144
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 144
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 145
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 145
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 145
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle
@@ -406,6 +407,19 @@ jobs:
           done
           cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
             channels::gchat::tests:: -- --test-threads=1 2>&1 | tee "$W548_ROOT/gchat-guards/tests.log"
+
+          for name in gchat_canary_diagnostic_codes_are_fixed_and_complete failed_gchat_probe_emits_only_fixed_canary_code; do
+            identity="cli::channel::converted_relink::tests::$name"
+            discovery="$W548_ROOT/gchat-guards/${name}-discovery.log"
+            actual="$W548_ROOT/gchat-guards/${name}-actual.log"
+            cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
+              "$identity" -- --exact --list > "$discovery" 2>&1
+            test "$(grep -Fxc "$identity: test" "$discovery")" -eq 1
+            cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
+              "$identity" -- --exact --test-threads=1 2>&1 | tee "$actual"
+            test "$(grep -Fxc "test $identity ... ok" "$actual")" -eq 1
+            grep -Fq 'test result: ok. 1 passed; 0 failed;' "$actual"
+          done
 
       - name: Build isolated Google Chat canary CLI
         id: gchat-cli-build

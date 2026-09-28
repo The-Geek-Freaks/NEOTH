@@ -8,6 +8,36 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1887 Google Chat probe diagnosis propagation (2026-09-28; hosted pending):**
+The authenticated product artifact10972873571 at a8031840 returned unknown with
+zero observed HTTP requests. Zero counters do not establish pre-bearer failure.
+Source trace found the actual diagnostic loss: ChannelTestResult.detail is
+discarded at the generic converted-relink failure. A Python marker-only change
+cannot recover that detail. Only GoogleChat in gchat-product-canary now emits
+a fixed allowlisted code for constructor/bearer/token/subscription/space errors;
+private detail never reaches stderr. Default and non-GChat failures stay generic.
+One injected-probe default regression selects2382portable/2157Linux/942Windows/
+145channel/58macOS. Two separate feature-only regressions have exact discovery
+and terminal guards in the product workflow; Python tests use independent literal
+codes with sensitive adjacent text. The underlying product failure is not yet fixed
+or identified by a fresh run. No auth, transport, refusal or cleanup gate relaxed.
+Previously dispatched941/2156/57 runs on a5f4c879 continue; no duplicate dispatch.
+No local executable validation, LF00112 closure or release claim.
+
+**W1888 prior channel128 acceptance and native recovery dispatch (2026-09-28):**
+Root admits the bounded128-test/publicCLI scope at a8031840 from run36425611785.
+Original logs10971909158, receipts10972413937, source10972129068 and publicCLI
+10971916956 match GitHub API digests;264extracted entries and72raw producer
+sources rehash exactly. Independent identity reconciliation found128discovery,
+128actual logs and128started/executed/passed,0failed; case04 remains integration.
+The real publicCLI relink covers first/retry/wrong-target, four cleanup flags,
+post0 and no unexpected request. The separate daemon/GChat products failed,
+so the overall workflow is red and this acceptance excludes both products.
+At a5f4c879 Preflight36430764717 andCodeQuality36430764115 pass. Exactly one
+fresh native run each is active: Windows94136431168765, Linux215636431175241,
+macOS5736431181738. These are pending evidence, not current runtime acceptance.
+No local executable validation or ROAD closure.
+
 **W1883/W1885/W1886 privacy projection and hosted recovery (2026-09-28; runtime pending):**
 Privacy audit now derives configured/partial channel visibility from canonical
 descriptors instead of three hardcoded credentials. Google Chat and Discord

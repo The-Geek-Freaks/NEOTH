@@ -33,7 +33,7 @@ DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REFUSAL_STAGES = frozenset(("wrong_target", "wrong_returned_space"))
 REFUSAL_COUNTERS = ("token", "subscription", "space", "wrong_space", "bad_token", "bad_bearer", "forbidden_post", "unexpected_get")
-REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_constructor", "gchat_probe", "unknown"))
+REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_constructor", "gchat_bearer", "gchat_token", "gchat_subscription", "gchat_space", "gchat_probe", "unknown"))
 REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "candidate_service_account_file",
     "candidate_subscription_resource",
@@ -49,8 +49,61 @@ REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "space_http_status",
     "space_malformed_json",
     "space_identity_mismatch",
+    "constructor_feature_disabled",
+    "constructor_token_uri",
+    "constructor_key_read",
+    "constructor_key_json",
+    "constructor_http_client",
+    "bearer_rsa_pem",
+    "bearer_claims",
+    "bearer_jwt_sign",
+    "token_post",
+    "token_body",
+    "token_status",
+    "token_json",
+    "token_access_token",
+    "subscription_request",
+    "subscription_body",
+    "space_path",
+    "space_request",
+    "space_body",
     "unknown",
 ))
+# Fixed codes emitted only by the gchat-product-canary feature. They never
+# contain provider detail, endpoint text, key data, token material, or stderr.
+GCHAT_CANARY_DIAGNOSTIC_CODES = {
+    "constructor-origin-not-unicode": ("gchat_constructor", "canary_origin_not_unicode"),
+    "constructor-origin-invalid": ("gchat_constructor", "canary_origin_invalid"),
+    "constructor-feature": ("gchat_constructor", "constructor_feature_disabled"),
+    "constructor-identity": ("gchat_constructor", "canary_synthetic_key_or_token_uri"),
+    "constructor-token-uri": ("gchat_constructor", "constructor_token_uri"),
+    "constructor-subscription": ("gchat_constructor", "constructor_subscription_resource"),
+    "constructor-key-read": ("gchat_constructor", "constructor_key_read"),
+    "constructor-key-json": ("gchat_constructor", "constructor_key_json"),
+    "constructor-http-client": ("gchat_constructor", "constructor_http_client"),
+    "bearer-rsa-pem": ("gchat_bearer", "bearer_rsa_pem"),
+    "bearer-claims": ("gchat_bearer", "bearer_claims"),
+    "bearer-jwt-sign": ("gchat_bearer", "bearer_jwt_sign"),
+    "token-post": ("gchat_token", "token_post"),
+    "token-body": ("gchat_token", "token_body"),
+    "token-status": ("gchat_token", "token_status"),
+    "token-json": ("gchat_token", "token_json"),
+    "token-access-token": ("gchat_token", "token_access_token"),
+    "subscription-request": ("gchat_subscription", "subscription_request"),
+    "subscription-body": ("gchat_subscription", "subscription_body"),
+    "subscription-forbidden": ("gchat_subscription", "subscription_forbidden"),
+    "subscription-status": ("gchat_subscription", "subscription_http_status"),
+    "subscription-json": ("gchat_subscription", "subscription_malformed_json"),
+    "subscription-identity": ("gchat_subscription", "subscription_identity_mismatch"),
+    "space-path": ("gchat_space", "space_path"),
+    "space-request": ("gchat_space", "space_request"),
+    "space-body": ("gchat_space", "space_body"),
+    "space-forbidden": ("gchat_space", "space_forbidden"),
+    "space-status": ("gchat_space", "space_http_status"),
+    "space-json": ("gchat_space", "space_malformed_json"),
+    "space-identity": ("gchat_space", "space_identity_mismatch"),
+    "unknown": ("unknown", "unknown"),
+}
 REFUSAL_OUTPUT_HASH_DOMAIN = b"neoth-gchat-refusal-output-v1\0"
 REFUSAL_ERROR_MARKERS = (
     ("Google Chat relink lacks service-account file", "candidate", "candidate_service_account_file"),
@@ -113,10 +166,14 @@ def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> d
     output = b"\n".join(value for value in (process.stdout, process.stderr) if isinstance(value, bytes))
     rendered = output.decode("utf-8", "replace")
     stage, reason = "unknown", "unknown"
-    for marker, candidate_stage, candidate_reason in REFUSAL_ERROR_MARKERS:
-        if marker in rendered:
-            stage, reason = candidate_stage, candidate_reason
-            break
+    match = re.search(r"gchat canary exact target probe diagnostic: ([a-z-]+)", rendered)
+    if match is not None:
+        stage, reason = GCHAT_CANARY_DIAGNOSTIC_CODES.get(match.group(1), ("unknown", "unknown"))
+    else:
+        for marker, candidate_stage, candidate_reason in REFUSAL_ERROR_MARKERS:
+            if marker in rendered:
+                stage, reason = candidate_stage, candidate_reason
+                break
     return {
         "stage": stage,
         "reason": reason,

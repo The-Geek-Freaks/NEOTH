@@ -76,6 +76,60 @@ class GChatRelinkCanaryTests(unittest.TestCase):
                 self.assertNotIn(canary.EMAIL, rendered)
                 self.assertNotIn("https://", rendered)
 
+    def test_fixed_canary_diagnostic_codes_map_without_retaining_adjacent_secret_text(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
+        for code, (expected_stage, expected_reason) in canary.GCHAT_CANARY_DIAGNOSTIC_CODES.items():
+            with self.subTest(code=code):
+                stderr = f"outer context: gchat canary exact target probe diagnostic: {code}{secret}"
+                process = subprocess.CompletedProcess(["neoth"], 1, b"ignored", stderr.encode("utf-8"))
+                diagnostic = canary.refusal_failure_diagnostic(process)
+                self.assertEqual(diagnostic["stage"], expected_stage)
+                self.assertEqual(diagnostic["reason"], expected_reason)
+                rendered = json.dumps(diagnostic, sort_keys=True)
+                self.assertNotIn(secret, rendered)
+                self.assertNotIn(canary.EMAIL, rendered)
+                self.assertNotIn("https://", rendered)
+                self.assertNotIn("BEGIN PRIVATE KEY", rendered)
+
+    def test_fixed_canary_diagnostic_literals_cover_each_failure_phase(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
+        cases = (
+            ("constructor-key-read", "gchat_constructor", "constructor_key_read"),
+            ("bearer-rsa-pem", "gchat_bearer", "bearer_rsa_pem"),
+            ("token-post", "gchat_token", "token_post"),
+            ("subscription-body", "gchat_subscription", "subscription_body"),
+            ("space-identity", "gchat_space", "space_identity_mismatch"),
+        )
+        for code, expected_stage, expected_reason in cases:
+            with self.subTest(code=code):
+                process = subprocess.CompletedProcess(
+                    ["neoth"],
+                    1,
+                    b"ignored",
+                    f"gchat canary exact target probe diagnostic: {code}{secret}".encode("utf-8"),
+                )
+                diagnostic = canary.refusal_failure_diagnostic(process)
+                self.assertEqual(diagnostic["stage"], expected_stage)
+                self.assertEqual(diagnostic["reason"], expected_reason)
+                rendered = json.dumps(diagnostic, sort_keys=True)
+                self.assertNotIn(secret, rendered)
+                self.assertNotIn(canary.EMAIL, rendered)
+                self.assertNotIn("https://", rendered)
+                self.assertNotIn("BEGIN PRIVATE KEY", rendered)
+
+    def test_unrecognized_fixed_canary_diagnostic_code_stays_unknown_and_redacted(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
+        process = subprocess.CompletedProcess(
+            ["neoth"], 1, b"ignored", f"gchat canary exact target probe diagnostic: future-code{secret}".encode("utf-8")
+        )
+        diagnostic = canary.refusal_failure_diagnostic(process)
+        self.assertEqual(diagnostic["stage"], "unknown")
+        self.assertEqual(diagnostic["reason"], "unknown")
+        rendered = json.dumps(diagnostic, sort_keys=True)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn(canary.EMAIL, rendered)
+        self.assertNotIn("https://", rendered)
+
     def test_refusal_diagnostic_redacts_unknown_sensitive_output(self):
         secret = b"https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
         process = subprocess.CompletedProcess(["neoth"], 1, secret, b"unrecognized failure")

@@ -23,6 +23,52 @@ use crate::channels::routing::ChannelRouting;
 
 const PROBE_VALIDITY: Duration = Duration::from_secs(60);
 
+// The product canary needs a stable, secret-free attribution signal when its
+// intentionally failing exact-target probes stop before the fake provider can
+// observe a request. Never forward ChannelTestResult::detail: even redacted
+// provider detail can retain a private endpoint. Production relinks keep their
+// established generic failure below.
+#[cfg(feature = "gchat-product-canary")]
+fn gchat_canary_probe_diagnostic_code(detail: &str) -> &'static str {
+    let markers = [
+        ("NEOTH_GCHAT_CANARY_ORIGIN is not Unicode", "constructor-origin-not-unicode"),
+        ("NEOTH_GCHAT_CANARY_ORIGIN", "constructor-origin-invalid"),
+        ("gchat canary feature is not enabled", "constructor-feature"),
+        ("this binary lacks the `gchat-channel` runtime feature", "constructor-feature"),
+        ("gchat canary key must use synthetic identity", "constructor-identity"),
+        ("official Google OAuth endpoint", "constructor-token-uri"),
+        ("gchat subscription must be", "constructor-subscription"),
+        ("read gchat service-account key", "constructor-key-read"),
+        ("parse gchat service-account JSON key", "constructor-key-json"),
+        ("build reqwest client for gchat adapter", "constructor-http-client"),
+        ("gchat: service-account private_key is not a valid RSA PEM", "bearer-rsa-pem"),
+        ("gchat: claims serialization", "bearer-claims"),
+        ("gchat: JWT signing failed", "bearer-jwt-sign"),
+        ("gchat token POST failed", "token-post"),
+        ("gchat token grant response", "token-body"),
+        ("gchat token grant rejected", "token-status"),
+        ("gchat token response parse", "token-json"),
+        ("gchat token response omitted access_token", "token-access-token"),
+        ("gchat subscription probe failed", "subscription-request"),
+        ("gchat subscription probe response", "subscription-body"),
+        ("Google Chat service account cannot read the Pub/Sub subscription", "subscription-forbidden"),
+        ("Google Chat subscription probe returned HTTP", "subscription-status"),
+        ("Google Chat subscription probe returned malformed JSON", "subscription-json"),
+        ("Google Chat subscription probe returned `", "subscription-identity"),
+        ("gchat space target contains an unsafe path identity", "space-path"),
+        ("gchat space target probe failed", "space-request"),
+        ("gchat space target probe response", "space-body"),
+        ("Google Chat service account cannot read the configured space", "space-forbidden"),
+        ("Google Chat space target probe returned HTTP", "space-status"),
+        ("Google Chat space target probe returned malformed JSON", "space-json"),
+        ("Google Chat space target probe returned a different space", "space-identity"),
+    ];
+    markers
+        .into_iter()
+        .find_map(|(marker, code)| detail.contains(marker).then_some(code))
+        .unwrap_or("unknown")
+}
+
 /// Secret-bearing input has no Debug implementation. The source path stays
 /// private and is never copied into the durable provenance records.
 pub(crate) struct ConvertedRelinkRequest {
@@ -145,11 +191,18 @@ where
     let result = tokio::time::timeout(PROBE_VALIDITY, probe(&prepared, &request.target))
         .await
         .context("converted relink exact target probe timed out")??;
-    // Provider detail can contain private endpoints. Keep this failure redacted.
-    ensure!(
-        result.status == "ok",
-        "converted relink exact target probe did not pass"
-    );
+    if result.status != "ok" {
+        #[cfg(feature = "gchat-product-canary")]
+        if request.destination.channel_id == ChannelId::GoogleChat {
+            anyhow::bail!(
+                "gchat canary exact target probe diagnostic: {}",
+                gchat_canary_probe_diagnostic_code(&result.detail)
+            );
+        }
+        // Provider detail can contain private endpoints. Production and
+        // non-Google-Chat relinks retain the historical generic failure.
+        anyhow::bail!("converted relink exact target probe did not pass");
+    }
     let candidate = PreparedConvertedRelink {
         prepared,
         destination: request.destination,

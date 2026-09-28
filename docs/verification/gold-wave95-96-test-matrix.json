@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1883 privacy and W1884/W1885 recovery source reviewed; hosted verification pending",
+  "status": "W1887 fixed-code diagnostic source approved; prior128/publicCLI admitted; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269808,
-    "sha256": "83E2900FA37D2B604D96D432DA5172A8C0E40570D0A669DA772BB04DFA7712F6"
+    "bytes": 269813,
+    "sha256": "43853FA477ABA6D479AB34FAEF859F0C160D057E73E765312034EFD221E214D7"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -13506,43 +13506,43 @@
     {
       "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     },
     {
@@ -14293,6 +14293,12 @@
       "test": "cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values",
       "sourcePath": "SRC/neothd/src/cli/privacy.rs",
       "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary",
+      "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+      "sourceSha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
       "junitClass": "neoth"
     }
   ],
@@ -59353,6 +59359,177 @@
       }
     ],
     "note": "2381portable/2156Linux/941Windows/144channel/57macOS. New privacy canonical projection, n8n one-character contract repair, isolated daemon onboarding fixture, authentic Doctor formatter. Earlier925Windows/2140Linux still red; no Road closure/local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1888PinnedChannel128Acceptance": {
+    "schema": "neoth-root-channel128-acceptance/v1",
+    "run": 36425611785,
+    "producer": "a80318405fbc338587c0005dfb73899a57ab5aea",
+    "artifacts": [
+      {
+        "id": 10971909158,
+        "name": "w548-gchat-live-regressions-log-a80318405fbc338587c0005dfb73899a57ab5aea",
+        "api_digest": "sha256:6be0e5d9a5595a68eaaa1220353efcdd3550ad45c194e6d697e98f817c43c51e",
+        "zip_sha256": "6be0e5d9a5595a68eaaa1220353efcdd3550ad45c194e6d697e98f817c43c51e",
+        "matches": true
+      },
+      {
+        "id": 10971916956,
+        "name": "converted-relink-public-cli-a80318405fbc338587c0005dfb73899a57ab5aea",
+        "api_digest": "sha256:bcf96efadfbdbe7cf7a1781a0f057dd4d6cfb3d3d2b612ff6181fcf00d62f6e5",
+        "zip_sha256": "bcf96efadfbdbe7cf7a1781a0f057dd4d6cfb3d3d2b612ff6181fcf00d62f6e5",
+        "matches": true
+      },
+      {
+        "id": 10972129068,
+        "name": "w548-gchat-live-regressions-source-a80318405fbc338587c0005dfb73899a57ab5aea",
+        "api_digest": "sha256:8dfd56f8c214f83ee45cf678f8b1a8d6d349e4715ffaffc027e250de5938e644",
+        "zip_sha256": "8dfd56f8c214f83ee45cf678f8b1a8d6d349e4715ffaffc027e250de5938e644",
+        "matches": true
+      },
+      {
+        "id": 10972413937,
+        "name": "w548-gchat-live-regressions-receipt-a80318405fbc338587c0005dfb73899a57ab5aea",
+        "api_digest": "sha256:385e78bcb2245c09ac2d924ea38539d4edaabf937993a171c383ef36628c4538",
+        "zip_sha256": "385e78bcb2245c09ac2d924ea38539d4edaabf937993a171c383ef36628c4538",
+        "matches": true
+      }
+    ],
+    "zipEntriesRehashed": 264,
+    "reconciliation": {
+      "expected": 128,
+      "executed": 128,
+      "started": 128,
+      "passed": 128,
+      "failed": 0,
+      "actual_logs": 128,
+      "discovery_logs": 128,
+      "terminal_sets_match": true,
+      "case04_integration_normalization": "case 04 log test name omits proactive_egress_contract_source_gate:: prefix; receipt identity supplies that integration target",
+      "case04_is_integration": true,
+      "other_127_are_lib": true
+    },
+    "rawProducerBindings": 72,
+    "publicCli": {
+      "outcome": "passed",
+      "failure": null,
+      "stage": "cleanup",
+      "cleanup": {
+        "evidence_retained": true,
+        "home_removed": true,
+        "source_removed": true,
+        "wrong_target_home_removed": true
+      },
+      "requests": {
+        "ping": 3,
+        "post": 0,
+        "target": 2,
+        "unexpected_get": 0,
+        "wrong_target": 1
+      },
+      "wrong_target": {
+        "credentials_absent": true,
+        "pending_record_present": true,
+        "ready_transaction_absent": true,
+        "reload_absent": true,
+        "routing_absent": true
+      },
+      "source_head": "a80318405fbc338587c0005dfb73899a57ab5aea"
+    },
+    "scope": "Prior pinned128 and actual publicCLI only. Overall workflow red; daemon and GChat products excluded.",
+    "localExecutableValidationRan": false
+  },
+  "wave1887GchatCanaryDiagnostics": {
+    "requiredTests": [
+      "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary"
+    ],
+    "canaryFeatureRequiredTests": [
+      "cli::channel::converted_relink::tests::gchat_canary_diagnostic_codes_are_fixed_and_complete",
+      "cli::channel::converted_relink::tests::failed_gchat_probe_emits_only_fixed_canary_code"
+    ],
+    "canaryFeatures": "gchat-product-canary,irc-channel,nostr-channel",
+    "status": "independent static review approved after test arity/error-capture corrections; hosted pending",
+    "note": "Default/non-GChat failures remain generic. Feature-only GChat failure forwards fixed allowlisted code, never provider detail. Zero server requests do not prove pre-bearer failure. Two canary-only tests are selected separately in feature workflow and not added to default native count.",
+    "priorFailure": {
+      "run": 36425611785,
+      "artifact": 10972873571,
+      "producer": "a80318405fbc338587c0005dfb73899a57ab5aea",
+      "zipSha256": "c23bcbcd8b8edbfdd6584f377bd053c549249265b15ff39c1ac1be6c43220525",
+      "observed": "wrong_target returned1; all8server counters0; diagnostic unknown; generic relink failure discarded probe detail"
+    }
+  },
+  "wave1887SourceBindings": {
+    "base": "a5f4c879bf60a8dcf2a6c6f6ff71ddb2473e7274",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 50397,
+        "sha256": "76665AD51650B8F5DFF8B101824B811247762951B18FA8B0DDD0F28D5C94DA18",
+        "blob": "f89e2c1dd2e719fdb605b9aaee6361ee0ea57c69"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 12524,
+        "sha256": "88DED118BD0BE24181F65CEFBA396B768A666704BA59BEE5D90C75E428ED689F",
+        "blob": "a69df02bff46a0c9a12272044053801e98199f16"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29969,
+        "sha256": "4B0008F31FE6FF0A78F1926EF2591AF45FD0EFDFC1A36BEE1B0A4AB62067D9E4",
+        "blob": "ee52cb373cb21748eb0250138eea35b0350173b2"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 160631,
+        "sha256": "B5938712169AFA38759DE7002180693E5D4F1901A402059B0985682AB60B71D3",
+        "blob": "7d230cf15750ea8c6c541a5fe3371f4699583629"
+      },
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 34801,
+        "sha256": "E54449DCD845565F9A3495A693106E99B4B3E998A6A733E4A06851BD06ECC649",
+        "blob": "98be58fcb7b701c559fbc60644794928ae0b377d"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 15937,
+        "sha256": "F5E47FF05B48C63EA54FA7259A0872CAADE54E22EFC45E3597EDC40B2D774555",
+        "blob": "465771811c3a587289f0ab873ded794de85709fa"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 539220,
+        "sha256": "04A0AA82F997AB2C009761A6AC18DC494670D37F9AC0FBA74EFAE02A80F10E8A",
+        "blob": "334e5fcf8017ff7247896dc682e05fdcb4890c92"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1575650,
+        "sha256": "D9ABDB8E71C842D721CD8BC6DB6905FEE69E8A6F4A8B7AB364DB2177F96B1A58",
+        "blob": "549e95426dee9953e7cef3fb161d1a1421772011"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2186660,
+        "sha256": "D9B59AC5CEB5F10DB06BCAFD785D254500A758DEB58363556465679A55F366E4",
+        "blob": "9eb259f69e51d3ffe91d88111bb10539873073c0"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "bytes": 17782,
+        "sha256": "B9D4C1258A7E505FB479F5ABA38A878B915A15C4E60754A4C817AF0F69126419",
+        "blob": "22aafd516252a67755cfdc54355d99ea9a4d0220"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "bytes": 24640,
+        "sha256": "8B0E8369B8CDF56C5A9A57C8EBDD76885092F4B674444E5A51AA8C3D149576F7",
+        "blob": "ac903a9b4eb86750f4bddf80fbc96adfa2969134"
+      }
+    ],
+    "note": "Default/nonGChat generic error retained; canary GoogleChat emits only fixed code, no provider detail.2382portable/2157Linux/942Windows/145channel/58macOS plus2canary-only exact tests. W1888 pinned128/publicCLI originals verified; failed products excluded. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

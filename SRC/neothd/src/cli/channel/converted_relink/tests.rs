@@ -494,6 +494,128 @@ async fn gchat_key_replaced_during_successful_probe_is_rejected_before_publicati
     );
 }
 
+#[cfg(not(feature = "gchat-product-canary"))]
+#[tokio::test]
+async fn failed_gchat_probe_keeps_generic_error_outside_canary() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    write_encrypted_first_use_home(&home);
+    let source = temp.path().join("openclaw.json");
+    std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    let service_account = temp.path().join("service-account.json");
+    std::fs::write(&service_account, "{}").unwrap();
+    let secret_adjacent_detail = "gchat token POST failed at https://private.invalid/token";
+
+    let error = prepare_converted_relink_with_probe_at(
+        &home,
+        request(
+            &source,
+            ConvertedRelinkChannel::GoogleChat,
+            Some(&service_account),
+            "spaces/AAAA-converted-relink",
+        ),
+        |_, _| {
+            Box::pin(async move {
+                Ok(ChannelTestResult {
+                    channel: "gchat".into(),
+                    account: None,
+                    status: "fail",
+                    detail: secret_adjacent_detail.into(),
+                })
+            })
+        },
+    )
+    .await
+    .err()
+    .expect("injected failed Google Chat probe must refuse publication");
+    let rendered = format!("{error:#}");
+    assert_eq!(rendered, "converted relink exact target probe did not pass");
+    assert!(!rendered.contains("private.invalid"));
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[test]
+fn gchat_canary_diagnostic_codes_are_fixed_and_complete() {
+    let cases = [
+        ("NEOTH_GCHAT_CANARY_ORIGIN is not Unicode", "constructor-origin-not-unicode"),
+        ("NEOTH_GCHAT_CANARY_ORIGIN must be canonical", "constructor-origin-invalid"),
+        ("gchat canary feature is not enabled", "constructor-feature"),
+        ("this binary lacks the `gchat-channel` runtime feature", "constructor-feature"),
+        ("gchat canary key must use synthetic identity", "constructor-identity"),
+        ("official Google OAuth endpoint", "constructor-token-uri"),
+        ("gchat subscription must be canonical", "constructor-subscription"),
+        ("read gchat service-account key", "constructor-key-read"),
+        ("parse gchat service-account JSON key", "constructor-key-json"),
+        ("build reqwest client for gchat adapter", "constructor-http-client"),
+        ("gchat: service-account private_key is not a valid RSA PEM", "bearer-rsa-pem"),
+        ("gchat: claims serialization", "bearer-claims"),
+        ("gchat: JWT signing failed", "bearer-jwt-sign"),
+        ("gchat token POST failed", "token-post"),
+        ("gchat token grant response body read failed", "token-body"),
+        ("gchat token grant rejected", "token-status"),
+        ("gchat token response parse", "token-json"),
+        ("gchat token response omitted access_token", "token-access-token"),
+        ("gchat subscription probe failed", "subscription-request"),
+        ("gchat subscription probe response exceeds", "subscription-body"),
+        ("Google Chat service account cannot read the Pub/Sub subscription", "subscription-forbidden"),
+        ("Google Chat subscription probe returned HTTP", "subscription-status"),
+        ("Google Chat subscription probe returned malformed JSON", "subscription-json"),
+        ("Google Chat subscription probe returned `wrong`", "subscription-identity"),
+        ("gchat space target contains an unsafe path identity", "space-path"),
+        ("gchat space target probe failed", "space-request"),
+        ("gchat space target probe response body read failed", "space-body"),
+        ("Google Chat service account cannot read the configured space", "space-forbidden"),
+        ("Google Chat space target probe returned HTTP", "space-status"),
+        ("Google Chat space target probe returned malformed JSON", "space-json"),
+        ("Google Chat space target probe returned a different space", "space-identity"),
+    ];
+    for (detail, expected) in cases {
+        assert_eq!(gchat_canary_probe_diagnostic_code(detail), expected);
+    }
+    assert_eq!(gchat_canary_probe_diagnostic_code("https://private.invalid/unknown"), "unknown");
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[tokio::test]
+async fn failed_gchat_probe_emits_only_fixed_canary_code() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    write_encrypted_first_use_home(&home);
+    let source = temp.path().join("openclaw.json");
+    std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    let service_account = temp.path().join("service-account.json");
+    std::fs::write(&service_account, "{}").unwrap();
+    let secret_adjacent_detail = "gchat token POST failed at https://private.invalid/token";
+
+    let error = prepare_converted_relink_with_probe_at(
+        &home,
+        request(
+            &source,
+            ConvertedRelinkChannel::GoogleChat,
+            Some(&service_account),
+            "spaces/AAAA-converted-relink",
+        ),
+        |_, _| {
+            Box::pin(async move {
+                Ok(ChannelTestResult {
+                    channel: "gchat".into(),
+                    account: None,
+                    status: "fail",
+                    detail: secret_adjacent_detail.into(),
+                })
+            })
+        },
+    )
+    .await
+    .err()
+    .expect("injected failed Google Chat probe must emit a canary diagnostic");
+    let rendered = format!("{error:#}");
+    assert_eq!(rendered, "gchat canary exact target probe diagnostic: token-post");
+    assert!(!rendered.contains("private.invalid"));
+}
+
 #[tokio::test]
 async fn reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly() {
     let temp = tempfile::tempdir().unwrap();

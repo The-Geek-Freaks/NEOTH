@@ -109,13 +109,14 @@ jobs:
           cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only	SRC/neothd/src/cli/privacy.rs
           cli::privacy::tests::audit_partial_gchat_configuration_remains_privacy_relevant	SRC/neothd/src/cli/privacy.rs
           cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values	SRC/neothd/src/cli/privacy.rs
+          cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary	SRC/neothd/src/cli/channel/converted_relink/tests.rs
           EOF
-          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 57
-          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 57
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 58
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 58
           cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
             shasum -a 256 "$source"
           done > "$evidence/source-sha256.txt"
-          shasum -a 256 SRC/neothd/src/cli/doctor/checks/integrations.rs SRC/Cargo.lock SRC/neothd/Cargo.toml SRC/neothd/src/tools/external_http.rs SRC/neothd/src/providers/http_client.rs SRC/neothd/src/skills/store.rs .github/workflows/macos-contract-regressions.yml >> "$evidence/source-sha256.txt"
+          shasum -a 256 SRC/neothd/src/cli/channel/converted_relink.rs SRC/neothd/src/cli/doctor/checks/integrations.rs SRC/Cargo.lock SRC/neothd/Cargo.toml SRC/neothd/src/tools/external_http.rs SRC/neothd/src/providers/http_client.rs SRC/neothd/src/skills/store.rs .github/workflows/macos-contract-regressions.yml >> "$evidence/source-sha256.txt"
       - name: Compile and discover core library tests
         id: compile
         timeout-minutes: 90
@@ -124,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p neoth --lib --locked -- --list > "$RUNNER_TEMP/macos-contract-regressions/discovery.txt" 2> "$RUNNER_TEMP/macos-contract-regressions/compile.log"
-      - name: Execute all 57 exact regressions without stopping at the first failure
+      - name: Execute all 58 exact regressions without stopping at the first failure
         timeout-minutes: 10
         working-directory: SRC
         shell: bash
@@ -147,8 +148,8 @@ jobs:
               failed=$((failed + 1))
             fi
           done < "$evidence/selection.tsv"
-          printf 'selected=57\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
-          test "$index" -eq 57 && test "$failed" -eq 0
+          printf 'selected=58\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq 58 && test "$failed" -eq 0
       - name: Preserve completed core compilation
         if: ${{ always() && steps.compile.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
