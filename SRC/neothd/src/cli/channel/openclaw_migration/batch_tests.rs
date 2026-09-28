@@ -303,9 +303,9 @@ async fn batch_source_include_or_request_mutation_after_each_probe_holds_before_
                             std::fs::write(
                                 target,
                                 if mutate_request {
-                                    b"invalid request"
+                                    "invalid request"
                                 } else {
-                                    b"{ slack: { accounts: {} } }"
+                                    "{ slack: { accounts: {} } }"
                                 },
                             )
                             .unwrap();

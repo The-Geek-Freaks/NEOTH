@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1819 Batch regression type repair (2026-09-28):**
+Core36382047362 atfe3bc6d3 passed strict slim production Clippy. Default
+core test-target checking then found E0308 in batch_tests.rs: the request
+and include drift fixtures selected byte arrays of lengths15 and27 in one
+conditional. Both branches now use string slices accepted by std::fs::write;
+the exact ASCII payloads and every drift/no-publication assertion are unchanged.
+Fresh hosted Core/CLI is pending. Windows865/focused93 remain undispatched
+until test types pass; Linux2104 also awaits the generated reference.
+Preflight36382046746 and CodeQuality36382046772 passed atfe3bc6d3.
+ROAD1324/1077/245/2 unchanged. No local compiler, formatter or test ran.
+
 **W1812-W1816 Native admission and batch compile repair (2026-09-28):**
 The earlier single-account producers are now admitted: Linux2086 at8b0a6a61
 (run36378258621) and Windows848 at9f5d96a9 (run36377724690). Root rechecked

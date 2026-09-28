@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Prior Linux2086/Windows848 admitted; W1807 compile repair pending hosted validation",
+  "status": "Slim production Clippy passed; batch fixture E0308 repaired; hosted retest pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266041,
-    "sha256": "42ACBC136AAE62A4CE39D88051926D1BC45675B40991AA0B06B045FCABD2F024"
+    "bytes": 266040,
+    "sha256": "DA138CEA039E6ACB7DEE49936D2B58617F28AA2309E1885DF82B052C79D172F6"
   },
   "sourceInputs": 1476,
   "requiredNativeTests": [
@@ -13848,49 +13848,49 @@
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
-      "sourceSha256": "650B101C032B95C24E59D1AE88C492807330E26244C010D56FF3CBDABAF84A9E",
+      "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
       "junitClass": "neoth"
     }
   ],
@@ -56264,6 +56264,38 @@
       }
     ],
     "note": "Authentic hosted formatting plus contextual IO-to-anyhow conversion; no local execution; new batch remains unaccepted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1819BatchTestTypes": {
+    "base": "fe3bc6d3331d6e3fc2f7653d9402df6ffe3c3a60",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 505221,
+        "sha256": "A1BFD8C6B0A151C4712A474417CAF6122706DD50BC3730F937F9C8B2167A4D69",
+        "blob": "1443ae92e73a3d1096cc9576b2943b80cb64488b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1541417,
+        "sha256": "5C1E9D98A71EB0CEFA04C98EA364FDD9EB7BF1EACE31BF0761B131E1FC527043",
+        "blob": "e0e931e1c02675063f7e2744261de749b857612f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2151940,
+        "sha256": "9780921D9ECAF92D6545D9A21DEC6C440E891514171D5ADE3E248CACD6D57BFE",
+        "blob": "4dd3f760f96fb95cda26103b906dfaf0ee7278d1"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
+        "bytes": 18993,
+        "sha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
+        "blob": "98228e81bd055396d95b8852ce2198c571fafe13"
+      }
+    ],
+    "note": "Only two AsRef-byte test literals changed from differently sized arrays to string slices, preserving exact bytes/assertions. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
