@@ -30,6 +30,12 @@ use zeroize::Zeroize;
 
 use crate::secret::SecretString;
 
+mod slack_migration;
+pub(crate) use slack_migration::{
+    PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad,
+    SlackMigrationState,
+};
+
 /// Cross-process-safe credential-store status classifier.
 ///
 /// A single-read probe of `credentials.yaml` that callers use to decide
@@ -934,6 +940,15 @@ pub(crate) struct PreparedSlackAccountUpsert {
     freedom_before: FileSnapshot,
     credentials_before: FileSnapshot,
     credentials_after: FileSnapshot,
+}
+
+/// Exact, fully rendered Slack account publication.  Unlike the ordinary
+/// prepared candidate this includes the team-bound policy incarnation and the
+/// final encrypted credentials bytes.  It is deliberately private: callers
+/// must use the migration custody handle rather than receive raw secrets.
+struct FinalizedSlackAccountUpsert {
+    prepared: PreparedSlackAccountUpsert,
+    freedom_after: FileSnapshot,
 }
 
 /// Opaque exact-account Slack retirement candidate. It retains both raw file
@@ -3015,13 +3030,22 @@ impl Credentials {
         prepared: PreparedSlackAccountUpsert,
         verified_team_id: &str,
     ) -> Result<()> {
+        let finalized = Self::finalize_prepared_slack_account_upsert_at(prepared, verified_team_id)?;
+        Self::publish_finalized_slack_account_upsert_at(finalized)
+    }
+
+    /// Turn an already reviewed Slack candidate into its one exact,
+    /// team-bound file generation.  This is intentionally shared by ordinary
+    /// Slack imports and the migration participant so both paths use exactly
+    /// the same workspace/incarnation rendering rules.
+    fn finalize_prepared_slack_account_upsert_at(
+        prepared: PreparedSlackAccountUpsert,
+        verified_team_id: &str,
+    ) -> Result<FinalizedSlackAccountUpsert> {
         let verified_team_id = crate::config::normalize_slack_team_id(verified_team_id)
             .context("verified Slack team_id is invalid")?;
         let freedom_dir = transaction_directory(&prepared.freedom_path);
-        anyhow::ensure!(
-            freedom_dir == transaction_directory(&prepared.credentials_path),
-            "prepared Slack account paths are not sibling files"
-        );
+        anyhow::ensure!(freedom_dir == transaction_directory(&prepared.credentials_path), "prepared Slack account paths are not sibling files");
         with_dual_file_transaction_lock(&prepared.freedom_path, || {
             with_config_writer_guard(&prepared.freedom_path, || {
                 with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
@@ -3077,12 +3101,31 @@ impl Credentials {
                         .as_bytes()
                         .to_vec(),
                     ));
+                    Ok(FinalizedSlackAccountUpsert { prepared, freedom_after })
+                })
+            })
+        })
+    }
+
+    fn publish_finalized_slack_account_upsert_at(
+        finalized: FinalizedSlackAccountUpsert,
+    ) -> Result<()> {
+        let prepared = finalized.prepared;
+        let freedom_dir = transaction_directory(&prepared.freedom_path);
+        with_dual_file_transaction_lock(&prepared.freedom_path, || {
+            with_config_writer_guard(&prepared.freedom_path, || {
+                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+                    anyhow::ensure!(
+                        FileSnapshot::capture(&prepared.freedom_path)?.same_as(&prepared.freedom_before)
+                            && FileSnapshot::capture(&prepared.credentials_path)?.same_as(&prepared.credentials_before),
+                        "Slack account configuration changed after its reviewed candidate; retry the command"
+                    );
                     publish_prepared_file_pair(
                         &prepared.freedom_path,
                         &prepared.credentials_path,
                         &freedom_dir,
                         &prepared.freedom_before,
-                        &freedom_after,
+                        &finalized.freedom_after,
                         &prepared.credentials_before,
                         &prepared.credentials_after,
                         (),
@@ -5578,10 +5621,24 @@ fn render_freedom_preserving_unknown_yaml(
 
 impl FileSnapshot {
     fn capture(path: &Path) -> Result<Self> {
-        match std::fs::read(path) {
-            Ok(bytes) => Ok(Self::Present(zeroize::Zeroizing::new(bytes))),
+        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let parent = std::path::absolute(parent).context("resolve config snapshot parent")?;
+        let name = path.file_name().context("snapshot path needs one file name")?;
+        let Some(bound) = crate::skills::store::open_bound_directory(&parent, false, "config snapshot parent")? else {
+            return Ok(Self::Missing);
+        };
+        match bound.dir.symlink_metadata(name) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::Missing),
-            Err(error) => Err(error).with_context(|| format!("snapshot {}", path.display())),
+            Err(error) => Err(error).with_context(|| format!("inspect snapshot {}", path.display())),
+            Ok(_) => crate::skills::store::read_regular_file_bounded(
+                &bound.dir,
+                name,
+                &bound.physical_display_path.join(name),
+                MAX_DUAL_FILE_JOURNAL_BYTES as usize,
+            )
+            .map(|bytes| Self::Present(zeroize::Zeroizing::new(bytes)))
+            .with_context(|| format!("capture bounded no-follow snapshot {}", path.display())),
         }
     }
 
@@ -5652,7 +5709,7 @@ fn relink_pair_commitments(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct JournalFileSnapshot {
     present: bool,

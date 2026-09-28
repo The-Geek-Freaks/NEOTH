@@ -70,6 +70,23 @@ jobs:
           test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
 
           cat > "$evidence/selection.tsv" <<'EOF'
+          config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches	neothd/src/config/credentials/slack_migration/tests.rs
+          config::credentials::slack_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback	neothd/src/config/credentials/slack_migration/tests.rs
+          cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound	neothd/src/cli/channel/openclaw_migration/tests.rs
+          cli::default_invocation_tests::openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation	neothd/src/cli/mod.rs
           channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate	neothd/src/channels/relink.rs
           channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused	neothd/src/channels/relink.rs
           channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite	neothd/src/channels/relink.rs
@@ -907,7 +924,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 813 ]]; then
+          if [[ "$expected" -ne 830 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

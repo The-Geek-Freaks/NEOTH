@@ -1178,6 +1178,12 @@ pub enum Commands {
     /// auto-reverser is a separate step.
     Undo(undo::UndoArgs),
 
+    /// Plan, apply, inspect, and roll back one file-backed OpenClaw Slack account.
+    OpenclawMigration {
+        #[command(subcommand)]
+        action: channel::openclaw_migration::OpenclawMigrationAction,
+    },
+
     /// Add, inspect, test, and remove messaging channels.
     #[command(alias = "channels")]
     Channel {
@@ -2208,6 +2214,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             // daemon supplies the writer via a different call path.
             self_dev::run(&home, args, None, global_output).await?;
         }
+        Commands::OpenclawMigration { action } => {
+            channel::openclaw_migration::run(action, &global_output).await?;
+        }
         Commands::Channel { action } => match action {
             ChannelAction::RelinkOpenclaw {
                 channel,
@@ -2384,6 +2393,44 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 mod default_invocation_tests {
     use super::*;
     use crate::interface_preference::InterfacePreference;
+
+    #[test]
+    fn openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation() {
+        let plan = Cli::try_parse_from([
+            "neoth",
+            "openclaw-migration",
+            "plan",
+            "--config",
+            "openclaw.json",
+            "--request",
+            "private-request.json",
+        ])
+        .unwrap();
+        assert!(matches!(plan.command, Commands::OpenclawMigration { .. }));
+        assert!(
+            Cli::try_parse_from(["neoth", "openclaw-migration", "plan", "--config", "openclaw.json"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["neoth", "openclaw-migration", "apply", "--id", "operation", "--confirm"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth", "openclaw-migration", "apply", "--id", "operation",
+                "--config", "openclaw.json", "--request", "private-request.json",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["neoth", "openclaw-migration", "rollback", "--id", "operation"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["neoth", "openclaw-migration", "status", "--id", "operation"])
+                .is_ok()
+        );
+    }
 
     fn installed_gui() -> gui::GuiAvailability {
         gui::installed_gui_for_test(std::path::PathBuf::from("/installed/neothd-gui"))

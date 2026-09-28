@@ -29,6 +29,7 @@ use crate::daemon::channel_runtime_health::{AccountRuntimeState, BindingTag, rea
 use crate::secret::SecretString;
 
 pub(crate) mod converted_relink;
+pub mod openclaw_migration;
 
 const MAX_PRIVATE_PAIRING_APPROVAL_BYTES: u64 = 1024;
 

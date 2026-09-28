@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1786 Reversible single-account Slack migration (2026-09-28):**
+Public openclaw-migration plan/apply/status/rollback now has an immutable
+source/request/baseline-bound plan, exact private before/after custody and
+immutable terminal receipts. Real auth.test verifies the selected Slack team;
+source and mapping are rechecked after await and before pair publication.
+Retries preserve the original AEAD nonce/incarnation, rollback restores exact
+prior bytes and refuses later drift, and lost direction/invalid custody or
+receipts fail closed. Status reports observed generation; terminal reload is
+at-least-once and is not live Socket Mode or daemon-adoption evidence.
+Scope: one Slack account on the file backend. Keychain and cross-channel
+atomic migration remain unsupported/open. Backend and coordinator source reviews
+PASS;18 new cases registered (17 portable,1 Unix), including11 coordinator
+checkpoints and4 dual-file boundaries in both directions. Hosted formatting,
+Clippy, test types, generated CLI and native2067/Windows830 remain pending.
+Docs: docs/openclaw-slack-migration.md. ROAD1324/1077/245/2 unchanged.
+No local executable validation; absolute BSOD hold remains active.
 **W1787 Relink native pass / public CLI fixture correction (2026-09-28):**
 Channel run36370531035 at00ce2966 executed and passed all37 selected tests;
 original receipt/log/source/product ZIPs match GitHub API digests and all26
