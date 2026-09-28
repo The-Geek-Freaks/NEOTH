@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1845/W1849 Integration admission and count repair (2026-09-28):**
+Core36396002270 atf110c7aa passed production Clippy, test-target typecheck,
+public CLI build/export; original10959015737 and exact generated reference
+are authenticated. Focused96/product36397133897 at9acf10f1 also passed:
+all96 named discovery/run/single-PASS terminals, all4 original ZIP/API digests
+and50 unique raw producer paths from workflow plus product receipts agree.
+The actual BlueBubbles CLI proves encrypted first-use setup, refused wrong
+target, Ready/reload publication and byte-stable retry with4 cleanup results.
+Evidence: docs/verification/gold-wave1845-core-admission.json and
+ docs/verification/gold-wave1849-focused96-admission.json.
+The W1844 checkbox closure is now synchronized with the canonical WS-LF
+paragraph, dashboard, release summary and Plan001 DoD2: ROAD1324/1081/241/2,
+243 raw/242 pre-tag blockers; WS-LF43done/75open; broad dashboard OPEN172.
+This repairs the stale-count Preflight36398380493 and scheduled CI36398949143
+failure, not a license-generation defect. No additional leaf closes.
+New W1847/W1848 Google Chat canary source is separate unaccepted WIP; these
+older receipts prove neither that change, live Google access nor daemon adoption.
+No local executable validation ran.
+
 **W1844 Schema-policy admission (2026-09-28):**
 The original GitHub schema run36396494718 at9acf10f1 is fully successful:
 20 extractor tests, exact frozen-schema comparison,56 Custody tests, strict

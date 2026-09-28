@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1845/W1849 Integration admission and count repair (2026-09-28):**
+Core36396002270 atf110c7aa passed production Clippy, test-target typecheck,
+public CLI build/export; original10959015737 and exact generated reference
+are authenticated. Focused96/product36397133897 at9acf10f1 also passed:
+all96 named discovery/run/single-PASS terminals, all4 original ZIP/API digests
+and50 unique raw producer paths from workflow plus product receipts agree.
+The actual BlueBubbles CLI proves encrypted first-use setup, refused wrong
+target, Ready/reload publication and byte-stable retry with4 cleanup results.
+Evidence: docs/verification/gold-wave1845-core-admission.json and
+ docs/verification/gold-wave1849-focused96-admission.json.
+The W1844 checkbox closure is now synchronized with the canonical WS-LF
+paragraph, dashboard, release summary and Plan001 DoD2: ROAD1324/1081/241/2,
+243 raw/242 pre-tag blockers; WS-LF43done/75open; broad dashboard OPEN172.
+This repairs the stale-count Preflight36398380493 and scheduled CI36398949143
+failure, not a license-generation defect. No additional leaf closes.
+New W1847/W1848 Google Chat canary source is separate unaccepted WIP; these
+older receipts prove neither that change, live Google access nor daemon adoption.
+No local executable validation ran.
+
 **W1844 Schema-policy admission (2026-09-28):**
 GitHub run36396494718 at9acf10f1 completed successfully:20 extractor tests,
 the exact frozen-schema comparison,56 Custody tests, Clippy and format. Its two
@@ -10114,7 +10133,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture and LF-001-10 QA exclusion/harness and LF-001-11 WhatsApp transport identity accepted: **42 done / 76
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture and LF-001-10 QA exclusion/harness and LF-001-11 WhatsApp transport identity and LF-001-02 complete schema policy accepted: **43 done / 75
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

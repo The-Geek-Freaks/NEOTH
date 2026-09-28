@@ -1,0 +1,99 @@
+{
+  "schema": "neoth-focused96-and-public-cli-product-admission/v1",
+  "decision": "accepted_for_exact_producer_hosted_regressions_and_loopback_public_cli_product_only",
+  "run": 36397133897,
+  "producer": "9acf10f161ce931ed33ce4c30fea1c0572e331b2",
+  "artifacts": [
+    {
+      "id": 10959676366,
+      "role": "focused-test-receipts",
+      "zip_sha256": "a0910c17ba9a2627c032290321a42871173e6521298e1a75e76840061de9b89f"
+    },
+    {
+      "id": 10959502310,
+      "role": "producer-source-receipt",
+      "zip_sha256": "e1bdd28e92e28fce69df26e08d9f19f98ec69fec4c0c53d975439ebd1cff7c0d"
+    },
+    {
+      "id": 10959467543,
+      "role": "focused-discovery-and-actual-logs",
+      "zip_sha256": "a456951ff725b131375022a372e96d277b098d4997ff11af6026c73580169e23"
+    },
+    {
+      "id": 10959313031,
+      "role": "public-cli-loopback-product-receipt",
+      "zip_sha256": "3c0f7e420f0754f207e337f38a9549598f2358068683fc737854b8fe2722e670"
+    }
+  ],
+  "native": {
+    "started": 96,
+    "executed": 96,
+    "passed": 96,
+    "failed": 0,
+    "discovery_logs": 96,
+    "actual_logs": 96,
+    "each_actual_has_one_test_terminal": true,
+    "exact_identity_set": true
+  },
+  "raw_producer_bindings": {
+    "workflow_receipt_paths": 40,
+    "product_receipt_source_bindings": 28,
+    "unique_union_paths": 50,
+    "verified": 50,
+    "method": "Union of workflow SHA256SUMS and public-product receipt.source_bindings; raw producer git cat-file bytes checked against receipt SHA-256 and git hash-object --no-filters against the producer blob."
+  },
+  "public_cli_loopback_product": {
+    "channel": "imessage_bluebubbles",
+    "outcome": "passed",
+    "local_external_provider": false,
+    "first": {
+      "already_ready": false,
+      "reload_requested": true
+    },
+    "retry": {
+      "already_ready": true,
+      "reload_requested": true
+    },
+    "requests": {
+      "ping": 3,
+      "target": 2,
+      "wrong_target": 1,
+      "post": 0,
+      "unexpected_get": 0
+    },
+    "wrong_target": {
+      "credentials_absent": true,
+      "routing_absent": true,
+      "reload_absent": true,
+      "ready_transaction_absent": true,
+      "pending_record_present": true
+    },
+    "cleanup": {
+      "evidence_retained": true,
+      "home_removed": true,
+      "source_removed": true,
+      "wrong_target_home_removed": true
+    }
+  },
+  "current_checkout": {
+    "head": "8e7108e76dabe9348550e08957a39e83bbbc2852",
+    "committed_delta_from_producer": [
+      "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+      "PLAN/PROGRESS_v1_0.md",
+      "PLAN/ROAD_TO_1_0_GOLD.md",
+      "docs/verification/gold-wave1844-schema-policy-admission.json"
+    ],
+    "uncommitted_delta_excluded": [
+      ".github/workflows/gchat-live-regressions.yml",
+      ".gitignore",
+      "SRC/neothd/Cargo.toml",
+      "SRC/neothd/src/channels/gchat.rs"
+    ]
+  },
+  "limits": [
+    "Admission applies only to producer commit 9acf10f161ce931ed33ce4c30fea1c0572e331b2.",
+    "It is hosted regression and local loopback public-CLI evidence only.",
+    "It is not Google Chat, live external-provider, daemon, release, or W1847-Cargo/GChat-WIP evidence."
+  ],
+  "evidence_directory": "work/gold-20260906/wave1849-focused96-admission"
+}

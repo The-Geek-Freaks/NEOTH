@@ -1,0 +1,11 @@
+{
+  "schema": "neoth-core-cli-reference-admission/v1",
+  "decision": "accepted",
+  "run": {"id": 36396002270, "producer_commit": "f110c7aae469a164a0edabc9b9b6e19523c8438b", "status": "completed", "conclusion": "success", "job": 108842432770},
+  "artifact": {"id": 10959015737, "name": "generated-cli-reference", "zip_sha256": "9d590922ccc8d0e0dbff04d4dad96c5327783faeb666bc0a731504258699932b", "api_digest_verified": true, "source_head_matches_producer": true},
+  "hosted_checks": {"slim_core_production_clippy": "success", "core_test_target_typecheck": "success", "public_cli_build": "success", "generated_reference_export": "success"},
+  "reference": {"artifact_sha256": "0a7c6360a10132f59bab36b08a4714612dd5a8a90d694b3bce02b8b5732da417", "artifact_manifest_matches": true, "current_docs_cli_commands_sha256": "0a7c6360a10132f59bab36b08a4714612dd5a8a90d694b3bce02b8b5732da417", "exact_current_match": true},
+  "producer_bindings": {"raw_paths": 2, "sha256_mismatches": 0, "git_hash_object_no_filters_mismatches": 0, "evidence": "work/gold-20260906/wave1845-core-admission/raw-producer-bindings/raw-producer-bindings.json"},
+  "bridge_to_9acf10f1": {"current_commit": "9acf10f161ce931ed33ce4c30fea1c0572e331b2", "cli_reference_unchanged": true, "source_scope": "17 Twitch policy-row dispositions/targets plus the pinned policy hash", "non_source_scope": "roadmap/progress/cadence and verification inventory updates"},
+  "scope": "Accepts the exact f110 core type/CLI-reference lane and its unchanged current generated CLI reference. It does not accept workspace Clippy, native behavioral tests, release, provider, daemon, or any later source work."
+}

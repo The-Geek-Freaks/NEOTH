@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Custody55PASS1FAIL identified Twitch root-composition policy gap;17 exact data rows repaired; full sweep unchanged",
+  "status": "Schema policy LF00102 accepted; Core CLI and Focused96 original evidence admitted; GChat canary source remains unaccepted WIP",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 267643,
-    "sha256": "FF4B8F5843BC5A3166A0E596C09929C725BC049F6DE147CB42109D74685AF537"
+    "bytes": 268226,
+    "sha256": "55DAC8EDD661A0C2BD42F2F0A032F58891A316FCCC7D596384E05183CEA09355"
   },
-  "sourceInputs": 1484,
+  "sourceInputs": 1487,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -56812,6 +56812,56 @@
       }
     ],
     "note": "Only reviewed policy actions/targets and hash corrected:3 direct Twitch fields,14 account fields. No classifier/test changes, no local execution. Core prior producer active.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1849Focused96AndCoreAdmission": {
+    "base": "8e7108e76dabe9348550e08957a39e83bbbc2852",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1844-schema-policy-admission.json",
+        "bytes": 4229,
+        "sha256": "5CE807F2F9252E4D8398B76827A0310220C64AE6135B2EC54D5A5AEF443D11F5",
+        "blob": "d06d6beb309ec5d4d7daa11a0528ce30df497adf"
+      },
+      {
+        "path": "docs/verification/gold-wave1845-core-admission.json",
+        "bytes": 1652,
+        "sha256": "7798CC81FA7478F58AF84CDA1EE74477B77416F419143373334A5F413DAFB8CC",
+        "blob": "df3fd9f11c0e2a98af89f687ccc4858233bacf4c"
+      },
+      {
+        "path": "docs/verification/gold-wave1849-focused96-admission.json",
+        "bytes": 3201,
+        "sha256": "D1A27FA6AA2B51FC36F4CEAB20D79056DB067A9DD92AFF10CAB083D208A1B7B0",
+        "blob": "d63890c5a2bf059c98fa3d63ab21907b5f81fd66"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 517436,
+        "sha256": "FBA82E31C4188F74F40EE9F4D8C99985616B7E21D974D7DDBB0CF5BB1E2C2A27",
+        "blob": "aff4e9aeb59b83c4b7d0f8df1d594affd4a8cdc4"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1553866,
+        "sha256": "4D11D4F76C5807D49F8201A91A5D1A0A2601D50195DD48459384DAA4A99D5E9C",
+        "blob": "71f12b69851b51442be87dad6ed90133d03325fb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2164876,
+        "sha256": "2B89C77827533C010E0C97F7E1C4F372D702947BD663A57472FA21E2629F03CB",
+        "blob": "8a5b5003cdd97234d0743e6a53a786c4de60b21c"
+      },
+      {
+        "path": "plans/001-openclaw-channel-migration-parity.md",
+        "bytes": 56085,
+        "sha256": "579079A3E7A931DEDF8D8892E25C42D82CD1431BCDD7FF83F231F38FA6816F5F",
+        "blob": "47ecc8c45ab0183a4e639f896a7d61b7e94b024a"
+      }
+    ],
+    "note": "Schema56/extractor20/exactupstream, Core36396002270 and Focused96+actualCLI36397133897 original artifacts admitted.50 raw workflow/product producer paths match. Synchronize ROAD1324/1081/241/2 and WS-LF43/75 after prior docs closure. No local runtime; no new GChat canary or daemon/provider acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

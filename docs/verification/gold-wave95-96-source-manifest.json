@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T08:15:31.4440055Z",
-  "validationStatus": "Custody55PASS1FAIL identified Twitch root-composition policy gap;17 exact data rows repaired; full sweep unchanged",
+  "capturedUtc": "2026-09-28T08:57:45.2711441Z",
+  "validationStatus": "Schema policy LF00102 accepted; Core CLI and Focused96 original evidence admitted; GChat canary source remains unaccepted WIP",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2802,6 +2802,21 @@
       "sha256": "148BC97978E1881E94CCA4FDD5622288D252289249DCE3057922E937E1896BDB"
     },
     {
+      "path": "docs/verification/gold-wave1844-schema-policy-admission.json",
+      "bytes": 4229,
+      "sha256": "5CE807F2F9252E4D8398B76827A0310220C64AE6135B2EC54D5A5AEF443D11F5"
+    },
+    {
+      "path": "docs/verification/gold-wave1845-core-admission.json",
+      "bytes": 1652,
+      "sha256": "7798CC81FA7478F58AF84CDA1EE74477B77416F419143373334A5F413DAFB8CC"
+    },
+    {
+      "path": "docs/verification/gold-wave1849-focused96-admission.json",
+      "bytes": 3201,
+      "sha256": "D1A27FA6AA2B51FC36F4CEAB20D79056DB067A9DD92AFF10CAB083D208A1B7B0"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3843,18 +3858,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 515351,
-      "sha256": "F4500C690C5D0A92F61B2CC50D23B15BF1A7BC4FF6E51D64683F3C00A26823BB"
+      "bytes": 517436,
+      "sha256": "FBA82E31C4188F74F40EE9F4D8C99985616B7E21D974D7DDBB0CF5BB1E2C2A27"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1551661,
-      "sha256": "16198C6ACAD702EC0654688B2CFDACA1C2BA7265A5077AEEDFB7B50F4926F7E2"
+      "bytes": 1553866,
+      "sha256": "4D11D4F76C5807D49F8201A91A5D1A0A2601D50195DD48459384DAA4A99D5E9C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2163034,
-      "sha256": "C61B2E63F41BAE3F501804F25EE0235F94A0D760893DDAECB684F0F37EAD856A"
+      "bytes": 2164876,
+      "sha256": "2B89C77827533C010E0C97F7E1C4F372D702947BD663A57472FA21E2629F03CB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3868,8 +3883,8 @@
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
-      "bytes": 55615,
-      "sha256": "6600D04815886D8F960DE855F1EF2EDCA590626DD221F99EF79BCF581EFC8007"
+      "bytes": 56085,
+      "sha256": "579079A3E7A931DEDF8D8892E25C42D82CD1431BCDD7FF83F231F38FA6816F5F"
     },
     {
       "path": "README.md",

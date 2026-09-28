@@ -516,7 +516,7 @@ Additionally:
 ## Definition of done
 
 - [x] The pinned fixture accounts for all 31 audited rows: 29 public, ClickClack, and QA test-only. **Accepted 2026-09-28 (W1823):** hosted custody48 at1bfcf4f0, exact31 raw upstream hashes and pinned classification/drift checks; see `docs/verification/gold-wave1823-custody48-admission.json`. This accepts fixture custody only.
-- [ ] Every source manifest/schema leaf has a path-specific migration disposition.
+- [x] Every source manifest/schema leaf has a path-specific migration disposition. **Accepted 2026-09-28 (W1844/W1845/W1849):** pinned3252-row policy and150 SecretRef families agree with the real classifier;20 extractor tests,56 custody tests, exact upstream comparison, Core/CLI compatibility and96 focused regressions passed on their bound producers. See `docs/verification/gold-wave1844-schema-policy-admission.json`, `gold-wave1845-core-admission.json` and `gold-wave1849-focused96-admission.json`. This does not qualify adapters or live providers.
 - [ ] `ChannelAccountId` reaches config, credentials, messages, identities, sessions, routing, pairing, queues, runtime state, health, permits, WAL, CLI, GUI, Buddy, and importer.
 - [ ] Legacy flat NEOTH channel configuration migrates transactionally to `default` with no behavior regression.
 - [ ] One canonical descriptor generates Core/CLI/GUI/Buddy/importer/docs/artifact consumers; no parallel hardcoded channel lists remain.
