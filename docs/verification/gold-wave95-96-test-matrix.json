@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1806 exact Telegram Core/CLI producer admitted; native Windows848/focused75 active; Linux2086 ready for dispatch after reference publication",
+  "status": "W1810 single-account Telegram75 and actual Relink CLI admitted; multi-account W1807 remains uncommitted WIP",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 264563,
-    "sha256": "DCE4EBE4675B142FA54F3BE3A122090AFF7DA1AE25E9BC4F2F58E1A92998EABD"
+    "bytes": 264720,
+    "sha256": "5876A04413B5F20FC0E9231521C0920F1B4617DB763BD1927397BA5B60017FCA"
   },
-  "sourceInputs": 1468,
+  "sourceInputs": 1469,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -55922,6 +55922,38 @@
       }
     ],
     "note": "Original ZIP/API/internal hashes and exact CLI/generator blobs verified. Runtime acceptance is limited to producer98331c12. No roadmap box closure or local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1810Focused75Admission": {
+    "base": "8b0a6a61cf3374b72804ae2f205c926621fa5194",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1810-focused75-admission.json",
+        "bytes": 5018,
+        "sha256": "3DFFE8956F44BE9F26F0CBCAA971E94BA249D76A48D7B112E1F300781385287B",
+        "blob": "58fdada2d8411b636e0e8c851a494d9a3677b3d6"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 501863,
+        "sha256": "EB367714D5D4DAF667E1E674E4ABD5B78BD5F2E8A1C88820A84A2FF904FF9491",
+        "blob": "b16164678d34bce3510dd777849f8557e52646f5"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1538059,
+        "sha256": "B162142977BBA964D495390DE6933A93ABD9275D112EC5579CCDDF4E074B06FA",
+        "blob": "714366b15bb77e2fc0ff5bf49d65bdf66a7015d1"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2148582,
+        "sha256": "5C636C7801ECCD18BE6D79366ADDBED6EA13CB2CB2F896C48F476A0EE151C8D1",
+        "blob": "03d7ba397f8695bf153ad470b7d2ea39f45895c9"
+      }
+    ],
+    "note": "Four authentic original ZIPs,75 exact single-test terminals,45 raw producer Git/SHA256 bindings verified at9f5d96a9. No multi-account or external-provider/daemon acceptance; no roadmap closure/local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

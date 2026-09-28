@@ -1,0 +1,126 @@
+{
+  "schema": "neoth-focused75-actual-relink-admission/v1",
+  "decision": "accepted_for_exact_hosted_focused75_and_loopback_actual_relink_product",
+  "run": {
+    "id": 36377726835,
+    "workflow": "Connection-bound channel regressions",
+    "producerCommit": "9f5d96a97c406325922c660517932b81ba2d1419",
+    "producerRef": "main",
+    "event": "workflow_dispatch",
+    "attempt": 1,
+    "conclusion": "success"
+  },
+  "native": {
+    "selected": 75,
+    "started": 75,
+    "executed": 75,
+    "passed": 75,
+    "failed": 0,
+    "workflowReceiptExactIdentityMatch": true,
+    "executedMatchesStarted": true,
+    "passedMatchesStarted": true,
+    "actualOneTestTerminals": 75,
+    "actualOrdinalRange": "01-75",
+    "actualNoMissingOrDuplicateOrdinals": true,
+    "actualTerminalsWithExactSuccess": true,
+    "focusedCase75": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity"
+  },
+  "product": {
+    "outcome": "passed",
+    "failure": null,
+    "localExternalProvider": false,
+    "initialSetup": {
+      "at_rest_encryption": "aes256_gcm_siv",
+      "created_without_restore": true,
+      "method": "neoth_init_cli_license_provider_skip",
+      "policy_set_after_init": true
+    },
+    "relink": {
+      "id": "6eb3f935b02f38cbe244c9fa1c285015f074ae1915d7838cc9806dd7aa3175b0",
+      "first": {
+        "already_ready": false,
+        "reload_requested": true
+      },
+      "retry": {
+        "already_ready": true,
+        "reload_requested": true
+      },
+      "wrongTarget": {
+        "credentials_absent": true,
+        "pending_record_present": true,
+        "ready_transaction_absent": true,
+        "reload_absent": true,
+        "routing_absent": true
+      },
+      "requests": {
+        "ping": 3,
+        "post": 0,
+        "target": 2,
+        "unexpected_get": 0,
+        "wrong_target": 1
+      }
+    },
+    "cleanup": {
+      "evidence_retained": true,
+      "home_removed": true,
+      "source_removed": true,
+      "wrong_target_home_removed": true
+    }
+  },
+  "originalArtifacts": [
+    {
+      "id": 10952380295,
+      "name": "w548-gchat-live-regressions-source-9f5d96a97c406325922c660517932b81ba2d1419",
+      "apiZipSha256": "83780b7cfafa3a8b9716780371f021a7137b2d99f5b42665596744186e78eb69",
+      "verifiedZipSha256": "83780b7cfafa3a8b9716780371f021a7137b2d99f5b42665596744186e78eb69",
+      "zipMemberCount": 2
+    },
+    {
+      "id": 10952315725,
+      "name": "w548-gchat-live-regressions-receipt-9f5d96a97c406325922c660517932b81ba2d1419",
+      "apiZipSha256": "e4bdee955466b006bd5a752a0ef03280bcaf4ac06aa90d235de5190e0075586d",
+      "verifiedZipSha256": "e4bdee955466b006bd5a752a0ef03280bcaf4ac06aa90d235de5190e0075586d",
+      "zipMemberCount": 4
+    },
+    {
+      "id": 10952201134,
+      "name": "converted-relink-public-cli-9f5d96a97c406325922c660517932b81ba2d1419",
+      "apiZipSha256": "2d2df939caaed12f27d52f1f3878dee13af1c42939688518b9bd40d92fa9ba4a",
+      "verifiedZipSha256": "2d2df939caaed12f27d52f1f3878dee13af1c42939688518b9bd40d92fa9ba4a",
+      "zipMemberCount": 2
+    },
+    {
+      "id": 10951699485,
+      "name": "w548-gchat-live-regressions-log-9f5d96a97c406325922c660517932b81ba2d1419",
+      "apiZipSha256": "e8e542f5350a1fa7c34817e7601492e916ef22ed67a2f2f5cebb4bda99dc7ffc",
+      "verifiedZipSha256": "e8e542f5350a1fa7c34817e7601492e916ef22ed67a2f2f5cebb4bda99dc7ffc",
+      "zipMemberCount": 150
+    }
+  ],
+  "rawProducerBindings": {
+    "producerSourceArtifact": 10952380295,
+    "productArtifact": 10952201134,
+    "entries": 45,
+    "allSha256Match": true,
+    "allGitHashObjectMatch": true,
+    "method": "Each Git-bound source/product SHA-256 was exported from the exact producer commit with raw git cat-file bytes, rehashed with SHA-256, and independently checked by git hash-object --no-filters against its producer tree blob.",
+    "generatedProductReceiptKeysExcluded": [
+      "binary",
+      "openclaw_source_fixture"
+    ],
+    "report": "work/gold-20260906/wave1810-focused75-admission/raw-producer-bindings.tsv",
+    "reportSha256": "20fec2ee17d8f90537816dab3cfc78b3e96d3440a4b63e2aaa591eb58f0948f8"
+  },
+  "compatibilityDelta": {
+    "acceptedProducer": "The accepted producer contains the prior single-participant Slack v1 and Telegram v2 migration source only.",
+    "currentW1807Wip": "The current uncommitted W1807 worktree introduces Batch/v3 coordinator, participant, custody backend, and batch-test changes. It was not part of producer commit 9f5d96a9 and is outside this admission.",
+    "acceptedForBatch": false
+  },
+  "limits": [
+    "The product canary is a local loopback BlueBubbles exercise; it is not real external-provider, daemon, or reload-adoption evidence.",
+    "The generated product receipt keys binary and openclaw_source_fixture are explicitly excluded from Git-path hashing.",
+    "No local compile, test, runtime, CI dispatch, Git index, commit, or push was performed.",
+    "This evidence admission does not accept W1807 Batch/v3 work or close a roadmap item."
+  ],
+  "roadmapClosure": false
+}

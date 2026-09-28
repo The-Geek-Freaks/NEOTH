@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1810 Telegram focused behavior and Relink product admitted (2026-09-28):**
+Run36377726835 at9f5d96a9 passed all75 selected/started/executed identities.
+Each identity has exactly one matching one-test green terminal. All4 original
+ZIPs match GitHub API digests;45 raw producer source paths match both SHA-256
+and Git object identities. Root independently rechecked these complete sets.
+The actual compiled Relink CLI passed fresh encrypted init, wrong-target refusal,
+Ready publication, byte-identical retry and all4 cleanup checks. This admits
+single-account Slack/Telegram behavior and the hosted loopback Relink scope.
+Evidence: docs/verification/gold-wave1810-focused75-admission.json.
+Windows848run36377724690 and Linux2086run36378258621 remain active. W1807
+atomic multi-account source and W1808/W1811 tests are still unpublished WIP;
+this receipt does not accept them. ROAD1324/1077/245/2 unchanged. No local
+executable validation occurred; the BSOD hold remains absolute.
+
 **W1806 Telegram Core and generated CLI admitted (2026-09-28):**
 Core36376994007 at98331c12 passed slim production Clippy, default test-target
 typecheck and the actual public CLI build. Original10952041108 matches its
