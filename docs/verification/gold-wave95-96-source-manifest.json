@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T06:21:55.8199256Z",
-  "validationStatus": "W1823 custody fixture accepted; W1824 QA boundary and W1825 fixture repairs statically reviewed, hosted behavior pending",
+  "capturedUtc": "2026-09-28T06:26:02.8815675Z",
+  "validationStatus": "Pinned fixture admitted; canonical progress count synchronized; Focused94 behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3823,18 +3823,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 507562,
-      "sha256": "80DDF0FFAAF48D72BB62D1BBE34074C643A530CA09DC05482E5BBE4E2AAF7829"
+      "bytes": 508091,
+      "sha256": "2906745FC3D3D66EBBDC582E8AFB20616623EBB769935F1F1A2479FF5D5F5127"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1543758,
-      "sha256": "568680294CF369204A2513A12970F40A928C3EA2EF11F6C6122B3B69AD8A5E84"
+      "bytes": 1544324,
+      "sha256": "C193FFBCB01BDD7AA0BA72C7C42E4D495A4F74DEEE6D8CB3BC7DE9F27ADF1925"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2154610,
-      "sha256": "C26DB9EE5FEC9D40D81FAADD00A6DDE757BDD13ACA3DE3D3F5CCE7E4D6C6AC8A"
+      "bytes": 2155139,
+      "sha256": "8F80AAFEE47935DBF5FDF11277C5309124ECF36F881AC6F7B00E7BC0A16523E2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1828 Canonical progress count synchronized (2026-09-28):**
+Preflight36386262972 found the older canonical PROGRESS WS-LF paragraph still
+at39done/79open after the W1823 leaf closure. It now matches ROAD40done/78open;
+the existing drift tests and all leaf rules remain unchanged. Broad dashboard
+open175 is distinct from246 raw/245 pre-tag blockers. Focused94/actualRelink
+36386346752 continues onb5eb32e7 with unchanged tested source. CodeQuality
+36386262596 passed; new Preflight is pending. No local executable validation.
+
 **W1823-W1825 Pinned fixture accepted; batch fixtures repaired (2026-09-28):**
 GOLD-LF-001-01 is closed for fixture/custody scope only. Hosted custody48
 subjob of run36383986007 at1bfcf4f0 passed all48 discovered tests; original

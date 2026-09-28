@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1828 Canonical progress count synchronized (2026-09-28):**
+Preflight36386262972 found the older canonical PROGRESS WS-LF paragraph still
+at39done/79open after the W1823 leaf closure. It now matches ROAD40done/78open;
+the existing drift tests and all leaf rules remain unchanged. Broad dashboard
+open175 is distinct from246 raw/245 pre-tag blockers. Focused94/actualRelink
+36386346752 continues onb5eb32e7 with unchanged tested source. CodeQuality
+36386262596 passed; new Preflight is pending. No local executable validation.
+
 **W1823-W1825 Pinned fixture accepted; batch fixtures repaired (2026-09-28):**
 GOLD-LF-001-01 is closed for fixture/custody scope only. Hosted custody48
 subjob of run36383986007 at1bfcf4f0 passed all48 discovered tests; original
@@ -9992,7 +10000,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation accepted: **39 done / 79
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture accepted: **40 done / 78
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

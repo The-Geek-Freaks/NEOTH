@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1823 custody fixture accepted; W1824 QA boundary and W1825 fixture repairs statically reviewed, hosted behavior pending",
+  "status": "Pinned fixture admitted; canonical progress count synchronized; Focused94 behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266657,
-    "sha256": "DFDB962A150B3284F1269C9171939137D4F51B709BA82DCEF14E099AECCEBBC8"
+    "bytes": 266627,
+    "sha256": "0A8DA2624DE070A7B7585B3153B1AF742C819BCA75B77AB397054D5F50ECC039"
   },
   "sourceInputs": 1479,
   "requiredNativeTests": [
@@ -56421,6 +56421,32 @@
       }
     ],
     "note": "Only GOLD-LF-001-01 accepted from authentic custody48 and31 raw upstream hashes. Focused93/Linux2104 failed invalid Slack fixture seeds and duplicate custody setup; test-only repairs preserve production guards. QA runtime/harness leaf remains open until Focused94 passes. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1828CanonicalProgress": {
+    "base": "b5eb32e713a32570200107a019f7fc06574efae6",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 508091,
+        "sha256": "2906745FC3D3D66EBBDC582E8AFB20616623EBB769935F1F1A2479FF5D5F5127",
+        "blob": "3d1c7ab5232dc229818c907071b0cded7e66ca0e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1544324,
+        "sha256": "C193FFBCB01BDD7AA0BA72C7C42E4D495A4F74DEEE6D8CB3BC7DE9F27ADF1925",
+        "blob": "9303f7a17dfc7ba9c8c936a3176725d1e44313cf"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2155139,
+        "sha256": "8F80AAFEE47935DBF5FDF11277C5309124ECF36F881AC6F7B00E7BC0A16523E2",
+        "blob": "693f2c3280931ed3fb1e8a5d51a373b5dfe41134"
+      }
+    ],
+    "note": "Preflight36386262972 identified the stale canonical progress count. Corrected40done/78open without changing tests, rules or executed source. Focused94 continues onb5eb32e7.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
