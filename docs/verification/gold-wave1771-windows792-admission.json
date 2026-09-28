@@ -1,0 +1,52 @@
+{
+  "schema": "neoth-native-windows-admission/v1",
+  "decision": "accepted",
+  "scope": "Windows792 native regression evidence only; Linux Group2028 and CLI product lifecycle admitted separately.",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36362252138,
+    "producer_commit": "7a9ae7724ae9735e940b31ba804d84c0df56f1a6",
+    "ref": "refs/heads/main",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10947131150,
+    "name": "windows-storage-regressions-7a9ae7724ae9735e940b31ba804d84c0df56f1a6",
+    "sha256": "60521f9bc2e173193a842a0c84e184d6316e2f5b17a07c44bfc8ee0fdfb388f5",
+    "api_digest_matches_download": true,
+    "zip_entries": 804,
+    "unsafe_entries": 0,
+    "duplicate_entries": 0
+  },
+  "receipt": {
+    "expected": 792,
+    "selected": 792,
+    "listed": 792,
+    "executed": 792,
+    "passed": 792,
+    "failed": 0,
+    "missing": 0,
+    "compile_status": 0,
+    "source_head_matches_producer": true
+  },
+  "execution": {
+    "result_identity_count": 792,
+    "single_pass_terminal_count": 792,
+    "all_numbered_test_log_hashes_match_artifact_manifest": true,
+    "evidence_file_hashes_verified": 10
+  },
+  "producer_bindings": {
+    "binding_count": 792,
+    "unique_source_paths": 108,
+    "input_paths": 13,
+    "all_raw_producer_git_blob_sha256_values_match_artifact_bindings": true,
+    "source": "git cat-file blob at exact producer commit; working tree excluded"
+  },
+  "limits": [
+    "No local compiler, Cargo, Rustfmt, Node, Python, XML parser, fixture, test, or runtime execution.",
+    "No product lifecycle or parent-road acceptance.",
+    "This record does not replace separately admitted Linux Group2028 evidence."
+  ]
+}

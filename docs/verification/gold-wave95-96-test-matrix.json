@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "hosted_first_use_product_linux2028_accepted_windows_pending",
+  "status": "Windows792 original source-bound evidence admitted; converted relink WIP excluded",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 258259,
-    "sha256": "194F5E43DC6688394C6899BA2B69BEE68862B88F5FCA52D327678E33CCD46BFF"
+    "bytes": 258473,
+    "sha256": "9696F03ED28D7CE016BAF91ED547119BA83AAB3073B3DD0A7249458A6447BAE2"
   },
-  "sourceInputs": 1435,
+  "sourceInputs": 1436,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -54454,6 +54454,32 @@
       }
     ],
     "note": "Original source/receipt/log API-digest ZIPs admit2028 exact individual tests with311 fixture source and10 input bindings at7a9ae772. Windows792 still pending. Unpublished relink source excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1771WindowsFirstUseAdmission": {
+    "base": "b94dd7de4f03be35f4ee85ca31b1329e90e49551",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1771-windows792-admission.json",
+        "bytes": 1740,
+        "sha256": "FCB0C0727283FF28B123B441D78D25C3FC5C2E4BA9E04C2A8391336F1B1B4E7F",
+        "blob": "97d797246257b9a30d0250dac4d32d0d82d643f0"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1522001,
+        "sha256": "A6A0DE960BD4C4AD275C9E979082A2CCE9D4F6FB2E66C7D2CDECD27808CE0C49",
+        "blob": "1301c199215056281cec970e67c602e30c6254a2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2132524,
+        "sha256": "5E764DE8F780D0D31BBA6F8DFE68A6A293E8B98B4138D6196D4246DBC9B522BD",
+        "blob": "1131246dcd71004a8a3d3b6b7c53d2150d6a6826"
+      }
+    ],
+    "note": "Windows792run36362252138 at7a9ae772: exact original API ZIP digest,792 selected/listed/single-PASS,108 source/13 input raw producer matches. No local executable validation, no parent ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

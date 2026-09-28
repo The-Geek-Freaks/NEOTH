@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1771 Windows first-use regressions admitted (2026-09-28):**
+Windows792run36362252138 attempt1 at7a9ae772 completed success. Original
+artifact10947131150 ZIP60521f9bc2e173193a842a0c84e184d6316e2f5b17a07c44bfc8ee0fdfb388f5
+matches the API digest;804 safe unique entries. All792 selected/listed/executed
+individual cases passed, zero missing/failed, compile_status0. All792 source
+bindings (108 unique paths) and13 build inputs match raw producer Git blobs.
+Evidence: docs/verification/gold-wave1771-windows792-admission.json.
+Together with W1769 Linux2028 and W1764 actual CLI first-use product, this
+completes the dispatched first-use regression cohort. Converted-relink source
+remains unpublished under independent review; no runtime acceptance inferred.
+ROAD1324/1077/245/2 unchanged. No local executable validation.
 **W1769 Linux first-use regressions admitted (2026-09-28):**
 Group2028run36362250590 at7a9ae772 completed success. Original source10947045389,
 receipt10947095308 and log10946383219 ZIPs match their GitHub API digests.
