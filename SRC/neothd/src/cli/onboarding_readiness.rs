@@ -14,8 +14,8 @@ use anyhow::{Context, Result};
 use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
 use crate::channels::registry::channel_descriptors;
 use crate::cli::init::ProviderKind;
-use crate::config::credentials::Credentials;
 use crate::config::FreedomConfig;
+use crate::config::credentials::Credentials;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OnboardingReadiness {

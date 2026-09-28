@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1870/W1871 source reviewed; fresh hosted native and product evidence pending",
+  "status": "Exact W1870 hosted formatter patch imported; native/product gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269477,
-    "sha256": "A46745BA640E5F88478E8991CD0F86C1DABE12720FD1E592100F51977A5DFBFA"
+    "bytes": 269473,
+    "sha256": "38C2C2E8C68A240A0C9653013E4E5AA27F36AD5F481CC29956A49DA5184E42AD"
   },
   "sourceInputs": 1494,
   "requiredNativeTests": [
@@ -486,7 +486,7 @@
     {
       "test": "channels::probe::tests::telegram_account_projection_distinguishes_exact_pairing_policy",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     },
     {
@@ -7830,13 +7830,13 @@
     {
       "test": "channels::probe::tests::slack_account_projection_is_sorted_and_secret_free",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     },
     {
       "test": "channels::probe::tests::slack_account_projection_refuses_orphaned_policy_map",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     },
     {
@@ -13998,43 +13998,43 @@
     {
       "test": "cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::token_only_telegram_is_not_ready",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8",
+      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
       "junitClass": "neoth"
     },
     {
@@ -14112,19 +14112,19 @@
     {
       "test": "channels::probe::tests::credential_view_preserves_authorization_identity_validation",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     },
     {
       "test": "channels::probe::tests::empty_and_whitespace_credentials_never_count_as_present",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     },
     {
       "test": "channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
-      "sourceSha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732",
+      "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
       "junitClass": "neoth"
     }
   ],
@@ -57609,6 +57609,44 @@
       }
     ],
     "note": "Descriptor-derived readiness retains typed identity validation and real Doctor/post-init effects. 22 exact cases registered:2353portable/2128Linux/911Windows/118channel. Daemon canary keeps actual OpenaiCompat consent; removes unsupported test WAL policy; product failures remain independent/fatal. No local executable validation; no ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1870HostedFormat": {
+    "base": "030067c0e0c5a3c3ffa10474acc140fb4dfdca74",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 527819,
+        "sha256": "88A3AB3D3858047CCE70349C60E607053EB62ECB731402462D129CC942596CFC",
+        "blob": "b9c23d8cc7569a15ce5242dbcd1853e93d799b74"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1564249,
+        "sha256": "EAB4115F0288851E4C3825EC5CF7504C3433AFA2F1CCFB348ECA9E80B31FBADE",
+        "blob": "d3152688bf29356155ea89a410efdde150819f39"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2175259,
+        "sha256": "56C61ADAF1B332ECC9535266180FECBDFFFBB9CCAEDA0DA389108637A11C247B",
+        "blob": "10cf00bfc6e560aead8529040b1d46345b5c0079"
+      },
+      {
+        "path": "SRC/neothd/src/channels/probe.rs",
+        "bytes": 51740,
+        "sha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
+        "blob": "9c640fc9128a7913a7ec93afbe3e3352283471d6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
+        "bytes": 9847,
+        "sha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+        "blob": "1f4daa0b0b2a8b327d90dc897b8e889f74a451a3"
+      }
+    ],
+    "note": "Original10968605989@030067c0 authenticated against API SHA; both Git postimages verified. No semantic change or local executable validation. Current source2353/2128/911/118; old native runs still continue.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

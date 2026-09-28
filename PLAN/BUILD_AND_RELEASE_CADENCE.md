@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1870 hosted formatting import (2026-09-28):** Preflight36418811607 at030067c0
+found only formatting in probe/onboarding. Original10968605989 ZIP/API SHA256
+2aff5af58fb3b144e1e16040fbda9f9805d095145b532a0a136efe0d10b6d31e matches;
+patch f45180b7296cff8894b1b064e90a45a51502b0efa74ad5d72475b44c8331e7ac and
+both exact Git postimages were verified and imported. No local formatter ran.
+
 **W1870/W1871 canonical readiness and product-gate follow-up (2026-09-28; hosted pending):**
 The shared onboarding projection now derives channel order, labels and static
 readiness from the canonical descriptor/probe. Telegram without its required

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T11:55:44.7039966Z",
-  "validationStatus": "W1870/W1871 source reviewed; fresh hosted native and product evidence pending",
+  "capturedUtc": "2026-09-28T12:00:05.4969768Z",
+  "validationStatus": "Exact W1870 hosted formatter patch imported; native/product gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3883,18 +3883,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 527432,
-      "sha256": "691D10287B803403C6304DBB8F907332F47548D525FA80593EC976269646BEB8"
+      "bytes": 527819,
+      "sha256": "88A3AB3D3858047CCE70349C60E607053EB62ECB731402462D129CC942596CFC"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1563862,
-      "sha256": "B9B227979300E108D47B29106E308F165F2712B41FA8CB2EB4E26B2F899E1D11"
+      "bytes": 1564249,
+      "sha256": "EAB4115F0288851E4C3825EC5CF7504C3433AFA2F1CCFB348ECA9E80B31FBADE"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2174872,
-      "sha256": "4A93EB7C1243C5B8C64664844AFB94EB07D782327F472C2A9E90A858044D5D43"
+      "bytes": 2175259,
+      "sha256": "56C61ADAF1B332ECC9535266180FECBDFFFBB9CCAEDA0DA389108637A11C247B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4638,8 +4638,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/probe.rs",
-      "bytes": 51977,
-      "sha256": "823C61086389AF3FB2CCE6A30D22085362125A3548FA51DE4BE91B217F4DE732"
+      "bytes": 51740,
+      "sha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15"
     },
     {
       "path": "SRC/neothd/src/channels/rate_limit.rs",
@@ -5039,7 +5039,7 @@
     {
       "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
       "bytes": 9847,
-      "sha256": "E23D5233CA672853A8C9C888C7B254E8AB8AFD6D6C626D5B97C5327EA10625C8"
+      "sha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40"
     },
     {
       "path": "SRC/neothd/src/cli/onboarding_status.rs",
