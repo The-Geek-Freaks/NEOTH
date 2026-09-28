@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Schema policy LF00102 accepted; Core CLI and Focused96 original evidence admitted; GChat canary source remains unaccepted WIP",
+  "status": "Source reviewed Google Chat debug-only public CLI canary and exact receipt contracts; hosted behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 268226,
-    "sha256": "55DAC8EDD661A0C2BD42F2F0A032F58891A316FCCC7D596384E05183CEA09355"
+    "bytes": 268592,
+    "sha256": "FB32341CE87924C1F36FCA38BEF5ADE6F473DAE1E5D74DEBABBC70398370F20B"
   },
-  "sourceInputs": 1487,
+  "sourceInputs": 1489,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -56862,6 +56862,81 @@
       }
     ],
     "note": "Schema56/extractor20/exactupstream, Core36396002270 and Focused96+actualCLI36397133897 original artifacts admitted.50 raw workflow/product producer paths match. Synchronize ROAD1324/1081/241/2 and WS-LF43/75 after prior docs closure. No local runtime; no new GChat canary or daemon/provider acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1847GChatCanaryAcceptance": {
+    "workflow": ".github/workflows/gchat-live-regressions.yml",
+    "features": [
+      "gchat-product-canary",
+      "irc-channel",
+      "nostr-channel"
+    ],
+    "defaultNativeCountIncludesTheseTests": false,
+    "requiredTests": [
+      "channels::gchat::tests::canary_origin_is_strict_loopback_http_with_explicit_port",
+      "channels::gchat::tests::canary_constructor_requires_exact_synthetic_key_and_origin_token_uri",
+      "channels::gchat::tests::canary_refuses_traffic_before_bearer_or_network"
+    ],
+    "normalPinRegression": "channels::gchat::tests::new_pins_the_google_token_uri_against_key_file_endpoint_poisoning",
+    "sourcePath": "SRC/neothd/src/channels/gchat.rs",
+    "product": "packaging/gchat_converted_relink_product_canary.py",
+    "status": "Source reviewed; GitHub behavior pending",
+    "scope": "Isolated debug-only synthetic Google Chat CLI relink product; no real Google provider, daemon adoption or release acceptance"
+  },
+  "wave1852GChatPublicCliCanarySource": {
+    "base": "70e02de6a9c0bf22fe58ed1cc1f15ea17863e0e6",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 36776,
+        "sha256": "BC2E8451D6BB4BB38130EA6845C7ED13B99B1A88E1088AFA76A1B7F26216D457",
+        "blob": "9cbb9f40955b58a53d10cc14ea00a3785911263a"
+      },
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 26421,
+        "sha256": "CBB7C788B06356D9062F132AAC4518022AE5BF50AF2AC01C21E7A368E0C6B659",
+        "blob": "142357c0a100c81b0ddd28cefe06baa987be26c0"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 6590,
+        "sha256": "F3FEFA374F80E12CB85F004CB7A2D11A07091AF54BE90481EF0258E375D55C9C",
+        "blob": "04b6c2c333f0bef7b274c52628aced1906a5b014"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 518675,
+        "sha256": "73694809E3E61BCFD4E2468D02ABF293A9750BA7A683A592B55F69790D292689",
+        "blob": "5cf406b74d0abad45a716c5b18810378be0dfa4e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1555105,
+        "sha256": "8E7FB3B0F900D8E8AA30060DF34034CC53F14940E2D4088A1ABD8D34A0470E90",
+        "blob": "4e7e1c0df58b2029daeb8a0f9dc95f8cb5759f22"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2166115,
+        "sha256": "05C8183E25103E0EDDC553957ABB1BB34BBE2E2F1E3C536E6FA255B10CA0BDCB",
+        "blob": "bc504eeba3c7bff417ebc881b033dcc46f83237b"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46469,
+        "sha256": "B13CB479F79CE37A6F287F77A564A41322D5ACF3702FF2FF1D6442B7E8D733AC",
+        "blob": "5f0f8849d1d4a628b8719519b4e9424af697a7f8"
+      },
+      {
+        "path": "SRC/neothd/src/channels/gchat.rs",
+        "bytes": 40985,
+        "sha256": "F815B2B26EC8FCEFF045DE17644A8246098D469891C943F5F84FCF9283A148C3",
+        "blob": "bd33604b6e2e9d88e96f954cb9082a11ae3df309"
+      }
+    ],
+    "note": "Default-off debug-only synthetic IP-loopback origin; normal Google token pin/env non-observation preserved, canary traffic blocked. Three feature guard tests plus genuine public CLI wrong-target/wrong-returned-space/Ready/retry and independent material/pair/routing/source/binary hashes. Normal96+BlueBubbles lane retained. LF00112 and release/provider/daemon claims remain open. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

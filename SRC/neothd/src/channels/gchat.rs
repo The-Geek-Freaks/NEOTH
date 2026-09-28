@@ -51,6 +51,36 @@ const PULL_BATCH: u32 = 10;
 /// Backoff after a transient pull/transport error.
 const ERROR_BACKOFF: Duration = Duration::from_secs(5);
 
+#[cfg(all(feature = "gchat-product-canary", not(debug_assertions)))]
+compile_error!("gchat-product-canary is a debug-only local canary and must not ship in release builds");
+
+#[cfg(feature = "gchat-product-canary")]
+const CANARY_EMAIL: &str = "bot@neoth-canary.invalid";
+
+#[cfg(feature = "gchat-product-canary")]
+fn canary_origin(value: &str) -> Result<url::Url> {
+    let origin = url::Url::parse(value).context("parse NEOTH_GCHAT_CANARY_ORIGIN")?;
+    let loopback = matches!(origin.host_str(), Some("127.0.0.1") | Some("[::1]"));
+    if origin.scheme() != "http"
+        || !loopback
+        || origin.port().filter(|port| *port != 0).is_none()
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || origin.path() != "/"
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+    {
+        anyhow::bail!(
+            "NEOTH_GCHAT_CANARY_ORIGIN must be canonical loopback http origin with explicit port"
+        );
+    }
+    let canonical = origin.as_str();
+    if value != canonical && value != canonical.trim_end_matches('/') {
+        anyhow::bail!("NEOTH_GCHAT_CANARY_ORIGIN must use canonical loopback spelling");
+    }
+    Ok(origin)
+}
+
 /// Subset of the service-account JSON key NEOTH needs.
 #[derive(Debug, Deserialize)]
 struct ServiceAccountKey {
@@ -202,11 +232,45 @@ pub struct GChatChannel {
     allowed_sender: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
+    #[cfg(feature = "gchat-product-canary")]
+    canary_origin: Option<url::Url>,
 }
 
 impl GChatChannel {
+    #[cfg(feature = "gchat-product-canary")]
+    fn is_canary(&self) -> bool {
+        self.canary_origin.is_some()
+    }
+
+    #[cfg(feature = "gchat-product-canary")]
+    fn canary_endpoint(&self) -> Option<url::Url> {
+        self.canary_origin.clone()
+    }
+
     /// Parse the service-account key at `sa_json_path` and build the adapter.
     pub fn new(sa_json_path: &std::path::Path, subscription: impl Into<String>) -> Result<Self> {
+        #[cfg(feature = "gchat-product-canary")]
+        {
+            let origin = match std::env::var("NEOTH_GCHAT_CANARY_ORIGIN") {
+                Ok(value) => Some(canary_origin(&value)?),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    anyhow::bail!("NEOTH_GCHAT_CANARY_ORIGIN is not Unicode")
+                }
+            };
+            Self::new_with_origin(sa_json_path, subscription, origin)
+        }
+        #[cfg(not(feature = "gchat-product-canary"))]
+        Self::new_with_origin(sa_json_path, subscription, None)
+    }
+
+    fn new_with_origin(
+        sa_json_path: &std::path::Path,
+        subscription: impl Into<String>,
+        canary_origin: Option<url::Url>,
+    ) -> Result<Self> {
+        #[cfg(not(feature = "gchat-product-canary"))]
+        anyhow::ensure!(canary_origin.is_none(), "gchat canary feature is not enabled");
         let subscription = validate_subscription_resource(&subscription.into())?;
         let raw = std::fs::read_to_string(sa_json_path).with_context(|| {
             format!(
@@ -220,7 +284,22 @@ impl GChatChannel {
         // endpoint rather than merely requiring HTTPS: a poisoned key could
         // otherwise direct a replayable assertion to an attacker-controlled
         // HTTPS host (including a userinfo/host parsing lookalike).
-        if key.token_uri != GOOGLE_TOKEN_URI {
+        #[cfg(feature = "gchat-product-canary")]
+        let expected_token = canary_origin
+            .as_ref()
+            .map(|origin| origin.join("token"))
+            .transpose()?
+            .map(|url| url.to_string());
+        #[cfg(feature = "gchat-product-canary")]
+        if canary_origin.is_some()
+            && (key.client_email != CANARY_EMAIL
+                || Some(key.token_uri.as_str()) != expected_token.as_deref())
+        {
+            anyhow::bail!(
+                "gchat canary key must use synthetic identity and canonical loopback token URI"
+            );
+        }
+        if canary_origin.is_none() && key.token_uri != GOOGLE_TOKEN_URI {
             anyhow::bail!(
                 "gchat: token_uri in the service-account key must be the official Google OAuth endpoint"
             );
@@ -238,6 +317,8 @@ impl GChatChannel {
             token: tokio::sync::Mutex::new(None),
             allowed_sender: None,
             gate_writer: None,
+            #[cfg(feature = "gchat-product-canary")]
+            canary_origin,
         })
     }
 
@@ -323,6 +404,10 @@ impl GChatChannel {
         let bearer = self.bearer().await?;
         let mut endpoint =
             url::Url::parse("https://pubsub.googleapis.com").expect("static Pub/Sub URL");
+        #[cfg(feature = "gchat-product-canary")]
+        if let Some(canary) = self.canary_endpoint() {
+            endpoint = canary;
+        }
         endpoint.set_path(&format!("/v1/{}", self.subscription));
         let response = self
             .http
@@ -346,6 +431,10 @@ impl GChatChannel {
         let bearer = self.bearer().await?;
         let mut endpoint =
             url::Url::parse("https://chat.googleapis.com").expect("static Google Chat URL");
+        #[cfg(feature = "gchat-product-canary")]
+        if let Some(canary) = self.canary_endpoint() {
+            endpoint = canary;
+        }
         endpoint.set_path(&format!("/v1/{space}"));
         self.probe_space_target_at(endpoint, &space, &bearer).await
     }
@@ -376,6 +465,12 @@ impl GChatChannel {
     /// one request per server hold period, well inside the 120s client
     /// timeout.
     async fn pull(&self) -> Result<PullResponse, ChannelError> {
+        #[cfg(feature = "gchat-product-canary")]
+        if self.is_canary() {
+            return Err(ChannelError::Transport(
+                "gchat canary refuses traffic pull".to_string(),
+            ));
+        }
         let bearer = self.bearer().await?;
         let url = format!(
             "https://pubsub.googleapis.com/v1/{}:pull",
@@ -409,6 +504,12 @@ impl GChatChannel {
 
     /// Ack processed messages so Pub/Sub stops redelivering them.
     async fn ack(&self, ack_ids: &[String]) -> Result<(), ChannelError> {
+        #[cfg(feature = "gchat-product-canary")]
+        if self.is_canary() {
+            return Err(ChannelError::Transport(
+                "gchat canary refuses traffic acknowledge".to_string(),
+            ));
+        }
         if ack_ids.is_empty() {
             return Ok(());
         }
@@ -436,6 +537,12 @@ impl GChatChannel {
 
     /// `POST /v1/{space}/messages` — plain-text send.
     async fn post_text(&self, space: &str, text: &str) -> Result<MessageId, ChannelError> {
+        #[cfg(feature = "gchat-product-canary")]
+        if self.is_canary() {
+            return Err(ChannelError::Transport(
+                "gchat canary refuses message send".to_string(),
+            ));
+        }
         let bearer = self.bearer().await?;
         let url = format!("https://chat.googleapis.com/v1/{space}/messages");
         let resp = self
@@ -615,6 +722,104 @@ impl Channel for GChatChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "gchat-product-canary")]
+    #[test]
+    fn canary_origin_is_strict_loopback_http_with_explicit_port() {
+        assert_eq!(
+            canary_origin("http://127.0.0.1:18470").unwrap().as_str(),
+            "http://127.0.0.1:18470/"
+        );
+        assert_eq!(canary_origin("http://[::1]:18470").unwrap().port(), Some(18470));
+        for bad in [
+            "https://127.0.0.1:1",
+            "http://localhost:1",
+            "http://127.0.0.1",
+            "http://127.0.0.1:0",
+            "http://u@127.0.0.1:1",
+            "http://127.0.0.1:1/path",
+            "http://127.0.0.1:1/?q=1",
+            "http://127.0.0.1:1/#f",
+            "http://127.1:1",
+            "http://2130706433:1",
+        ] {
+            assert!(canary_origin(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[cfg(feature = "gchat-product-canary")]
+    #[test]
+    fn canary_constructor_requires_exact_synthetic_key_and_origin_token_uri() {
+        let dir = tempfile::tempdir().unwrap();
+        let origin = canary_origin("http://127.0.0.1:18470").unwrap();
+        for (name, email, token) in [
+            (
+                "email",
+                "not-canary@example.invalid",
+                "http://127.0.0.1:18470/token",
+            ),
+            ("google", CANARY_EMAIL, GOOGLE_TOKEN_URI),
+            ("port", CANARY_EMAIL, "http://127.0.0.1:18471/token"),
+        ] {
+            let key = dir.path().join(format!("{name}.json"));
+            std::fs::write(
+                &key,
+                format!(r#"{{"client_email":"{email}","private_key":"x","token_uri":"{token}"}}"#),
+            )
+            .unwrap();
+            assert!(
+                GChatChannel::new_with_origin(
+                    &key,
+                    "projects/p/subscriptions/s",
+                    Some(origin.clone())
+                )
+                .is_err()
+            );
+        }
+        let key = dir.path().join("valid.json");
+        std::fs::write(&key, r#"{"client_email":"bot@neoth-canary.invalid","private_key":"x","token_uri":"http://127.0.0.1:18470/token"}"#).unwrap();
+        assert!(
+            GChatChannel::new_with_origin(&key, "projects/p/subscriptions/s", Some(origin)).is_ok()
+        );
+    }
+
+    #[cfg(feature = "gchat-product-canary")]
+    #[tokio::test]
+    async fn canary_refuses_traffic_before_bearer_or_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("canary.json");
+        std::fs::write(&key, r#"{"client_email":"bot@neoth-canary.invalid","private_key":"not-a-pem","token_uri":"http://127.0.0.1:18470/token"}"#).unwrap();
+        let channel = GChatChannel::new_with_origin(
+            &key,
+            "projects/p/subscriptions/s",
+            Some(canary_origin("http://127.0.0.1:18470").unwrap()),
+        )
+        .unwrap();
+        assert!(
+            channel
+                .pull()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("refuses traffic pull")
+        );
+        assert!(
+            channel
+                .ack(&["a".to_string()])
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("refuses traffic acknowledge")
+        );
+        assert!(
+            channel
+                .post_text("spaces/x", "x")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("refuses message send")
+        );
+    }
 
     #[test]
     fn sa_key_parse_defaults_token_uri() {

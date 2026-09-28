@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T08:57:45.2711441Z",
-  "validationStatus": "Schema policy LF00102 accepted; Core CLI and Focused96 original evidence admitted; GChat canary source remains unaccepted WIP",
+  "capturedUtc": "2026-09-28T09:05:00.8653599Z",
+  "validationStatus": "Source reviewed Google Chat debug-only public CLI canary and exact receipt contracts; hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 34102,
-      "sha256": "703DCF9377F79380FF990C982C02E5E470F0E42630D710928C061F29336571CA"
+      "bytes": 36776,
+      "sha256": "BC2E8451D6BB4BB38130EA6845C7ED13B99B1A88E1088AFA76A1B7F26216D457"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3657,6 +3657,11 @@
       "sha256": "AB6C977E3E3B955C24D825336B9BE5B7A6A4222180FC7D1F194F6BC974D280B6"
     },
     {
+      "path": "packaging/gchat_converted_relink_product_canary.py",
+      "bytes": 26421,
+      "sha256": "CBB7C788B06356D9062F132AAC4518022AE5BF50AF2AC01C21E7A368E0C6B659"
+    },
+    {
       "path": "packaging/linux/build-packages.sh",
       "bytes": 17526,
       "sha256": "DDD7CECB8194FFBC853D2B07AB11798D45283359701D7CB7D915B740A70A7182"
@@ -3755,6 +3760,11 @@
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
       "bytes": 11201,
       "sha256": "2A033CC97DC2F1CA5FC9AF3596EF6018CEAC46AD85104914F122E149DE5D0B91"
+    },
+    {
+      "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+      "bytes": 6590,
+      "sha256": "F3FEFA374F80E12CB85F004CB7A2D11A07091AF54BE90481EF0258E375D55C9C"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3858,18 +3868,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 517436,
-      "sha256": "FBA82E31C4188F74F40EE9F4D8C99985616B7E21D974D7DDBB0CF5BB1E2C2A27"
+      "bytes": 518675,
+      "sha256": "73694809E3E61BCFD4E2468D02ABF293A9750BA7A683A592B55F69790D292689"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1553866,
-      "sha256": "4D11D4F76C5807D49F8201A91A5D1A0A2601D50195DD48459384DAA4A99D5E9C"
+      "bytes": 1555105,
+      "sha256": "8E7FB3B0F900D8E8AA30060DF34034CC53F14940E2D4088A1ABD8D34A0470E90"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2164876,
-      "sha256": "2B89C77827533C010E0C97F7E1C4F372D702947BD663A57472FA21E2629F03CB"
+      "bytes": 2166115,
+      "sha256": "05C8183E25103E0EDDC553957ABB1BB34BBE2E2F1E3C536E6FA255B10CA0BDCB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4553,8 +4563,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46356,
-      "sha256": "31063C67DF245D078107CE93BA153C11C54C32CD60295C11D14BD9C5EFF798CC"
+      "bytes": 46469,
+      "sha256": "B13CB479F79CE37A6F287F77A564A41322D5ACF3702FF2FF1D6442B7E8D733AC"
     },
     {
       "path": "SRC/neothd/src/analytics/mod.rs",
@@ -4578,8 +4588,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/gchat.rs",
-      "bytes": 33355,
-      "sha256": "22E952F89C39284AA4AD7ED9ACB3F3E4F6E0A883A4F7477325F8145892071F13"
+      "bytes": 40985,
+      "sha256": "F815B2B26EC8FCEFF045DE17644A8246098D469891C943F5F84FCF9283A148C3"
     },
     {
       "path": "SRC/neothd/src/channels/identity.rs",

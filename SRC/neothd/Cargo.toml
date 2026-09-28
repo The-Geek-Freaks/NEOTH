@@ -222,6 +222,8 @@ nostr-channel = ["dep:nostr-sdk", "dep:nostr"]
 # probe row + the pure `gchat_api` mapping stay compiled in every build; only
 # the pull/send adapter needs the feature.
 gchat-channel = ["dep:jsonwebtoken"]
+# W1847 local-only product canary. Never part of a distribution bundle.
+gchat-product-canary = ["gchat-channel"]
 # GOLD-ADAPT-RMAS-01/03 — optional local RecursiveMAS Python sidecar for
 # council deliberation. Default OFF; NOT flipped on in release CI. No new
 # crate deps — the sidecar is an OPERATOR-INSTALLED checkout that NEOTH only

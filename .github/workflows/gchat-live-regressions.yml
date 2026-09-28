@@ -59,6 +59,8 @@ jobs:
             SRC/neothd/src/cli/channel/converted_relink/tests.rs \
             packaging/converted_channel_relink_product_canary.py \
             packaging/tests/test_converted_channel_relink_product_canary.py \
+            packaging/gchat_converted_relink_product_canary.py \
+            packaging/tests/test_gchat_converted_relink_product_canary.py \
             SRC/neoth-openclaw-custody/src/pinned_inventory.rs \
             SRC/neoth-openclaw-custody/src/pinned_schema.rs \
             SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json \
@@ -101,7 +103,9 @@ jobs:
           : > "$W548_ROOT/receipt/executed.txt"
 
       - name: Verify compiled-CLI relink canary contracts
-        run: python3 packaging/tests/test_converted_channel_relink_product_canary.py
+        run: |
+          python3 packaging/tests/test_converted_channel_relink_product_canary.py
+          python3 packaging/tests/test_gchat_converted_relink_product_canary.py
 
       - name: Run focused channel and exact-target regressions
         working-directory: SRC
@@ -276,6 +280,50 @@ jobs:
           path: |
             ${{ runner.temp }}/w548-gchat-live-regressions/product/evidence/
             ${{ runner.temp }}/w548-gchat-live-regressions/product/receipt/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify isolated Google Chat canary guards
+        timeout-minutes: 20
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          mkdir -p "$W548_ROOT/gchat-guards"
+          cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
+            channels::gchat::tests:: -- --list > "$W548_ROOT/gchat-guards/discovery.log" 2>&1
+          for name in canary_origin_is_strict_loopback_http_with_explicit_port canary_constructor_requires_exact_synthetic_key_and_origin_token_uri canary_refuses_traffic_before_bearer_or_network new_pins_the_google_token_uri_against_key_file_endpoint_poisoning; do
+            grep -Fx "channels::gchat::tests::$name: test" "$W548_ROOT/gchat-guards/discovery.log"
+          done
+          cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
+            channels::gchat::tests:: -- --test-threads=1 2>&1 | tee "$W548_ROOT/gchat-guards/tests.log"
+
+      - name: Build isolated Google Chat canary CLI
+        timeout-minutes: 20
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked --features gchat-product-canary,irc-channel,nostr-channel
+
+      - name: Exercise public Google Chat relink against authenticated loopback
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$W548_ROOT/gchat-product"
+          python3 packaging/gchat_converted_relink_product_canary.py \
+            --binary "$PWD/SRC/target/debug/neoth" \
+            --root "$W548_ROOT/gchat-product" \
+            --home "$W548_ROOT/gchat-product/neoth-home" \
+            --source "$W548_ROOT/gchat-product/openclaw.json" \
+            --evidence-dir "$W548_ROOT/gchat-product/evidence" \
+            --receipt "$W548_ROOT/gchat-product/receipt/receipt.json" \
+            --workflow .github/workflows/gchat-live-regressions.yml
+
+      - name: Upload isolated Google Chat canary evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gchat-relink-public-cli-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w548-gchat-live-regressions/gchat-guards/
+            ${{ runner.temp }}/w548-gchat-live-regressions/gchat-product/evidence/
+            ${{ runner.temp }}/w548-gchat-live-regressions/gchat-product/receipt/
           if-no-files-found: warn
           retention-days: 14
 

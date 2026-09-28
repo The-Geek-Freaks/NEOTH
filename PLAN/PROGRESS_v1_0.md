@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1847/W1850 Google Chat public-CLI canary source (2026-09-28; hosted pending):**
+A default-off debug-only gchat-product-canary feature enables one canonical
+IP-loopback origin for synthetic service-account probes. Normal builds never
+read that variable and retain Google's exact OAuth endpoint. Canary credentials
+must bind the synthetic identity and exact loopback token URI; traffic pull,
+acknowledgement and message send are refused before bearer or network access.
+The hosted product drives actual public CLI init and encrypted relink with a
+JWT-signature-checking fake OAuth/subscription/space service. Wrong target and
+wrong returned identity must leave Pending and preserve existing bytes; success
+must match independently calculated material, pair and routing commitments,
+then preserve durable bytes on retry. Original source/binary hashes and cleanup
+are retained. A separate feature guard suite follows the normal96-test and
+BlueBubbles CLI gates. Source review passed after correcting the actual
+routing field and completing receipt provenance. New hosted behavior is pending;
+LF00112 and all release/provider/daemon-adoption claims remain open.
+ROAD1324/1081/241/2 and WS-LF43/75 unchanged. No local executable validation.
+
 **W1845/W1849 Integration admission and count repair (2026-09-28):**
 Core36396002270 atf110c7aa passed production Clippy, test-target typecheck,
 public CLI build/export; original10959015737 and exact generated reference
