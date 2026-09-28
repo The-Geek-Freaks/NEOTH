@@ -1452,6 +1452,12 @@ const INVENTORY: &[(&str, Surface)] = &[
         ),
     ),
     ("import", CliOnly("data import pipe")),
+    (
+        "openclaw-migration",
+        CliOnly(
+            "private-source account mapping and operation-bound custody/recovery require explicit local files and confirmation; no GUI mapping or rollback dispatch is implemented, and full migration/GUI parity remains open",
+        ),
+    ),
     ("telemetry", Gui("privacy")),
     ("adr", Gui("adr-browser")),
     ("backup", Gui("config")),

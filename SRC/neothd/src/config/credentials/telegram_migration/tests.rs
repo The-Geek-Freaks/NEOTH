@@ -46,7 +46,6 @@ fn prepared(freedom: &Path, credentials: &Path) -> PreparedTelegramMigration {
         account("ops"),
         42,
         SecretString::from("123456789:telegram-migration-fixture"),
-
         "db290af9-0cb1-4271-aecd-dc45272a71a3",
         commitment(),
     )
@@ -390,7 +389,6 @@ fn nofollow_pair_capture_rejects_a_symlinked_credentials_leaf() {
             account("ops"),
             42,
             SecretString::from("123456789:telegram-fixture"),
-
             "db290af9-0cb1-4271-aecd-dc45272a71a3",
             commitment(),
         )
@@ -414,7 +412,6 @@ fn bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it(
             account("ops"),
             42,
             SecretString::from("123456789:telegram-fixture"),
-
             "db290af9-0cb1-4271-aecd-dc45272a71a3",
             commitment(),
         )
@@ -500,40 +497,146 @@ fn encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback
 fn keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody() {
     let (directory, freedom, credentials) = seed();
     std::fs::write(&freedom, "secrets_backend: keychain\n").unwrap();
-    let before = (std::fs::read(&freedom).unwrap(), std::fs::read(&credentials).unwrap());
-    let result = Credentials::prepare_telegram_migration_upsert_at(
-        &freedom, &credentials, account("ops"), 42, SecretString::from("123456789:telegram-fixture"),
-        "db290af9-0cb1-4271-aecd-dc45272a71a3", commitment(),
+    let before = (
+        std::fs::read(&freedom).unwrap(),
+        std::fs::read(&credentials).unwrap(),
     );
-    let error = match result { Ok(_) => panic!("keychain must be rejected before candidate preparation"), Err(error) => error };
-    assert!(error.to_string().contains("requires a file-backed secrets backend"));
-    assert_eq!((std::fs::read(&freedom).unwrap(), std::fs::read(&credentials).unwrap()), before);
-    assert!(!custody_path(&freedom, "db290af9-0cb1-4271-aecd-dc45272a71a3").unwrap().exists());
-    assert!(!directory.path().join(crate::config::reload::RELOAD_SENTINEL_NAME).exists());
+    let result = Credentials::prepare_telegram_migration_upsert_at(
+        &freedom,
+        &credentials,
+        account("ops"),
+        42,
+        SecretString::from("123456789:telegram-fixture"),
+        "db290af9-0cb1-4271-aecd-dc45272a71a3",
+        commitment(),
+    );
+    let error = match result {
+        Ok(_) => panic!("keychain must be rejected before candidate preparation"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("requires a file-backed secrets backend")
+    );
+    assert_eq!(
+        (
+            std::fs::read(&freedom).unwrap(),
+            std::fs::read(&credentials).unwrap()
+        ),
+        before
+    );
+    assert!(
+        !custody_path(&freedom, "db290af9-0cb1-4271-aecd-dc45272a71a3")
+            .unwrap()
+            .exists()
+    );
+    assert!(
+        !directory
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+            .exists()
+    );
 }
 
 #[test]
 fn existing_account_incarnation_and_unselected_account_survive_migration_and_rollback() {
     let (_directory, freedom, credentials) = seed();
-    for (name, user, token) in [("ops", 41, "123456789:old-token"), ("personal", 99, "987654321:untouched-token")] {
-        let candidate = Credentials::prepare_telegram_account_upsert_at(&freedom, &credentials, account(name), user, SecretString::from(token)).unwrap();
+    for (name, user, token) in [
+        ("ops", 41, "123456789:old-token"),
+        ("personal", 99, "987654321:untouched-token"),
+    ] {
+        let candidate = Credentials::prepare_telegram_account_upsert_at(
+            &freedom,
+            &credentials,
+            account(name),
+            user,
+            SecretString::from(token),
+        )
+        .unwrap();
         Credentials::commit_prepared_telegram_account_upsert_at(candidate).unwrap();
     }
-    let before = (std::fs::read(&freedom).unwrap(), std::fs::read(&credentials).unwrap());
+    let before = (
+        std::fs::read(&freedom).unwrap(),
+        std::fs::read(&credentials).unwrap(),
+    );
     let original = crate::config::load_runtime_config_pair_from_path(&freedom).unwrap();
-    let incarnation = original.config.channel_accounts.telegram.get(&account("ops")).unwrap().incarnation.clone();
+    let incarnation = original
+        .config
+        .channel_accounts
+        .telegram
+        .get(&account("ops"))
+        .unwrap()
+        .incarnation
+        .clone();
     assert!(incarnation.is_some());
     let candidate = prepared(&freedom, &credentials);
-    assert_eq!(candidate.candidate_pair().config.channel_accounts.telegram.get(&account("ops")).unwrap().incarnation, incarnation);
+    assert_eq!(
+        candidate
+            .candidate_pair()
+            .config
+            .channel_accounts
+            .telegram
+            .get(&account("ops"))
+            .unwrap()
+            .incarnation,
+        incarnation
+    );
     let custody = candidate.persist_telegram_migration_custody_at().unwrap();
     assert_eq!(custody.allowed_user_id(), 42);
-    custody.commit_if_before_at(&freedom, &credentials, "db290af9-0cb1-4271-aecd-dc45272a71a3", commitment()).unwrap();
+    custody
+        .commit_if_before_at(
+            &freedom,
+            &credentials,
+            "db290af9-0cb1-4271-aecd-dc45272a71a3",
+            commitment(),
+        )
+        .unwrap();
     let published = crate::config::load_runtime_config_pair_from_path(&freedom).unwrap();
-    let selected = published.config.channel_accounts.telegram.get(&account("ops")).unwrap();
+    let selected = published
+        .config
+        .channel_accounts
+        .telegram
+        .get(&account("ops"))
+        .unwrap();
     assert_eq!(selected.allowed_user_id, 42);
     assert_eq!(selected.incarnation, incarnation);
-    assert_eq!(published.config.channel_accounts.telegram.get(&account("personal")).unwrap().allowed_user_id, 99);
-    assert_eq!(published.credentials.channel_accounts.telegram.get(&account("personal")).unwrap().token.as_ref().unwrap().expose(), "987654321:untouched-token");
-    custody.rollback_if_exact_at(&freedom, &credentials, "db290af9-0cb1-4271-aecd-dc45272a71a3", commitment()).unwrap();
-    assert_eq!((std::fs::read(&freedom).unwrap(), std::fs::read(&credentials).unwrap()), before);
+    assert_eq!(
+        published
+            .config
+            .channel_accounts
+            .telegram
+            .get(&account("personal"))
+            .unwrap()
+            .allowed_user_id,
+        99
+    );
+    assert_eq!(
+        published
+            .credentials
+            .channel_accounts
+            .telegram
+            .get(&account("personal"))
+            .unwrap()
+            .token
+            .as_ref()
+            .unwrap()
+            .expose(),
+        "987654321:untouched-token"
+    );
+    custody
+        .rollback_if_exact_at(
+            &freedom,
+            &credentials,
+            "db290af9-0cb1-4271-aecd-dc45272a71a3",
+            commitment(),
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            std::fs::read(&freedom).unwrap(),
+            std::fs::read(&credentials).unwrap()
+        ),
+        before
+    );
 }

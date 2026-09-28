@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1801-W1803 Windows admission and Linux parity diagnosis (2026-09-28):**
+Windows831run36374304491 at308bf12a is fully admitted:831 exact identities
+and matching single-PASS logs,832 log/10 evidence hashes, API-authenticated
+original10950818868, and128 raw producer paths (831 rows plus13 inputs).
+Evidence: docs/verification/gold-wave1801-windows831-admission.json.
+Linux2068run36375055716 atd1b9cf94 failed the existing CLI/GUI drift guard:
+openclaw-migration was missing its explicit surface classification. It now
+records the actual private-file CLI workflow and absent GUI mapping/recovery;
+no GUI availability or full roadmap closure is claimed. The same existing
+guard joins the focused lane (75 cases) so future command additions fail early.
+Telegram hosted format from Preflight36376993651 original10951800659 is
+API/inner-hash authenticated and imported across7 Rust files; no local rustfmt.
+Core36376994007 remains active. New native2086/848 and focused75 await gates.
+ROAD1324/1077/245/2 unchanged; no local executable validation.
+
 **W1800 Focused Slack56 and Relink product admitted (2026-09-28):**
 Run36374440126 atb824be89 passed all56 selected/started/executed cases, with
 56 exact matching one-test green terminals and0 failures/missing/duplicates.

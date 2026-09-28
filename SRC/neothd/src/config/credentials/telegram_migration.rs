@@ -14,10 +14,10 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize;
 
 use super::{
-    Credentials, FileSnapshot, JournalFileSnapshot,
-    PreparedTelegramAccountUpsert, publish_prepared_file_pair, sibling_credentials_path,
-    transaction_directory, validate_exact_pair_target, with_config_writer_guard,
-    with_dual_file_transaction_lock, with_legacy_pair_locks,
+    Credentials, FileSnapshot, JournalFileSnapshot, PreparedTelegramAccountUpsert,
+    publish_prepared_file_pair, sibling_credentials_path, transaction_directory,
+    validate_exact_pair_target, with_config_writer_guard, with_dual_file_transaction_lock,
+    with_legacy_pair_locks,
 };
 use crate::channels::registry::ChannelAccountId;
 use crate::secret::SecretString;
@@ -88,25 +88,54 @@ struct TelegramMigrationCustodyRecord {
 impl Credentials {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare_telegram_migration_upsert_at(
-        freedom_path: &Path, credentials_path: &Path, account_id: ChannelAccountId,
-        allowed_user_id: u64, token: SecretString, operation_id: &str, request_commitment: &str,
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: ChannelAccountId,
+        allowed_user_id: u64,
+        token: SecretString,
+        operation_id: &str,
+        request_commitment: &str,
     ) -> Result<PreparedTelegramMigration> {
         validate_operation_binding(operation_id, request_commitment)?;
         super::with_coherent_pair_transaction_at(freedom_path, || {
-            let config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
-            anyhow::ensure!(config.secrets_backend != crate::config::SecretsBackend::Keychain, "Telegram OpenClaw migration requires a file-backed secrets backend");
-            let prepared = Self::prepare_telegram_account_upsert_at(freedom_path, credentials_path, account_id, allowed_user_id, token)?;
-            Ok(PreparedTelegramMigration { prepared, operation_id: operation_id.to_owned(), request_commitment: request_commitment.to_owned() })
+            let config =
+                crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+            anyhow::ensure!(
+                config.secrets_backend != crate::config::SecretsBackend::Keychain,
+                "Telegram OpenClaw migration requires a file-backed secrets backend"
+            );
+            let prepared = Self::prepare_telegram_account_upsert_at(
+                freedom_path,
+                credentials_path,
+                account_id,
+                allowed_user_id,
+                token,
+            )?;
+            Ok(PreparedTelegramMigration {
+                prepared,
+                operation_id: operation_id.to_owned(),
+                request_commitment: request_commitment.to_owned(),
+            })
         })
     }
 }
 impl PreparedTelegramMigration {
-    pub(crate) fn candidate_pair(&self) -> &crate::config::RuntimeConfigPair { self.prepared.candidate_pair() }
-    pub(crate) fn account_id(&self) -> &ChannelAccountId { self.prepared.account_id() }
-    pub(crate) fn persist_telegram_migration_custody_at(self) -> Result<TelegramMigrationCustody> { TelegramMigrationCustody::persist(self.prepared, self.operation_id, self.request_commitment) }
+    pub(crate) fn candidate_pair(&self) -> &crate::config::RuntimeConfigPair {
+        self.prepared.candidate_pair()
+    }
+    pub(crate) fn account_id(&self) -> &ChannelAccountId {
+        self.prepared.account_id()
+    }
+    pub(crate) fn persist_telegram_migration_custody_at(self) -> Result<TelegramMigrationCustody> {
+        TelegramMigrationCustody::persist(self.prepared, self.operation_id, self.request_commitment)
+    }
 }
 impl TelegramMigrationCustody {
-    fn persist(prepared: PreparedTelegramAccountUpsert, operation_id: String, request_commitment: String) -> Result<Self> {
+    fn persist(
+        prepared: PreparedTelegramAccountUpsert,
+        operation_id: String,
+        request_commitment: String,
+    ) -> Result<Self> {
         validate_operation_binding(&operation_id, &request_commitment)?;
         let directory = transaction_directory(&prepared.freedom_path);
         anyhow::ensure!(
@@ -134,7 +163,14 @@ impl TelegramMigrationCustody {
                         operation_id,
                         request_commitment,
                         account_id: prepared.account_id.to_string(),
-                        allowed_user_id: prepared.candidate.config.channel_accounts.telegram.get(&prepared.account_id).context("prepared Telegram policy is missing")?.allowed_user_id,
+                        allowed_user_id: prepared
+                            .candidate
+                            .config
+                            .channel_accounts
+                            .telegram
+                            .get(&prepared.account_id)
+                            .context("prepared Telegram policy is missing")?
+                            .allowed_user_id,
                         freedom_file: transaction_file_name_exact(
                             &prepared.freedom_path,
                             "freedom.yaml",
@@ -224,7 +260,9 @@ impl TelegramMigrationCustody {
     pub(crate) fn after_sha256(&self) -> &str {
         &self.record.after_sha256
     }
-    pub(crate) fn allowed_user_id(&self) -> u64 { self.record.allowed_user_id }
+    pub(crate) fn allowed_user_id(&self) -> u64 {
+        self.record.allowed_user_id
+    }
     pub(crate) fn account_id(&self) -> &str {
         &self.record.account_id
     }
@@ -639,7 +677,10 @@ fn validate_record(
         account.to_string() == record.account_id,
         "noncanonical Telegram migration custody account id"
     );
-    anyhow::ensure!(record.allowed_user_id != 0, "Telegram migration custody allowed user id is zero");
+    anyhow::ensure!(
+        record.allowed_user_id != 0,
+        "Telegram migration custody allowed user id is zero"
+    );
     let (before_freedom, before_credentials, after_freedom, after_credentials) = (
         record
             .freedom_before
@@ -671,7 +712,12 @@ fn persist_record_create_new(path: &Path, record: &TelegramMigrationCustodyRecor
         "Telegram migration custody exceeds the private recovery limit"
     );
     let result = crate::util::atomic_write::write_private_create_new_durable(path, body.as_bytes())
-        .with_context(|| format!("create private Telegram migration custody {}", path.display()));
+        .with_context(|| {
+            format!(
+                "create private Telegram migration custody {}",
+                path.display()
+            )
+        });
     body.zeroize();
     result
 }

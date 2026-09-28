@@ -24,8 +24,10 @@ use crate::secret::SecretString;
 use crate::skills::store;
 
 mod participants;
-use participants::{PairState, ParticipantCustody, ParticipantKind, PreparedParticipant,
-    PrivateRequest, ProbeBinding, ProbeOutcome, SelectedSource};
+use participants::{
+    PairState, ParticipantCustody, ParticipantKind, PreparedParticipant, PrivateRequest,
+    ProbeBinding, ProbeOutcome, SelectedSource,
+};
 
 const MAX_REQUEST: usize = 8 * 1024;
 const MAX_RECORD: usize = 16 * 1024;
@@ -81,9 +83,14 @@ struct Plan {
 }
 
 impl Plan {
-    fn kind(&self) -> ParticipantKind { self.participant.unwrap_or(ParticipantKind::Slack) }
+    fn kind(&self) -> ParticipantKind {
+        self.participant.unwrap_or(ParticipantKind::Slack)
+    }
     fn valid_version(&self) -> bool {
-        matches!((self.version, self.participant), (1, None) | (2, Some(ParticipantKind::Telegram)))
+        matches!(
+            (self.version, self.participant),
+            (1, None) | (2, Some(ParticipantKind::Telegram))
+        )
     }
 }
 
@@ -253,12 +260,14 @@ impl OperationStore {
                 // Only the plan-to-initial-state crash window permits absence.
                 // Losing a later journal must not erase a rollback direction.
                 ensure!(
-                        ParticipantCustody::load_optional_at(
-                            plan.kind(),
-                            &self.home.join("freedom.yaml"),
-                            &self.id,
-                            &binding
-                        )?.is_none() && self.read::<Terminal>("committed")?.is_none()
+                    ParticipantCustody::load_optional_at(
+                        plan.kind(),
+                        &self.home.join("freedom.yaml"),
+                        &self.id,
+                        &binding
+                    )?
+                    .is_none()
+                        && self.read::<Terminal>("committed")?.is_none()
                         && self.read::<Terminal>("rolled-back")?.is_none(),
                     "migration state is missing after custody publication"
                 );
@@ -386,14 +395,9 @@ pub async fn run(action: OpenclawMigrationAction, output: &OutputFormat) -> Resu
             confirm,
         } => {
             ensure!(confirm, "apply requires --confirm");
-            apply_participant_at_with(
-                &home,
-                &id,
-                &config,
-                &request,
-                participants::probe,
-                |_| Ok(()),
-            )
+            apply_participant_at_with(&home, &id, &config, &request, participants::probe, |_| {
+                Ok(())
+            })
             .await
         }
         OpenclawMigrationAction::Status { id } => status_at(&home, &id),
@@ -404,7 +408,11 @@ pub async fn run(action: OpenclawMigrationAction, output: &OutputFormat) -> Resu
     };
     // Errors from source/schema/provider/file internals may contain private
     // inputs. Public diagnostics deliberately expose no nested error chain.
-    let status = outcome.map_err(|_| anyhow::anyhow!("OpenClaw migration refused; inspect the operation status and original private inputs"))?;
+    let status = outcome.map_err(|_| {
+        anyhow::anyhow!(
+            "OpenClaw migration refused; inspect the operation status and original private inputs"
+        )
+    })?;
     match output {
         OutputFormat::Table => println!(
             "openclaw migration {}: {:?}, pair={}, held={}, reload_requested={}",
@@ -424,7 +432,11 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
     let store = OperationStore::open(home, &id, true)?;
     let plan = with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         let plan = Plan {
-            version: if request.kind() == ParticipantKind::Slack { 1 } else { 2 },
+            version: if request.kind() == ParticipantKind::Slack {
+                1
+            } else {
+                2
+            },
             id: id.clone(),
             source_binding,
             request_binding,
@@ -536,7 +548,10 @@ where
         return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
     }
     with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
-        ensure!(started.elapsed() < PROBE_VALIDITY, "migration probe expired");
+        ensure!(
+            started.elapsed() < PROBE_VALIDITY,
+            "migration probe expired"
+        );
         if recheck_inputs(&plan, config, request_path).is_err() {
             return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
         }
@@ -807,7 +822,11 @@ fn request_binding(request: &PrivateRequest) -> Result<String> {
 
 fn plan_binding(plan: &Plan) -> Result<String> {
     Ok(hash(
-        if plan.version == 1 { b"neoth-openclaw-migration-plan-v1\0" } else { b"neoth-openclaw-migration-plan-v2\0" },
+        if plan.version == 1 {
+            b"neoth-openclaw-migration-plan-v1\0"
+        } else {
+            b"neoth-openclaw-migration-plan-v2\0"
+        },
         &serde_json::to_vec(plan)?,
     ))
 }

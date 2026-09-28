@@ -1,0 +1,98 @@
+{
+  "schema": "neoth-linux-parity-diagnosis/v1",
+  "decision": "diagnosed_failed_run_not_accepted",
+  "run": {
+    "id": 36375055716,
+    "workflow": "Research and loop lifecycle quality",
+    "workflowPath": ".github/workflows/research-lifecycle.yml",
+    "producerCommit": "d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+    "producerRef": "refs/heads/main",
+    "attempt": 1,
+    "conclusion": "failure"
+  },
+  "receipt": {
+    "required": 2068,
+    "selected": 2068,
+    "executed": 2068,
+    "failed": 1,
+    "failedIdentity": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+    "receiptArtifact": 10951156781
+  },
+  "failure": {
+    "missingInventoryVerb": "openclaw-migration",
+    "logArtifact": 10951336289,
+    "logLines": "21998-22027",
+    "panicLocation": "neothd/src/cli/parity_drift.rs:1775:5"
+  },
+  "originalArtifacts": [
+    {
+      "id": 10951156781,
+      "name": "w190-research-lifecycle-receipt-d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+      "apiZipSha256": "b7ea0464cc1d5d13b17b3ff80a348a6857de931c54e7f0250e813286f832006d",
+      "zipMemberCount": 6
+    },
+    {
+      "id": 10951336289,
+      "name": "w190-research-lifecycle-log-d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+      "apiZipSha256": "f1de0854b9e7c41a61544c4c9d97a5ff1085103c923a12b78b1cd1e243725353",
+      "zipMemberCount": 3
+    },
+    {
+      "id": 10950843854,
+      "name": "w190-research-lifecycle-source-d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+      "apiZipSha256": "4a83dea42b792a1352e9ea0ba98f3ee44353448a131ca227ba3c0d2f9b8d0bdf",
+      "zipMemberCount": 3
+    },
+    {
+      "id": 10950354175,
+      "name": "openclaw-custody-d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+      "apiZipSha256": "3f234fa12b8ea3b1150092a15a6dee836bd2cbe9d7bc5fd544081c1f4c383825",
+      "zipMemberCount": 6
+    }
+  ],
+  "producerBindings": {
+    "docs/verification/gold-wave95-96-test-matrix.json": {
+      "role": "producer input documentation reference",
+      "producerBlob": "9f151ddc1213844dce782399237577249653c47d",
+      "rawSha256": "ed8361dda5ebcd3d1d7f7584a03ba11861cb5a315d5e9b8315d66704dccbaaf0",
+      "expectedSha256": "ed8361dda5ebcd3d1d7f7584a03ba11861cb5a315d5e9b8315d66704dccbaaf0",
+      "sha256MatchesExpected": true,
+      "gitHashObject": "9f151ddc1213844dce782399237577249653c47d",
+      "gitHashMatchesBlob": true
+    },
+    "SRC/neothd/src/cli/mod.rs": {
+      "role": "live CLI command declaration source",
+      "producerBlob": "dd183172702fb863737d3c874f77635841a30829",
+      "rawSha256": "135453124558be3cce6c39135fc43beb2dde934e1daca6d9f52bbabdaebd9492",
+      "expectedSha256": null,
+      "sha256MatchesExpected": null,
+      "gitHashObject": "dd183172702fb863737d3c874f77635841a30829",
+      "gitHashMatchesBlob": true
+    },
+    "SRC/neothd/src/cli/parity_drift.rs": {
+      "role": "failed identity source fixture",
+      "producerBlob": "833a16295ca2eb454b76b4e0b1bf891fedd09b62",
+      "rawSha256": "1f73c86090a3ac0969c92ad11b10a3083aaac039c539c2be5b3b902422edbdae",
+      "expectedSha256": "1f73c86090a3ac0969c92ad11b10a3083aaac039c539c2be5b3b902422edbdae",
+      "sha256MatchesExpected": true,
+      "gitHashObject": "833a16295ca2eb454b76b4e0b1bf891fedd09b62",
+      "gitHashMatchesBlob": true
+    }
+  },
+  "laterStaticCorrection": {
+    "inventoryPath": "SRC/neothd/src/cli/parity_drift.rs",
+    "inventoryEntry": "openclaw-migration",
+    "triage": "CliOnly",
+    "focusedGatePath": ".github/workflows/gchat-live-regressions.yml",
+    "focusedGateCase": 75,
+    "focusedGateIdentity": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+    "review": "work/gold-20260906/wave1802-group2068-diagnosis/STATIC-ROW-REVIEW.md"
+  },
+  "limits": [
+    "Failed run is not a full-group acceptance.",
+    "The later local source row and focused-gate case are static-only and were not in this failed producer.",
+    "No local runtime, compile, test, or hosted rerun was performed.",
+    "No roadmap closure follows from this diagnosis."
+  ],
+  "roadmapClosure": false
+}

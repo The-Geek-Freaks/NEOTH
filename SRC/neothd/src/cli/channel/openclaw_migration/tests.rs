@@ -13,15 +13,31 @@ use std::sync::{
 // Keep the existing Slack-only probes unchanged while exercising the shared
 // coordinator, rather than maintaining a second Slack state machine.
 async fn apply_at_with<P, F>(
-    home: &Path, id: &str, config: &Path, request: &Path,
-    probe: P, checkpoint: impl FnMut(Checkpoint) -> Result<()>,
+    home: &Path,
+    id: &str,
+    config: &Path,
+    request: &Path,
+    probe: P,
+    checkpoint: impl FnMut(Checkpoint) -> Result<()>,
 ) -> Result<Status>
-where P: FnOnce(SlackProbeBinding) -> F, F: Future<Output = Result<SlackProbeOutcome>>,
+where
+    P: FnOnce(SlackProbeBinding) -> F,
+    F: Future<Output = Result<SlackProbeOutcome>>,
 {
-    apply_participant_at_with(home, id, config, request, |binding| async move {
-        let ProbeBinding::Slack(binding) = binding else { anyhow::bail!("expected Slack participant") };
-        Ok(ProbeOutcome::Slack(probe(binding).await?))
-    }, checkpoint).await
+    apply_participant_at_with(
+        home,
+        id,
+        config,
+        request,
+        |binding| async move {
+            let ProbeBinding::Slack(binding) = binding else {
+                anyhow::bail!("expected Slack participant")
+            };
+            Ok(ProbeOutcome::Slack(probe(binding).await?))
+        },
+        checkpoint,
+    )
+    .await
 }
 
 pub(super) fn write_home(home: &Path, backend: &str) {

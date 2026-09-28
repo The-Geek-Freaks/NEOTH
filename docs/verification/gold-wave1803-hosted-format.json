@@ -1,0 +1,10 @@
+{
+  "schema": "neoth-hosted-rustfmt-import/v1",
+  "run": 36376993651,
+  "producer": "98331c12c5fdc8c06352a6997cc8100bf03d1498",
+  "artifact": 10951800659,
+  "zipDigest": "sha256:b043509a9c58cc0fd49926485c622a08a89bd0dfbd884bcfb68f234db3dc8115",
+  "innerHashesVerified": true,
+  "patchScope": "seven Telegram/shared-coordinator Rust source and test files; exact hosted patch applied",
+  "localExecutableValidationRan": false
+}

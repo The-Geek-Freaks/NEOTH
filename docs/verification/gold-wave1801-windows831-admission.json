@@ -1,0 +1,86 @@
+{
+  "schema": "neoth-native-windows-admission/v1",
+  "decision": "accepted",
+  "scope": "Windows831 native regression evidence only; other lanes are admitted separately.",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36374304491,
+    "workflow": "Windows storage regressions",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36374304491",
+    "producer_commit": "308bf12a82318ded400857ed98c7f05d91d4d63e",
+    "ref": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10950818868,
+    "name": "windows-storage-regressions-308bf12a82318ded400857ed98c7f05d91d4d63e",
+    "size_bytes": 403545,
+    "zip_members": 843,
+    "api_digest": "sha256:08a9682d92c824f04cc03162a341474fc6ed791fbe56ed1003b466b1674b04d6",
+    "sha256": "08a9682d92c824f04cc03162a341474fc6ed791fbe56ed1003b466b1674b04d6",
+    "api_digest_matches_download": true,
+    "expired": false
+  },
+  "receipt": {
+    "expected": 831,
+    "selected": 831,
+    "listed": 831,
+    "executed": 831,
+    "passed": 831,
+    "failed": 0,
+    "missing": 0,
+    "compile_status": 0,
+    "source_head_matches_producer": true
+  },
+  "execution": {
+    "selection_identity_count": 831,
+    "result_identity_count": 831,
+    "duplicate_results": 0,
+    "missing_selected_result_identities": 0,
+    "extra_result_identities": 0,
+    "result_sequence_complete": true,
+    "single_pass_terminal_count": 831,
+    "per_log_terminal_receipt_failures": 0,
+    "all_numbered_test_log_hashes_match_artifact_manifest": true,
+    "log_manifest_entries": 832,
+    "log_manifest_mismatches": 0,
+    "evidence_file_hashes_verified": 10,
+    "evidence_file_hash_mismatches": 0
+  },
+  "producer_bindings": {
+    "source_binding_rows": 831,
+    "input_paths": 13,
+    "unique_source_paths": 128,
+    "raw_producer_git_blob_sha256_mismatches": 0,
+    "raw_git_hash_object_no_filters_mismatches": 0,
+    "all_raw_producer_git_blob_sha256_values_match_artifact_bindings": true,
+    "all_exported_blobs_match_producer_git_object_ids": true,
+    "source": "Raw git cat-file exports at exact producer commit, Get-FileHash SHA-256, and git hash-object --no-filters; working tree excluded.",
+    "binding_table": "work/gold-20260906/wave1801-windows831/producer-bindings.json",
+    "binding_table_sha256": "93756cb5c21db0fa76a97a168ab45143e140028e61c7ac9159d87a6612556a91",
+    "raw_blob_object_table": "work/gold-20260906/wave1801-windows831/raw-blob-hash-object.tsv",
+    "raw_blob_object_table_sha256": "ccaf04d95d0a625c4e549eb782d0bb9de18467d783e4c4aefb861f4ed0eea09c",
+    "extra_input_bindings": [
+      "SRC/Cargo.lock",
+      "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "SRC/neothd/Cargo.toml",
+      "SRC/neothd/src/installers/paperless_generation_auth.rs",
+      "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+      "SRC/neothd/src/installers/paperless_purge.rs",
+      "SRC/neothd/src/installers/paperless_repair.rs",
+      "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "SRC/neothd/src/memory/drift.rs",
+      "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs",
+      "SRC/neothd/src/proactive/action_staging.rs"
+    ]
+  },
+  "limits": [
+    "No local compiler, Cargo, Rustfmt, Node, Python, XML parser, fixture, test, or runtime execution.",
+    "No product lifecycle or parent-road acceptance.",
+    "Accepts the exact Slack-era Windows831 producer only; later Telegram source, Linux, CLI/product and daemon readiness are separate."
+  ],
+  "roadmapClosure": false
+}
