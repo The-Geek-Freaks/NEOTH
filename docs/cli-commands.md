@@ -3214,7 +3214,7 @@ OH-02 — compact onboarding readiness snapshot.  Shows provider auth, enabled c
 
 ## `neoth openclaw-migration`
 
-Plan, apply, inspect, and roll back one file-backed OpenClaw Slack or Telegram account
+Plan, apply, inspect, and roll back file-backed OpenClaw Slack/Telegram accounts as one pair
 
 ### `neoth openclaw-migration apply`
 
@@ -3227,7 +3227,7 @@ Verify and apply the exact plan; resupply the same private inputs on retry
 
 ### `neoth openclaw-migration plan`
 
-Bind one supported Slack or Telegram account and the current target pair
+Bind supported Slack/Telegram accounts and one current target pair
 
 - `--config <CONFIG>`
 - `--request <REQUEST>`

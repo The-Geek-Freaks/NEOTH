@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1821 Batch Core/CLI admitted (2026-09-28):**
+Core36382850795 at7e751b68 passed slim production Clippy, default core test
+typechecking and the public CLI build. The authentic generated reference is
+imported from artifact10952684504 after API ZIP digest, inner producer and
+reference hash checks; all5 CLI/generator/workflow bindings match this source.
+The reference now describes multiple Slack/Telegram accounts as one pair.
+Evidence: docs/verification/gold-wave1821-batch-core-cli-admission.json.
+Windows865run36383573851 and focused93/Relink36383575673 remain active on
+7e751b68; Linux2104 follows this reference publication. No current batch
+behavior acceptance yet. Keychain remains unsupported; its W1820 design still
+has explicit crash-order blockers. ROAD1324/1077/245/2 unchanged; no local runtime.
+
 **W1819 Batch regression type repair (2026-09-28):**
 Core36382047362 atfe3bc6d3 passed strict slim production Clippy. Default
 core test-target checking then found E0308 in batch_tests.rs: the request
