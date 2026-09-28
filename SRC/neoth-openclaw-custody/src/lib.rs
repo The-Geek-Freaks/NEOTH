@@ -3013,7 +3013,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let path = write_config(
             temp.path(),
-            "{ channels: { telegram: { botToken: { source: 'env', provider: 'default', id: 'BOT' } }, matrix: { accounts: { work: { homeserver: 'https://x' } } }, qqbot: { accounts: { work: { futureOption: true } } }, whatsapp: { authDir: { invalid: true } } } }",
+            "{ channels: { telegram: { botToken: { source: 'env', provider: 'default', id: 'BOT' }, accounts: { work: { botToken: 'ACCOUNT_SECRET' } } }, matrix: { accounts: { work: { homeserver: 'https://x' } } }, qqbot: { accounts: { work: { futureOption: true } } }, whatsapp: { authDir: { invalid: true } } } }",
         );
         let report = inspect_openclaw_config(&path).unwrap();
         let secret = report
@@ -3030,12 +3030,22 @@ mod tests {
         let account = report
             .ledger
             .iter()
-            .find(|entry| entry.source_path == "channels.matrix.accounts.work")
+            .find(|entry| entry.source_path == "channels.telegram.accounts.work")
             .unwrap();
         assert_eq!(account.disposition, ImportDisposition::Unsupported);
         assert_eq!(
             account.schema_binding.as_ref().unwrap().action_id,
             "requires_account_scoped_runtime"
+        );
+        let matrix = report
+            .ledger
+            .iter()
+            .find(|entry| entry.source_path == "channels.matrix.accounts.work")
+            .unwrap();
+        assert_eq!(matrix.disposition, ImportDisposition::Unknown);
+        assert_eq!(
+            matrix.schema_binding.as_ref().unwrap().action_id,
+            "blocked_requires_explicit_leaf_mapping"
         );
         let opaque = report
             .ledger

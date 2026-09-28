@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1842 Policy context precedence repair (2026-09-28):**
+Schema run36395347453 at00dce00d passed extraction/cmp and compiled Custody;
+54 tests passed,2 failed. The new3252-row classifier sweep exposed315 typed
+composite rows labelled target-contract despite earlier no-adapter or account
+runtime branches. Those exact policy rows now follow existing precedence;
+production classifier, opaque handling and the exhaustive test are unchanged.
+The combined regression now distinguishes a typed Telegram account (unsupported)
+from Matrix's opaque account subtree (unknown), asserting both outcomes.
+New hosted verification pending; LF00102 remains open and counts unchanged.
 **W1841 Hosted compiler and formatting repair (2026-09-28):**
 W1839 extractor source tests, fresh upstream extraction and exact fixture cmp
 passed in run36394905502 at49822c73. Custody and Core36394908350 failed on

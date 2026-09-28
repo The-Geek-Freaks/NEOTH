@@ -133,7 +133,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -141,7 +141,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -149,7 +149,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -157,7 +157,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -165,7 +165,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -173,7 +173,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -181,7 +181,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -189,7 +189,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -197,7 +197,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -357,7 +357,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -365,7 +365,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -373,7 +373,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -381,7 +381,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -389,7 +389,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -397,7 +397,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -405,7 +405,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -413,7 +413,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -421,7 +421,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "clickclack",
@@ -1557,7 +1557,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1565,7 +1565,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1573,7 +1573,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1581,7 +1581,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1589,7 +1589,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1597,7 +1597,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1605,7 +1605,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1613,7 +1613,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1621,7 +1621,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -1997,7 +1997,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2005,7 +2005,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2013,7 +2013,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2021,7 +2021,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2029,7 +2029,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2037,7 +2037,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2045,7 +2045,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2053,7 +2053,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2061,7 +2061,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2541,7 +2541,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2549,7 +2549,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2557,7 +2557,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2565,7 +2565,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2573,7 +2573,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2581,7 +2581,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2589,7 +2589,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2597,7 +2597,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2605,7 +2605,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2685,7 +2685,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2693,7 +2693,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2701,7 +2701,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2709,7 +2709,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2717,7 +2717,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2725,7 +2725,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2733,7 +2733,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2741,7 +2741,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -2749,7 +2749,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "discord",
@@ -5238,7 +5238,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5246,7 +5246,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5254,7 +5254,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5262,7 +5262,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5270,7 +5270,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5278,7 +5278,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5286,7 +5286,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5294,7 +5294,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5302,7 +5302,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5398,7 +5398,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5406,7 +5406,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5414,7 +5414,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5422,7 +5422,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5430,7 +5430,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5438,7 +5438,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5446,7 +5446,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5454,7 +5454,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5462,7 +5462,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5958,7 +5958,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5966,7 +5966,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5974,7 +5974,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5982,7 +5982,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5990,7 +5990,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -5998,7 +5998,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6006,7 +6006,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6014,7 +6014,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6022,7 +6022,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6094,7 +6094,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6102,7 +6102,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6110,7 +6110,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6118,7 +6118,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6126,7 +6126,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6134,7 +6134,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6142,7 +6142,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6150,7 +6150,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6158,7 +6158,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6294,7 +6294,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6302,7 +6302,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6310,7 +6310,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6318,7 +6318,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6326,7 +6326,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6334,7 +6334,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6342,7 +6342,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6350,7 +6350,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6358,7 +6358,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6846,7 +6846,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6854,7 +6854,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6862,7 +6862,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6870,7 +6870,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6878,7 +6878,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6886,7 +6886,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6894,7 +6894,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6902,7 +6902,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -6910,7 +6910,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "feishu",
@@ -7302,7 +7302,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7310,7 +7310,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7318,7 +7318,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7326,7 +7326,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7334,7 +7334,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7342,7 +7342,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7350,7 +7350,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7358,7 +7358,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7366,7 +7366,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7382,7 +7382,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7390,7 +7390,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7398,7 +7398,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7406,7 +7406,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7414,7 +7414,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7422,7 +7422,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7430,7 +7430,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7438,7 +7438,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -7446,7 +7446,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "googlechat",
@@ -11631,7 +11631,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11639,7 +11639,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11647,7 +11647,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11655,7 +11655,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11663,7 +11663,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11671,7 +11671,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11679,7 +11679,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11687,7 +11687,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -11695,7 +11695,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "mattermost",
@@ -12617,7 +12617,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12625,7 +12625,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12633,7 +12633,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12641,7 +12641,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12649,7 +12649,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12657,7 +12657,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12665,7 +12665,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12673,7 +12673,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -12681,7 +12681,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "msteams",
@@ -13393,7 +13393,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13401,7 +13401,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13409,7 +13409,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13417,7 +13417,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13425,7 +13425,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13433,7 +13433,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13441,7 +13441,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13449,7 +13449,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13457,7 +13457,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13497,7 +13497,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13505,7 +13505,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13513,7 +13513,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13521,7 +13521,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13529,7 +13529,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13537,7 +13537,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13545,7 +13545,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13553,7 +13553,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13561,7 +13561,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13841,7 +13841,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13849,7 +13849,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13857,7 +13857,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13865,7 +13865,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13873,7 +13873,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13881,7 +13881,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13889,7 +13889,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13897,7 +13897,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13905,7 +13905,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13945,7 +13945,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13953,7 +13953,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13961,7 +13961,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13969,7 +13969,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13977,7 +13977,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13985,7 +13985,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -13993,7 +13993,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -14001,7 +14001,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -14009,7 +14009,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "nextcloud-talk",
@@ -14922,7 +14922,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14930,7 +14930,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14938,7 +14938,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14946,7 +14946,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14954,7 +14954,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14962,7 +14962,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14970,7 +14970,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14978,7 +14978,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -14986,7 +14986,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15322,7 +15322,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15330,7 +15330,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15338,7 +15338,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15346,7 +15346,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15354,7 +15354,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15362,7 +15362,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15370,7 +15370,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15378,7 +15378,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -15386,7 +15386,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "qqbot",
@@ -17132,7 +17132,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17140,7 +17140,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17148,7 +17148,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17156,7 +17156,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17164,7 +17164,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17172,7 +17172,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17180,7 +17180,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17188,7 +17188,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17196,7 +17196,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17244,7 +17244,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17252,7 +17252,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17260,7 +17260,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17268,7 +17268,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17276,7 +17276,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17284,7 +17284,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17292,7 +17292,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17300,7 +17300,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17308,7 +17308,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17908,7 +17908,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17916,7 +17916,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17924,7 +17924,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17932,7 +17932,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17940,7 +17940,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17948,7 +17948,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17956,7 +17956,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17964,7 +17964,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -17972,7 +17972,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18148,7 +18148,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18156,7 +18156,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18164,7 +18164,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18172,7 +18172,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18180,7 +18180,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18188,7 +18188,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18196,7 +18196,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18204,7 +18204,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18212,7 +18212,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18548,7 +18548,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18556,7 +18556,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18564,7 +18564,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18572,7 +18572,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18580,7 +18580,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18588,7 +18588,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18596,7 +18596,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18604,7 +18604,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -18612,7 +18612,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "slack",
@@ -20302,7 +20302,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20310,7 +20310,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20318,7 +20318,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20326,7 +20326,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20334,7 +20334,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20342,7 +20342,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20350,7 +20350,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20358,7 +20358,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20366,7 +20366,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20478,7 +20478,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20486,7 +20486,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20494,7 +20494,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20502,7 +20502,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20510,7 +20510,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20518,7 +20518,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20526,7 +20526,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20534,7 +20534,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20542,7 +20542,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "sms",
@@ -20790,7 +20790,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20798,7 +20798,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20806,7 +20806,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20814,7 +20814,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20822,7 +20822,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20830,7 +20830,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20838,7 +20838,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20846,7 +20846,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -20854,7 +20854,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22126,7 +22126,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22134,7 +22134,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22142,7 +22142,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22150,7 +22150,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22158,7 +22158,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22166,7 +22166,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22174,7 +22174,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22182,7 +22182,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -22190,7 +22190,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_account_scoped_runtime"
     },
     {
       "channel_id": "telegram",
@@ -25200,7 +25200,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25208,7 +25208,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25216,7 +25216,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25224,7 +25224,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25232,7 +25232,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25240,7 +25240,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25248,7 +25248,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25256,7 +25256,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25264,7 +25264,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25376,7 +25376,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25384,7 +25384,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25392,7 +25392,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25400,7 +25400,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25408,7 +25408,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25416,7 +25416,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25424,7 +25424,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25432,7 +25432,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25440,7 +25440,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25480,7 +25480,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25488,7 +25488,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25496,7 +25496,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25504,7 +25504,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25512,7 +25512,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25520,7 +25520,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25528,7 +25528,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25536,7 +25536,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25544,7 +25544,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25664,7 +25664,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25672,7 +25672,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25680,7 +25680,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25688,7 +25688,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25696,7 +25696,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25704,7 +25704,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25712,7 +25712,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25720,7 +25720,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",
@@ -25728,7 +25728,7 @@
       "json_type": "string",
       "scope": "typed_leaf",
       "disposition": "unsupported",
-      "action_id": "requires_target_contract"
+      "action_id": "requires_neoth_adapter"
     },
     {
       "channel_id": "zalo",

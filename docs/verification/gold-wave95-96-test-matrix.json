@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Extractor parity passed; E0277 repaired and authentic hosted formatting imported; Custody/Core revalidation pending",
+  "status": "Custody compiled54PASS2FAIL exposed policy context mismatch;315 exact policy rows repaired; new hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 267644,
-    "sha256": "692B753BF0F9EC19C5417C39A1A479D77AF886EEF5C8AC2EEDD76193E175C18C"
+    "bytes": 267639,
+    "sha256": "EB2155189A9E14EEF803724624CBF2CA710978E9AB32890B11A237110EDE9311"
   },
   "sourceInputs": 1484,
   "requiredNativeTests": [
@@ -2406,67 +2406,67 @@
     {
       "test": "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D",
+      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D",
+      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D",
+      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_ledgers_separate_account_containers_and_redacts_account_secrets",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_opaque_subtree_blocks_at_its_exact_account_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_never_binds_credential_bearing_string_urls",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::whatsapp_auth_dir_requires_the_legacy_string_shape",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_walks_typed_descendants_under_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::explicit_typed_leaves_take_precedence_over_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D",
+      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -8256,19 +8256,19 @@
     {
       "test": "tests::selected_slack_account_is_exact_and_never_serializes_its_tokens",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::selected_slack_account_rejects_broad_or_ambiguous_shapes_without_tokens_in_error",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::selected_slack_account_keeps_the_exact_loaded_source_set",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -13356,25 +13356,25 @@
     {
       "test": "tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C",
+      "sourceSha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D",
+      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -56730,6 +56730,50 @@
       }
     ],
     "note": "Option suffix uses explicit Context within Result; same policy hash. Original formatZIP10957163386 API/inner hashes checked; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1842PolicyContextPrecedence": {
+    "base": "00dce00dffeddbd6973d16056a454b4aaddbdb45",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 514914,
+        "sha256": "88A661B45F8693DAD8A522E30779D8BC1C743968F2EE6A7E15E8B95318F56AF6",
+        "blob": "9fa6ab4b219dea191bcbd46f7a42bb2654d731b2"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1551224,
+        "sha256": "ED5C64D70FD17B254AC23C4B3F45805DB9EAEA785613FEACF19724A41433E32B",
+        "blob": "3f6a5b81116245e053447656a6553c2612420de3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2162597,
+        "sha256": "D26C1F71DF1B3CFD2E3AF1F6DE15CD80284C396AAD353C3C14E65293F5E89407",
+        "blob": "765296f2007880e6f79d06a7ea1350bd1deaca84"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json",
+        "bytes": 832770,
+        "sha256": "4F3BB299684CB12547B4592549E20837D09BD826BC3A115894E9B349EEE3E0AC",
+        "blob": "83e6ea808add573844b9f359da7afd656250b8a5"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+        "bytes": 111788,
+        "sha256": "B794B2DAE9CBD71DD3492F7CCDEBB84CA48A9C5D00A948D25C61B74B694CB35D",
+        "blob": "618a68c062c33f033bb99efc0ba6f4fb80b3ab48"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+        "bytes": 42278,
+        "sha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+        "blob": "3635de910a94da36fc8ee70e0836d3a60498bdd7"
+      }
+    ],
+    "note": "No production classifier/guard relaxation. Existing no-adapter/account precedence restored in static policy; real typed vs opaque test assertions corrected. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
