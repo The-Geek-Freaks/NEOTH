@@ -69,6 +69,10 @@ jobs:
             SRC/neothd/src/config/credentials.rs \
             SRC/neothd/src/cli/channel/openclaw_migration.rs \
             SRC/neothd/src/cli/channel/openclaw_migration/tests.rs \
+            SRC/neothd/src/cli/channel/openclaw_migration/participants.rs \
+            SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs \
+            SRC/neothd/src/config/credentials/telegram_migration.rs \
+            SRC/neothd/src/config/credentials/telegram_migration/tests.rs \
             SRC/neothd/src/config/credentials/slack_migration.rs \
             SRC/neothd/src/config/credentials/slack_migration/tests.rs \
             SRC/neothd/src/cli/mod.rs \
@@ -132,6 +136,25 @@ jobs:
             fi
           }
 
+          run_case 57 lib config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly --lib
+          run_case 58 lib config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair --lib
+          run_case 59 lib config::credentials::telegram_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image config::credentials::telegram_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image --lib
+          run_case 60 lib config::credentials::telegram_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability config::credentials::telegram_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability --lib
+          run_case 61 lib config::credentials::telegram_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it config::credentials::telegram_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it --lib
+          run_case 62 lib config::credentials::telegram_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it config::credentials::telegram_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it --lib
+          run_case 63 lib config::credentials::telegram_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches config::credentials::telegram_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches --lib
+          run_case 64 lib config::credentials::telegram_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback config::credentials::telegram_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback --lib
+          run_case 65 lib config::credentials::telegram_migration::tests::keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody config::credentials::telegram_migration::tests::keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody --lib
+          run_case 66 lib config::credentials::telegram_migration::tests::existing_account_incarnation_and_unselected_account_survive_migration_and_rollback config::credentials::telegram_migration::tests::existing_account_incarnation_and_unselected_account_survive_migration_and_rollback --lib
+          run_case 67 lib cli::channel::openclaw_migration::telegram_tests::telegram_encrypted_lifecycle_preserves_incarnation_retry_and_exact_rollback cli::channel::openclaw_migration::telegram_tests::telegram_encrypted_lifecycle_preserves_incarnation_retry_and_exact_rollback --lib
+          run_case 68 lib cli::channel::openclaw_migration::telegram_tests::telegram_keychain_and_invalid_typed_requests_reject_before_publication cli::channel::openclaw_migration::telegram_tests::telegram_keychain_and_invalid_typed_requests_reject_before_publication --lib
+          run_case 69 lib cli::channel::openclaw_migration::telegram_tests::telegram_failed_wrong_kind_and_timed_out_probes_publish_nothing cli::channel::openclaw_migration::telegram_tests::telegram_failed_wrong_kind_and_timed_out_probes_publish_nothing --lib
+          run_case 70 lib cli::channel::openclaw_migration::telegram_tests::telegram_source_include_request_and_pair_drift_refuse_publication cli::channel::openclaw_migration::telegram_tests::telegram_source_include_request_and_pair_drift_refuse_publication --lib
+          run_case 71 lib cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction --lib
+          run_case 72 lib cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success --lib
+          run_case 73 lib cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization --lib
+          run_case 74 lib config::credentials::telegram_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf config::credentials::telegram_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf --lib
+
           run_case 38 lib config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it --lib
           run_case 39 lib config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly --lib
           run_case 40 lib config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair --lib
@@ -194,9 +217,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 56
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 56
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 56
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 74
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 74
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 74
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

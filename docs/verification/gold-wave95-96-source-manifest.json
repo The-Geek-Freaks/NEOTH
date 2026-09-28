@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T03:44:23.9005713Z",
-  "validationStatus": "Core36373320839 admitted; native migration gates pending",
+  "capturedUtc": "2026-09-28T04:13:43.6883590Z",
+  "validationStatus": "W1798 Telegram source reviewed; hosted compile/native pending; prior Slack56 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 22534,
-      "sha256": "C973698A7615E44A8A0E9D88D310EA542BF84500C55B148F0D26D5ABE306BAB0"
+      "bytes": 27751,
+      "sha256": "1DE7DC382872625E203388A5FE45BB94E1C9744D5E8FE2B5546C3C2528A12F2F"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29375,
-      "sha256": "3632B092302075220673DED974F7B3882457EC85111C53A86662D5FAAC434BAF"
+      "bytes": 29422,
+      "sha256": "EB261585A86CFA5DACBA23C7E19B85BFE63D4D977BB299A046AA59B3C937F4E8"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 144166,
-      "sha256": "8A609474BFF628B7A6CF1FBFE2CBA228DBF9038AEF1AFA3D1D9D3CE9A0B972A0"
+      "bytes": 147399,
+      "sha256": "6694BFDF4571BB2CFE27AF8E70E31044CEA4F620C747EA51D820C6DFEB89BF78"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1343,8 +1343,8 @@
     },
     {
       "path": "docs/openclaw-slack-migration.md",
-      "bytes": 3732,
-      "sha256": "3692BE79D6FAFCCFB4FB5160BC7B39106D7CB750B9EBD081C6D5B34ACDFFB223"
+      "bytes": 4444,
+      "sha256": "59917AA4102DDDA25740431EA7D2C46FC4820607FECF7300EB0CBBCFF54FBD78"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -2712,6 +2712,16 @@
       "sha256": "9E127DF65B982D288952C92A25344AB745FFFE7BBFBA33067CB6E6353B955D8C"
     },
     {
+      "path": "docs/verification/gold-wave1798-telegram-source.json",
+      "bytes": 1183,
+      "sha256": "57FB909958D12BCE43B874451235AEAFA1F6389BEE7787A26C52EFD0979B283E"
+    },
+    {
+      "path": "docs/verification/gold-wave1800-focused56-admission.json",
+      "bytes": 5498,
+      "sha256": "D4DC0EEFD6D8FC8BD02DE7ADF576D211F098BC508F77779658A343B805E9E62A"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3753,18 +3763,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 496932,
-      "sha256": "6431EA1EB4852926A71EB13FC16823094ED16FFD6CD2DBCA745D9376147F66B5"
+      "bytes": 498945,
+      "sha256": "9B4274F61F7D138CF9653FEEC68C1D8AB54099F679EBD954A53037C31CEE7641"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1533128,
-      "sha256": "6F591518B6F41A600F366EB0B65DB1C75F537060A3CEAC5CF9C82C946B3C64C4"
+      "bytes": 1535141,
+      "sha256": "F2B57E27B2EA5305726B392EC8244204DE809F58113D15C582F3F652C3B24946"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2143651,
-      "sha256": "05CA0CF5761D104D2052E328DE9C550FA871B7B7F111D1967E48ECD9826A9CA6"
+      "bytes": 2145664,
+      "sha256": "705C77C4A1165ED90D91DF7A1C41373D5B5F6CA7711B137FB847A76938E1E820"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4623,13 +4633,23 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
-      "bytes": 32549,
-      "sha256": "CF6B1467A33CF0BD5171135FE75C375909E3EA3E4C07952F0C63C6CCB8DF005F"
+      "bytes": 30767,
+      "sha256": "1DE80DDE07E1C65F9673CC1DEBA523A6900079139A42434E775C8701EEBA370B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration/participants.rs",
+      "bytes": 12210,
+      "sha256": "E7A6618EA7DDF0E5B308FD46AB7AA2CC75ACDC9F98A0C58EE8B23FDB37D74149"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs",
+      "bytes": 13419,
+      "sha256": "62BD3FFE0628B8FFA870EE018A699448ADEAC9F1966BDB9C6C70C93ECFB76F72"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "bytes": 23664,
-      "sha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E"
+      "bytes": 24451,
+      "sha256": "B3814A80F35040922D81567E3C1CEC4B17A2AAF9B7931157BE719521DA448830"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -4863,8 +4883,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 125715,
-      "sha256": "135453124558BE3CCE6C39135FC43BEB2DDE934E1DACA6D9F52BBABDAEBD9492"
+      "bytes": 125727,
+      "sha256": "982DAD12E4DA629B1D1B1FF4995E4A8B1FD0F9759D1E9A98696F8F793136140C"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -5288,8 +5308,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 436315,
-      "sha256": "E9AE1E5BEB6D56EB797E2A7B298AD6A2A3D5963B84A3B02509E859B6FA3D8C1B"
+      "bytes": 436494,
+      "sha256": "7CDAC155D40D8FCE073C1E81E876C38AC437FAAF4749B029E52E8445029E2D73"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
@@ -5300,6 +5320,16 @@
       "path": "SRC/neothd/src/config/credentials/slack_migration/tests.rs",
       "bytes": 15485,
       "sha256": "6967287DB54D9A6452EC6BA01E899E0F3154293BC4EDD8A7827EDAC74665D983"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/telegram_migration.rs",
+      "bytes": 32300,
+      "sha256": "8CA6C9189333689498FCAE54E9A9D1464DDD3011E9CC65C4768B6E32BA0DED7F"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/telegram_migration/tests.rs",
+      "bytes": 18103,
+      "sha256": "D1606FECE7230D1E3A6B05E87A95953DF92404EDB5470A9E44BF8AEDD627CD54"
     },
     {
       "path": "SRC/neothd/src/config/doc_ingest.rs",

@@ -31,8 +31,13 @@ use zeroize::Zeroize;
 use crate::secret::SecretString;
 
 mod slack_migration;
+mod telegram_migration;
 pub(crate) use slack_migration::{
     PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad, SlackMigrationState,
+};
+pub(crate) use telegram_migration::{
+    PreparedTelegramMigration, TelegramMigrationCustody,
+    TelegramMigrationCustodyLoad, TelegramMigrationState,
 };
 
 /// Cross-process-safe credential-store status classifier.

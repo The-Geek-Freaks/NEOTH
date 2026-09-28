@@ -1,0 +1,35 @@
+{
+  "schema": "neoth-openclaw-telegram-source-review/v1",
+  "decision": "source_review_pass_hosted_pending",
+  "base": "d1b9cf94f10dc1e3eecf72f13ff37f64275615f3",
+  "scope": "one file-backed Telegram migration through existing shared coordinator with byte-compatible Slack v1 records",
+  "review": [
+    {
+      "path": "work/gold-20260906/wave1799-telegram-review/BACKEND-REVIEW.md",
+      "sha256": "05482b2993d78a273c594618953d2a4281e9b99ebd2e69701b9673cf9b8e4b90",
+      "decision": "PASS static only"
+    },
+    {
+      "path": "work/gold-20260906/wave1799-telegram-review/COORDINATOR-REVIEW.md",
+      "sha256": "10cbc2f9a983499bf0dd4181014a6b07785d92b466c036df335b500455d5b436",
+      "decision": "PASS static only"
+    }
+  ],
+  "newCases": {
+    "total": 18,
+    "portable": 17,
+    "unix": 1
+  },
+  "registered": {
+    "portable": 2297,
+    "linuxGroup": 2086,
+    "windows": 848,
+    "focused": 74
+  },
+  "limits": [
+    "No local executable validation due absolute BSOD hold",
+    "No hosted compile/type/format/native acceptance for Telegram yet",
+    "No multi-participant atomicity, keychain, live external provider or daemon adoption"
+  ],
+  "roadmapClosure": false
+}

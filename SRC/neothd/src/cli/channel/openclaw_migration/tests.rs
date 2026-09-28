@@ -10,7 +10,21 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-fn write_home(home: &Path, backend: &str) {
+// Keep the existing Slack-only probes unchanged while exercising the shared
+// coordinator, rather than maintaining a second Slack state machine.
+async fn apply_at_with<P, F>(
+    home: &Path, id: &str, config: &Path, request: &Path,
+    probe: P, checkpoint: impl FnMut(Checkpoint) -> Result<()>,
+) -> Result<Status>
+where P: FnOnce(SlackProbeBinding) -> F, F: Future<Output = Result<SlackProbeOutcome>>,
+{
+    apply_participant_at_with(home, id, config, request, |binding| async move {
+        let ProbeBinding::Slack(binding) = binding else { anyhow::bail!("expected Slack participant") };
+        Ok(ProbeOutcome::Slack(probe(binding).await?))
+    }, checkpoint).await
+}
+
+pub(super) fn write_home(home: &Path, backend: &str) {
     let mut freedom = FreedomConfig::default();
     if backend == "keychain" {
         freedom.secrets_backend = crate::config::SecretsBackend::Keychain;
@@ -27,7 +41,7 @@ fn write_home(home: &Path, backend: &str) {
     .unwrap();
 }
 
-fn write_encrypted_home(home: &Path) {
+pub(super) fn write_encrypted_home(home: &Path) {
     let mut public = serde_yaml::to_value(FreedomConfig::default()).unwrap();
     public.as_mapping_mut().unwrap().insert(
         serde_yaml::Value::String("wal".into()),
@@ -64,14 +78,14 @@ fn write_request(root: &Path, allowed: &str) -> PathBuf {
     request
 }
 
-struct Fixture {
+pub(super) struct Fixture {
     _root: tempfile::TempDir,
-    home: PathBuf,
-    source: PathBuf,
-    request: PathBuf,
+    pub(super) home: PathBuf,
+    pub(super) source: PathBuf,
+    pub(super) request: PathBuf,
 }
 
-fn new_fixture(include: bool) -> Fixture {
+pub(super) fn new_fixture(include: bool) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     std::fs::create_dir(&home).unwrap();
@@ -105,7 +119,7 @@ fn plan(fixture: &Fixture) -> Status {
     plan_at(&fixture.home, &fixture.source, &fixture.request).unwrap()
 }
 
-fn ok_outcome() -> SlackProbeOutcome {
+pub(super) fn ok_outcome() -> SlackProbeOutcome {
     SlackProbeOutcome {
         report: crate::cli::channel::ChannelTestResult {
             channel: "slack".into(),
@@ -117,11 +131,11 @@ fn ok_outcome() -> SlackProbeOutcome {
     }
 }
 
-async fn ok_probe(_: SlackProbeBinding) -> Result<SlackProbeOutcome> {
+pub(super) async fn ok_probe(_: SlackProbeBinding) -> Result<SlackProbeOutcome> {
     Ok(ok_outcome())
 }
 
-fn pair(home: &Path) -> (Vec<u8>, Vec<u8>) {
+pub(super) fn pair(home: &Path) -> (Vec<u8>, Vec<u8>) {
     (
         std::fs::read(home.join("freedom.yaml")).unwrap(),
         std::fs::read(home.join("credentials.yaml")).unwrap(),

@@ -1,4 +1,4 @@
-//! One source-bound, reversible, file-backed OpenClaw Slack migration.
+//! One source-bound, reversible, file-backed OpenClaw account migration.
 //! Provider probing is the only injected external effect in coordinator tests.
 
 use std::ffi::OsStr;
@@ -19,12 +19,13 @@ use super::{
 use crate::channels::registry::ChannelAccountId;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::config::credentials::{
-    Credentials, PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad,
-    SlackMigrationState, with_coherent_pair_transaction_at,
-};
+use crate::config::credentials::{Credentials, with_coherent_pair_transaction_at};
 use crate::secret::SecretString;
 use crate::skills::store;
+
+mod participants;
+use participants::{PairState, ParticipantCustody, ParticipantKind, PreparedParticipant,
+    PrivateRequest, ProbeBinding, ProbeOutcome, SelectedSource};
 
 const MAX_REQUEST: usize = 8 * 1024;
 const MAX_RECORD: usize = 16 * 1024;
@@ -33,7 +34,7 @@ const PROBE_VALIDITY: Duration = Duration::from_secs(60);
 
 #[derive(Subcommand, Debug)]
 pub enum OpenclawMigrationAction {
-    /// Bind one supported Slack source account and the current target pair.
+    /// Bind one supported Slack or Telegram account and the current target pair.
     Plan {
         #[arg(long)]
         config: PathBuf,
@@ -65,16 +66,6 @@ pub enum OpenclawMigrationAction {
     },
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PrivateRequest {
-    schema_version: u8,
-    channel: String,
-    source_account: String,
-    account: ChannelAccountId,
-    allowed_user_id: String,
-}
-
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Plan {
@@ -83,6 +74,17 @@ struct Plan {
     source_binding: String,
     request_binding: String,
     pair_before: String,
+    // Absent for existing Slack v1 plans: serialization and plan hashes stay
+    // unchanged. Only v2 Telegram plans carry an explicit participant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    participant: Option<ParticipantKind>,
+}
+
+impl Plan {
+    fn kind(&self) -> ParticipantKind { self.participant.unwrap_or(ParticipantKind::Slack) }
+    fn valid_version(&self) -> bool {
+        matches!((self.version, self.participant), (1, None) | (2, Some(ParticipantKind::Telegram)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -234,7 +236,7 @@ impl OperationStore {
     fn load(&self) -> Result<(Plan, State)> {
         let plan: Plan = self.read("plan")?.context("migration plan absent")?;
         ensure!(
-            plan.version == 1 && plan.id == self.id,
+            plan.valid_version() && plan.id == self.id,
             "migration plan identity invalid"
         );
         for digest in [
@@ -251,14 +253,12 @@ impl OperationStore {
                 // Only the plan-to-initial-state crash window permits absence.
                 // Losing a later journal must not erase a rollback direction.
                 ensure!(
-                    matches!(
-                        SlackMigrationCustody::load_optional_at(
+                        ParticipantCustody::load_optional_at(
+                            plan.kind(),
                             &self.home.join("freedom.yaml"),
                             &self.id,
                             &binding
-                        )?,
-                        SlackMigrationCustodyLoad::Absent
-                    ) && self.read::<Terminal>("committed")?.is_none()
+                        )?.is_none() && self.read::<Terminal>("committed")?.is_none()
                         && self.read::<Terminal>("rolled-back")?.is_none(),
                     "migration state is missing after custody publication"
                 );
@@ -288,21 +288,22 @@ impl OperationStore {
         Ok((plan, state))
     }
 
-    fn custody(&self, plan: &Plan, state: &mut State) -> Result<Option<SlackMigrationCustody>> {
+    fn custody(&self, plan: &Plan, state: &mut State) -> Result<Option<ParticipantCustody>> {
         let binding = plan_binding(plan)?;
-        match SlackMigrationCustody::load_optional_at(
+        match ParticipantCustody::load_optional_at(
+            plan.kind(),
             &self.home.join("freedom.yaml"),
             &self.id,
             &binding,
         )? {
-            SlackMigrationCustodyLoad::Absent => {
+            None => {
                 ensure!(
                     state.custody_binding.is_none() && state.phase == Phase::Planned,
                     "recorded migration custody is absent"
                 );
                 Ok(None)
             }
-            SlackMigrationCustodyLoad::Present(custody) => {
+            Some(custody) => {
                 ensure!(
                     custody.before_sha256() == plan.pair_before,
                     "custody differs from planned pair baseline"
@@ -313,12 +314,12 @@ impl OperationStore {
                 } else {
                     state.custody_binding = Some(digest);
                 }
-                Ok(Some(*custody))
+                Ok(Some(custody))
             }
         }
     }
 
-    fn observe(&self, plan: &Plan, custody: &SlackMigrationCustody) -> Result<SlackMigrationState> {
+    fn observe(&self, plan: &Plan, custody: &ParticipantCustody) -> Result<PairState> {
         custody.inspect_at(
             &self.home.join("freedom.yaml"),
             &self.home.join("credentials.yaml"),
@@ -330,7 +331,7 @@ impl OperationStore {
     fn terminal(
         &self,
         plan: &Plan,
-        custody: &SlackMigrationCustody,
+        custody: &ParticipantCustody,
         phase: Phase,
         create: bool,
     ) -> Result<bool> {
@@ -385,17 +386,12 @@ pub async fn run(action: OpenclawMigrationAction, output: &OutputFormat) -> Resu
             confirm,
         } => {
             ensure!(confirm, "apply requires --confirm");
-            apply_at_with(
+            apply_participant_at_with(
                 &home,
                 &id,
                 &config,
                 &request,
-                |binding| async move {
-                    probe_slack_account_binding_with(binding, |token| async move {
-                        crate::channels::slack_api::auth_test(&token).await
-                    })
-                    .await
-                },
+                participants::probe,
                 |_| Ok(()),
             )
             .await
@@ -408,7 +404,7 @@ pub async fn run(action: OpenclawMigrationAction, output: &OutputFormat) -> Resu
     };
     // Errors from source/schema/provider/file internals may contain private
     // inputs. Public diagnostics deliberately expose no nested error chain.
-    let status = outcome.map_err(|_| anyhow::anyhow!("OpenClaw Slack migration refused; inspect the operation status and original private inputs"))?;
+    let status = outcome.map_err(|_| anyhow::anyhow!("OpenClaw migration refused; inspect the operation status and original private inputs"))?;
     match output {
         OutputFormat::Table => println!(
             "openclaw migration {}: {:?}, pair={}, held={}, reload_requested={}",
@@ -428,11 +424,12 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
     let store = OperationStore::open(home, &id, true)?;
     let plan = with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         let plan = Plan {
-            version: 1,
+            version: if request.kind() == ParticipantKind::Slack { 1 } else { 2 },
             id: id.clone(),
             source_binding,
             request_binding,
-            pair_before: pair_baseline(&store.home)?,
+            pair_before: pair_baseline(&store.home, request.kind())?,
+            participant: (request.kind() != ParticipantKind::Slack).then_some(request.kind()),
         };
         // The ordinary prepared candidate validates the supported backend,
         // account policy and credential shape, without publishing target data.
@@ -446,7 +443,7 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
     Ok(make_status(&plan, &state, "before", true))
 }
 
-async fn apply_at_with<P, F>(
+async fn apply_participant_at_with<P, F>(
     home: &Path,
     id: &str,
     config: &Path,
@@ -455,14 +452,14 @@ async fn apply_at_with<P, F>(
     mut checkpoint: impl FnMut(Checkpoint) -> Result<()>,
 ) -> Result<Status>
 where
-    P: FnOnce(SlackProbeBinding) -> F,
-    F: Future<Output = Result<SlackProbeOutcome>>,
+    P: FnOnce(ProbeBinding) -> F,
+    F: Future<Output = Result<ProbeOutcome>>,
 {
     let store = OperationStore::open(home, id, false)?;
     let (plan, mut state) = store.load()?;
     let request = match load_request(request_path).and_then(|request| {
         ensure!(
-            request_binding(&request)? == plan.request_binding,
+            request.kind() == plan.kind() && request_binding(&request)? == plan.request_binding,
             "request differs from plan"
         );
         recheck_source(&plan, config, &request)?;
@@ -482,13 +479,13 @@ where
     }
     if let Some(custody) = &custody {
         match store.observe(&plan, custody)? {
-            SlackMigrationState::After => {
+            PairState::After => {
                 return with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
                     if recheck_inputs(&plan, config, request_path).is_err() {
                         return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
                     }
                     ensure!(
-                        store.observe(&plan, custody)? == SlackMigrationState::After,
+                        store.observe(&plan, custody)? == PairState::After,
                         "pair drift before terminal receipt"
                     );
                     if state.phase == Phase::Committed
@@ -508,8 +505,8 @@ where
                     )
                 });
             }
-            SlackMigrationState::Mixed => return store.hold(&mut state, HoldReason::TargetDrift),
-            SlackMigrationState::Before => {
+            PairState::Mixed => return store.hold(&mut state, HoldReason::TargetDrift),
+            PairState::Before => {
                 if state.phase == Phase::Committed || store.read::<Terminal>("committed")?.is_some()
                 {
                     return store.hold(&mut state, HoldReason::TargetDrift);
@@ -519,7 +516,7 @@ where
     }
     let prepared = with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         ensure!(
-            pair_baseline(&store.home)? == plan.pair_before,
+            pair_baseline(&store.home, plan.kind())? == plan.pair_before,
             "target differs from plan"
         );
         let selected = select_source(config, &request)?;
@@ -529,38 +526,28 @@ where
         );
         prepare_candidate(&store.home, &plan, &request, selected)
     })?;
-    let binding = resolve_slack_probe_binding(prepared.candidate_pair(), prepared.account_id())?;
+    let binding = prepared.probe_binding()?;
     let started = Instant::now();
     let outcome = tokio::time::timeout(PROBE_VALIDITY, probe(binding))
         .await
-        .context("Slack probe timed out")??;
-    ensure!(
-        outcome.report.status == "ok",
-        "Slack candidate probe failed"
-    );
-    let team = outcome
-        .verified_team_id
-        .context("Slack probe returned no workspace")?;
+        .context("migration probe timed out")??;
+    let evidence = outcome.evidence(plan.kind())?;
     if recheck_inputs(&plan, config, request_path).is_err() {
         return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
     }
     with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
-        ensure!(started.elapsed() < PROBE_VALIDITY, "Slack probe expired");
+        ensure!(started.elapsed() < PROBE_VALIDITY, "migration probe expired");
         if recheck_inputs(&plan, config, request_path).is_err() {
             return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
         }
-        if pair_baseline(&store.home)? != plan.pair_before {
+        if pair_baseline(&store.home, plan.kind())? != plan.pair_before {
             return store.hold(&mut state, HoldReason::TargetDrift);
         }
         let custody = if let Some(custody) = custody {
-            ensure!(
-                custody.account_id() == request.account.as_str()
-                    && custody.verified_team_id() == team,
-                "Slack workspace differs from prepared custody"
-            );
+            custody.validate_retry(&request, &evidence)?;
             custody
         } else {
-            let custody = prepared.persist_slack_migration_custody_at(&team)?;
+            let custody = prepared.persist(&evidence)?;
             checkpoint(Checkpoint::CustodySaved)?;
             custody
         };
@@ -575,7 +562,7 @@ where
         checkpoint(Checkpoint::ApplyingRecorded)?;
         ensure!(
             started.elapsed() < PROBE_VALIDITY,
-            "Slack probe expired before publication"
+            "migration probe expired before publication"
         );
         if recheck_inputs(&plan, config, request_path).is_err() {
             return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
@@ -589,12 +576,12 @@ where
         ensure!(
             committed.before_sha256 == plan.pair_before
                 && committed.after_sha256 == custody.after_sha256(),
-            "Slack participant commitment differs from custody"
+            "participant commitment differs from custody"
         );
         checkpoint(Checkpoint::PairPublished)?;
         ensure!(
-            store.observe(&plan, &custody)? == SlackMigrationState::After,
-            "Slack pair publication is not exact"
+            store.observe(&plan, &custody)? == PairState::After,
+            "migration pair publication is not exact"
         );
         finish(
             &store,
@@ -621,7 +608,7 @@ fn rollback_at_with(
         let observed = store.observe(&plan, &custody)?;
         let terminal = store.terminal(&plan, &custody, Phase::RolledBack, false)?;
         if terminal || state.phase == Phase::RolledBack {
-            if !terminal || observed != SlackMigrationState::Before {
+            if !terminal || observed != PairState::Before {
                 return store.hold(&mut state, HoldReason::TargetDrift);
             }
             return finish(
@@ -634,12 +621,12 @@ fn rollback_at_with(
             );
         }
         match observed {
-            SlackMigrationState::Mixed => return store.hold(&mut state, HoldReason::TargetDrift),
-            SlackMigrationState::Before if state.phase != Phase::RollingBack => {
+            PairState::Mixed => return store.hold(&mut state, HoldReason::TargetDrift),
+            PairState::Before if state.phase != Phase::RollingBack => {
                 return store.hold(&mut state, HoldReason::TargetDrift);
             }
-            SlackMigrationState::Before => {}
-            SlackMigrationState::After => {
+            PairState::Before => {}
+            PairState::After => {
                 state.phase = Phase::RollingBack;
                 state.held = None;
                 store.write("state", &state, false)?;
@@ -654,7 +641,7 @@ fn rollback_at_with(
             }
         }
         ensure!(
-            store.observe(&plan, &custody)? == SlackMigrationState::Before,
+            store.observe(&plan, &custody)? == PairState::Before,
             "rollback pair is not exact"
         );
         finish(
@@ -672,7 +659,7 @@ fn finish(
     store: &OperationStore,
     plan: &Plan,
     state: &mut State,
-    custody: &SlackMigrationCustody,
+    custody: &ParticipantCustody,
     phase: Phase,
     checkpoint: &mut impl FnMut(Checkpoint) -> Result<()>,
 ) -> Result<Status> {
@@ -725,7 +712,7 @@ fn status_at(home: &Path, id: &str) -> Result<Status> {
     };
     with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         let Some(custody) = custody else {
-            let valid = pair_baseline(&store.home)? == plan.pair_before;
+            let valid = pair_baseline(&store.home, plan.kind())? == plan.pair_before;
             return Ok(make_status(
                 &plan,
                 &state,
@@ -747,14 +734,14 @@ fn status_at(home: &Path, id: &str) -> Result<Status> {
         };
         let consistent = terminal_valid
             && match state.phase {
-                Phase::Committed => observed == SlackMigrationState::After,
-                Phase::RolledBack => observed == SlackMigrationState::Before,
-                _ => observed != SlackMigrationState::Mixed,
+                Phase::Committed => observed == PairState::After,
+                Phase::RolledBack => observed == PairState::Before,
+                _ => observed != PairState::Mixed,
             };
         let pair_state = match observed {
-            SlackMigrationState::Before => "before",
-            SlackMigrationState::After => "after",
-            SlackMigrationState::Mixed => "drift",
+            PairState::Before => "before",
+            PairState::After => "after",
+            PairState::Mixed => "drift",
         };
         Ok(make_status(&plan, &state, pair_state, consistent))
     })
@@ -781,34 +768,13 @@ fn prepare_candidate(
     home: &Path,
     plan: &Plan,
     request: &PrivateRequest,
-    selected: neoth_openclaw_custody::SelectedSlackAccount,
-) -> Result<PreparedSlackMigration> {
-    ensure!(
-        source_binding(selected.source_set())? == plan.source_binding,
-        "selected source differs from plan"
-    );
-    let (bot, app) = selected.into_tokens();
-    Credentials::prepare_slack_migration_upsert_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        request.account.clone(),
-        request.allowed_user_id.clone(),
-        bot.with_exposed(|token| SecretString::from(token)),
-        app.with_exposed(|token| SecretString::from(token)),
-        &plan.id,
-        &plan_binding(plan)?,
-    )
+    selected: SelectedSource,
+) -> Result<PreparedParticipant> {
+    selected.prepare(home, plan, request)
 }
 
-fn select_source(
-    config: &Path,
-    request: &PrivateRequest,
-) -> Result<neoth_openclaw_custody::SelectedSlackAccount> {
-    neoth_openclaw_custody::select_slack_account(
-        config,
-        &request.source_account,
-        &neoth_openclaw_custody::canonical_known_channel_inventory_sha256(),
-    )
+fn select_source(config: &Path, request: &PrivateRequest) -> Result<SelectedSource> {
+    SelectedSource::select(config, request)
 }
 
 fn recheck_source(plan: &Plan, config: &Path, request: &PrivateRequest) -> Result<()> {
@@ -822,7 +788,7 @@ fn recheck_source(plan: &Plan, config: &Path, request: &PrivateRequest) -> Resul
 fn recheck_inputs(plan: &Plan, config: &Path, request_path: &Path) -> Result<()> {
     let request = load_request(request_path)?;
     ensure!(
-        request_binding(&request)? == plan.request_binding,
+        request.kind() == plan.kind() && request_binding(&request)? == plan.request_binding,
         "request changed during operation"
     );
     recheck_source(plan, config, &request)
@@ -836,23 +802,12 @@ fn source_binding(binding: &neoth_openclaw_custody::SourceSetBinding) -> Result<
 }
 
 fn request_binding(request: &PrivateRequest) -> Result<String> {
-    // Serialize a fixed tuple, not the original JSON, so whitespace is not an
-    // account-selection decision. Each supplied field remains bound exactly.
-    Ok(hash(
-        b"neoth-openclaw-migration-request-v1\0",
-        &serde_json::to_vec(&(
-            request.schema_version,
-            &request.channel,
-            &request.source_account,
-            request.account.as_str(),
-            &request.allowed_user_id,
-        ))?,
-    ))
+    request.binding()
 }
 
 fn plan_binding(plan: &Plan) -> Result<String> {
     Ok(hash(
-        b"neoth-openclaw-migration-plan-v1\0",
+        if plan.version == 1 { b"neoth-openclaw-migration-plan-v1\0" } else { b"neoth-openclaw-migration-plan-v2\0" },
         &serde_json::to_vec(plan)?,
     ))
 }
@@ -888,29 +843,16 @@ fn load_request(path: &Path) -> Result<PrivateRequest> {
     )?);
     let request: PrivateRequest =
         serde_json::from_slice(&bytes).context("invalid private migration request")?;
-    ensure!(
-        request.schema_version == 1 && request.channel == "slack",
-        "only single-account Slack migration schema1 is supported"
-    );
-    ensure!(
-        !request.source_account.trim().is_empty()
-            && !request.source_account.chars().any(char::is_control),
-        "invalid source account"
-    );
-    ensure!(
-        !request.allowed_user_id.trim().is_empty()
-            && !request.allowed_user_id.chars().any(char::is_control),
-        "invalid allowed member"
-    );
+    request.validate()?;
     Ok(request)
 }
 
-fn pair_baseline(home: &Path) -> Result<String> {
+fn pair_baseline(home: &Path, kind: ParticipantKind) -> Result<String> {
     let bound = store::open_bound_directory(home, false, "migration target home")?
         .context("target home absent")?;
     let mut digest = Sha256::new();
     // Same exact raw-pair commitment as the private credential participant.
-    digest.update(b"neoth-openclaw-slack-migration-pair-v1\0");
+    digest.update(kind.pair_domain());
     for name in ["freedom.yaml", "credentials.yaml"] {
         digest.update(name.as_bytes());
         digest.update([0]);
@@ -935,3 +877,6 @@ fn pair_baseline(home: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod telegram_tests;

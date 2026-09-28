@@ -1,14 +1,14 @@
-# Reversible OpenClaw Slack migration
+# Reversible OpenClaw Slack and Telegram migration
 
-`neoth openclaw-migration` moves one explicitly selected OpenClaw Slack account
-into one named NEOTH Slack account. This version supports the file credentials
+`neoth openclaw-migration` moves one explicitly selected OpenClaw Slack or
+Telegram account into one named NEOTH account of that channel. It supports the file credentials
 backend, including encrypted credentials. It provides a durable plan, apply,
 status, and rollback operation for that one account. Other channel families,
 multiple-account batches, and the keychain backend are not supported by this
 operation version.
 
-The existing individual Telegram import and converted-channel relink commands
-remain separate operations. A Slack migration does not claim atomic migration
+The existing individual import and converted-channel relink commands
+remain separate operations. A single-account migration does not claim atomic migration
 across those commands or completion of the full OpenClaw migration roadmap.
 
 ## Plan an explicit mapping
@@ -32,6 +32,23 @@ the selected, supported OpenClaw source fields; they do not belong in the mappin
 file or command line. Unknown request fields and unsupported source shapes are
 rejected.
 
+For Telegram, use the same command with this private mapping. Its allowed user
+is a positive integer; a Slack member ID remains a string:
+
+```json
+{
+  "schema_version": 1,
+  "channel": "telegram",
+  "source_account": "work",
+  "account": "work",
+  "allowed_user_id": 123456789
+}
+```
+
+Telegram migration refuses keychain-backed homes before preparing the account
+or accessing its keychain token. Existing Slack v1 plans and recovery records
+remain usable; Telegram operations use their own participant-bound v2 plans.
+
 ```text
 neoth --output json openclaw-migration plan --config /private/openclaw.json --request /private/migration-request.json
 ```
@@ -47,8 +64,10 @@ neoth --output json openclaw-migration apply --id <operation-id> --config /priva
 neoth --output json openclaw-migration status --id <operation-id>
 ```
 
-Apply verifies the exact Slack candidate with authenticated `auth.test`, binds
-the resulting workspace, and rechecks the source set before publication. Its
+Apply verifies the exact Slack candidate with authenticated `auth.test` and binds
+the resulting workspace. Telegram uses authenticated `getMe`; its returned bot
+username is display information and never replaces the explicit allowed user
+or prepared account incarnation. Both recheck the source and mapping before publication. The
 private recovery record retains the exact file images, including encrypted
 credential bytes and account incarnation. If the process stops, repeat the
 same apply command with the original source and mapping. Recovery reconciles
@@ -77,6 +96,6 @@ publish them as diagnostic artifacts.
 
 Successful apply and rollback request daemon reload after the terminal state
 is durable. A reload request is not evidence that a running daemon adopted the
-new generation or that Slack Socket Mode is connected. Inspect ordinary daemon
+new generation or that the channel is connected. Inspect ordinary daemon
 and channel status for live connectivity. This command does not undo messages
 already delivered by an active channel.

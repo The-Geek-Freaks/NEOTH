@@ -2,6 +2,34 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1800 Focused Slack56 and Relink product admitted (2026-09-28):**
+Run36374440126 atb824be89 passed all56 selected/started/executed cases, with
+56 exact matching one-test green terminals and0 failures/missing/duplicates.
+All4 original ZIPs match GitHub API digests;40 distinct producer source hashes
+match raw Git blobs. The actual public CLI Relink canary passed fresh init,
+explicit AEAD, wrong-target refusal, Ready publication, exact retry and all4
+cleanup checks. Evidence: docs/verification/gold-wave1800-focused56-admission.json.
+This accepts the prior focused Slack/Relink scope, not the new Telegram source,
+external provider or running-daemon readiness. Windows831run36374304491 is
+successful and awaits artifact admission; Linux2068run36375055716 continues.
+ROAD1324/1077/245/2 unchanged; local BSOD hold fully respected.
+
+**W1798 Reversible Telegram participant and Slack compatibility (2026-09-28):**
+The existing openclaw-migration command now accepts a strict Telegram mapping
+with a positive numeric allowed user. One shared coordinator retains source/
+request rechecks, immutable custody, exact retries, held state and rollback.
+Telegram has separate raw-pair/custody domains and explicit v2 plans; Slack v1
+plan serialization, request hashes and existing custody stay unchanged.
+Keychain is refused under pair authority before ordinary candidate preparation.
+Real getMe probes the prepared account; its username is never sender authority.
+18 new registered cases (17 portable/1 Unix) cover exact encrypted recovery,
+all11 coordinator and four bidirectional pair checkpoints, stale/missing records,
+source/request/pair drift, typed mapping, existing incarnation/unselected account
+preservation and Slack v1 readers. Hosted74/2086/848 behavior remains pending;
+source review is separate from runtime acceptance. Portable2297 registered.
+No multi-account, mixed-channel atomicity, keychain or live-daemon acceptance;
+ROAD1324/1077/245/2 unchanged. No local executable validation under BSOD hold.
+
 **W1796 Slack Core and generated CLI admitted (2026-09-28):**
 Run36373320839 at1da6281f passed slim production Clippy, default test-target
 typecheck, public CLI build and actual generated command reference. Original

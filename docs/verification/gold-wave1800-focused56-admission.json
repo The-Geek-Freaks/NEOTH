@@ -1,0 +1,138 @@
+{
+  "schema": "neoth-converted-relink-public-cli-admission/v1",
+  "decision": "accepted_for_exact_hosted_loopback_product_and_focused56",
+  "run": 36374440126,
+  "producerCommit": "b824be89478b1301e61817235205908be2468929",
+  "native": {
+    "selected": 56,
+    "started": 56,
+    "executed": 56,
+    "passed": 56,
+    "failed": 0,
+    "exactOneTestTerminals": 56,
+    "noMissingOrDuplicateNumberedActualTerminals": true,
+    "integrationIdentity": {
+      "test": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "binary": "proactive_egress_contract_source_gate",
+      "actualLog": "04-actual-integration-proactive-egress-contract-source-gate--google-chat-proactivity-uses-only-the-published-live-instance.log"
+    }
+  },
+  "product": {
+    "outcome": "passed",
+    "failure": null,
+    "local_external_provider": false,
+    "initial_setup": {
+      "created_without_restore": true,
+      "method": "neoth_init_cli_license_provider_skip",
+      "at_rest_encryption": "aes256_gcm_siv",
+      "policy_set_after_init": true
+    },
+    "relink": {
+      "relink_id": "6eb3f935b02f38cbe244c9fa1c285015f074ae1915d7838cc9806dd7aa3175b0",
+      "first": {
+        "already_ready": false,
+        "reload_requested": true
+      },
+      "retry": {
+        "already_ready": true,
+        "reload_requested": true
+      },
+      "wrong_target": {
+        "pending_record_present": true,
+        "credentials_absent": true,
+        "routing_absent": true,
+        "ready_transaction_absent": true,
+        "reload_absent": true
+      },
+      "requests": {
+        "ping": 3,
+        "target": 2,
+        "wrong_target": 1,
+        "post": 0,
+        "unexpected_get": 0
+      }
+    },
+    "cleanup": {
+      "evidence_retained": true,
+      "home_removed": true,
+      "source_removed": true,
+      "wrong_target_home_removed": true
+    }
+  },
+  "originalArtifacts": [
+    {
+      "id": 10951060305,
+      "name": "w548-gchat-live-regressions-log-b824be89478b1301e61817235205908be2468929",
+      "zipSha256": "56af058b70ec795e4ee38bf69ede50b9ac98d67ea688dab476bc583da79ac6e7",
+      "zipMembers": 112
+    },
+    {
+      "id": 10950668214,
+      "name": "converted-relink-public-cli-b824be89478b1301e61817235205908be2468929",
+      "zipSha256": "3fbeff9174ac2439c4ce1e2e0ec3f789f297b2af501887456fbaa96196f1aa11",
+      "zipMembers": 2
+    },
+    {
+      "id": 10950253694,
+      "name": "w548-gchat-live-regressions-receipt-b824be89478b1301e61817235205908be2468929",
+      "zipSha256": "21de8e9334a4d3c437bfbfdcd883dd935809c417f084e7f1a6f5caa3084324ce",
+      "zipMembers": 4
+    },
+    {
+      "id": 10950044420,
+      "name": "w548-gchat-live-regressions-source-b824be89478b1301e61817235205908be2468929",
+      "zipSha256": "d62815343d8b8ae99379443a31df01233c974221020a9418d31f8611002a17a6",
+      "zipMembers": 2
+    }
+  ],
+  "rawProducerBindings": {
+    "producerSourceArtifact": 10950044420,
+    "sourceEntries": 30,
+    "gitCommit": "b824be89478b1301e61817235205908be2468929",
+    "verification": "Every source/product source SHA-256 rehashed from an exact raw git cat-file producer blob; git hash-object checked export integrity. Root compared all56 receipt identities and individually named one-test terminals against producer workflow selection.",
+    "report": "work/gold-20260906/wave1800-focused56-admission/raw-producer-bindings.tsv",
+    "reportSha256": "c12cdca84c3f15b1911c44f3f59a9f2d4d0d24899146ee6ecc88455f3eb38fc6",
+    "keyBindings": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "sha256": "c973698a7615e44a8a0e9d88d310ea542bf84500c55b148f0d26d5abe306bab0",
+        "blob": "7e57e62befea9b8dd7bf073b4b65078bc51369bc"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+        "blob": "358ff8824872b5c4af063c737f66ca080c83e351"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "sha256": "029098d7abd6944e461f44f44cd73476b1de1c7b0aca394e4a96f80748682736",
+        "blob": "2f70adfdb5b0efcb42961d879844c7b72be14ab9"
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "sha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+        "blob": "219e564be5201c75c9ee3b7ee805003c9a118591"
+      },
+      {
+        "path": "packaging/converted_channel_relink_product_canary.py",
+        "sha256": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+        "blob": "20be27ca34fb6d352b327ced8f8a2af50221bf62"
+      },
+      {
+        "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
+        "sha256": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91",
+        "blob": "072eca898bd3128fce63579afe0fe71fecf24e3c"
+      }
+    ],
+    "verifiedUniqueRawProducerPaths": 40,
+    "rootProofSha256": "799d7d4747f01364c309a8e2c93545dff1376cd61847a30f8512b1c12aa4683b"
+  },
+  "limits": [
+    "Hosted CI and local loopback BlueBubbles product evidence only; no real external provider acceptance.",
+    "No running daemon or reload-adoption proof; reload requested is not runtime ready.",
+    "Telegram is outside this W1800 admission.",
+    "Focused Slack migration native cases are accepted only for b824be89; the Telegram extension and broader Linux/Windows cohorts remain separate.",
+    "No local executable validation was run."
+  ],
+  "roadmapClosure": false
+}

@@ -901,6 +901,23 @@ jobs:
           installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_preserves_partial_or_stopped_old_runtime_without_readiness_claim	neothd/src/installers/paperless_restore_tests.rs
           installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_current_identity_port_and_mount_mutants_reject_before_effects	neothd/src/installers/paperless_restore_tests.rs
           cli::paperless::tests::paperless_rollback_cli_binds_restore_id_and_confirmation_without_target_overrides	neothd/src/cli/paperless.rs
+          config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::keychain_migration_refuses_before_preparation_without_mutating_pair_or_custody	neothd/src/config/credentials/telegram_migration/tests.rs
+          config::credentials::telegram_migration::tests::existing_account_incarnation_and_unselected_account_survive_migration_and_rollback	neothd/src/config/credentials/telegram_migration/tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_encrypted_lifecycle_preserves_incarnation_retry_and_exact_rollback	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_keychain_and_invalid_typed_requests_reject_before_publication	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_failed_wrong_kind_and_timed_out_probes_publish_nothing	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_source_include_request_and_pair_drift_refuse_publication	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -925,7 +942,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 831 ]]; then
+          if [[ "$expected" -ne 848 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
