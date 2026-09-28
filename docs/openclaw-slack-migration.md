@@ -143,3 +143,17 @@ is durable. A reload request is not evidence that a running daemon adopted the
 new generation or that the channel is connected. Inspect ordinary daemon
 and channel status for live connectivity. This command does not undo messages
 already delivered by an active channel.
+
+## Inspection policy and unsupported fields
+
+OpenClaw inspection checks each recognized field against a separately pinned
+NEOTH migration policy. Its ledger records the source schema identity, the
+intended migration disposition and action, and separate schema and policy
+hashes. Unknown fields and incompatible value shapes remain explicit blockers;
+a recognized field is not automatically supported by the migration command.
+Secret references are matched only to complete pinned schema families. Their
+values remain redacted, and account-specific fields keep their existing
+unsupported status until a corresponding account runtime mapping exists.
+A disagreement between the checked policy and the actual classifier stops
+inspection instead of emitting a misleading migration action. This inspection
+policy does not expand the supported Slack/Telegram apply operations above.

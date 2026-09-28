@@ -64,6 +64,7 @@ jobs:
             SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json \
             SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json \
             SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json \
+            SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json \
             SRC/neothd/src/cli/channel_relink.rs \
             SRC/neothd/src/channels/relink.rs \
             SRC/neothd/src/channels/registry.rs \

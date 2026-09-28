@@ -13,6 +13,145 @@ spec.loader.exec_module(module)
 
 
 class SchemaWalkerTests(unittest.TestCase):
+    def test_checked_policy_is_exact_and_closed_for_every_fixture_row(self):
+        fixture = json.loads((SCRIPT.parent.parent / "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json").read_text())
+        policy = json.loads((SCRIPT.parent.parent / "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json").read_text())
+        before = json.dumps(fixture["channels"], sort_keys=True, separators=(",", ":"))
+        module.validate_migration_policy(fixture["channels"], policy)
+        self.assertEqual(sum(len(c["leaves"]) for c in fixture["channels"]), 3252)
+        self.assertEqual(sum(leaf.get("scope") == "opaque_subtree" for c in fixture["channels"] for leaf in c["leaves"]), 22)
+        self.assertEqual(json.dumps(fixture["channels"], sort_keys=True, separators=(",", ":")), before)
+
+    def test_policy_validation_does_not_overlay_source_inventory(self):
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        policy = self.policy_for({"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"})
+        before = json.dumps(channels, sort_keys=True, separators=(",", ":"))
+        module.validate_migration_policy(channels, policy)
+        self.assertEqual(json.dumps(channels, sort_keys=True, separators=(",", ":")), before)
+
+    @staticmethod
+    def policy_for(*rows, synthetic=None):
+        if synthetic is None:
+            synthetic = [
+                {"kind":"account_container","disposition":"unsupported","action_id":"requires_account_scoped_runtime"},
+                {"kind":"whatsapp_auth_dir_string","channel_id":"whatsapp","path_template":"authDir","json_type":"string","disposition":"needs_relink","action_id":"relink_required"},
+                {"kind":"account_container_unmapped","disposition":"unknown","action_id":"blocked_requires_explicit_account_mapping"},
+            ]
+        return {"policy_name": module.POLICY_NAME, "policy_version": 1, "source": dict(module.POLICY_SOURCE), "rows": list(rows), "synthetic": synthetic}
+
+    def test_policy_refuses_missing_extra_and_duplicate_identities(self):
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        row = {"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        cases = (
+            (self.policy_for(), "missing migration policy identity"),
+            (self.policy_for(row, {**row, "path_template":"extra"}), "extra migration policy identity"),
+            (self.policy_for(row, dict(row)), "duplicate migration policy identity"),
+        )
+        for policy, error in cases:
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, policy)
+
+    def test_policy_refuses_identity_outcome_and_target_contract_violations(self):
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        row = {"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        cases = (
+            ({**row, "json_type":"boolean"}, "missing migration policy identity"),
+            ({**row, "scope":"opaque_subtree"}, "missing migration policy identity"),
+            ({**row, "disposition":"mapped", "action_id":"neoth_credential_flow"}, "invalid migration policy outcome"),
+            ({key: value for key, value in row.items() if key != "target_path"}, "invalid migration policy target"),
+            ({**row, "target_path":""}, "invalid migration policy target"),
+            ({**row, "target_path":42}, "invalid migration policy target"),
+            ({**row, "disposition":"unsupported", "action_id":"requires_neoth_adapter", "target_path":""}, "invalid migration policy target"),
+            ({**row, "disposition":"unsupported", "action_id":"requires_neoth_adapter", "target_path":None}, "invalid migration policy target"),
+        )
+        for altered, error in cases:
+            with self.subTest(altered=altered), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, self.policy_for(altered))
+
+    def test_policy_refuses_invalid_name_version_and_source_pins(self):
+        row = {"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        cases = (
+            ({"policy_name":"wrong"}, "invalid migration policy name"),
+            ({"policy_version":2}, "invalid migration policy version"),
+            ({"source":{**module.POLICY_SOURCE, "commit":"wrong"}}, "invalid migration policy source pins"),
+        )
+        for replacement, error in cases:
+            policy = self.policy_for(row)
+            policy.update(replacement)
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, policy)
+
+    def test_policy_refuses_missing_extra_duplicate_and_incompatible_synthetic_entries(self):
+        row = {"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        good = self.policy_for(row)["synthetic"]
+        cases = (
+            (good[1:], "missing migration policy synthetic:account_container"),
+            (good + [dict(good[0])], "duplicate migration policy synthetic:account_container"),
+            (good + [{"kind":"other","disposition":"needs_secret","action_id":"neoth_credential_flow"}], "unknown migration policy synthetic:other"),
+            ([{**good[0], "action_id":"relink_required"}, *good[1:]], "invalid migration policy synthetic outcome:account_container"),
+            ([good[0], {**good[1], "json_type":"boolean"}], "invalid migration policy synthetic identity:whatsapp_auth_dir_string"),
+        )
+        for synthetic, error in cases:
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, self.policy_for(row, synthetic=synthetic))
+
+    def test_policy_refuses_unknown_fields_and_boolean_version(self):
+        row = {"channel_id":"x","path_template":"token","json_type":"string","scope":"typed_leaf","disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        channels = [{"channel_id": "x", "leaves": [{"path_template": "token", "json_type": "string"}]}]
+        cases = (
+            ({"extra": True}, "invalid migration policy fields"),
+            ({"policy_version":True}, "invalid migration policy version"),
+            ({"rows":[{**row, "extra":True}]}, "invalid migration policy row fields"),
+            ({"synthetic":[{**self.policy_for(row)["synthetic"][0], "extra":True}, *self.policy_for(row)["synthetic"][1:]]}, "invalid migration policy synthetic fields:account_container"),
+        )
+        for replacement, error in cases:
+            policy = self.policy_for(row)
+            policy.update(replacement)
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, policy)
+
+    def test_policy_requires_the_exact_source_derived_secret_ref_family_set(self):
+        parent = "credential{anyOf:1}{oneOf:0}"
+        channels = [{"channel_id":"x", "leaves":[
+            {"path_template":parent + suffix,"json_type":"string"}
+            for suffix in (".id", ".source", ".provider")
+        ]}]
+        rows = [
+            {"channel_id":"x","path_template":parent + suffix,"json_type":"string","scope":"typed_leaf","disposition":"unsupported","action_id":"requires_target_contract"}
+            for suffix in (".id", ".source", ".provider")
+        ]
+        family = {"kind":"secret_ref_family","channel_id":"x","path_template":parent,"disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        module.validate_migration_policy(channels, self.policy_for(*rows, synthetic=[*self.policy_for()["synthetic"], family]))
+        unsupported = {"kind":"secret_ref_family","channel_id":"x","path_template":parent,"disposition":"unsupported","action_id":"requires_target_contract"}
+        module.validate_migration_policy(channels, self.policy_for(*rows, synthetic=[*self.policy_for()["synthetic"], unsupported]))
+        cases = (
+            ([], "missing migration policy secret_ref_family"),
+            ([family, dict(family)], "duplicate migration policy secret_ref_family"),
+            ([{**family, "path_template":"other{anyOf:1}{oneOf:0}"}], "missing migration policy secret_ref_family"),
+            ([family, {**family, "path_template":"other{anyOf:1}{oneOf:0}"}], "extra migration policy secret_ref_family"),
+            ([{**family, "action_id":"requires_neoth_adapter", "target_path":"credentials.x"}], "invalid migration policy secret_ref_family outcome"),
+            ([{**family, "target_path":""}], "invalid migration policy secret_ref_family outcome"),
+        )
+        base = self.policy_for()["synthetic"]
+        for families, error in cases:
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                module.validate_migration_policy(channels, self.policy_for(*rows, synthetic=[*base, *families]))
+
+    def test_secret_ref_family_requires_the_complete_typed_source_trio(self):
+        parent = "credential{anyOf:1}{oneOf:0}"
+        channels = [{"channel_id":"x", "leaves":[
+            {"path_template":parent + suffix,"json_type":"string"}
+            for suffix in (".id", ".source")
+        ]}]
+        rows = [
+            {"channel_id":"x","path_template":parent + suffix,"json_type":"string","scope":"typed_leaf","disposition":"unsupported","action_id":"requires_target_contract"}
+            for suffix in (".id", ".source")
+        ]
+        family = {"kind":"secret_ref_family","channel_id":"x","path_template":parent,"disposition":"needs_secret","action_id":"neoth_credential_flow","target_path":"credentials.x"}
+        with self.assertRaisesRegex(ValueError, "extra migration policy secret_ref_family"):
+            module.validate_migration_policy(channels, self.policy_for(*rows, synthetic=[*self.policy_for()["synthetic"], family]))
     def test_resolves_refs_composition_arrays_and_account_template(self):
         root = {
             "definitions": {"secret": {"type": "string"}},

@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1835/W1839 Complete schema policy source (2026-09-28; hosted pending):**
+The original upstream schema fixture remains byte-identical. A separate pinned
+NEOTH policy specifies all3252 exact channel/path/type/scope identities, all150
+structurally derived SecretRef families and3 explicit account/legacy cases.
+Rust validates both hashes, exact identity joins and closed outcomes; runtime
+ledger bindings reject disposition/action/target disagreement and expose both
+input hashes without secret values. Unknown/incompatible input stays blocked.
+The extractor validates this policy without rewriting upstream schema data;
+its evidence records the separate policy pin. Source tests cover missing,
+extra, duplicate, incompatible and metadata-drift policies. New Rust tests
+exercise the real classifier across every schema row, every SecretRef family,
+and account containers; legacy WhatsApp and redaction boundaries are retained.
+Final independent static review found no remaining blocker. This is source
+publication only: LF00102 remains OPEN until authentic hosted extraction,
+Custody tests and Core compatibility checks pass. The schema workflow now
+retains named test logs and source hashes. ROAD1324/1080/242/2 is unchanged.
+No local compiler, formatter, parser, test or product runtime ran.
 **W1838 Windows868 accepted (2026-09-28):**
 Windows run36387780331 at9fc9e065 completed successfully. Original artifact
 10956252817 matches the API ZIP digest; all868 selected/discovered/result

@@ -12,7 +12,15 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with: { persist-credentials: false, fetch-depth: 1 }
       - name: Run extractor source tests
-        run: python3 -m unittest scripts/test_extract_openclaw_channel_schema.py
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/w169"
+          git rev-parse HEAD > "$RUNNER_TEMP/w169/source-head.txt"
+          sha256sum scripts/extract_openclaw_channel_schema.py \
+            scripts/test_extract_openclaw_channel_schema.py \
+            SRC/neoth-openclaw-custody/src/fixtures/*.json \
+            .github/workflows/openclaw-schema-inventory.yml > "$RUNNER_TEMP/w169/source-sha256.txt"
+          python3 -m unittest -v scripts/test_extract_openclaw_channel_schema.py 2>&1 | tee "$RUNNER_TEMP/w169/extractor-tests.log"
       - name: Fetch and extract exact static metadata
         id: extract
         shell: bash
@@ -60,20 +68,40 @@ jobs:
           components: clippy, rustfmt
       - name: Record exact package source
         run: |
-          git rev-parse HEAD
-          sha256sum SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/schema-custody"
+          git rev-parse HEAD > "$RUNNER_TEMP/schema-custody/source-head.txt"
+          sha256sum SRC/neoth-openclaw-custody/src/*.rs \
+            SRC/neoth-openclaw-custody/src/fixtures/*.json \
+            SRC/neoth-openclaw-custody/Cargo.toml SRC/Cargo.toml SRC/Cargo.lock \
+            .github/workflows/openclaw-schema-inventory.yml > "$RUNNER_TEMP/schema-custody/source-sha256.txt"
       - name: Run custody package regressions
         timeout-minutes: 8
         working-directory: SRC
-        run: cargo test --locked -p neoth-openclaw-custody -- --test-threads=1
+        run: |
+          set -euo pipefail
+          cargo test --locked -p neoth-openclaw-custody --lib -- --list 2>&1 | tee "$RUNNER_TEMP/schema-custody/discovery.log"
+          cargo test --locked -p neoth-openclaw-custody -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/schema-custody/tests.log"
       - name: Check custody package lint
         timeout-minutes: 3
         working-directory: SRC
-        run: cargo clippy --locked -p neoth-openclaw-custody --all-targets --no-deps -- -D warnings
+        run: |
+          set -euo pipefail
+          cargo clippy --locked -p neoth-openclaw-custody --all-targets --no-deps -- -D warnings 2>&1 | tee "$RUNNER_TEMP/schema-custody/clippy.log"
       - name: Check custody package formatting
         id: format
         working-directory: SRC
-        run: cargo fmt -p neoth-openclaw-custody -- --check
+        run: |
+          set -euo pipefail
+          cargo fmt -p neoth-openclaw-custody -- --check 2>&1 | tee "$RUNNER_TEMP/schema-custody/format.log"
+      - name: Retain exact schema policy regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openclaw-schema-custody-${{ github.sha }}
+          path: ${{ runner.temp }}/schema-custody/
+          if-no-files-found: error
+          retention-days: 14
       - name: Generate package formatting patch
         if: failure() && steps.format.outcome == 'failure'
         working-directory: SRC

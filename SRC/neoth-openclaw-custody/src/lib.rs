@@ -182,6 +182,11 @@ pub struct SchemaLedgerBinding {
     pub path_template: String,
     pub scope: String,
     pub action_id: String,
+    pub policy_disposition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_target_path: Option<String>,
+    pub schema_sha256: String,
+    pub policy_sha256: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -1398,7 +1403,7 @@ fn classify_leaf(
             reason: reason.to_string(),
             source_account_label: None,
             effective_value_sha256: None,
-            schema_binding: None,
+            schema_binding: Some(schema_binding(pinned_schema::whatsapp_auth_dir_legacy()?, disposition, target_path, "relink_required")?),
         });
     }
 
@@ -1430,10 +1435,7 @@ fn classify_leaf(
                     .to_string(),
             source_account_label: account_label,
             effective_value_sha256: None,
-            schema_binding: Some(schema_binding(
-                schema,
-                "blocked_requires_explicit_leaf_mapping",
-            )),
+            schema_binding: Some(schema_binding(schema, ImportDisposition::Unknown, None, "blocked_requires_explicit_leaf_mapping")?),
         });
     }
     let Some(target_channel) = target_channel else {
@@ -1447,7 +1449,7 @@ fn classify_leaf(
             reason: "known OpenClaw channel has no NEOTH adapter".to_string(),
             source_account_label: account_label,
             effective_value_sha256: value_binding(value, path, sensitive),
-            schema_binding: Some(schema_binding(schema, "requires_neoth_adapter")),
+            schema_binding: Some(schema_binding(schema, ImportDisposition::Unsupported, None, "requires_neoth_adapter")?),
         });
     };
     if account_label.is_some() {
@@ -1462,7 +1464,7 @@ fn classify_leaf(
                 .to_string(),
             source_account_label: account_label,
             effective_value_sha256: value_binding(value, path, sensitive),
-            schema_binding: Some(schema_binding(schema, "requires_account_scoped_runtime")),
+            schema_binding: Some(schema_binding(schema, ImportDisposition::Unsupported, None, "requires_account_scoped_runtime")?),
         });
     }
 
@@ -1485,7 +1487,7 @@ fn classify_leaf(
         reason: reason.to_string(),
         source_account_label: None,
         effective_value_sha256: value_binding(value, path, sensitive),
-        schema_binding: Some(schema_binding(schema, action_id)),
+        schema_binding: Some(schema_binding(schema, disposition, target_path, action_id)?),
     })
 }
 
@@ -1519,7 +1521,7 @@ fn classify_account_container(path: &[PathPart]) -> Result<FieldLedgerEntry> {
         reason: reason.to_string(),
         source_account_label: Some(account_label),
         effective_value_sha256: None,
-        schema_binding: schema.map(|schema| schema_binding(schema, action_id)),
+        schema_binding: schema.map(|schema| schema_binding(schema, disposition, None, action_id)).transpose()?,
     })
 }
 
@@ -1595,8 +1597,11 @@ fn direct_channel_field(path: &[PathPart]) -> Option<&str> {
     (path.len() == 3).then(|| key_at(path, 2)).flatten()
 }
 
-fn schema_binding(schema: pinned_schema::SchemaMatch, action_id: &str) -> SchemaLedgerBinding {
-    SchemaLedgerBinding {
+fn schema_binding(schema: pinned_schema::SchemaMatch, runtime: ImportDisposition, runtime_target: Option<&str>, runtime_action_id: &str) -> Result<SchemaLedgerBinding> {
+    anyhow::ensure!(schema.disposition == runtime.as_str() && schema.action_id == runtime_action_id && schema.target_path.as_deref() == runtime_target, "W1835 schema policy outcome mismatch for {}", schema.path_template);
+    let policy_disposition = schema.disposition.clone();
+    let policy_target_path = schema.target_path.clone();
+    Ok(SchemaLedgerBinding {
         schema_id: schema.schema_id,
         path_template: schema.path_template,
         scope: match schema.scope {
@@ -1605,8 +1610,12 @@ fn schema_binding(schema: pinned_schema::SchemaMatch, action_id: &str) -> Schema
             pinned_schema::SchemaScope::AccountContainer => "account_container",
         }
         .to_string(),
-        action_id: action_id.to_string(),
-    }
+        action_id: runtime_action_id.to_string(),
+        policy_disposition,
+        policy_target_path,
+        schema_sha256: pinned_schema::FIXTURE_SHA256.to_string(),
+        policy_sha256: pinned_schema::POLICY_SHA256.to_string(),
+    })
 }
 
 fn value_binding(value: &Value, path: &[PathPart], sensitive: bool) -> Option<String> {
@@ -2073,7 +2082,12 @@ mod tests {
         assert_eq!(auth.disposition, ImportDisposition::NeedsRelink);
         assert!(auth.sensitive);
         assert!(auth.effective_value_sha256.is_none());
-        assert!(auth.schema_binding.is_none());
+        let binding = auth.schema_binding.as_ref().unwrap();
+        assert_eq!(binding.schema_id, "w1835:whatsapp:authDir:legacy_string");
+        assert_eq!(binding.action_id, "relink_required");
+        assert_eq!(binding.policy_disposition, "needs_relink");
+        assert_eq!(binding.schema_sha256, pinned_schema::FIXTURE_SHA256);
+        assert_eq!(binding.policy_sha256, pinned_schema::POLICY_SHA256);
         assert!(
             !serde_json::to_string(&report)
                 .unwrap()
@@ -2907,6 +2921,50 @@ mod tests {
         );
         assert!(!rendered.contains("PROXY_SECRET"));
         assert!(!rendered.contains("EXTRA_SECRET"));
+    }
+
+    #[test]
+    fn w1837_policy_binding_checks_direct_sensitive_and_fail_closed_outcomes() {
+        let temp = tempdir().unwrap();
+        let path = write_config(temp.path(), "{ channels: { telegram: { botToken: 'secret', enabled: true }, googlechat: { audience: 'x' }, whatsapp: { authDir: '/state' }, clickclack: { enabled: true } } }");
+        let report = inspect_openclaw_config(&path).unwrap();
+        let token = report.ledger.iter().find(|entry| entry.source_path == "channels.telegram.botToken").unwrap();
+        assert_eq!(token.disposition, ImportDisposition::NeedsSecret);
+        assert!(token.sensitive && token.effective_value_sha256.is_none());
+        let bound = token.schema_binding.as_ref().unwrap();
+        assert_eq!(bound.action_id, "neoth_credential_flow");
+        assert_eq!(bound.policy_disposition, "needs_secret");
+        assert_eq!(bound.schema_sha256, pinned_schema::FIXTURE_SHA256);
+        assert_eq!(bound.policy_sha256, pinned_schema::POLICY_SHA256);
+        let runtime = report.ledger.iter().find(|entry| entry.source_path == "channels.googlechat.audience").unwrap();
+        assert_eq!(runtime.disposition, ImportDisposition::NeedsRuntime);
+        assert_eq!(runtime.schema_binding.as_ref().unwrap().action_id, "runtime_prerequisite_required");
+        let relink = report.ledger.iter().find(|entry| entry.source_path == "channels.whatsapp.authDir").unwrap();
+        assert_eq!(relink.disposition, ImportDisposition::NeedsRelink);
+        assert_eq!(relink.schema_binding.as_ref().unwrap().action_id, "relink_required");
+        let unsupported = report.ledger.iter().find(|entry| entry.source_path == "channels.clickclack.enabled").unwrap();
+        assert_eq!(unsupported.disposition, ImportDisposition::Unsupported);
+        assert_eq!(unsupported.schema_binding.as_ref().unwrap().action_id, "requires_neoth_adapter");
+    }
+
+    #[test]
+    fn w1837_policy_binding_preserves_secret_ref_account_opaque_and_bad_legacy_shape() {
+        let temp = tempdir().unwrap();
+        let path = write_config(temp.path(), "{ channels: { telegram: { botToken: { source: 'env', provider: 'default', id: 'BOT' } }, matrix: { accounts: { work: { homeserver: 'https://x' } } }, qqbot: { accounts: { work: { futureOption: true } } }, whatsapp: { authDir: { invalid: true } } } }");
+        let report = inspect_openclaw_config(&path).unwrap();
+        let secret = report.ledger.iter().find(|entry| entry.source_path == "channels.telegram.botToken").unwrap();
+        assert_eq!(secret.disposition, ImportDisposition::NeedsSecret);
+        assert!(secret.sensitive && secret.effective_value_sha256.is_none());
+        assert_eq!(secret.schema_binding.as_ref().unwrap().action_id, "neoth_credential_flow");
+        let account = report.ledger.iter().find(|entry| entry.source_path == "channels.matrix.accounts.work").unwrap();
+        assert_eq!(account.disposition, ImportDisposition::Unsupported);
+        assert_eq!(account.schema_binding.as_ref().unwrap().action_id, "requires_account_scoped_runtime");
+        let opaque = report.ledger.iter().find(|entry| entry.source_path == "channels.qqbot.accounts.work.futureOption").unwrap();
+        assert_eq!(opaque.disposition, ImportDisposition::Unknown);
+        assert_eq!(opaque.schema_binding.as_ref().unwrap().action_id, "blocked_requires_explicit_leaf_mapping");
+        let invalid = report.ledger.iter().find(|entry| entry.source_path == "channels.whatsapp.authDir.invalid").unwrap();
+        assert_eq!(invalid.disposition, ImportDisposition::Unknown);
+        assert!(invalid.schema_binding.is_none());
     }
 
     #[test]

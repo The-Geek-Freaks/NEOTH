@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T07:42:01.7326780Z",
-  "validationStatus": "Windows868 original artifacts accepted at9fc9e065; W1835 working source excluded",
+  "capturedUtc": "2026-09-28T07:58:35.5005815Z",
+  "validationStatus": "Exact separate schema migration policy source reviewed; hosted extractor/Custody/Core pending; LF00102 open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 33999,
-      "sha256": "DE798C3D8EB31C10B93695A869B975BCD6063D3846AB78DD4D97A78787BF3DDF"
+      "bytes": 34102,
+      "sha256": "703DCF9377F79380FF990C982C02E5E470F0E42630D710928C061F29336571CA"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -113,8 +113,8 @@
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
-      "bytes": 4096,
-      "sha256": "AF91A9EF852BABD2CD41A0B11F18FE1FEF727B3FD23234431D7FED2330C3ACD1"
+      "bytes": 5683,
+      "sha256": "5F6D958C3DDE9C2C2710B3B455D8ABCB868B96BCD02DD8D6C8D49329F19571CB"
     },
     {
       "path": ".github/workflows/paperless-product.yml",
@@ -1343,8 +1343,8 @@
     },
     {
       "path": "docs/openclaw-slack-migration.md",
-      "bytes": 6051,
-      "sha256": "6E12955F27632F94708E40A3DDC3B9587A6AB729ADB81CF22C679E3A126295A7"
+      "bytes": 6928,
+      "sha256": "F5B3A3C2F23F2A6A5829E5400C988E3D19AD743212D79D0467BCA47AC03AEFF7"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -3843,18 +3843,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 512294,
-      "sha256": "07AFA52A53B594123749FF25194E1A8A1D2AAE38FE6A31AE77767C5292DF6CEE"
+      "bytes": 513588,
+      "sha256": "16A75CB0ADB2389F083D95737B68B56EB943222C8F4E917E00CDCD788C2F73CD"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1548604,
-      "sha256": "6CC695197796DAF9C58599086E072E1BA40EE5ACFBB84277F924F0B1D45FD417"
+      "bytes": 1549898,
+      "sha256": "8AF6BB9703CADFCF58AD05B6BFC6CF559C2AAC0A6627FA1C8FEC66BC05520492"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2159977,
-      "sha256": "FC7C54508E4EDC6E7ECE9834EC6772E2CF94A74C73A908CD84D1F494D842EBB4"
+      "bytes": 2161271,
+      "sha256": "6C6A32DD5490FA78F0653686C151D4A9096939DBEE5F4646330693648FBC3D8D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3883,8 +3883,8 @@
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
-      "bytes": 10267,
-      "sha256": "08F2749E1A057F98A305C8589EF0BE1BA12830A268F6BB42E7D4F6EA1C721C12"
+      "bytes": 19794,
+      "sha256": "44CE6C71450CF8C4A6A74334947D70C52B8D3E42BE5DD02EE76EA902081B3C9D"
     },
     {
       "path": "scripts/test_acquire_paperless_provenance.py",
@@ -3893,8 +3893,8 @@
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
-      "bytes": 5499,
-      "sha256": "927F40E13E0ECFE193526C3CAAC5146CC027FA1DBF89241BB23882BF414A44E5"
+      "bytes": 16402,
+      "sha256": "3D02C1AE7CC9EEC4C63CB7796A6F08747CACD9B5ABE54D70870C051BAE961D43"
     },
     {
       "path": "SRC/_gate_gui_check.bat",
@@ -3977,6 +3977,11 @@
       "sha256": "8925B0D248CB58F233A227F22946B395789F88FFF808622FB9A5D571EB115817"
     },
     {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json",
+      "bytes": 832266,
+      "sha256": "1342AE1183ECB95E429983A5AD31C7A3A4D97D6534CEE7FF111B02D05AEC23D6"
+    },
+    {
       "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
       "bytes": 384625,
       "sha256": "A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F"
@@ -3993,8 +3998,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 105244,
-      "sha256": "422A889238CBF9ED88CF83CE80A80A8C38D3CA6C9F154F39C5FBB3A4AE20EA9C"
+      "bytes": 110243,
+      "sha256": "FADF66DA6CBA14E5BCC91F8138E76E23AC75BF26CA225E784130439EC160D505"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
@@ -4003,8 +4008,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "bytes": 22524,
-      "sha256": "B4E5378F70C7514F09A598AD7220CAA9D44C5E3C5915674DADD34C87CB8613CD"
+      "bytes": 39422,
+      "sha256": "C9EB10B1AE9B8BA6E8E9AED4B54B0D0C18BD7BBD208A67AEDACA041962106698"
     },
     {
       "path": "SRC/neothd-gui/AGENTS.md",
