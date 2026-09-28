@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T12:00:05.4969768Z",
-  "validationStatus": "Exact W1870 hosted formatter patch imported; native/product gates pending",
+  "capturedUtc": "2026-09-28T12:17:47.3891732Z",
+  "validationStatus": "W1873 ArXiv canonical URL reviewed; fresh hosted native gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 7858,
-      "sha256": "04C96ADE3B61EB89C745D5AF1118098C6B170F33F5D969293835F2893EB07CDE"
+      "bytes": 8211,
+      "sha256": "A742F12B0C1E257DE44A64215CCDCD73E8FF74DAA7A3612A6CEEE8F8330B10DB"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29613,
-      "sha256": "9F6744DE0D1DA2DB3B7410C845ECB6227F58894C3F2B49E29FE8541FA18E367C"
+      "bytes": 29659,
+      "sha256": "81E245B27F6CC1017863DA2D275DF9463E7007699DD0FD4EDF810032CB8F4AA2"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 156971,
-      "sha256": "4316774FF99992D34E401DA89259E62A5EA0A3628806574C1FDA17B4434BBCF9"
+      "bytes": 157338,
+      "sha256": "F59CA357663169FEC01AAD8A1304F7D89D2D39F949D9EF370C35ED1927B5766C"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3883,18 +3883,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 527819,
-      "sha256": "88A3AB3D3858047CCE70349C60E607053EB62ECB731402462D129CC942596CFC"
+      "bytes": 529317,
+      "sha256": "B916B124E8A674AF3E5E035C3E6BB1E2A125D0A78D8213F0E6C457E6ACB59A45"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1564249,
-      "sha256": "EAB4115F0288851E4C3825EC5CF7504C3433AFA2F1CCFB348ECA9E80B31FBADE"
+      "bytes": 1565747,
+      "sha256": "C2DCEE57CCAF84B2C2D72C5664D18381BF47E54326B0219B25EAB75BEABE7FFD"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2175259,
-      "sha256": "56C61ADAF1B332ECC9535266180FECBDFFFBB9CCAEDA0DA389108637A11C247B"
+      "bytes": 2176757,
+      "sha256": "2B4DF305B442AE00EFB47F450A9E238EEEBBA1DFF13B720EE3AE4D89404690ED"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7128,8 +7128,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/arxiv.rs",
-      "bytes": 15607,
-      "sha256": "294A7462292066F05C5CDD85BFAE4E8CC6E5F3DD99388D25A7E369A5D3C10D71"
+      "bytes": 15678,
+      "sha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9"
     },
     {
       "path": "SRC/neothd/src/tools/caldav_account.rs",

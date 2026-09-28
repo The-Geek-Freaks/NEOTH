@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact W1870 hosted formatter patch imported; native/product gates pending",
+  "status": "W1873 ArXiv canonical URL reviewed; fresh hosted native gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269473,
-    "sha256": "38C2C2E8C68A240A0C9653013E4E5AA27F36AD5F481CC29956A49DA5184E42AD"
+    "bytes": 269469,
+    "sha256": "B56A532886BAF04C843D67CB3901C23992699B2D943EC75F32AA9C27BA62B9CB"
   },
   "sourceInputs": 1494,
   "requiredNativeTests": [
@@ -14125,6 +14125,30 @@
       "test": "channels::probe::tests::probe_all_covers_every_channel_and_misconfigured_filters_errors",
       "sourcePath": "SRC/neothd/src/channels/probe.rs",
       "sourceSha256": "3FDED82A50E85FFE251CF5002B783678567C6FF9E3628E9E010971B74881FD15",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::arxiv::tests::search_decodes_real_atom_feed_via_http",
+      "sourcePath": "SRC/neothd/src/tools/arxiv.rs",
+      "sourceSha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::arxiv::tests::search_clamps_max_results_to_50",
+      "sourcePath": "SRC/neothd/src/tools/arxiv.rs",
+      "sourceSha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::arxiv::tests::search_propagates_non_2xx_as_error",
+      "sourcePath": "SRC/neothd/src/tools/arxiv.rs",
+      "sourceSha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::arxiv::tests::search_does_not_follow_redirects",
+      "sourcePath": "SRC/neothd/src/tools/arxiv.rs",
+      "sourceSha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
       "junitClass": "neoth"
     }
   ],
@@ -57647,6 +57671,252 @@
       }
     ],
     "note": "Original10968605989@030067c0 authenticated against API SHA; both Git postimages verified. No semantic change or local executable validation. Current source2353/2128/911/118; old native runs still continue.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1873ArxivCanonicalUrl": {
+    "requiredTests": [
+      "tools::arxiv::tests::search_decodes_real_atom_feed_via_http",
+      "tools::arxiv::tests::search_clamps_max_results_to_50",
+      "tools::arxiv::tests::search_propagates_non_2xx_as_error",
+      "tools::arxiv::tests::search_does_not_follow_redirects"
+    ],
+    "status": "independent static review approved; hosted execution pending",
+    "note": "Use the same canonical reqwest URL in permit descriptor and sealed request; existing real HTTP decoding, limit, non-2xx and redirect tests. No transport guard or proxy change."
+  },
+  "wave1872MacosRecovery": {
+    "schema": "neoth-macos-contract-admission/v1",
+    "run": 36415343627,
+    "artifact": 10968766151,
+    "source": "913a57ab3b99dc8e187b2509d915bc4b19674939",
+    "zipSha256": "f91514667fcf5332582c7cbc7ea17daf7502098c2595f7a7d9fb4087e738a7b1",
+    "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+    "selected": 21,
+    "executed": 21,
+    "passed": 12,
+    "failed": 9,
+    "sourceBindings": [
+      {
+        "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
+        "blob": "3fe6f17f774376f885398d9da7db0128f110a6fe",
+        "sha256": "53d20c92e76fe86ec20468e20fdc359426284521aa2df6cd96605e271e5ef7be"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel.rs",
+        "blob": "2aa9a8113960a22cfb3528c936e31596180b1740",
+        "sha256": "08516a520f1bb3909b77ab3968cd95ea9057f5e5284da6fbc74ec79102da4381"
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat.rs",
+        "blob": "df5839e49fd65fff749fa6ccc0ae45b8bfee78ea",
+        "sha256": "025a2222c14853553f7749488cfc69f7905df4f924c6a4f84017367dc6033055"
+      },
+      {
+        "path": "SRC/neothd/src/cli/obsidian.rs",
+        "blob": "fc4ceb9621b1ec580c4edbc7034f6d641b47029c",
+        "sha256": "90f95b50eea7fbf15f04d4627560931c839064af788ca3413076848abc625078"
+      },
+      {
+        "path": "SRC/neothd/src/cli/paperless.rs",
+        "blob": "bf63ef81cba25def0cb5438be0f5c0d2875bf1b7",
+        "sha256": "91efe887cc68ad356c96d7fe4e25ec819dbd40db9c08a4f5044494f850bd425f"
+      },
+      {
+        "path": "SRC/neothd/src/cli/proactive.rs",
+        "blob": "9c39fdbfc4471bbae4c9404b6698a240d44db223",
+        "sha256": "ab2e714b0b41f332a41ccd981415fcb9b4fc2a45c6e4f835cae8f3e282455a26"
+      },
+      {
+        "path": "SRC/neothd/src/cli/recall_score.rs",
+        "blob": "ef5c4b6463a75c92d8d15cc63c2c6751b3d5464e",
+        "sha256": "a7aa2f7613e25dfbce1058c79abe7e1efaaa38f560c901ea415b08ebf9ef7abe"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs",
+        "blob": "d494227d1a10d3287e1cbcf73e548dfecf87beb1",
+        "sha256": "9b8cf1bc6650480e9590ba66db6f9826241e36669a553286a06c289e311f7637"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+        "blob": "c92a23e78d58037b733ac34c98001451855a807d",
+        "sha256": "36cc4a1e39e13c7d7bbcb9980d66264592115fa53ce5f998ca48859962cfaf66"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+        "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "blob": "5f0f8849d1d4a628b8719519b4e9424af697a7f8",
+        "sha256": "b13cb479f79ce37a6f287f77a564a41322d5acf3702ff2ff1d6442b7e8d733ac"
+      },
+      {
+        "path": "SRC/neothd/src/tools/arxiv.rs",
+        "blob": "250502784d26b21b5bb5ce9f5f3bc5a384a2bfec",
+        "sha256": "294a7462292066f05c5cdd85bfae4e8cc6e5f3dd99388d25a7e369a5d3c10d71"
+      },
+      {
+        "path": "SRC/neothd/src/tools/external_http.rs",
+        "blob": "3feacf8baae5799a8352fce4b765cd931c14e102",
+        "sha256": "27f66539ad02364c413d224d3a0bef8f5f9908a3f3ce94b429c93091e3e6dff4"
+      },
+      {
+        "path": "SRC/neothd/src/providers/http_client.rs",
+        "blob": "d851ba627065ac0cd4c910d71208fa43f7fcff75",
+        "sha256": "a39ba83bc1b186d213b25079e04c08a81662fea6f97af341270a5b25adeeec25"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "blob": "fa035e2f19cba845b386212b78e7aa29c856b8b3",
+        "sha256": "408950d2a75d40356a65c0f89e73a6d9742bfba9934eb2b4d6d923307ff762c0"
+      },
+      {
+        "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+        "blob": "0e6a6c4d6e68254b32d3cee8da8f667192a74175",
+        "sha256": "f61246e3911f89c44ec7d047a61d3c43c49c442a01d8973ac7032e3a0d4902eb"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "blob": "754ab29262b03394510cd940f80f72f98da9bf51",
+        "sha256": "04c96ade3b61eb89c745d5af1118098c6b170f33f5d969293835f2893eb07cde"
+      }
+    ],
+    "terminals": [
+      {
+        "test": "cli::arxiv_ingest_task::tests::indexes_single_paper_without_provider",
+        "status": "failed"
+      },
+      {
+        "test": "cli::arxiv_ingest_task::tests::falls_back_to_raw_abstract_when_provider_fails",
+        "status": "failed"
+      },
+      {
+        "test": "cli::arxiv_ingest_task::tests::uses_provider_summary_when_available",
+        "status": "failed"
+      },
+      {
+        "test": "cli::arxiv_ingest_task::tests::reindex_same_paper_indexes_once_per_pass",
+        "status": "failed"
+      },
+      {
+        "test": "cli::channel::tests::flat_telegram_remove_rejects_a_secret_account_map_without_writing",
+        "status": "passed"
+      },
+      {
+        "test": "cli::channel::tests::flat_telegram_add_rejects_a_public_account_map_without_writing",
+        "status": "passed"
+      },
+      {
+        "test": "cli::channel::tests::json_telegram_replacement_rejects_an_account_map_without_writing",
+        "status": "passed"
+      },
+      {
+        "test": "cli::chat::tests::incognito_turn_boundary_is_central_and_production_only",
+        "status": "passed"
+      },
+      {
+        "test": "cli::obsidian::tests::bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings",
+        "status": "passed"
+      },
+      {
+        "test": "cli::paperless::tests::explicit_home_clean_vault_ingest_creates_no_finding",
+        "status": "passed"
+      },
+      {
+        "test": "cli::proactive::tests::document_discovery_list_without_state_does_not_create_home",
+        "status": "passed"
+      },
+      {
+        "test": "cli::proactive::tests::document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect",
+        "status": "passed"
+      },
+      {
+        "test": "cli::proactive::tests::document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit",
+        "status": "passed"
+      },
+      {
+        "test": "cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output",
+        "status": "passed"
+      },
+      {
+        "test": "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::arxiv_skill_scan_cron::tests::skill_scan_inserts_groundtruth_rows_for_cs_ai_paper",
+        "status": "failed"
+      },
+      {
+        "test": "daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_blank_oversized_and_four_line_completions",
+        "status": "failed"
+      },
+      {
+        "test": "daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_oversized_feed_input_before_provider_or_insert",
+        "status": "failed"
+      },
+      {
+        "test": "daemon::arxiv_skill_scan_cron::tests::skill_scan_skips_paper_when_provider_fails",
+        "status": "failed"
+      },
+      {
+        "test": "daemon::audit_rpc::tests::allowlist_contains_exactly_the_oneshot_codes",
+        "status": "passed"
+      },
+      {
+        "test": "cli::arxiv_ingest_task::tests::arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count",
+        "status": "failed"
+      }
+    ],
+    "localExecutableValidationRan": false
+  },
+  "wave1873SourceBindings": {
+    "base": "d820f9194ada2f6595b80fa8d3e305162027666c",
+    "sources": [
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 8211,
+        "sha256": "A742F12B0C1E257DE44A64215CCDCD73E8FF74DAA7A3612A6CEEE8F8330B10DB",
+        "blob": "0224031c38a0b56eadbacd705da30ad08b45de94"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29659,
+        "sha256": "81E245B27F6CC1017863DA2D275DF9463E7007699DD0FD4EDF810032CB8F4AA2",
+        "blob": "a9fd121d5978e5d71e37fcab0471e250ddf61907"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 157338,
+        "sha256": "F59CA357663169FEC01AAD8A1304F7D89D2D39F949D9EF370C35ED1927B5766C",
+        "blob": "ec1884d9bd9077109faefe06895ae9a3fe2cfd8b"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 529317,
+        "sha256": "B916B124E8A674AF3E5E035C3E6BB1E2A125D0A78D8213F0E6C457E6ACB59A45",
+        "blob": "f7bf915987ba9f6d637bca0aea72f6a2def4d716"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1565747,
+        "sha256": "C2DCEE57CCAF84B2C2D72C5664D18381BF47E54326B0219B25EAB75BEABE7FFD",
+        "blob": "f41a12bbda4eb852dd521fbc04d951afc0a8c201"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2176757,
+        "sha256": "2B4DF305B442AE00EFB47F450A9E238EEEBBA1DFF13B720EE3AE4D89404690ED",
+        "blob": "435b967c6f0c37babe01509069eaf2a422940539"
+      },
+      {
+        "path": "SRC/neothd/src/tools/arxiv.rs",
+        "bytes": 15678,
+        "sha256": "2FEB0FE93B1C8115F39ADB88114D33DB2AB81E1FEFC9F6533CE6F68AAF1E9AE9",
+        "blob": "b2b233cd410277f59e17bbe512f74541942e8573"
+      }
+    ],
+    "note": "Same canonical URL binds descriptor and sealed GET;4 real HTTP cases registered2357portable/2132Linux/915Windows/macOS25. macOS21 prior producer authentically12pass9Arxivfail. No transport policy weakening/no local validation/no ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

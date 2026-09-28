@@ -69,12 +69,13 @@ pub(crate) async fn search_against_authorized(
         anyhow::bail!("arxiv: empty query");
     }
     let max = max_results.clamp(1, MAX_ARXIV_RESULTS);
-    let url = format!(
+    let url = reqwest::Url::parse(&format!(
         "{endpoint}?search_query={}&start=0&max_results={}&sortBy=submittedDate&sortOrder=descending",
         urlencode(query),
         max
-    );
-    let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Arxiv);
+    ))
+    .context("parse arxiv request URL")?;
+    let request = ExternalHttpRequest::get(url.as_str(), ExternalHttpSurface::Arxiv);
     let client = http_client::build_client_no_redirect()?;
     let transport = ExternalHttpTransportRequest::new(
         &request,

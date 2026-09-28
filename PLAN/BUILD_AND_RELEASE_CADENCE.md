@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1872/W1873 ArXiv canonical request and macOS admission (2026-09-28):**
+Original macOS run36415343627 at913a57ab artifact10968766151 is authenticated
+against its API ZIP SHA256 f91514667fcf5332582c7cbc7ea17daf7502098c2595f7a7d9fb4087e738a7b1.
+All21 identities/discovery/results and17 raw producer-source hashes agree:
+12 passed,9 failed. All non-ArXiv cases pass, including the seven corrected
+macOS temp-root fixtures. The8 ArXiv callers and diagnostic fail before any
+network request: sealed-request-rejected, mock_received_requests=0.
+W1873 canonicalizes the URL once and uses the same reqwest::Url for the permit
+descriptor and built GET; no proxy/transport/authorization weakening. Independent
+source review approved. Four existing real HTTP tests are newly registered:
+decode, limit50, non-2xx and redirect refusal. Portable2357/Linux2132/Windows915/
+macOS25 now selected; channel118 unchanged. Fresh execution of this fix is pending.
+Windows889 run36415338533 at913a57ab ended874passed/15failed/0missing; original
+artifact10968977368 digest verified, exact terminal/source admission underway.
+Channel118 + public CLI/daemon/GChat run36419695485 atd820f919 remains active;
+Preflight36419254014 and CodeQuality36419251891 succeeded on that producer.
+ROAD1324/1081done/241open/2partial;243raw blockers/242pre-tag;WS-LF43done/75open
+remain unchanged. Local executable validation stays prohibited. Claude is off;
+Root continues implementation and owns Git/main, PLAN, CI and final acceptance.
+
 **W1870 hosted formatting import (2026-09-28):** Preflight36418811607 at030067c0
 found only formatting in probe/onboarding. Original10968605989 ZIP/API SHA256
 2aff5af58fb3b144e1e16040fbda9f9805d095145b532a0a136efe0d10b6d31e matches;
