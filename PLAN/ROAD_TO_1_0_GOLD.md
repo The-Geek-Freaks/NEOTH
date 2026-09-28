@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1812-W1816 Native admission and batch compile repair (2026-09-28):**
+The earlier single-account producers are now admitted: Linux2086 at8b0a6a61
+(run36378258621) and Windows848 at9f5d96a9 (run36377724690). Root rechecked
+2086 exact list/run/one-test terminals, including17 split-output cases, and
+848 exact Windows identities/log terminals plus849 log/10 evidence hashes.
+All327 Linux and130 Windows raw producer/input paths match SHA-256 and Git
+blob identities. The CLI/GUI parity guard and generated reference equality
+passed in the old Linux producer. These receipts do not accept W1807.
+Published batch41317e83 failed Core36380719006 before behavior tests: its
+pair-writer callback returned std::io::Error where anyhow::Error is required.
+The established contextual conversion is now applied and independently
+reviewed. Authentic Preflight36380718812 formatting from original10952920594
+is imported for six Rust files. New Core/CLI verification remains pending;
+Windows865/focused93 wait for typecheck; Linux2104 waits for regenerated CLI.
+Evidence: gold-wave1812-linux2086-admission.json,
+gold-wave1813-windows848-admission.json and gold-wave1814-batch-hosted-format.json
+under docs/verification. ROAD1324/1077/245/2 unchanged. No local runtime.
+
 **W1807/W1808/W1811 Atomic file-backed account batch (2026-09-28):**
 The public migration command now accepts an ordered v3 request with1..32
 Slack/Telegram mappings. It captures one raw config/credentials pair, accumulates

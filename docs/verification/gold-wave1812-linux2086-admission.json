@@ -1,0 +1,84 @@
+{
+  "schema": "neoth-linux2086-admission/v1",
+  "decision": "accepted",
+  "run": {
+    "id": 36378258621,
+    "producer_commit": "8b0a6a61cf3374b72804ae2f205c926621fa5194",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "receipt": {
+    "required": 2086,
+    "selected": 2086,
+    "executed": 2086,
+    "failed": 0
+  },
+  "terminals": {
+    "listed": 2086,
+    "executed": 2086,
+    "passed": 2086,
+    "failed": 0
+  },
+  "producer_git": {
+    "source_paths": 317,
+    "source_mismatches": 0,
+    "input_paths": 10,
+    "input_mismatches": 0
+  },
+  "guards": {
+    "parity_green": true,
+    "generated_reference_equality_green": true
+  },
+  "scope": "Only Linux producer8b0a6a61; separate custody subjob excluded from2086. Does not accept later batch implementation41317e83 or live provider/daemon adoption.",
+  "individual_terminal_assertions": {
+    "fixture_names": 2086,
+    "unique_fixture_names": 2086,
+    "list_records": 2086,
+    "run_records": 2086,
+    "one_test_success_terminals": 2086,
+    "missing": 0,
+    "extra": 0,
+    "duplicates": 0,
+    "standard_inline_success": 2069,
+    "named_prefix_then_standalone_ok": 17,
+    "root_rechecked": true,
+    "guards": [
+      {
+        "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+        "passed": true
+      },
+      {
+        "test": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+        "passed": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "id": 10952645142,
+      "sha256": "428df302c7b577d8efd6b8542f180063865c3cd3dcd9e60023e9148908687bb7",
+      "role": "w190-research-lifecycle-log-8b0a6a61cf3374b72804ae2f205c926621fa5194"
+    },
+    {
+      "id": 10952029125,
+      "sha256": "c35f40fb32cc8e67c2c62c6734b94b9306c4e5d4e95395034086187bce128c04",
+      "role": "w190-research-lifecycle-source-8b0a6a61cf3374b72804ae2f205c926621fa5194"
+    },
+    {
+      "id": 10952004429,
+      "sha256": "4e12a66cb6c570d42ede0b0823b3e34d1a0c57599a1de85a5a27dccdd180f4ee",
+      "role": "w190-research-lifecycle-receipt-8b0a6a61cf3374b72804ae2f205c926621fa5194"
+    },
+    {
+      "id": 10951462423,
+      "sha256": "c9917dea75eb9967e35e701b0262f23aabe07577e3dfd85a6ab45c07388ed62a",
+      "role": "openclaw-custody-8b0a6a61cf3374b72804ae2f205c926621fa5194"
+    }
+  ],
+  "raw_blob_checks": {
+    "unique_paths": 327,
+    "sha256_and_git_hash_object_no_filters_match": true,
+    "source_paths": 317,
+    "input_paths": 10
+  }
+}

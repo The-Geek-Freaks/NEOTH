@@ -449,7 +449,9 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
             pair_before: pair_baseline(&store.home, request.kind())?,
             participant: (request.kind() != ParticipantKind::Slack).then_some(request.kind()),
             participant_count: match &request {
-                PrivateRequest::Batch { participants, .. } => Some(u8::try_from(participants.len())?),
+                PrivateRequest::Batch { participants, .. } => {
+                    Some(u8::try_from(participants.len())?)
+                }
                 _ => None,
             },
         };
@@ -788,8 +790,16 @@ fn make_status(plan: &Plan, state: &State, pair_state: &'static str, consistent:
         id: plan.id.clone(),
         phase: state.phase,
         pair_state,
-        committed_steps: if consistent && state.phase == Phase::Committed { plan.participant_count() } else { 0 },
-        reversed_steps: if consistent && state.phase == Phase::RolledBack { plan.participant_count() } else { 0 },
+        committed_steps: if consistent && state.phase == Phase::Committed {
+            plan.participant_count()
+        } else {
+            0
+        },
+        reversed_steps: if consistent && state.phase == Phase::RolledBack {
+            plan.participant_count()
+        } else {
+            0
+        },
         held: state.held.is_some() || !consistent,
         reason: state
             .held
@@ -936,7 +946,11 @@ where
         id,
         config,
         request_path,
-        |binding| probe.take().expect("single-participant test probe called twice")(binding),
+        |binding| {
+            probe
+                .take()
+                .expect("single-participant test probe called twice")(binding)
+        },
         checkpoint,
     )
     .await

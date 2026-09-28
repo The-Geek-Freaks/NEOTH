@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-hosted-format-and-compile-repair/v1",
+  "producer": "41317e8382ba0a3397049348c4bdafa3847bce4d",
+  "format_run": 36380718812,
+  "artifact_id": 10952920594,
+  "zip_sha256": "f2fa2a6dc5771652fac03706ba5f6cb876ac495977a3fa9bcd65e932e6a353d9",
+  "patch_sha256": "f25c18e6db95d586272ac23af95ff0011d4347aa894c7c42996c056865e04142",
+  "hosted_patch_applied_to_six_files": true,
+  "core_run": 36380719006,
+  "failure": "E0271: batch pair writer returned std::io::Result instead of anyhow::Result",
+  "repair": "Add established atomic-write .with_context conversion; preserve IO cause and target context",
+  "independent_static_review": "work/gold-20260906/wave1816-batch-compile-review.md",
+  "review_backend_sha256": "2553c3e7f164952738be3a04365e88ffa4be318cffabce1ad5cea336a5094d45",
+  "local_executable_validation": false,
+  "new_hosted_validation": "pending",
+  "scope": "Formatting authenticity and static compiler correction only; no W1807 behavior acceptance"
+}

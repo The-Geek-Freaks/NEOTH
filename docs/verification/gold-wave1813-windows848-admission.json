@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-windows-regression-admission/v1",
+  "run_id": 36377724690,
+  "workflow": "Windows storage regressions",
+  "producer_commit": "9f5d96a97c406325922c660517932b81ba2d1419",
+  "artifact": {
+    "id": 10952228470,
+    "name": "windows-storage-regressions-9f5d96a97c406325922c660517932b81ba2d1419",
+    "api_sha256": "d3721e2786a8018420309015d68e317682192edb8f7518ddf4a077679b1d969e",
+    "downloaded_sha256": "d3721e2786a8018420309015d68e317682192edb8f7518ddf4a077679b1d969e"
+  },
+  "execution": {
+    "expected": 848,
+    "selected": 848,
+    "listed": 848,
+    "executed": 848,
+    "passed": 848,
+    "failed": 0,
+    "duplicate_results": 0,
+    "missing_selected_result_identities": 0,
+    "extra_result_identities": 0,
+    "numbered_log_count": 848,
+    "per_log_terminal_receipt_failures": 0,
+    "log_manifest_mismatches": 0,
+    "evidence_manifest_mismatches": 0
+  },
+  "producer_bindings": {
+    "source_binding_rows": 848,
+    "input_manifest_rows": 13,
+    "unique_paths": 130,
+    "sha256_all_match": true,
+    "git_hash_object_no_filters_checked": 130,
+    "git_hash_object_no_filters_all_match": true
+  },
+  "scope": "Windows-only producer9f5d96a9; does not accept later multi-account source41317e83 or current runtime.",
+  "root_verification": {
+    "exact_named_lists_and_one_test_terminals": 848,
+    "raw_producer_paths_rehashed": 130,
+    "missing_or_mismatched": 0,
+    "artifact_api_digest_rechecked": true
+  }
+}

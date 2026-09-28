@@ -20,8 +20,10 @@ use super::{
     with_legacy_pair_locks,
 };
 use crate::channels::registry::ChannelAccountId;
-use crate::config::{AccountIncarnation, FreedomConfig, RuntimeConfigPair, SecretsBackend,
-    SlackAccountConfig, TelegramAccountConfig};
+use crate::config::{
+    AccountIncarnation, FreedomConfig, RuntimeConfigPair, SecretsBackend, SlackAccountConfig,
+    TelegramAccountConfig,
+};
 use crate::secret::SecretString;
 
 const VERSION: u8 = 1;
@@ -109,8 +111,17 @@ struct BatchCustodyRecord {
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "channel", rename_all = "snake_case", deny_unknown_fields)]
 enum CustodyParticipant {
-    Slack { account: String, allowed_user_id: String, verified_team_id: String, incarnation: String },
-    Telegram { account: String, allowed_user_id: u64, incarnation: String },
+    Slack {
+        account: String,
+        allowed_user_id: String,
+        verified_team_id: String,
+        incarnation: String,
+    },
+    Telegram {
+        account: String,
+        allowed_user_id: u64,
+        incarnation: String,
+    },
 }
 
 impl Credentials {
@@ -123,103 +134,265 @@ impl Credentials {
     ) -> Result<PreparedFileMigrationBatch> {
         validate_binding(operation_id, plan_binding)?;
         ensure!(!inputs.is_empty(), "file migration batch is empty");
-        ensure!(inputs.len() <= MAX_PARTICIPANTS, "file migration batch exceeds {MAX_PARTICIPANTS} participants");
-        ensure!(transaction_directory(freedom_path) == transaction_directory(credentials_path), "file migration batch pair paths are not siblings");
-        with_dual_file_transaction_lock(freedom_path, || with_config_writer_guard(freedom_path, || with_legacy_pair_locks(freedom_path, credentials_path, || {
-            validate_targets(freedom_path, credentials_path)?;
-            let before_freedom = FileSnapshot::capture(freedom_path)?;
-            let before_credentials = FileSnapshot::capture(credentials_path)?;
-            let config_before = FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
-            ensure!(config_before.secrets_backend == SecretsBackend::File, "file migration batch requires the file secrets backend");
-            let mut config = config_before.clone();
-            let mut credentials = Self::load_or_default_unlocked(credentials_path)?;
-            ensure!(config.telegram_token.is_none() && config.telegram_user_id.is_none() && credentials.telegram_token.is_none(), "legacy Telegram scalar fields cannot coexist with a file migration batch");
-            ensure!(credentials.slack_bot_token.is_none() && credentials.slack_app_token.is_none() && credentials.slack_allowed_user_id.is_none(), "legacy Slack scalar fields cannot coexist with a file migration batch");
-            ensure!(config.channel_accounts.telegram.keys().eq(credentials.channel_accounts.telegram.keys()), "Telegram policy and credential account keys must match before batch");
-            ensure!(config.channel_accounts.slack.keys().eq(credentials.channel_accounts.slack.keys()), "Slack policy and credential account keys must match before batch");
-            for policy in config.channel_accounts.telegram.values() {
-                ensure!(policy.allowed_user_id != 0, "existing Telegram account has invalid allowed_user_id");
-            }
-            for (account, policy) in &config.channel_accounts.slack {
-                crate::channels::slack::normalize_allowed_user_id(&policy.allowed_user_id)
-                    .with_context(|| format!("existing Slack account `{account}` has invalid allowed_user_id"))?;
-                let secrets = credentials.channel_accounts.slack.get(account)
-                    .context("matched existing Slack credential is absent")?;
-                ensure!(secrets.bot_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty())
-                    && secrets.app_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty()),
-                    "existing Slack account `{account}` has incomplete file credentials");
-            }
-            let mut seen = BTreeSet::new();
-            let mut participants = Vec::with_capacity(inputs.len());
-            for input in inputs {
-                match input {
-                    FileMigrationInput::Telegram { account, allowed_user_id, token } => {
-                        ensure!(allowed_user_id != 0, "Telegram account allowed_user_id must be nonzero");
-                        ensure!(!token.expose().trim().is_empty(), "Telegram account token must be non-blank");
-                        ensure!(seen.insert(("telegram", account.to_string())), "duplicate Telegram target account");
-                        let existing = config.channel_accounts.telegram.get(&account);
-                        let policy = TelegramAccountConfig {
-                            allowed_user_id,
-                            incarnation: Some(existing.and_then(|p| p.incarnation.clone()).unwrap_or_else(AccountIncarnation::new_random)),
-                            dm_pairing: existing.and_then(|p| p.dm_pairing.clone()),
-                        };
-                        config.channel_accounts.telegram.insert(account.clone(), policy);
-                        credentials.channel_accounts.telegram.insert(account.clone(), TelegramAccountCredentials { token: Some(token) });
-                        participants.push(FileMigrationParticipant::Telegram { account });
+        ensure!(
+            inputs.len() <= MAX_PARTICIPANTS,
+            "file migration batch exceeds {MAX_PARTICIPANTS} participants"
+        );
+        ensure!(
+            transaction_directory(freedom_path) == transaction_directory(credentials_path),
+            "file migration batch pair paths are not siblings"
+        );
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    validate_targets(freedom_path, credentials_path)?;
+                    let before_freedom = FileSnapshot::capture(freedom_path)?;
+                    let before_credentials = FileSnapshot::capture(credentials_path)?;
+                    let config_before =
+                        FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+                    ensure!(
+                        config_before.secrets_backend == SecretsBackend::File,
+                        "file migration batch requires the file secrets backend"
+                    );
+                    let mut config = config_before.clone();
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)?;
+                    ensure!(
+                        config.telegram_token.is_none()
+                            && config.telegram_user_id.is_none()
+                            && credentials.telegram_token.is_none(),
+                        "legacy Telegram scalar fields cannot coexist with a file migration batch"
+                    );
+                    ensure!(
+                        credentials.slack_bot_token.is_none()
+                            && credentials.slack_app_token.is_none()
+                            && credentials.slack_allowed_user_id.is_none(),
+                        "legacy Slack scalar fields cannot coexist with a file migration batch"
+                    );
+                    ensure!(
+                        config
+                            .channel_accounts
+                            .telegram
+                            .keys()
+                            .eq(credentials.channel_accounts.telegram.keys()),
+                        "Telegram policy and credential account keys must match before batch"
+                    );
+                    ensure!(
+                        config
+                            .channel_accounts
+                            .slack
+                            .keys()
+                            .eq(credentials.channel_accounts.slack.keys()),
+                        "Slack policy and credential account keys must match before batch"
+                    );
+                    for policy in config.channel_accounts.telegram.values() {
+                        ensure!(
+                            policy.allowed_user_id != 0,
+                            "existing Telegram account has invalid allowed_user_id"
+                        );
                     }
-                    FileMigrationInput::Slack { account, allowed_user_id, bot_token, app_token } => {
-                        let allowed_user_id = crate::channels::slack::normalize_allowed_user_id(&allowed_user_id).context("Slack account allowed_user_id is invalid")?;
-                        ensure!(!bot_token.expose().trim().is_empty() && !app_token.expose().trim().is_empty(), "Slack account tokens must be non-blank");
-                        ensure!(seen.insert(("slack", account.to_string())), "duplicate Slack target account");
-                        let team_id = config.channel_accounts.slack.get(&account).and_then(|p| p.team_id.clone());
-                        config.channel_accounts.slack.insert(account.clone(), SlackAccountConfig { allowed_user_id, team_id, incarnation: Some(AccountIncarnation::new_random()) });
-                        credentials.channel_accounts.slack.insert(account.clone(), SlackAccountCredentials { bot_token: Some(bot_token), app_token: Some(app_token) });
-                        participants.push(FileMigrationParticipant::Slack { account });
+                    for (account, policy) in &config.channel_accounts.slack {
+                        crate::channels::slack::normalize_allowed_user_id(&policy.allowed_user_id)
+                            .with_context(|| {
+                                format!(
+                                    "existing Slack account `{account}` has invalid allowed_user_id"
+                                )
+                            })?;
+                        let secrets = credentials
+                            .channel_accounts
+                            .slack
+                            .get(account)
+                            .context("matched existing Slack credential is absent")?;
+                        ensure!(
+                            secrets
+                                .bot_token
+                                .as_ref()
+                                .is_some_and(|token| !token.expose().trim().is_empty())
+                                && secrets
+                                    .app_token
+                                    .as_ref()
+                                    .is_some_and(|token| !token.expose().trim().is_empty()),
+                            "existing Slack account `{account}` has incomplete file credentials"
+                        );
                     }
-                }
-            }
-            let candidate = RuntimeConfigPair {
-                config: config.clone(),
-                raw_credentials: credentials.clone(),
-                credentials: credentials.clone(),
-            };
-            ensure!(
-                candidate.authenticated_telegram_accounts()?.len()
-                    == config.channel_accounts.telegram.len()
-                    && candidate.authenticated_slack_accounts()?.len()
-                        == config.channel_accounts.slack.len(),
-                "file migration batch candidate authentication is incomplete"
-            );
-            Ok(PreparedFileMigrationBatch { freedom_path: freedom_path.to_path_buf(), credentials_path: credentials_path.to_path_buf(), operation_id: operation_id.to_owned(), plan_binding: plan_binding.to_owned(), before_freedom, before_credentials, config_before, config, credentials, participants, candidate })
-        })))
+                    let mut seen = BTreeSet::new();
+                    let mut participants = Vec::with_capacity(inputs.len());
+                    for input in inputs {
+                        match input {
+                            FileMigrationInput::Telegram {
+                                account,
+                                allowed_user_id,
+                                token,
+                            } => {
+                                ensure!(
+                                    allowed_user_id != 0,
+                                    "Telegram account allowed_user_id must be nonzero"
+                                );
+                                ensure!(
+                                    !token.expose().trim().is_empty(),
+                                    "Telegram account token must be non-blank"
+                                );
+                                ensure!(
+                                    seen.insert(("telegram", account.to_string())),
+                                    "duplicate Telegram target account"
+                                );
+                                let existing = config.channel_accounts.telegram.get(&account);
+                                let policy = TelegramAccountConfig {
+                                    allowed_user_id,
+                                    incarnation: Some(
+                                        existing
+                                            .and_then(|p| p.incarnation.clone())
+                                            .unwrap_or_else(AccountIncarnation::new_random),
+                                    ),
+                                    dm_pairing: existing.and_then(|p| p.dm_pairing.clone()),
+                                };
+                                config
+                                    .channel_accounts
+                                    .telegram
+                                    .insert(account.clone(), policy);
+                                credentials.channel_accounts.telegram.insert(
+                                    account.clone(),
+                                    TelegramAccountCredentials { token: Some(token) },
+                                );
+                                participants.push(FileMigrationParticipant::Telegram { account });
+                            }
+                            FileMigrationInput::Slack {
+                                account,
+                                allowed_user_id,
+                                bot_token,
+                                app_token,
+                            } => {
+                                let allowed_user_id =
+                                    crate::channels::slack::normalize_allowed_user_id(
+                                        &allowed_user_id,
+                                    )
+                                    .context("Slack account allowed_user_id is invalid")?;
+                                ensure!(
+                                    !bot_token.expose().trim().is_empty()
+                                        && !app_token.expose().trim().is_empty(),
+                                    "Slack account tokens must be non-blank"
+                                );
+                                ensure!(
+                                    seen.insert(("slack", account.to_string())),
+                                    "duplicate Slack target account"
+                                );
+                                let team_id = config
+                                    .channel_accounts
+                                    .slack
+                                    .get(&account)
+                                    .and_then(|p| p.team_id.clone());
+                                config.channel_accounts.slack.insert(
+                                    account.clone(),
+                                    SlackAccountConfig {
+                                        allowed_user_id,
+                                        team_id,
+                                        incarnation: Some(AccountIncarnation::new_random()),
+                                    },
+                                );
+                                credentials.channel_accounts.slack.insert(
+                                    account.clone(),
+                                    SlackAccountCredentials {
+                                        bot_token: Some(bot_token),
+                                        app_token: Some(app_token),
+                                    },
+                                );
+                                participants.push(FileMigrationParticipant::Slack { account });
+                            }
+                        }
+                    }
+                    let candidate = RuntimeConfigPair {
+                        config: config.clone(),
+                        raw_credentials: credentials.clone(),
+                        credentials: credentials.clone(),
+                    };
+                    ensure!(
+                        candidate.authenticated_telegram_accounts()?.len()
+                            == config.channel_accounts.telegram.len()
+                            && candidate.authenticated_slack_accounts()?.len()
+                                == config.channel_accounts.slack.len(),
+                        "file migration batch candidate authentication is incomplete"
+                    );
+                    Ok(PreparedFileMigrationBatch {
+                        freedom_path: freedom_path.to_path_buf(),
+                        credentials_path: credentials_path.to_path_buf(),
+                        operation_id: operation_id.to_owned(),
+                        plan_binding: plan_binding.to_owned(),
+                        before_freedom,
+                        before_credentials,
+                        config_before,
+                        config,
+                        credentials,
+                        participants,
+                        candidate,
+                    })
+                })
+            })
+        })
     }
 }
 
 impl PreparedFileMigrationBatch {
-    pub(crate) fn candidate_pair(&self) -> &RuntimeConfigPair { &self.candidate }
-    pub(crate) fn participants(&self) -> &[FileMigrationParticipant] { &self.participants }
-    pub(crate) fn persist_custody(mut self, verified_teams: &[Option<String>]) -> Result<FileMigrationBatchCustody> {
-        ensure!(verified_teams.len() == self.participants.len(), "file migration verified-team vector length differs from participants");
+    pub(crate) fn candidate_pair(&self) -> &RuntimeConfigPair {
+        &self.candidate
+    }
+    pub(crate) fn participants(&self) -> &[FileMigrationParticipant] {
+        &self.participants
+    }
+    pub(crate) fn persist_custody(
+        mut self,
+        verified_teams: &[Option<String>],
+    ) -> Result<FileMigrationBatchCustody> {
+        ensure!(
+            verified_teams.len() == self.participants.len(),
+            "file migration verified-team vector length differs from participants"
+        );
         for (participant, verified) in self.participants.iter().zip(verified_teams) {
             match participant {
                 FileMigrationParticipant::Slack { account } => {
-                    let team = verified.as_deref().context("Slack batch participant needs verified team id")?;
-                    let team = crate::config::normalize_slack_team_id(team).context("verified Slack team_id is invalid")?;
+                    let team = verified
+                        .as_deref()
+                        .context("Slack batch participant needs verified team id")?;
+                    let team = crate::config::normalize_slack_team_id(team)
+                        .context("verified Slack team_id is invalid")?;
                     let original = self.config_before.channel_accounts.slack.get(account);
-                    let old_team = original.and_then(|p| p.team_id.as_deref()).map(crate::config::normalize_slack_team_id).transpose().context("stored Slack team_id is invalid")?;
+                    let old_team = original
+                        .and_then(|p| p.team_id.as_deref())
+                        .map(crate::config::normalize_slack_team_id)
+                        .transpose()
+                        .context("stored Slack team_id is invalid")?;
                     let incarnation = match old_team.as_deref() {
-                        Some(old) if old == team.as_str() => original.and_then(|p| p.incarnation.clone()).unwrap_or_else(AccountIncarnation::new_random),
+                        Some(old) if old == team.as_str() => original
+                            .and_then(|p| p.incarnation.clone())
+                            .unwrap_or_else(AccountIncarnation::new_random),
                         _ => AccountIncarnation::new_random(),
                     };
-                    let policy = self.config.channel_accounts.slack.get_mut(account).context("prepared Slack policy absent")?;
+                    let policy = self
+                        .config
+                        .channel_accounts
+                        .slack
+                        .get_mut(account)
+                        .context("prepared Slack policy absent")?;
                     policy.team_id = Some(team);
                     policy.incarnation = Some(incarnation);
                 }
-                FileMigrationParticipant::Telegram { .. } => ensure!(verified.is_none(), "Telegram batch participant must not carry a verified team"),
+                FileMigrationParticipant::Telegram { .. } => ensure!(
+                    verified.is_none(),
+                    "Telegram batch participant must not carry a verified team"
+                ),
             }
         }
-        let after_freedom = FileSnapshot::Present(zeroize::Zeroizing::new(render_freedom_preserving_unknown_yaml(&self.config, &self.before_freedom, InlineTelegramTokenPolicy::Preserve)?.as_bytes().to_vec()));
-        let after_credentials = self.credentials.rendered_file_snapshot_preserving_unknown(&self.credentials_path, &self.before_credentials)?;
+        let after_freedom = FileSnapshot::Present(zeroize::Zeroizing::new(
+            render_freedom_preserving_unknown_yaml(
+                &self.config,
+                &self.before_freedom,
+                InlineTelegramTokenPolicy::Preserve,
+            )?
+            .as_bytes()
+            .to_vec(),
+        ));
+        let after_credentials = self.credentials.rendered_file_snapshot_preserving_unknown(
+            &self.credentials_path,
+            &self.before_credentials,
+        )?;
         FileMigrationBatchCustody::persist(self, after_freedom, after_credentials)
     }
 }
@@ -240,7 +413,9 @@ impl FileMigrationBatchCustody {
             credentials_file: "credentials.yaml".into(),
             participants,
             freedom_before: JournalFileSnapshot::from_file_snapshot(&prepared.before_freedom),
-            credentials_before: JournalFileSnapshot::from_file_snapshot(&prepared.before_credentials),
+            credentials_before: JournalFileSnapshot::from_file_snapshot(
+                &prepared.before_credentials,
+            ),
             freedom_after: JournalFileSnapshot::from_file_snapshot(&after_freedom),
             credentials_after: JournalFileSnapshot::from_file_snapshot(&after_credentials),
             before_sha256: pair_hash(&prepared.before_freedom, &prepared.before_credentials),
@@ -322,8 +497,11 @@ impl FileMigrationBatchCustody {
         );
         for (stored, incoming) in self.record.participants.iter().zip(verified_teams) {
             match stored {
-                CustodyParticipant::Slack { verified_team_id, .. } => {
-                    let incoming = incoming.as_deref()
+                CustodyParticipant::Slack {
+                    verified_team_id, ..
+                } => {
+                    let incoming = incoming
+                        .as_deref()
                         .map(crate::config::normalize_slack_team_id)
                         .transpose()?;
                     ensure!(
@@ -360,7 +538,14 @@ impl FileMigrationBatchCustody {
         operation_id: &str,
         plan_binding: &str,
     ) -> Result<FileMigrationBatchCommit> {
-        self.publish(freedom, credentials, operation_id, plan_binding, true, |_| Ok(()))?;
+        self.publish(
+            freedom,
+            credentials,
+            operation_id,
+            plan_binding,
+            true,
+            |_| Ok(()),
+        )?;
         Ok(FileMigrationBatchCommit {
             before_sha256: self.record.before_sha256.clone(),
             after_sha256: self.record.after_sha256.clone(),
@@ -374,7 +559,14 @@ impl FileMigrationBatchCustody {
         operation_id: &str,
         plan_binding: &str,
     ) -> Result<FileMigrationBatchState> {
-        self.publish(freedom, credentials, operation_id, plan_binding, false, |_| Ok(()))?;
+        self.publish(
+            freedom,
+            credentials,
+            operation_id,
+            plan_binding,
+            false,
+            |_| Ok(()),
+        )?;
         Ok(FileMigrationBatchState::Before)
     }
 
@@ -399,17 +591,28 @@ impl FileMigrationBatchCustody {
         validate_exact_pair_target(&self.path, "file migration batch custody")?;
         let body = read_custody(&self.path)?.context("file migration batch custody disappeared")?;
         let observed: BatchCustodyRecord = serde_yaml::from_slice(&body)?;
-        validate_record(&observed, &self.record.operation_id, &self.record.plan_binding)?;
-        ensure!(observed == self.record, "file migration batch custody changed after loading");
+        validate_record(
+            &observed,
+            &self.record.operation_id,
+            &self.record.plan_binding,
+        )?;
+        ensure!(
+            observed == self.record,
+            "file migration batch custody changed after loading"
+        );
         Ok(())
     }
 
     fn snapshots(&self) -> Result<(FileSnapshot, FileSnapshot, FileSnapshot, FileSnapshot)> {
         Ok((
             self.record.freedom_before.decode("batch freedom_before")?,
-            self.record.credentials_before.decode("batch credentials_before")?,
+            self.record
+                .credentials_before
+                .decode("batch credentials_before")?,
             self.record.freedom_after.decode("batch freedom_after")?,
-            self.record.credentials_after.decode("batch credentials_after")?,
+            self.record
+                .credentials_after
+                .decode("batch credentials_after")?,
         ))
     }
 
@@ -444,14 +647,15 @@ impl FileMigrationBatchCustody {
         with_pair_locks(freedom, credentials, || {
             self.ensure_unchanged()?;
             let state = self.classify()?;
-            let (from_freedom, to_freedom, from_credentials, to_credentials) = match (state, forward) {
-                (FileMigrationBatchState::Mixed, _) => {
-                    anyhow::bail!("file migration batch raw pair drifted")
-                }
-                (FileMigrationBatchState::Before, true) => (&fb, &fa, &cb, &ca),
-                (FileMigrationBatchState::After, false) => (&fa, &fb, &ca, &cb),
-                _ => return Ok(()),
-            };
+            let (from_freedom, to_freedom, from_credentials, to_credentials) =
+                match (state, forward) {
+                    (FileMigrationBatchState::Mixed, _) => {
+                        anyhow::bail!("file migration batch raw pair drifted")
+                    }
+                    (FileMigrationBatchState::Before, true) => (&fb, &fa, &cb, &ca),
+                    (FileMigrationBatchState::After, false) => (&fa, &fb, &ca, &cb),
+                    _ => return Ok(()),
+                };
             publish_prepared_file_pair(
                 freedom,
                 credentials,
@@ -463,6 +667,7 @@ impl FileMigrationBatchCustody {
                 (),
                 Some(|path: &Path, body: &[u8]| {
                     crate::util::atomic_write::atomic_write_private(path, body)
+                        .with_context(|| format!("atomically write {}", path.display()))
                 }),
                 fault,
             )
@@ -488,61 +693,229 @@ fn with_pair_locks<T>(
 #[cfg(test)]
 impl FileMigrationBatchCustody {
     pub(crate) fn publish_with_test_fault<F>(
-        &self, freedom: &Path, credentials: &Path, operation_id: &str,
-        plan_binding: &str, forward: bool, fault: F,
+        &self,
+        freedom: &Path,
+        credentials: &Path,
+        operation_id: &str,
+        plan_binding: &str,
+        forward: bool,
+        fault: F,
     ) -> Result<()>
-    where F: FnMut(super::DualFileFaultPoint) -> Result<()> {
-        self.publish(freedom, credentials, operation_id, plan_binding, forward, fault)
+    where
+        F: FnMut(super::DualFileFaultPoint) -> Result<()>,
+    {
+        self.publish(
+            freedom,
+            credentials,
+            operation_id,
+            plan_binding,
+            forward,
+            fault,
+        )
     }
 }
-fn custody_participants(config: &FreedomConfig, participants: &[FileMigrationParticipant]) -> Result<Vec<CustodyParticipant>> { participants.iter().map(|p| match p { FileMigrationParticipant::Slack { account } => { let x=config.channel_accounts.slack.get(account).context("prepared Slack policy absent")?; Ok(CustodyParticipant::Slack { account: account.to_string(), allowed_user_id:x.allowed_user_id.clone(), verified_team_id:x.team_id.clone().context("final Slack team absent")?, incarnation:x.incarnation.clone().context("final Slack incarnation absent")?.to_string() }) }, FileMigrationParticipant::Telegram { account } => { let x=config.channel_accounts.telegram.get(account).context("prepared Telegram policy absent")?; Ok(CustodyParticipant::Telegram { account: account.to_string(), allowed_user_id:x.allowed_user_id, incarnation:x.incarnation.clone().context("final Telegram incarnation absent")?.to_string() }) } }).collect() }
-fn validate_targets(freedom: &Path, credentials: &Path) -> Result<()> { ensure!(freedom.file_name().is_some_and(|x| x == "freedom.yaml") && credentials == sibling_credentials_path(freedom), "file migration batch requires canonical pair targets"); validate_exact_pair_target(freedom,"file migration batch freedom")?; validate_exact_pair_target(credentials,"file migration batch credentials") }
-fn custody_path(freedom: &Path, operation_id: &str) -> Result<PathBuf> { let parsed=uuid::Uuid::parse_str(operation_id).context("file migration batch operation id must be UUID")?; ensure!(parsed.hyphenated().to_string()==operation_id,"file migration batch operation id noncanonical"); Ok(transaction_directory(freedom).join(format!("{PREFIX}{operation_id}{SUFFIX}"))) }
+fn custody_participants(
+    config: &FreedomConfig,
+    participants: &[FileMigrationParticipant],
+) -> Result<Vec<CustodyParticipant>> {
+    participants
+        .iter()
+        .map(|p| match p {
+            FileMigrationParticipant::Slack { account } => {
+                let x = config
+                    .channel_accounts
+                    .slack
+                    .get(account)
+                    .context("prepared Slack policy absent")?;
+                Ok(CustodyParticipant::Slack {
+                    account: account.to_string(),
+                    allowed_user_id: x.allowed_user_id.clone(),
+                    verified_team_id: x.team_id.clone().context("final Slack team absent")?,
+                    incarnation: x
+                        .incarnation
+                        .clone()
+                        .context("final Slack incarnation absent")?
+                        .to_string(),
+                })
+            }
+            FileMigrationParticipant::Telegram { account } => {
+                let x = config
+                    .channel_accounts
+                    .telegram
+                    .get(account)
+                    .context("prepared Telegram policy absent")?;
+                Ok(CustodyParticipant::Telegram {
+                    account: account.to_string(),
+                    allowed_user_id: x.allowed_user_id,
+                    incarnation: x
+                        .incarnation
+                        .clone()
+                        .context("final Telegram incarnation absent")?
+                        .to_string(),
+                })
+            }
+        })
+        .collect()
+}
+fn validate_targets(freedom: &Path, credentials: &Path) -> Result<()> {
+    ensure!(
+        freedom.file_name().is_some_and(|x| x == "freedom.yaml")
+            && credentials == sibling_credentials_path(freedom),
+        "file migration batch requires canonical pair targets"
+    );
+    validate_exact_pair_target(freedom, "file migration batch freedom")?;
+    validate_exact_pair_target(credentials, "file migration batch credentials")
+}
+fn custody_path(freedom: &Path, operation_id: &str) -> Result<PathBuf> {
+    let parsed = uuid::Uuid::parse_str(operation_id)
+        .context("file migration batch operation id must be UUID")?;
+    ensure!(
+        parsed.hyphenated().to_string() == operation_id,
+        "file migration batch operation id noncanonical"
+    );
+    Ok(transaction_directory(freedom).join(format!("{PREFIX}{operation_id}{SUFFIX}")))
+}
 fn validate_binding(operation_id: &str, plan_binding: &str) -> Result<()> {
     let parsed = uuid::Uuid::parse_str(operation_id)?;
-    ensure!(parsed.hyphenated().to_string() == operation_id,
-        "file migration batch operation id must be canonical lowercase UUID");
-    ensure!(plan_binding.len() == 64 && plan_binding.bytes().all(|x| x.is_ascii_hexdigit() && !x.is_ascii_uppercase()),
-        "file migration batch plan binding must be lowercase SHA-256");
+    ensure!(
+        parsed.hyphenated().to_string() == operation_id,
+        "file migration batch operation id must be canonical lowercase UUID"
+    );
+    ensure!(
+        plan_binding.len() == 64
+            && plan_binding
+                .bytes()
+                .all(|x| x.is_ascii_hexdigit() && !x.is_ascii_uppercase()),
+        "file migration batch plan binding must be lowercase SHA-256"
+    );
     Ok(())
 }
 
 fn validate_record(r: &BatchCustodyRecord, operation_id: &str, plan_binding: &str) -> Result<()> {
-    ensure!(r.version == VERSION && r.operation_id == operation_id && r.plan_binding == plan_binding,
-        "file migration batch custody binding invalid");
-    ensure!(r.freedom_file == "freedom.yaml" && r.credentials_file == "credentials.yaml",
-        "file migration batch custody targets are noncanonical");
-    ensure!(!r.participants.is_empty() && r.participants.len() <= MAX_PARTICIPANTS,
-        "file migration batch custody participant count invalid");
+    ensure!(
+        r.version == VERSION && r.operation_id == operation_id && r.plan_binding == plan_binding,
+        "file migration batch custody binding invalid"
+    );
+    ensure!(
+        r.freedom_file == "freedom.yaml" && r.credentials_file == "credentials.yaml",
+        "file migration batch custody targets are noncanonical"
+    );
+    ensure!(
+        !r.participants.is_empty() && r.participants.len() <= MAX_PARTICIPANTS,
+        "file migration batch custody participant count invalid"
+    );
     let mut seen = BTreeSet::new();
     for participant in &r.participants {
         match participant {
-            CustodyParticipant::Slack { account, allowed_user_id, verified_team_id, incarnation } => {
+            CustodyParticipant::Slack {
+                account,
+                allowed_user_id,
+                verified_team_id,
+                incarnation,
+            } => {
                 let canonical = ChannelAccountId::new(account.clone())?;
-                ensure!(canonical.to_string() == *account && seen.insert(("slack", account)), "invalid or duplicate Slack custody account");
+                ensure!(
+                    canonical.to_string() == *account && seen.insert(("slack", account)),
+                    "invalid or duplicate Slack custody account"
+                );
                 let _ = crate::channels::slack::normalize_allowed_user_id(allowed_user_id)?;
                 let _ = crate::config::normalize_slack_team_id(verified_team_id)?;
                 let _ = AccountIncarnation::parse(incarnation)?;
             }
-            CustodyParticipant::Telegram { account, allowed_user_id, incarnation } => {
+            CustodyParticipant::Telegram {
+                account,
+                allowed_user_id,
+                incarnation,
+            } => {
                 let canonical = ChannelAccountId::new(account.clone())?;
-                ensure!(canonical.to_string() == *account && *allowed_user_id != 0 && seen.insert(("telegram", account)), "invalid or duplicate Telegram custody account");
+                ensure!(
+                    canonical.to_string() == *account
+                        && *allowed_user_id != 0
+                        && seen.insert(("telegram", account)),
+                    "invalid or duplicate Telegram custody account"
+                );
                 let _ = AccountIncarnation::parse(incarnation)?;
             }
         }
     }
     let (fb, cb, fa, ca) = (
-        r.freedom_before.decode("batch freedom_before")?, r.credentials_before.decode("batch credentials_before")?,
-        r.freedom_after.decode("batch freedom_after")?, r.credentials_after.decode("batch credentials_after")?,
+        r.freedom_before.decode("batch freedom_before")?,
+        r.credentials_before.decode("batch credentials_before")?,
+        r.freedom_after.decode("batch freedom_after")?,
+        r.credentials_after.decode("batch credentials_after")?,
     );
-    ensure!(r.before_sha256 == pair_hash(&fb, &cb) && r.after_sha256 == pair_hash(&fa, &ca),
-        "file migration batch custody pair commitment invalid");
+    ensure!(
+        r.before_sha256 == pair_hash(&fb, &cb) && r.after_sha256 == pair_hash(&fa, &ca),
+        "file migration batch custody pair commitment invalid"
+    );
     Ok(())
 }
-fn pair_hash(f:&FileSnapshot,c:&FileSnapshot)->String { let mut h=Sha256::new(); h.update(PAIR_DOMAIN); for (name,s) in [("freedom.yaml",f),("credentials.yaml",c)] { h.update(name.as_bytes()); h.update([0]); match s { FileSnapshot::Missing=>h.update([0]), FileSnapshot::Present(b)=>{h.update([1]);h.update((b.len()as u64).to_le_bytes());h.update(b.as_slice());} } } format!("{:x}",h.finalize()) }
-fn custody_hash(r:&BatchCustodyRecord)->String { let mut body=zeroize::Zeroizing::new(serde_yaml::to_string(r).expect("validated batch custody serializes")); let mut h=Sha256::new();h.update(CUSTODY_DOMAIN);h.update(body.as_bytes());let out=format!("{:x}",h.finalize());body.zeroize();out }
-fn persist_record_create_new(path:&Path,r:&BatchCustodyRecord)->Result<()> { let mut body=zeroize::Zeroizing::new(serde_yaml::to_string(r)?); ensure!(body.len() as u64 <= super::MAX_DUAL_FILE_JOURNAL_BYTES,"file migration batch custody exceeds limit"); let result=crate::util::atomic_write::write_private_create_new_durable(path,body.as_bytes()).with_context(||format!("create file migration batch custody {}",path.display()));body.zeroize();result }
-fn read_custody(path:&Path)->Result<Option<zeroize::Zeroizing<Vec<u8>>>> { let parent=path.parent().context("batch custody parent absent")?; let bound=crate::skills::store::open_bound_directory(parent,false,"file migration batch custody parent")?.context("file migration batch custody parent absent")?; let name=path.file_name().context("batch custody leaf absent")?; match bound.dir.symlink_metadata(name) { Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(None),Err(e)=>Err(e.into()),Ok(m)=>{ensure!(m.file_type().is_file()&&!m.file_type().is_symlink(),"file migration batch custody is not regular");let bytes=crate::skills::store::read_regular_file_bounded(&bound.dir,name,&bound.physical_display_path.join(name),super::MAX_DUAL_FILE_JOURNAL_BYTES as usize)?;Ok(Some(zeroize::Zeroizing::new(bytes)))}} }
+fn pair_hash(f: &FileSnapshot, c: &FileSnapshot) -> String {
+    let mut h = Sha256::new();
+    h.update(PAIR_DOMAIN);
+    for (name, s) in [("freedom.yaml", f), ("credentials.yaml", c)] {
+        h.update(name.as_bytes());
+        h.update([0]);
+        match s {
+            FileSnapshot::Missing => h.update([0]),
+            FileSnapshot::Present(b) => {
+                h.update([1]);
+                h.update((b.len() as u64).to_le_bytes());
+                h.update(b.as_slice());
+            }
+        }
+    }
+    format!("{:x}", h.finalize())
+}
+fn custody_hash(r: &BatchCustodyRecord) -> String {
+    let mut body = zeroize::Zeroizing::new(
+        serde_yaml::to_string(r).expect("validated batch custody serializes"),
+    );
+    let mut h = Sha256::new();
+    h.update(CUSTODY_DOMAIN);
+    h.update(body.as_bytes());
+    let out = format!("{:x}", h.finalize());
+    body.zeroize();
+    out
+}
+fn persist_record_create_new(path: &Path, r: &BatchCustodyRecord) -> Result<()> {
+    let mut body = zeroize::Zeroizing::new(serde_yaml::to_string(r)?);
+    ensure!(
+        body.len() as u64 <= super::MAX_DUAL_FILE_JOURNAL_BYTES,
+        "file migration batch custody exceeds limit"
+    );
+    let result = crate::util::atomic_write::write_private_create_new_durable(path, body.as_bytes())
+        .with_context(|| format!("create file migration batch custody {}", path.display()));
+    body.zeroize();
+    result
+}
+fn read_custody(path: &Path) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    let parent = path.parent().context("batch custody parent absent")?;
+    let bound = crate::skills::store::open_bound_directory(
+        parent,
+        false,
+        "file migration batch custody parent",
+    )?
+    .context("file migration batch custody parent absent")?;
+    let name = path.file_name().context("batch custody leaf absent")?;
+    match bound.dir.symlink_metadata(name) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+        Ok(m) => {
+            ensure!(
+                m.file_type().is_file() && !m.file_type().is_symlink(),
+                "file migration batch custody is not regular"
+            );
+            let bytes = crate::skills::store::read_regular_file_bounded(
+                &bound.dir,
+                name,
+                &bound.physical_display_path.join(name),
+                super::MAX_DUAL_FILE_JOURNAL_BYTES as usize,
+            )?;
+            Ok(Some(zeroize::Zeroizing::new(bytes)))
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;
