@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1764 hosted actual CLI first-use product admitted (2026-09-28):**
+Run36362248893 at7a9ae772 passed its actual compiled CLI init and isolated
+Archive Bridge daemon/plugin lifecycle. Original artifact10946540544 ZIP
+391598a9a62cc1303209ce0e71476fd8a902181ab5af26354dae63c8c7a0c1b1
+matches the GitHub API digest. All31 raw producer Git blobs match receipt
+hashes; installed bundle and source-owned ownership bytes also match.
+All11 phases (init through uninstall), all6 cleanup flags and first-use key
+retention passed. Initialization used only neoth init --provider skip with
+explicit CLI/license arguments; no restore seed. No init/startup diagnostic.
+Preflight36362159037 and CodeQL36362158757 passed for this source. Separate
+Group2028run36362250590 and Windows792run36362252138 are still running.
+Evidence: docs/verification/gold-wave1764-first-use-archive-bridge-admission.json.
+This accepts hosted Linux CLI first-use plus isolated bundled-plugin lifecycle;
+GUI onboarding, native Obsidian UI and external-provider acceptance remain open.
+W1765/W1766 Relink transaction/runtime integration is unpublished WIP under
+independent review; no acceptance is inferred. ROAD1324/1077/245/2 unchanged.
 **W1764 ordinary CLI interface-lock continuation (2026-09-28):**
 Product36360760874 atfa421934 compiled successfully, then failed at init with
 command_failed; all six cleanup flags true. Original artifact10946065535,
