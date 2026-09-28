@@ -12,6 +12,31 @@ import gchat_converted_relink_product_canary as canary
 
 
 class GChatRelinkCanaryTests(unittest.TestCase):
+    def test_refusal_failure_evidence_is_fixed_numeric_and_redacted(self):
+        counts = {name: offset for offset, name in enumerate(canary.REFUSAL_COUNTERS)}
+        evidence = canary.refusal_probe_evidence("wrong_target", counts)
+        self.assertEqual(evidence, {"stage": "wrong_target", "counters": counts})
+        rendered = json.dumps(evidence, sort_keys=True)
+        self.assertNotIn(canary.EMAIL, rendered)
+        self.assertNotIn("http://", rendered)
+        self.assertNotIn("BEGIN PRIVATE KEY", rendered)
+        self.assertNotIn("exception", rendered)
+        canary.validate_receipt_redaction(rendered)
+        for forbidden in (canary.EMAIL, "http://127.0.0.1:1", "https://example.invalid", "raw exception text", "BEGIN PRIVATE KEY"):
+            with self.subTest(forbidden=forbidden):
+                with self.assertRaisesRegex(canary.Failure, "receipt_secret_leak"):
+                    canary.validate_receipt_redaction(json.dumps({"failure": forbidden}))
+        for invalid in (
+            {**counts, "extra": 1},
+            {name: (True if name == "token" else value) for name, value in counts.items()},
+            {name: (-1 if name == "token" else value) for name, value in counts.items()},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
+                    canary.refusal_probe_evidence("wrong_target", invalid)
+        with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
+            canary.refusal_probe_evidence("untrusted-stage", counts)
+
     def test_strict_google_chat_envelope_and_public_argv(self):
         with tempfile.TemporaryDirectory() as directory:
             key = Path(directory) / "key.json"

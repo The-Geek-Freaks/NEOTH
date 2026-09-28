@@ -1254,18 +1254,20 @@ mod tests {
     fn explicit_home_clean_vault_ingest_creates_no_finding() {
         let home = tempfile::tempdir().unwrap();
         let vault = tempfile::tempdir().unwrap();
+        let home_path = std::fs::canonicalize(home.path()).unwrap();
+        let vault_path = std::fs::canonicalize(vault.path()).unwrap();
         let outcome = ingest_to_vault_at(
-            home.path(),
+            &home_path,
             "clean-producer-001",
             "Invoice text from Acme Co",
             OcrSource::PaperlessNgx,
-            vault.path(),
+            &vault_path,
             "NEOTH",
         )
         .expect("clean production ingest");
         assert!(outcome.target_path.exists());
 
-        let recent = crate::paperless::findings::recent_at(home.path(), 0, 10).unwrap();
+        let recent = crate::paperless::findings::recent_at(&home_path, 0, 10).unwrap();
         assert_eq!(recent.total, 0);
         assert!(recent.findings.is_empty());
         assert!(!recent.truncated);

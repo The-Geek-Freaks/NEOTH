@@ -447,7 +447,8 @@ mod tests {
     async fn arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count() {
         let mock = mock_arxiv(ONE_PAPER_ATOM, 200).await;
         let http = crate::tools::external_http::ExternalHttpAuthorizer::test_allow();
-        let result = arxiv::search_against_authorized(&mock.uri(), "all:diagnostic", 1, &http).await;
+        let result =
+            arxiv::search_against_authorized(&mock.uri(), "all:diagnostic", 1, &http).await;
         let request_count = mock
             .received_requests()
             .await

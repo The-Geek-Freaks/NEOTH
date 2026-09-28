@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn document_discovery_list_without_state_does_not_create_home() {
         let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("absent-home");
+        let home = std::fs::canonicalize(root.path()).unwrap().join("absent-home");
         run_proactive(ProactiveArgs {
             action: ProactiveAction::Documents,
             home: Some(home.clone()),
@@ -594,16 +594,18 @@ mod tests {
     fn document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect() {
         let home = tempfile::tempdir().unwrap();
         let sources = tempfile::tempdir().unwrap();
-        let source = sources.path().join("operator's notes.md");
+        let home_path = std::fs::canonicalize(home.path()).unwrap();
+        let sources_path = std::fs::canonicalize(sources.path()).unwrap();
+        let source = sources_path.join("operator's notes.md");
         let body = "# Operator notes\nThis stays in the selected source file.\n";
         std::fs::write(&source, body).unwrap();
         let config = crate::config::DocIngestConfig {
             enabled: true,
-            watch_paths: vec![sources.path().display().to_string()],
+            watch_paths: vec![sources_path.display().to_string()],
             max_per_day: 3,
         };
-        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_000).unwrap();
-        let notices = crate::daemon::doc_ingest_cron::list_pending(home.path()).unwrap();
+        crate::daemon::doc_ingest_cron::scan_once(&home_path, &config, None, 1_000).unwrap();
+        let notices = crate::daemon::doc_ingest_cron::list_pending(&home_path).unwrap();
         assert_eq!(notices.len(), 1);
         let revision_id = notices[0].revision_id.clone();
         let source_path = notices[0].source_path.clone();
@@ -618,18 +620,18 @@ mod tests {
         assert!(!encoded.contains("This stays in the selected source file."));
         run_proactive(ProactiveArgs {
             action: ProactiveAction::DismissDocument { revision_id },
-            home: Some(home.path().to_path_buf()),
+            home: Some(home_path.clone()),
         })
         .unwrap();
-        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_001).unwrap();
+        crate::daemon::doc_ingest_cron::scan_once(&home_path, &config, None, 1_001).unwrap();
         assert!(
-            crate::daemon::doc_ingest_cron::list_pending(home.path())
+            crate::daemon::doc_ingest_cron::list_pending(&home_path)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(std::fs::read_to_string(&source).unwrap(), body);
-        assert!(!home.path().join("views.db").exists());
-        assert!(!home.path().join("wal").exists());
+        assert!(!home_path.join("views.db").exists());
+        assert!(!home_path.join("wal").exists());
     }
 
     const DOCUMENT_SOURCE_SHA256: &str =
@@ -1017,18 +1019,20 @@ mod tests {
     fn document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit() {
         let home = tempfile::tempdir().unwrap();
         let vault = tempfile::tempdir().unwrap();
+        let home_path = std::fs::canonicalize(home.path()).unwrap();
+        let vault_path = std::fs::canonicalize(vault.path()).unwrap();
         let proposal = staged_document(
             "Document distillation (wiki)",
             DocumentStagingRoute::Wiki {
-                vault_root: vault.path().display().to_string(),
+                vault_root: vault_path.display().to_string(),
                 subdir: "NEOTH".to_owned(),
                 note_markdown: "# Operator knowledge\n\nThis belongs only in the selected vault."
                     .to_owned(),
             },
         );
-        save_proposal(home.path(), &proposal).unwrap();
-        accept_document(home.path(), &proposal.id).expect("publish create-only document note");
-        let note_dir = vault.path().join("NEOTH").join("Documents");
+        save_proposal(&home_path, &proposal).unwrap();
+        accept_document(&home_path, &proposal.id).expect("publish create-only document note");
+        let note_dir = vault_path.join("NEOTH").join("Documents");
         let first_note = std::fs::read_dir(&note_dir)
             .unwrap()
             .next()
@@ -1037,7 +1041,7 @@ mod tests {
             .path();
         let first = std::fs::read_to_string(&first_note).unwrap();
         let audits = document_audit_payloads(
-            home.path(),
+            &home_path,
             crate::wal::events::ExtendedSubtype::DocumentNoteApplied,
         );
         assert_eq!(audits.len(), 1);
@@ -1062,16 +1066,16 @@ mod tests {
             audits[0]["route_content_sha256"],
             hex::encode(Sha256::digest(first.as_bytes()))
         );
-        accept_document(home.path(), &proposal.id).expect("exact document note replay reconciles");
+        accept_document(&home_path, &proposal.id).expect("exact document note replay reconciles");
         assert_eq!(std::fs::read_to_string(&first_note).unwrap(), first);
         std::fs::write(&first_note, "operator-owned note edit\n").unwrap();
-        assert!(accept_document(home.path(), &proposal.id).is_err());
+        assert!(accept_document(&home_path, &proposal.id).is_err());
         assert_eq!(
             std::fs::read_to_string(&first_note).unwrap(),
             "operator-owned note edit\n"
         );
         assert!(
-            !home.path().join("views.db").exists(),
+            !home_path.join("views.db").exists(),
             "Vault note route must not use a memory or self-wiki store"
         );
     }

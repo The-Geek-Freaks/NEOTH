@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1867/W1868 Hosted failure diagnosis and focused macOS recovery (2026-09-28):**
+GChat36408351275 atb4b43cac failed refusal_probe_contract_invalid after Pending
+and unchanged-file checks, before Ready. Original10964432555 ZIP/API digest
+40125eec9c460f5e8a21a1c35d2e9164ba83fbb5258e9e7b5241dfae089ed206 matches;
+all8 cleanup flags succeeded. The old receipt omitted counters. The canary now
+retains only a fixed stage and eight numeric counters on that failure, with
+all authentication and negative-probe thresholds unchanged. Hosted pending.
+Scheduled macOS36398949143 compiled but failed20/6695 executed tests;12231
+were not run after fail-fast. Original10965426991 is retained. Seven legitimate
+CLI fixture setups passed macOS /var temp aliases to strict ancestor checks;
+they now canonicalize only existing temporary roots. Production nofollow and
+intentional symlink-negative tests are unchanged. Independent review approved.
+A narrow macOS lane selects all20 failures plus the ArXiv diagnostic, checks
+exact discovery and every result, and compiles only the core library. Windows
+continues its889-case lane. Neither selection is yet a passed native gate.
+W1866's hosted formatter original10964684261 was authenticated; the exact patch
+and all three Git postimages were imported. No local formatter ran.
+Strict workspace Clippy, core test typecheck, public CLI build and export in
+run36409692729 ata1c640ff completed successfully. This verifies W1855/W1865;
+it does not certify the later W1866/W1868 source. No release/ROAD leaf closes.
+ROAD1324/1081/241/2 and WS-LF43done/75open remain unchanged.
+
 **W1866 Windows recovery batch and daemon provenance (2026-09-28; hosted pending):**
 Scheduled Windows run36398949143 at8e7108e7 compiled successfully but stopped
 with20 failures after8379 of18808 tests. W1863 repairs six stale contracts:

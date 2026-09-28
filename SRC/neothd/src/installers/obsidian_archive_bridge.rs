@@ -130,7 +130,7 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
         .map_err(|_| BridgeError::Io)?;
     let stage_mutation_binding =
         crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
-        .map_err(|_| BridgeError::UnsafePath)?;
+            .map_err(|_| BridgeError::UnsafePath)?;
     let stage_shared_dir = crate::skills::store::open_bound_real_child_dir_for_read(
         &parent.dir,
         &stage_mutation_binding,
@@ -171,9 +171,8 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
         }
     }
 
-    let binding =
-        crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
-            .map_err(|_| BridgeError::UnsafePath)?;
+    let binding = crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
+        .map_err(|_| BridgeError::UnsafePath)?;
     if binding.identity_token() != stage_read_binding.identity_token()
         || !stage_read_binding
             .matches_directory_child(&parent.dir, &stage_name, &stage_display)

@@ -31,10 +31,14 @@ RELOAD = ".reload-requested"
 DESTINATION = {"channel_id": "gchat", "account_id": "default"}
 DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_relinks.json", ".channel-relink-google-chat.transaction.json")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+REFUSAL_STAGES = frozenset(("wrong_target", "wrong_returned_space"))
+REFUSAL_COUNTERS = ("token", "subscription", "space", "wrong_space", "bad_token", "bad_bearer", "forbidden_post", "unexpected_get")
 
 
 class Failure(RuntimeError):
-    pass
+    def __init__(self, code: str, refusal_probe: dict | None = None) -> None:
+        super().__init__(code)
+        self.refusal_probe = refusal_probe
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,20 @@ def digest(path: Path) -> str:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def refusal_probe_evidence(stage: str, counts: dict[str, int]) -> dict:
+    """A fixed, redacted receipt fragment; it can never carry request data."""
+    if stage not in REFUSAL_STAGES or set(counts) != set(REFUSAL_COUNTERS):
+        raise Failure("refusal_evidence_invalid")
+    if any(type(counts[name]) is not int or counts[name] < 0 for name in REFUSAL_COUNTERS):
+        raise Failure("refusal_evidence_invalid")
+    return {"stage": stage, "counters": {name: counts[name] for name in REFUSAL_COUNTERS}}
+
+
+def validate_receipt_redaction(encoded: str) -> None:
+    if any(marker in encoded for marker in (EMAIL, "BEGIN PRIVATE KEY", "http://", "https://", "exception")):
+        raise Failure("receipt_secret_leak")
 
 
 def contained(path: Path, root: Path) -> bool:
@@ -333,7 +351,7 @@ def expected_after(before: ExpectedReceipt, home: Path) -> ExpectedReceipt:
     return ExpectedReceipt(before.material_sha256, before.pair_before_sha256, before.routing_before_sha256, pair_commitment(home), sha256_bytes((home / "channel_routing.json").read_bytes()), before.source_sha256)
 
 
-def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], required_calls: int, expected_space_event: str, server: FakeGoogle) -> dict:
+def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], stage: str, required_calls: int, expected_space_event: str, server: FakeGoogle) -> dict:
     if any(snapshot(home / name) != value for name, value in before.items()):
         raise Failure("refusal_mutated_existing_state")
     if (home / RELOAD).exists() or (home / ".channel-relink-google-chat.transaction.json").exists():
@@ -345,7 +363,7 @@ def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]],
         raise Failure("pending_identity_invalid")
     counts = server.counts()
     if counts["token"] < required_calls or counts["subscription"] < required_calls or counts[expected_space_event] < 1:
-        raise Failure("refusal_probe_contract_invalid")
+        raise Failure("refusal_probe_contract_invalid", refusal_probe_evidence(stage, counts))
     return {"pending_id": matches[0].get("id"), "source_set_sha256": matches[0].get("source_set_sha256")}
 
 
@@ -465,7 +483,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         wrong_before = {name: snapshot(wrong / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
         if command(argv(binary, source_path, WRONG_SPACE), wrong_env, envelope(root / "service-account.json")).returncode == 0:
             raise Failure("wrong_target_accepted")
-        wrong_pending = require_pending_unchanged(wrong, wrong_before, 1, "wrong_space", server)
+        wrong_pending = require_pending_unchanged(wrong, wrong_before, "wrong_target", 1, "wrong_space", server)
         returned_before = {name: snapshot(home / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
         server.wrong_return = True
         try:
@@ -474,7 +492,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
             server.wrong_return = False
         if returned.returncode == 0:
             raise Failure("wrong_returned_space_accepted")
-        returned_pending = require_pending_unchanged(home, returned_before, 2, "space", server)
+        returned_pending = require_pending_unchanged(home, returned_before, "wrong_returned_space", 2, "space", server)
         before = expected_before(home, root / "service-account.json", source_path)
         first = command(argv(binary, source_path, SPACE), env, envelope(root / "service-account.json"))
         if first.returncode:
@@ -518,21 +536,24 @@ def main() -> int:
         raise Failure("hosted_guard_failed")
     result = None
     error = None
+    refusal_probe = None
     try:
         result = execute(binary, root, home, source_path, evidence, workflow)
     except Failure as caught:
         error = str(caught)
+        refusal_probe = caught.refusal_probe
     except Exception:
         error = "unexpected_failure"
     flags = cleanup(root, home, source_path, evidence)
     payload = {"schema_version": 1, "outcome": "passed" if result and all(flags.values()) else "failed", "failure": error, "cleanup": flags, "local_external_provider": False, "source_head": os.environ.get("GITHUB_SHA", "")}
+    if refusal_probe is not None:
+        payload["refusal_probe"] = refusal_probe
     if result:
         payload["gchat_relink"] = result
     if regular(binary):
         payload["binary_sha256"] = digest(binary)
     encoded = json.dumps(payload, sort_keys=True)
-    if EMAIL in encoded or "BEGIN PRIVATE KEY" in encoded:
-        raise Failure("receipt_secret_leak")
+    validate_receipt_redaction(encoded)
     receipt.parent.mkdir(parents=True, exist_ok=True)
     receipt.write_text(encoded, encoding="utf-8")
     return 0 if payload["outcome"] == "passed" else 1

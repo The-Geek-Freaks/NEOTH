@@ -2957,8 +2957,9 @@ mod tests {
     #[tokio::test]
     async fn bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings() {
         let temp = tempdir().unwrap();
-        let archive_root = temp.path().join("explicit-archive-root");
-        let vault = temp.path().join("vault");
+        let temp_path = std::fs::canonicalize(temp.path()).unwrap();
+        let archive_root = temp_path.join("explicit-archive-root");
+        let vault = temp_path.join("vault");
         let note = vault.join("NEOTH-Sessions/operator-note.md");
         std::fs::create_dir_all(note.parent().unwrap()).unwrap();
         std::fs::write(&note, b"operator note").unwrap();

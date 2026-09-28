@@ -1,0 +1,133 @@
+name: macOS contract regressions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-contract-regressions-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regressions:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 110
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Restore core test build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-contract-regressions-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-contract-regressions-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-
+      - name: Bind the exact scheduled-CI failure selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/macos-contract-regressions"
+          mkdir -p "$evidence/logs"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          test "$(cat "$evidence/source-head.txt")" = "$GITHUB_SHA"
+          cat > "$evidence/selection.tsv" <<'EOF'
+          cli::arxiv_ingest_task::tests::indexes_single_paper_without_provider	SRC/neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::falls_back_to_raw_abstract_when_provider_fails	SRC/neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::uses_provider_summary_when_available	SRC/neothd/src/cli/arxiv_ingest_task.rs
+          cli::arxiv_ingest_task::tests::reindex_same_paper_indexes_once_per_pass	SRC/neothd/src/cli/arxiv_ingest_task.rs
+          cli::channel::tests::flat_telegram_remove_rejects_a_secret_account_map_without_writing	SRC/neothd/src/cli/channel.rs
+          cli::channel::tests::flat_telegram_add_rejects_a_public_account_map_without_writing	SRC/neothd/src/cli/channel.rs
+          cli::channel::tests::json_telegram_replacement_rejects_an_account_map_without_writing	SRC/neothd/src/cli/channel.rs
+          cli::chat::tests::incognito_turn_boundary_is_central_and_production_only	SRC/neothd/src/cli/chat.rs
+          cli::obsidian::tests::bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings	SRC/neothd/src/cli/obsidian.rs
+          cli::paperless::tests::explicit_home_clean_vault_ingest_creates_no_finding	SRC/neothd/src/cli/paperless.rs
+          cli::proactive::tests::document_discovery_list_without_state_does_not_create_home	SRC/neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect	SRC/neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit	SRC/neothd/src/cli/proactive.rs
+          cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output	SRC/neothd/src/cli/recall_score.rs
+          cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker	SRC/neothd/src/cli/recall_score.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_inserts_groundtruth_rows_for_cs_ai_paper	SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_blank_oversized_and_four_line_completions	SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_rejects_oversized_feed_input_before_provider_or_insert	SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::arxiv_skill_scan_cron::tests::skill_scan_skips_paper_when_provider_fails	SRC/neothd/src/daemon/arxiv_skill_scan_cron.rs
+          daemon::audit_rpc::tests::allowlist_contains_exactly_the_oneshot_codes	SRC/neothd/src/daemon/audit_rpc/tests.rs
+          cli::arxiv_ingest_task::tests::arxiv_mock_feed_diagnostic_reports_search_cause_and_request_count	SRC/neothd/src/cli/arxiv_ingest_task.rs
+          EOF
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 21
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 21
+          cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
+            shasum -a 256 "$source"
+          done > "$evidence/source-sha256.txt"
+          shasum -a 256 SRC/Cargo.lock SRC/neothd/Cargo.toml SRC/neothd/src/tools/arxiv.rs SRC/neothd/src/tools/external_http.rs SRC/neothd/src/providers/http_client.rs SRC/neothd/src/skills/store.rs SRC/neothd/src/installers/obsidian_archive_bridge.rs .github/workflows/macos-contract-regressions.yml >> "$evidence/source-sha256.txt"
+      - name: Compile and discover core library tests
+        id: compile
+        timeout-minutes: 90
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p neoth --lib --locked -- --list > "$RUNNER_TEMP/macos-contract-regressions/discovery.txt" 2> "$RUNNER_TEMP/macos-contract-regressions/compile.log"
+      - name: Execute all 21 exact regressions without stopping at the first failure
+        timeout-minutes: 10
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/macos-contract-regressions"
+          : > "$evidence/results.tsv"
+          index=0
+          failed=0
+          while IFS=$'\t' read -r name source; do
+            index=$((index + 1))
+            log="$evidence/logs/$index.log"
+            if [[ "$(grep -Fxc "$name: test" "$evidence/discovery.txt")" != 1 ]]; then
+              printf '%s\tmissing\t%s\n' "$index" "$name" >> "$evidence/results.tsv"
+              failed=$((failed + 1))
+            elif cargo test -p neoth --lib --locked "$name" -- --exact --test-threads=1 > "$log" 2>&1 && grep -Fxq "test $name ... ok" "$log" && grep -Fq 'test result: ok. 1 passed; 0 failed;' "$log"; then
+              printf '%s\tpassed\t%s\n' "$index" "$name" >> "$evidence/results.tsv"
+            else
+              printf '%s\tfailed\t%s\n' "$index" "$name" >> "$evidence/results.tsv"
+              failed=$((failed + 1))
+            fi
+          done < "$evidence/selection.tsv"
+          printf 'selected=21\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq 21 && test "$failed" -eq 0
+      - name: Preserve completed core compilation
+        if: ${{ always() && steps.compile.outcome == 'success' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-contract-regressions-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+      - name: Upload exact source, discovery and result logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-contract-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/macos-contract-regressions/
+          if-no-files-found: error
+          retention-days: 14

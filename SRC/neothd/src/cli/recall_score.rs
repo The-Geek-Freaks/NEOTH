@@ -1499,7 +1499,9 @@ mod tests {
             RecallParityHarnessOperation::AnchorLinkCreate { .. }
         ));
         let output_dir = tempfile::tempdir().unwrap();
-        let output = output_dir.path().join("operator-anchor-link.json");
+        let output = std::fs::canonicalize(output_dir.path())
+            .unwrap()
+            .join("operator-anchor-link.json");
         write_new_operator_anchor_link(&output, b"canonical link").unwrap();
         assert_eq!(std::fs::read(&output).unwrap(), b"canonical link");
         assert!(write_new_operator_anchor_link(&output, b"replacement").is_err());
@@ -1534,23 +1536,24 @@ mod tests {
             },
         };
         let blocked = tempfile::tempdir().unwrap();
+        let blocked_path = std::fs::canonicalize(blocked.path()).unwrap();
         std::fs::write(
-            blocked.path().join("four-grader-input-digests.json"),
+            blocked_path.join("four-grader-input-digests.json"),
             b"occupied",
         )
         .unwrap();
-        assert!(write_new_grader_inputs(blocked.path(), &prepared).is_err());
+        assert!(write_new_grader_inputs(&blocked_path, &prepared).is_err());
         assert!(prepared.inputs.iter().all(|(grader_id, _)| {
-            !blocked
-                .path()
+            !blocked_path
                 .join(format!("grader-input-{grader_id}.json"))
                 .exists()
         }));
         let output = tempfile::tempdir().unwrap();
-        write_new_grader_inputs(output.path(), &prepared).unwrap();
+        let output_path = std::fs::canonicalize(output.path()).unwrap();
+        write_new_grader_inputs(&output_path, &prepared).unwrap();
         let digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile =
             serde_json::from_slice(
-                &std::fs::read(output.path().join("four-grader-input-digests.json")).unwrap(),
+                &std::fs::read(output_path.join("four-grader-input-digests.json")).unwrap(),
             )
             .unwrap();
         for ((grader_id, bytes), digest) in prepared.inputs.iter().zip(&digests.inputs) {
@@ -1560,7 +1563,7 @@ mod tests {
                 digest.input_sha256
             );
             assert_eq!(
-                std::fs::read(output.path().join(format!("grader-input-{grader_id}.json")))
+                std::fs::read(output_path.join(format!("grader-input-{grader_id}.json")))
                     .unwrap(),
                 *bytes
             );

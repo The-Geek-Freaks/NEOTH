@@ -25355,9 +25355,7 @@ template = "[REDACTED]"
             .chars()
             .filter(|character| !character.is_whitespace())
             .collect();
-        assert!(
-            engine_shape.contains("||(!args.incognito&&(config.refusal_recovery.enabled")
-        );
+        assert!(engine_shape.contains("||(!args.incognito&&(config.refusal_recovery.enabled"));
         let alternate_ingress = production
             .split("pub async fn run_chat_with(")
             .nth(1)
