@@ -1,0 +1,182 @@
+{
+  "schema": "neoth-relink-encryption-policy-canary/v1",
+  "run": 36370531035,
+  "producer_commit": "00ce2966357757f9afd0ceb41edc69370fad518a",
+  "native": {
+    "started": 37,
+    "executed": 37,
+    "passed": 37,
+    "failed": 0
+  },
+  "product": "failed",
+  "failure": "credentials_not_encrypted",
+  "cleanup": {
+    "evidence_retained": true,
+    "home_removed": true,
+    "source_removed": true,
+    "wrong_target_home_removed": true
+  },
+  "artifacts": [
+    {
+      "id": 10949431429,
+      "name": "converted-relink-public-cli-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "17a2b7fded2f565c2a73bd8161bbd1874baa1c384898bea14125bf4e6a0eb018",
+      "entries": 1
+    },
+    {
+      "id": 10949312300,
+      "name": "w548-gchat-live-regressions-receipt-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "61e011b36781be7d72c06cbff90d0899f5ac4a5561580e38a6fbaa8ba6932e23",
+      "entries": 4
+    },
+    {
+      "id": 10949242662,
+      "name": "w548-gchat-live-regressions-log-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "763341b9b1d6bcf83f21474fe2ae68c121f724379836b22b91d5fba24c797fa1",
+      "entries": 74
+    },
+    {
+      "id": 10949088599,
+      "name": "w548-gchat-live-regressions-source-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "a7fcf5754d1b2f0f0c43fa8b90b8620e3a08872409c7dbbfba2e7a6bf2642b41",
+      "entries": 2
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "sha256": "8131d84c7a6db065dd6f994d733e12b416a1dff99043e9a202146e8f60f4a3a6",
+      "blob": "fc46679ab8b37b88025e71a8934920931bba368a"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/Cargo.toml",
+      "sha256": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+      "blob": "86b02711188fd588fc598a578f3b8d7a1567bafa"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
+      "sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+      "blob": "b695cf8e1bbedf82025441e54227f080060d42a3"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
+      "sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+      "blob": "139ecaf877f9756d3095fab0d1f04745235c0fc2"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json",
+      "sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+      "blob": "8119f09318695dd97bb4f051f28e42294105b51e"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sha256": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+      "blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+      "sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+      "blob": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+      "blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6"
+    },
+    {
+      "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+      "sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "blob": "664678368a6f21332253924f6cb09e40445cdd20"
+    },
+    {
+      "path": "SRC/neothd/src/channels/relink.rs",
+      "sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+      "blob": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8"
+    },
+    {
+      "path": "SRC/neothd/src/channels/routing.rs",
+      "sha256": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+      "blob": "f6f08083ee1a6747f3ba7469a787540064a3ecdd"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "sha256": "04f3f67a598b58c1b27fe5010e695556290213aa54986a24c428dd4cb4859dda",
+      "blob": "f615ca82ef0ebd936ebcc73e00cb77104ba2e4cf"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+      "sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+      "blob": "358ff8824872b5c4af063c737f66ca080c83e351"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel_relink.rs",
+      "sha256": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+      "blob": "74a0243d1122cf33d97cb5a8827a4572168ccdda"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "sha256": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+      "blob": "19b94663f34755bba0560b74c79c54396b8c0658"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sha256": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+      "blob": "411efb49c119920ec81c69f253405ab8a5bb692d"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/io.rs",
+      "sha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "blob": "d7646518596245a7c86137fd46f6e7619a73cc90"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_identity.rs",
+      "sha256": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+      "blob": "62928810ff3a68af0441a548e7dd9bca672b1512"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_provider.rs",
+      "sha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "sha256": "e979c83495fe56ccffca6fd89c58937f0b4b785623f9830a85e46bebd73ddcb1",
+      "blob": "6edc3b152dd06bd310db4a740ae110f45a2cf606"
+    },
+    {
+      "path": "SRC/neothd/src/cli/reload.rs",
+      "sha256": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+      "blob": "8183066d2f3873d42bc9bf661e01ddda7ddb2e7b"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "1c84c1b7caf5b7206eeb302faba65772f14c855f886850d2a56cdb1366003699",
+      "blob": "d08daec3c3050f9fd26dca4e8f4e23b54372829c"
+    },
+    {
+      "path": "packaging/converted_channel_relink_product_canary.py",
+      "sha256": "ad7bc71694f045a8eb9727a057e2db2729d60fe9e2d1499c7e37a0241b85665e",
+      "blob": "6a236f3ef5de4b462140359bd1bff651ba345955"
+    },
+    {
+      "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
+      "sha256": "6020426bb5c22d0aa0bafddb3a4a8badabd5840e5003e58cb98f657f304a910d",
+      "blob": "2deede012a02cfb803beb368d0a16b0c6a8f3f3a"
+    }
+  ],
+  "cause": "Canary required AEAD credentials after first-use init without enabling opt-in wal.encryption. Init provisions master identity but default WAL/config policy remains none.",
+  "correction": "After actual init explicitly opt the isolated fixture into aes256_gcm_siv; preserve master key and all other generated config bytes. Keep strict encrypted-publication and raw-pair retry checks.",
+  "localExecutableValidationRan": false,
+  "hostedRetest": "pending",
+  "roadmapClosure": false
+}

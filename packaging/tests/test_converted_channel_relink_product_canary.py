@@ -13,6 +13,26 @@ import converted_channel_relink_product_canary as canary
 
 
 class ConvertedRelinkProductCanaryTests(unittest.TestCase):
+    def test_encryption_is_explicit_after_init_and_preserves_identity_and_other_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); (home / "wal").mkdir()
+            key = home / "wal" / "master.key"; key.write_bytes(b"k" * 32)
+            config = home / "freedom.yaml"
+            before = b"operator_id: canary\nwal:\n  compression: none\n  encryption: none\nfuture: keep\n"
+            config.write_bytes(before)
+            canary.enable_fixture_encryption(home)
+            self.assertEqual(config.read_bytes(), before.replace(b"encryption: none", b"encryption: aes256_gcm_siv"))
+            self.assertEqual(key.read_bytes(), b"k" * 32)
+            config.write_bytes(b"operator_id: canary\n")
+            canary.enable_fixture_encryption(home)
+            self.assertEqual(config.read_bytes(), b"operator_id: canary\nwal:\n  compression: none\n  encryption: aes256_gcm_siv\n")
+            self.assertEqual(key.read_bytes(), b"k" * 32)
+            for invalid in (before + b"wal:\n  encryption: none\n", before.replace(b"compression: none", b"compression: zstd_3")):
+                config.write_bytes(invalid)
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(canary.Failure, "encryption_setup_policy_invalid"):
+                    canary.enable_fixture_encryption(home)
+                self.assertEqual(config.read_bytes(), invalid)
+
     def test_private_custody_source_is_the_exact_openclaw_json_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); source = root / "openclaw.json"

@@ -168,6 +168,30 @@ def write_source(path: Path) -> None:
     os.chmod(path, 0o600)
 
 
+def enable_fixture_encryption(home: Path) -> None:
+    # The real init creates the identity but leaves at-rest encryption opt-in.
+    # Make that operator choice explicitly in its generated config, preserving
+    # every other byte and the original master key. Never synthesize a home.
+    config = home / "freedom.yaml"
+    key = home / "wal" / "master.key"
+    if not regular(config) or config.stat().st_size > LIMIT or not regular(key):
+        raise Failure("encryption_setup_input_invalid")
+    before_key = file_snapshot(key)
+    before = config.read_bytes()
+    old = b"wal:\n  compression: none\n  encryption: none\n"
+    new = b"wal:\n  compression: none\n  encryption: aes256_gcm_siv\n"
+    stanzas = len(re.findall(rb"(?m)^wal:", before))
+    if stanzas == 0:
+        after = before + (b"" if before.endswith(b"\n") else b"\n") + new
+    elif stanzas == 1 and before.count(old) == 1:
+        after = before.replace(old, new, 1)
+    else:
+        raise Failure("encryption_setup_policy_invalid")
+    config.write_bytes(after)
+    if file_snapshot(key) != before_key:
+        raise Failure("encryption_setup_identity_changed")
+
+
 class LoopbackBlueBubbles:
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -344,6 +368,8 @@ def source_bindings(workflow: Path) -> dict[str, str]:
         "SRC/neothd/src/cli/channel/converted_relink.rs": Path("SRC/neothd/src/cli/channel/converted_relink.rs"),
         "SRC/neothd/src/channels/relink.rs": Path("SRC/neothd/src/channels/relink.rs"), "SRC/neothd/src/channels/routing.rs": Path("SRC/neothd/src/channels/routing.rs"),
         "SRC/neothd/src/config/credentials.rs": Path("SRC/neothd/src/config/credentials.rs"), "SRC/neothd/src/channels/imessage_bluebubbles.rs": Path("SRC/neothd/src/channels/imessage_bluebubbles.rs"),
+        "SRC/neothd/src/config/wal.rs": Path("SRC/neothd/src/config/wal.rs"),
+        "SRC/neothd/src/wal/master_key.rs": Path("SRC/neothd/src/wal/master_key.rs"),
         "SRC/neothd/src/cli/reload.rs": Path("SRC/neothd/src/cli/reload.rs"), "SRC/neothd/src/cli/init.rs": Path("SRC/neothd/src/cli/init.rs"),
         "SRC/neothd/src/cli/init/first_install_identity.rs": Path("SRC/neothd/src/cli/init/first_install_identity.rs"), "SRC/neothd/src/cli/init/io.rs": Path("SRC/neothd/src/cli/init/io.rs"),
         "SRC/neothd/src/cli/init/steps_identity.rs": Path("SRC/neothd/src/cli/init/steps_identity.rs"), "SRC/neothd/src/cli/init/steps_provider.rs": Path("SRC/neothd/src/cli/init/steps_provider.rs"),
@@ -380,12 +406,14 @@ def execute(binary: Path, root: Path, home: Path, source: Path, evidence: Path, 
     home.mkdir(); evidence.mkdir(parents=True); write_source(source)
     env = dict(os.environ); env["NEOTH_HOME"] = str(home)
     initialize_fresh_home(binary, home, env)
+    enable_fixture_encryption(home)
     server = LoopbackBlueBubbles(); port = server.start()
     try:
         expected = expected_context(home, port)
         wrong_home = root / "wrong-target-home"; wrong_home.mkdir()
         wrong_env = dict(os.environ); wrong_env["NEOTH_HOME"] = str(wrong_home)
         initialize_fresh_home(binary, wrong_home, wrong_env)
+        enable_fixture_encryption(wrong_home)
         wrong = command(relink_argv(binary, source, WRONG_TARGET), wrong_env, envelope(port))
         if wrong.returncode == 0 or PASSWORD in wrong.stdout.decode("utf-8", "replace") or PASSWORD in wrong.stderr.decode("utf-8", "replace"):
             raise Failure("wrong_target_command_invalid")
@@ -414,7 +442,8 @@ def execute(binary: Path, root: Path, home: Path, source: Path, evidence: Path, 
                  "wrong_target": wrong_flags, "requests": counts, "expected_bindings": expected}
         (evidence / "receipt-summary.json").write_text(json.dumps(proof, sort_keys=True), encoding="utf-8")
         return {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "local_external_provider": False,
-                "initial_setup": {"method": "neoth_init_cli_license_provider_skip", "created_without_restore": True},
+                "initial_setup": {"method": "neoth_init_cli_license_provider_skip", "created_without_restore": True,
+                                  "at_rest_encryption": "aes256_gcm_siv", "policy_set_after_init": True},
                 "relink": proof, "sha256": {"binary": digest(binary), "openclaw_source_fixture": digest(source), **source_bindings(workflow)}}
     finally:
         if not server.stop():

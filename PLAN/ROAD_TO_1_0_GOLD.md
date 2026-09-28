@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1787 Relink native pass / public CLI fixture correction (2026-09-28):**
+Channel run36370531035 at00ce2966 executed and passed all37 selected tests;
+original receipt/log/source/product ZIPs match GitHub API digests and all26
+product producer bindings match exact Git blobs. The real CLI reached Ready,
+but the product canary failed its encrypted-credentials requirement: first-use
+init provisions a master identity while WAL/config encryption remains opt-in.
+The fixture now explicitly sets aes256_gcm_siv after actual init, preserving
+identity and other config bytes; strict encrypted publication/retry checks stay.
+Hosted product retest pending. Evidence:
+docs/verification/gold-wave1787-relink-encryption-policy.json.
+Slack migration remains unpublished WIP; ROAD1324/1077/245/2 unchanged.
 **W1784 Relink raw-pair drift repair (2026-09-28):**
 Channel37run36369102469 at171839df selected and executed all37:36 passed,
 one real drift regression failed; actual CLI product was not reached. Original
