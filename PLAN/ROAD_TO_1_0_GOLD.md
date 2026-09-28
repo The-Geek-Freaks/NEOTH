@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1879/W1880 pinned channel acceptance and Google Chat refusal diagnostics (2026-09-28):**
+The four original artifacts for run36419695485 atd820f919 are authenticated:
+10970013260 logs,10969819066 receipts,10969739161 source,10969676703 publicCLI.
+Independent reconciliation verifies118exact started/executed/passed,0failed,
+118discovery+118actual logs and71raw producer-source bindings. Case04 is the
+single integration test, the other117 are lib cases. Root accepts only this
+pinned scope plus the actual publicCLI relink receipt (first/retry/wrong-target,
+4cleanup flags true,post0). Live daemon adoption and Google Chat remain failed.
+Current formatted source221defc3 passes Preflight36424547655. Windows925
+run36424849943 andLinux2140run36424960983 each dispatched once; macOS25
+run36421784463 continues onaaefb26b. No native results are assumed.
+W1880 adds canary-only allowlisted failure stage/reason, CLI returncode and a
+domain-separated hash of already-bounded CLI output to the Google Chat refusal
+receipt. No raw output/key/URI is retained; both negative probe thresholds and
+all auth/traffic/cleanup conditions stay intact. Independent literal-error,
+sensitive-output and actual refusal-propagation mock tests accompany the change;
+hosted execution is pending. All-zero loopback counters establish no observed
+request, not a proven URL/proxy/constructor root cause. No ROAD closure.
+
 **W1875 hosted formatting import (2026-09-28):** Preflight36424013048 at e6721ce5
 found one assertion layout difference. Original10970736210 ZIP/API SHA256
 4316b0f6b9c27213504a9d8dd54ebd7d506f73bec2019d80a2cb141614366e88 and patch

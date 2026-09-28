@@ -33,6 +33,42 @@ DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REFUSAL_STAGES = frozenset(("wrong_target", "wrong_returned_space"))
 REFUSAL_COUNTERS = ("token", "subscription", "space", "wrong_space", "bad_token", "bad_bearer", "forbidden_post", "unexpected_get")
+REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_constructor", "gchat_probe", "unknown"))
+REFUSAL_DIAGNOSTIC_REASONS = frozenset((
+    "candidate_service_account_file",
+    "candidate_subscription_resource",
+    "canary_origin_invalid",
+    "canary_origin_not_unicode",
+    "canary_synthetic_key_or_token_uri",
+    "constructor_subscription_resource",
+    "subscription_forbidden",
+    "subscription_http_status",
+    "subscription_malformed_json",
+    "subscription_identity_mismatch",
+    "space_forbidden",
+    "space_http_status",
+    "space_malformed_json",
+    "space_identity_mismatch",
+    "unknown",
+))
+REFUSAL_OUTPUT_HASH_DOMAIN = b"neoth-gchat-refusal-output-v1\0"
+REFUSAL_ERROR_MARKERS = (
+    ("Google Chat relink lacks service-account file", "candidate", "candidate_service_account_file"),
+    ("subscription must be the full resource name", "candidate", "candidate_subscription_resource"),
+    ("NEOTH_GCHAT_CANARY_ORIGIN is not Unicode", "gchat_constructor", "canary_origin_not_unicode"),
+    ("NEOTH_GCHAT_CANARY_ORIGIN must be canonical loopback http origin with explicit port", "gchat_constructor", "canary_origin_invalid"),
+    ("NEOTH_GCHAT_CANARY_ORIGIN must use canonical loopback spelling", "gchat_constructor", "canary_origin_invalid"),
+    ("gchat canary key must use synthetic identity and canonical loopback token URI", "gchat_constructor", "canary_synthetic_key_or_token_uri"),
+    ("gchat subscription must be `projects/<project>/subscriptions/<subscription>`", "gchat_constructor", "constructor_subscription_resource"),
+    ("Google Chat service account cannot read the Pub/Sub subscription", "gchat_probe", "subscription_forbidden"),
+    ("Google Chat subscription probe returned HTTP ", "gchat_probe", "subscription_http_status"),
+    ("Google Chat subscription probe returned malformed JSON", "gchat_probe", "subscription_malformed_json"),
+    ("Google Chat subscription probe returned `", "gchat_probe", "subscription_identity_mismatch"),
+    ("Google Chat service account cannot read the configured space", "gchat_probe", "space_forbidden"),
+    ("Google Chat space target probe returned HTTP ", "gchat_probe", "space_http_status"),
+    ("Google Chat space target probe returned malformed JSON", "gchat_probe", "space_malformed_json"),
+    ("Google Chat space target probe returned a different space", "gchat_probe", "space_identity_mismatch"),
+)
 
 
 class Failure(RuntimeError):
@@ -66,13 +102,43 @@ def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def refusal_probe_evidence(stage: str, counts: dict[str, int]) -> dict:
+def refusal_output_hash(process: subprocess.CompletedProcess[bytes]) -> str:
+    stdout = process.stdout if isinstance(process.stdout, bytes) else b""
+    stderr = process.stderr if isinstance(process.stderr, bytes) else b""
+    return sha256_bytes(REFUSAL_OUTPUT_HASH_DOMAIN + stdout + b"\0" + stderr)
+
+
+def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> dict:
+    """Classify bounded output without ever retaining its untrusted text."""
+    output = b"\n".join(value for value in (process.stdout, process.stderr) if isinstance(value, bytes))
+    rendered = output.decode("utf-8", "replace")
+    stage, reason = "unknown", "unknown"
+    for marker, candidate_stage, candidate_reason in REFUSAL_ERROR_MARKERS:
+        if marker in rendered:
+            stage, reason = candidate_stage, candidate_reason
+            break
+    return {
+        "stage": stage,
+        "reason": reason,
+        "returncode": process.returncode if type(process.returncode) is int else -1,
+        "output_sha256": refusal_output_hash(process),
+    }
+
+
+def refusal_probe_evidence(stage: str, counts: dict[str, int], process: subprocess.CompletedProcess[bytes]) -> dict:
     """A fixed, redacted receipt fragment; it can never carry request data."""
     if stage not in REFUSAL_STAGES or set(counts) != set(REFUSAL_COUNTERS):
         raise Failure("refusal_evidence_invalid")
     if any(type(counts[name]) is not int or counts[name] < 0 for name in REFUSAL_COUNTERS):
         raise Failure("refusal_evidence_invalid")
-    return {"stage": stage, "counters": {name: counts[name] for name in REFUSAL_COUNTERS}}
+    diagnostic = refusal_failure_diagnostic(process)
+    if diagnostic["stage"] not in REFUSAL_DIAGNOSTIC_STAGES or diagnostic["reason"] not in REFUSAL_DIAGNOSTIC_REASONS:
+        raise Failure("refusal_evidence_invalid")
+    return {
+        "stage": stage,
+        "counters": {name: counts[name] for name in REFUSAL_COUNTERS},
+        "failure": diagnostic,
+    }
 
 
 def validate_receipt_redaction(encoded: str) -> None:
@@ -351,7 +417,7 @@ def expected_after(before: ExpectedReceipt, home: Path) -> ExpectedReceipt:
     return ExpectedReceipt(before.material_sha256, before.pair_before_sha256, before.routing_before_sha256, pair_commitment(home), sha256_bytes((home / "channel_routing.json").read_bytes()), before.source_sha256)
 
 
-def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], stage: str, required_calls: int, expected_space_event: str, server: FakeGoogle) -> dict:
+def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], stage: str, required_calls: int, expected_space_event: str, server: FakeGoogle, refusal_result: subprocess.CompletedProcess[bytes]) -> dict:
     if any(snapshot(home / name) != value for name, value in before.items()):
         raise Failure("refusal_mutated_existing_state")
     if (home / RELOAD).exists() or (home / ".channel-relink-google-chat.transaction.json").exists():
@@ -363,7 +429,7 @@ def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]],
         raise Failure("pending_identity_invalid")
     counts = server.counts()
     if counts["token"] < required_calls or counts["subscription"] < required_calls or counts[expected_space_event] < 1:
-        raise Failure("refusal_probe_contract_invalid", refusal_probe_evidence(stage, counts))
+        raise Failure("refusal_probe_contract_invalid", refusal_probe_evidence(stage, counts, refusal_result))
     return {"pending_id": matches[0].get("id"), "source_set_sha256": matches[0].get("source_set_sha256")}
 
 
@@ -481,9 +547,10 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         initialize(binary, wrong, wrong_env)
         enable_encryption(wrong)
         wrong_before = {name: snapshot(wrong / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
-        if command(argv(binary, source_path, WRONG_SPACE), wrong_env, envelope(root / "service-account.json")).returncode == 0:
+        wrong_result = command(argv(binary, source_path, WRONG_SPACE), wrong_env, envelope(root / "service-account.json"))
+        if wrong_result.returncode == 0:
             raise Failure("wrong_target_accepted")
-        wrong_pending = require_pending_unchanged(wrong, wrong_before, "wrong_target", 1, "wrong_space", server)
+        wrong_pending = require_pending_unchanged(wrong, wrong_before, "wrong_target", 1, "wrong_space", server, wrong_result)
         returned_before = {name: snapshot(home / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
         server.wrong_return = True
         try:
@@ -492,7 +559,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
             server.wrong_return = False
         if returned.returncode == 0:
             raise Failure("wrong_returned_space_accepted")
-        returned_pending = require_pending_unchanged(home, returned_before, "wrong_returned_space", 2, "space", server)
+        returned_pending = require_pending_unchanged(home, returned_before, "wrong_returned_space", 2, "space", server, returned)
         before = expected_before(home, root / "service-account.json", source_path)
         first = command(argv(binary, source_path, SPACE), env, envelope(root / "service-account.json"))
         if first.returncode:

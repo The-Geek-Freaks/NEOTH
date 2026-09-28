@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact W1875 hosted formatter postimage imported; fresh native/product gates pending",
+  "status": "W1879 prior pinned channel118/publicCLI accepted; W1880 redacted diagnostic source approved, hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269642,
-    "sha256": "7FF844D8E307EC8F2ECEDC7D151DC2BBE9F7FA3D4533BF8F05018913039787A9"
+    "bytes": 269667,
+    "sha256": "A3F537D6290FA702B575E0F989E2AA22AA27DDC7E1D5B8806F5064ED8D6795C8"
   },
   "sourceInputs": 1495,
   "requiredNativeTests": [
@@ -58841,6 +58841,138 @@
       }
     ],
     "note": "Original10970736210 and patch authenticated; exact onboarding_status postimagee629c61a7fa3dd381f463da5e60d7499e6ad25d3. No semantic changes; no local runtime or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1879PinnedChannelAcceptance": {
+    "schema": "neoth-pinned-channel-root-acceptance/v1",
+    "run": 36419695485,
+    "source": "d820f9194ada2f6595b80fa8d3e305162027666c",
+    "status": "SOURCE_ADMITTED_FOR_118_AND_PUBLIC_CLI_ONLY",
+    "executed": 118,
+    "passed": 118,
+    "failed": 0,
+    "rawSourceBindings": 71,
+    "reviewAdmissionSha256": "e7917046bfbc56d25b55c4bd1c7a5d651fe1348d74e3527eed1826a7418f40b0",
+    "artifacts": [
+      {
+        "id": 10969676703,
+        "name": "converted-relink-public-cli-d820f9194ada2f6595b80fa8d3e305162027666c",
+        "workflow_run_id": 36419695485,
+        "producer_commit": "d820f9194ada2f6595b80fa8d3e305162027666c",
+        "api_digest": "sha256:7d46a9120d368a517b43f0b6dc58ca79ffecc53a2f771257107b34ab5ecfec20",
+        "zip_sha256": "7d46a9120d368a517b43f0b6dc58ca79ffecc53a2f771257107b34ab5ecfec20",
+        "digest_matches": true
+      },
+      {
+        "id": 10969739161,
+        "name": "w548-gchat-live-regressions-source-d820f9194ada2f6595b80fa8d3e305162027666c",
+        "workflow_run_id": 36419695485,
+        "producer_commit": "d820f9194ada2f6595b80fa8d3e305162027666c",
+        "api_digest": "sha256:9bd2f551d78e9b4836381803a7f512ae298e6ceef33ffa0d4ecfc6dd9138894b",
+        "zip_sha256": "9bd2f551d78e9b4836381803a7f512ae298e6ceef33ffa0d4ecfc6dd9138894b",
+        "digest_matches": true
+      },
+      {
+        "id": 10969819066,
+        "name": "w548-gchat-live-regressions-receipt-d820f9194ada2f6595b80fa8d3e305162027666c",
+        "workflow_run_id": 36419695485,
+        "producer_commit": "d820f9194ada2f6595b80fa8d3e305162027666c",
+        "api_digest": "sha256:1cb876ded47eef8a554a32e4dcb92e3ed08f40108083776ee76f5872c3f0796f",
+        "zip_sha256": "1cb876ded47eef8a554a32e4dcb92e3ed08f40108083776ee76f5872c3f0796f",
+        "digest_matches": true
+      },
+      {
+        "id": 10970013260,
+        "name": "w548-gchat-live-regressions-log-d820f9194ada2f6595b80fa8d3e305162027666c",
+        "workflow_run_id": 36419695485,
+        "producer_commit": "d820f9194ada2f6595b80fa8d3e305162027666c",
+        "api_digest": "sha256:8f31e1015447e68a2f837a3cfbbe1e51cb518235842196cecf5e0c99c26fbb33",
+        "zip_sha256": "8f31e1015447e68a2f837a3cfbbe1e51cb518235842196cecf5e0c99c26fbb33",
+        "digest_matches": true
+      }
+    ],
+    "publicCliProduct": {
+      "outcome": "passed",
+      "failure": null,
+      "stage": "cleanup",
+      "cleanup": {
+        "evidence_retained": true,
+        "home_removed": true,
+        "source_removed": true,
+        "wrong_target_home_removed": true
+      },
+      "requests": {
+        "ping": 3,
+        "post": 0,
+        "target": 2,
+        "unexpected_get": 0,
+        "wrong_target": 1
+      },
+      "wrong_target": {
+        "credentials_absent": true,
+        "pending_record_present": true,
+        "ready_transaction_absent": true,
+        "reload_absent": true,
+        "routing_absent": true
+      },
+      "first": {
+        "already_ready": false,
+        "reload_requested": true
+      },
+      "retry": {
+        "already_ready": true,
+        "reload_requested": true
+      },
+      "source_head": "d820f9194ada2f6595b80fa8d3e305162027666c"
+    },
+    "excluded": "Separate live-daemon adoption and GoogleChat product both failed; newer source remains unproven.",
+    "localExecutableValidationRan": false
+  },
+  "wave1880GchatRefusalDiagnostics": {
+    "run": 36419695485,
+    "artifact": 10970450014,
+    "source": "d820f9194ada2f6595b80fa8d3e305162027666c",
+    "zipSha256": "1a3320cdd0cdb1843e91a92755b10aeb7767cf69fde437f344a5fa751bc65083",
+    "observed": "wrong_target refusal_probe_contract_invalid;8loopback counters zero",
+    "status": "canary-only redacted diagnostics pending hosted execution",
+    "note": "Fixed source-derived error codes/returncode/domain hash; raw CLI output never persisted; no auth/traffic thresholds changed. No inferred transport or URL cause."
+  },
+  "wave1880SourceBindings": {
+    "base": "221defc357939fd4913fd2a02c6126c22e1b9687",
+    "sources": [
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 31788,
+        "sha256": "1EBCEAD2AE9EECF254117458C7E5EEC08409378E85CAAEE8916C0DEB5410E8BB",
+        "blob": "cd72bd37bcfc6c17f69178c8418f84d12bb16d3b"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 12675,
+        "sha256": "CAFFD6ED41438DCF8506408853DC6A7A741DCABC74E74424362915DD1DC58E91",
+        "blob": "a31cb5b5a0ea79f25cc68b3694ca7ebcfc31b9d2"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 533445,
+        "sha256": "986EC8B348BA2F8FF0A9C84853272A9EF4F3322073821B2F131E355333DD5B49",
+        "blob": "9f8c35824e500a261d294c8a6cf7c4fc8e02a4dc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1569875,
+        "sha256": "49155F08ADBAF67884661B3FBDC2CADCFF599F64DD653DD1A676A72FC111D6C1",
+        "blob": "a19898f1af871cdf8a69fc38945adabaefe2f1ac"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2180885,
+        "sha256": "ABC739116826A26CDBFF854BA98308BA1BA87C77767D2CE2D3885B3A627B0AED",
+        "blob": "76e566cb762338b27d6460ed4cc6df45952a4463"
+      }
+    ],
+    "note": "Four authentic originals+71rawbindings prove prior d820f919118passes/publicCLI only. W1880 canary-only source-derived refusal diagnostic preserves all thresholds; native925/2140/oldermac25 continue. No local runtime or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

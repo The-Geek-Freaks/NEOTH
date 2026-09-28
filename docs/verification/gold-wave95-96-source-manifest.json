@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T12:49:30.1585186Z",
-  "validationStatus": "Exact W1875 hosted formatter postimage imported; fresh native/product gates pending",
+  "capturedUtc": "2026-09-28T12:57:01.2494445Z",
+  "validationStatus": "W1879 prior pinned channel118/publicCLI accepted; W1880 redacted diagnostic source approved, hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3673,8 +3673,8 @@
     },
     {
       "path": "packaging/gchat_converted_relink_product_canary.py",
-      "bytes": 27886,
-      "sha256": "DD707681A707548DE035E4D895A7049FF2FCDF7F204EED2CE69BF41B420C283D"
+      "bytes": 31788,
+      "sha256": "1EBCEAD2AE9EECF254117458C7E5EEC08409378E85CAAEE8916C0DEB5410E8BB"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -3783,8 +3783,8 @@
     },
     {
       "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
-      "bytes": 8467,
-      "sha256": "90BF7475639F300E7A7D8BCD99D294F8CB8E2514DB5E79B416B7685E959FFBB0"
+      "bytes": 12675,
+      "sha256": "CAFFD6ED41438DCF8506408853DC6A7A741DCABC74E74424362915DD1DC58E91"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 532047,
-      "sha256": "9E742082B348AC9C6316AA0681D6FA41DE712385F1828D69CF5CACB038B175E7"
+      "bytes": 533445,
+      "sha256": "986EC8B348BA2F8FF0A9C84853272A9EF4F3322073821B2F131E355333DD5B49"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1568477,
-      "sha256": "BD5365A37389981FB3F1BADCAB048D5319ADF7286C00B702AE18718ECC7D32D6"
+      "bytes": 1569875,
+      "sha256": "49155F08ADBAF67884661B3FBDC2CADCFF599F64DD653DD1A676A72FC111D6C1"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2179487,
-      "sha256": "45D5E0A3E4FFE54F094D8ACF69687B6ED38C00C3E85D3B231B313B4803669FB1"
+      "bytes": 2180885,
+      "sha256": "ABC739116826A26CDBFF854BA98308BA1BA87C77767D2CE2D3885B3A627B0AED"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
