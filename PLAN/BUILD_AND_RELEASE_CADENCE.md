@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1889/W1891 Nostr setup preflight and Linux2156 acceptance (2026-09-28):**
+A build without nostr-channel now rejects Nostr setup before flag collection or
+private-key prompting, configuration loading, staging or persistence. Both actual
+prepare/run callers use canonical descriptor display/feature metadata; other
+adapters retain their provisioning behavior, and the later Nostr guard remains.
+Three default regressions (including the existing late guard) and a separately
+selected compiled-Nostr positive case cover both feature configurations. Static
+review approved;2385portable/2160Linux/945Windows/147channel/61macOS registered.
+The feature lane selects the available-runtime case, not the cfg-disabled refusal.
+Linux run36431175241 at a5f4c879 is admitted:2156fixture names/discoveries/passing
+terminal identities match exactly,0failed;324unique raw producer paths match all
+per-fixture source bindings. All four original ZIP/API digests verified. Separate
+custody required4/full56 pass. This proves the pinned Doctor/privacy/n8n recovery,
+not the later W1887/W1889 source or final release. Product145 run36434782901
+at ab556641 is active after both push gates passed; its Python contract step now
+passes. Windows941/macOS57 on a5f4c879 are now also admitted:941/0/0 with132
+raw fixture paths (artifact10974918693), and57/0 with22raw source bindings
+(artifact10975661818). Original ZIP/API digests and exact terminal identities
+match. No local runtime or ROAD closure.
+
 **W1890 hosted canary fixture correction (2026-09-28):**
 Product run36433419319 atce248199 stopped in its Python contract gate before
 Rust/product execution: publicCLI10PASS, GChat13PASS, daemon14PASS/1FAIL.

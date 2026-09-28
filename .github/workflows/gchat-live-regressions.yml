@@ -180,6 +180,8 @@ jobs:
             fi
           }
 
+          run_case 146 lib cli::channel::tests::channel_add_preflight_keeps_non_nostr_channels_eligible cli::channel::tests::channel_add_preflight_keeps_non_nostr_channels_eligible --lib
+          run_case 147 lib cli::channel::tests::nostr_add_preflight_allows_a_compiled_runtime cli::channel::tests::nostr_add_preflight_allows_a_compiled_runtime --lib
           run_case 145 lib cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary --lib
           run_case 140 lib cli::privacy::tests::audit_lists_no_channels_when_credentials_empty cli::privacy::tests::audit_lists_no_channels_when_credentials_empty --lib
           run_case 141 lib cli::privacy::tests::audit_warns_and_lists_configured_channels cli::privacy::tests::audit_warns_and_lists_configured_channels --lib
@@ -332,9 +334,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 145
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 145
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 145
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 147
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 147
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 147
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

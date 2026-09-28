@@ -22,6 +22,8 @@ use crate::channels::registry::{
     CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelAccountId, ChannelId, ChannelRef, channel_descriptors,
     resolve_channel_id, validate_registry,
 };
+#[cfg(not(feature = "nostr-channel"))]
+use crate::channels::registry::{ChannelRuntimeDependency, descriptor};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
@@ -3577,6 +3579,29 @@ fn collect_channel_add_fields(
     }
 }
 
+/// Reject Nostr setup before accepting flags or prompting for a private key
+/// when its canonical runtime dependency is absent. Other feature-gated
+/// adapters retain their existing credential pre-provisioning policy.
+fn preflight_channel_add_runtime(channel_id: ChannelId) -> Result<()> {
+    #[cfg(feature = "nostr-channel")]
+    let _ = channel_id;
+    #[cfg(not(feature = "nostr-channel"))]
+    {
+        let descriptor = descriptor(channel_id);
+        if descriptor.id == ChannelId::Nostr
+            && let ChannelRuntimeDependency::FeatureGated { feature } = descriptor.runtime
+        {
+            anyhow::bail!(
+                "{} setup is unavailable: this binary lacks the `{feature}` feature; \
+                 install a release build with {} support before adding credentials",
+                descriptor.display_name,
+                descriptor.display_name
+            );
+        }
+    }
+    Ok(())
+}
+
 fn prepare_channel_add_with_fields_at(
     home: &std::path::Path,
     channel_id: ChannelId,
@@ -3633,6 +3658,7 @@ pub(crate) async fn prepare_channel_add_at(
     flags: &ChannelAddFlags,
 ) -> Result<PreparedChannelAdd> {
     let channel_id = resolve_operator_channel(channel)?;
+    preflight_channel_add_runtime(channel_id)?;
     let fields = collect_channel_add_fields(channel_id, flags)?;
     prepare_channel_add_with_fields_at(home, channel_id, fields)
 }
@@ -3719,6 +3745,7 @@ pub(crate) async fn run_add_at(
     output: &OutputFormat,
 ) -> Result<()> {
     let channel_id = resolve_operator_channel(channel)?;
+    preflight_channel_add_runtime(channel_id)?;
     // B17: collect ALL interactive input BEFORE entering the lock.
     let fields = collect_channel_add_fields(channel_id, flags)?;
 
@@ -8975,6 +9002,56 @@ mod tests {
             .to_string();
         assert!(error.contains("lacks the `nostr-channel` feature"));
         assert!(!error.contains(&"11".repeat(32)));
+    }
+
+    #[cfg(not(feature = "nostr-channel"))]
+    #[tokio::test]
+    async fn nostr_add_preflight_rejects_before_field_collection_or_persistence() {
+        let home = tempfile::tempdir().unwrap();
+        let empty_flags = ChannelAddFlags::default();
+        let error = match prepare_channel_add_at(home.path(), "nostr", &empty_flags).await {
+            Ok(_) => panic!("Nostr setup unexpectedly reached field collection"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("Nostr"));
+        assert!(error.contains("nostr-channel"));
+        assert!(!error.contains("non-interactive stdin"));
+
+        let sentinel = "nostr-preflight-secret-must-not-leak";
+        let flags = ChannelAddFlags {
+            token: Some(sentinel.to_string()),
+            channels_csv: Some("wss://relay.example.com".to_string()),
+            ..Default::default()
+        };
+        let error = match run_add_at(home.path(), "nostr", &flags, &OutputFormat::Json).await {
+            Ok(_) => panic!("Nostr setup unexpectedly reached persistence"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("Nostr"));
+        assert!(error.contains("nostr-channel"));
+        assert!(!error.contains(sentinel));
+        assert!(!home.path().join("freedom.yaml").exists());
+        assert!(!home.path().join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn channel_add_preflight_keeps_non_nostr_channels_eligible() {
+        for descriptor in channel_descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.id != ChannelId::Nostr)
+        {
+            assert!(
+                preflight_channel_add_runtime(descriptor.id).is_ok(),
+                "{} setup unexpectedly rejected",
+                descriptor.display_name
+            );
+        }
+    }
+
+    #[cfg(feature = "nostr-channel")]
+    #[test]
+    fn nostr_add_preflight_allows_a_compiled_runtime() {
+        assert!(preflight_channel_add_runtime(ChannelId::Nostr).is_ok());
     }
 
     #[test]

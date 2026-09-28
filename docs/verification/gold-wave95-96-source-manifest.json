@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T14:10:12.3404461Z",
-  "validationStatus": "W1890 isolated test endpoint expectation corrected; hosted pending",
+  "capturedUtc": "2026-09-28T14:23:53.5766188Z",
+  "validationStatus": "W1889 source approved; W1891/92/93 pinned native recovery accepted; fresh source gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 50397,
-      "sha256": "76665AD51650B8F5DFF8B101824B811247762951B18FA8B0DDD0F28D5C94DA18"
+      "bytes": 50751,
+      "sha256": "AB9716649DFB8A9055252A3B04C3A0EFF83214BA5D225E5D110E75DD4975B2CD"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 12524,
-      "sha256": "88DED118BD0BE24181F65CEFBA396B768A666704BA59BEE5D90C75E428ED689F"
+      "bytes": 12877,
+      "sha256": "E7AE9653F504B5B10E0FE8E0BE78B0D9D31A44A1B76EB99905A2FB8EB8BE4DEC"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29969,
-      "sha256": "4B0008F31FE6FF0A78F1926EF2591AF45FD0EFDFC1A36BEE1B0A4AB62067D9E4"
+      "bytes": 30017,
+      "sha256": "DB1A5AAEF27FE519EBC07ADE136F6644C86763360AA743A42FFD3D0F0FC7D6A2"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 160631,
-      "sha256": "B5938712169AFA38759DE7002180693E5D4F1901A402059B0985682AB60B71D3"
+      "bytes": 160972,
+      "sha256": "77137C6E8963F6EDC9B83210A2C578DAA959201AEBA34C36B2512D8951356D86"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 540387,
-      "sha256": "B502A59E37F8C15F76A7680B232E847771545469831D64CFF39D2F8CE46622AB"
+      "bytes": 541865,
+      "sha256": "793C87E8BAD15B0E57EDC2BA41563A7B16B979DDDBBE06C2BCF411DDCCF664C0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1576817,
-      "sha256": "D5421717A3D7FC83DEEBB5419CD332D0469E8ABF01EFA2C958CDAE6433DF6D4E"
+      "bytes": 1578295,
+      "sha256": "226AF746E6EDF9CC9C4ABAE932E0BA952100C818AD56C865A4662C254F6A3AA6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2187827,
-      "sha256": "2E62061CBABC496D50D495F68301E59AB1D6C42A5976763CC75245036C7DEF92"
+      "bytes": 2189305,
+      "sha256": "2AE882FC9176C1E2C77541A4417F700154A8374CDBD090F2EFF9C5F9C03B39DC"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4748,8 +4748,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 363618,
-      "sha256": "08516A520F1BB3909B77AB3968CD95EA9057F5E5284DA6FBC74EC79102DA4381"
+      "bytes": 366767,
+      "sha256": "558E8842C3A936EC94AF8BECE9F7485393C3C23CA1BE26E783AF6DFE696C8545"
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
