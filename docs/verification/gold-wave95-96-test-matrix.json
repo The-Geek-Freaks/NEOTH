@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1887 authentic hosted format imported; fresh checks pending",
+  "status": "W1890 isolated test endpoint expectation corrected; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269785,
-    "sha256": "7B4EF45C698D9F6BE047C7B661756DEE77B0B671AFBA1F91731F44663A735B44"
+    "bytes": 269791,
+    "sha256": "F6C4F0DD03A00ECB90267FD706EF572B6211A9432EA1B291E440F2D798E2B81B"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -59586,6 +59586,53 @@
       }
     ],
     "note": "Original10974490574/API ZIP and patch hashes, both exact postimages verified. Layout only; no local formatter/runtime.2382/2157/942/145/58 unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1890CanaryFixtureEndpointRecovery": {
+    "run": 36433419319,
+    "producer": "ce248199e69811e72ee28f4f67d6cd4b4bc37a55",
+    "status": "failed before Rust/product execution; test expectation corrected, fresh hosted pending",
+    "passedContracts": {
+      "publicCli": 10,
+      "gchat": 13,
+      "daemon": 14
+    },
+    "failedTest": "test_init_home_marks_only_fresh_daemon_canary_onboarding_complete",
+    "cause": "Expected endpoint omitted existing /v1 suffix. Configure-loopback-provider correctly persists OpenAI-compatible base /v1; only assertion changed.",
+    "failedLog": "work/gold-20260906/wave1890-canary-fixture-recovery/failed-step.log",
+    "failedLogSha256": "E0D0FC55DFF6E1E3829CC5ECF92E722FE5A82708D80C0583D868C83DFD95065A",
+    "localExecutableValidationRan": false
+  },
+  "wave1890FixtureSourceBindings": {
+    "base": "ce248199e69811e72ee28f4f67d6cd4b4bc37a55",
+    "sources": [
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 15492,
+        "sha256": "B3B51F296B8ED351F72D5063B1D0F398E8D41D639446E654C2698C1BFCE665FC",
+        "blob": "49e7f65bfce79b10d8dededd604df360c7bb1c6c"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 540387,
+        "sha256": "B502A59E37F8C15F76A7680B232E847771545469831D64CFF39D2F8CE46622AB",
+        "blob": "d6e1d7a94b496a0b0bc561b8bacf8a6ef4cabb7c"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1576817,
+        "sha256": "D5421717A3D7FC83DEEBB5419CD332D0469E8ABF01EFA2C958CDAE6433DF6D4E",
+        "blob": "96e4f3d23dbeba9bf20df8d7a6fa1596a55f35a0"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2187827,
+        "sha256": "2E62061CBABC496D50D495F68301E59AB1D6C42A5976763CC75245036C7DEF92",
+        "blob": "9e7efbdd781e1cd631e555172467ce305e519800"
+      }
+    ],
+    "note": "Actual helper already emits /v1; fix only test expected literal. Prior Python gates10+13passed and14/1daemon; no Rust/product ran. Nostr setup W1889 is separate unaccepted WIP, excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

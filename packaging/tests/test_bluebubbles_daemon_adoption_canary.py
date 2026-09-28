@@ -153,7 +153,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.assertIn("onboarding_complete: true\n", config)
             self.assertEqual(config.count("onboarding_complete:"), 1)
             self.assertIn("provider_kind: openai_compat\n", config)
-            self.assertIn("provider_endpoint: http://127.0.0.1:43123\n", config)
+            self.assertIn("provider_endpoint: http://127.0.0.1:43123/v1\n", config)
             self.assertIn("provider_model: daemon-canary-model\n", config)
             self.assertNotIn("channels:", config)
             self.assertNotIn("one_shot", config)

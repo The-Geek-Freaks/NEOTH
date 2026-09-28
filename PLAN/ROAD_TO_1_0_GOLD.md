@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1890 hosted canary fixture correction (2026-09-28):**
+Product run36433419319 atce248199 stopped in its Python contract gate before
+Rust/product execution: publicCLI10PASS, GChat13PASS, daemon14PASS/1FAIL.
+The new init_home test expected an endpoint without the existing OpenAI-compatible
+/v1 suffix; the helper correctly wrote /v1. Only that literal expectation is
+corrected. Production, helper behavior, consent, onboarding and traffic guards
+are unchanged. Preflight36433086976 andCodeQuality36433085922 atce248199 passed.
+Native941/2156/57 runs on a5f4c879 remain active. Fresh product validation follows
+one green-head dispatch; no local runtime, claimed product pass or ROAD closure.
+
 **W1887 hosted formatter import (2026-09-28):** Preflight36432652934 at aac07c78
 requested only Rust layout changes. Original10974490574 ZIP/API SHA256
 a1f6e10363725f077739c44e1cc67971ec5db04457d3cc752fdcd5b094e3a795 and patch
