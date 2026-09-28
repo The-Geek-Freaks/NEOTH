@@ -10,6 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use cap_fs_ext::DirExt as _;
 use sha2::{Digest as _, Sha256};
 
 const CONFIG_FILE: &str = "freedom.yaml";

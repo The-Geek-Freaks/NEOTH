@@ -12,7 +12,10 @@ it. Independent backend and canary source reviews PASS after retained-state,
 bound namespace, checkpoint-resume and directory-durability corrections.
 Source published b3bec830; authenticated hosted format imported at e38161cf.
 GitHub-only product36360291623, Group2027run36360293343 and Windows791run
-36360295078 were dispatched once at e38161cf. Runtime acceptance is pending.
+36360295078 were dispatched once at e38161cf. Product and Linux compile
+failed E0599: missing cap_fs_ext::DirExt trait import at three no-follow calls.
+The one-line import repair is source-checked; Windows was cancelled as
+superseded before retrying the corrected producer. Runtime acceptance pending.
 Its Preflight requested one additional formatting-only line wrap; original
 artifact10945386686 and exact postimage were verified before import.
 The Archive Bridge canary now starts from an empty home through real public
