@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1875 status/W1876 Windows repairs/W1877 diagnostic preservation; fresh native and product execution pending",
+  "status": "Exact W1875 hosted formatter postimage imported; fresh native/product gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269667,
-    "sha256": "DA704B5410D7B8FF988C50ED9BD1E7E0A8E8FDA65FCF21A7DE1EFC191F2FBC1E"
+    "bytes": 269642,
+    "sha256": "7FF844D8E307EC8F2ECEDC7D151DC2BBE9F7FA3D4533BF8F05018913039787A9"
   },
   "sourceInputs": 1495,
   "requiredNativeTests": [
@@ -8118,13 +8118,13 @@
     {
       "test": "cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
@@ -14154,49 +14154,49 @@
     {
       "test": "cli::onboarding_status::tests::render_fully_configured_contains_ready_yes",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::render_no_channel_shows_ready_no_and_blocker",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::render_no_provider_shows_ready_no_and_provider_blocker",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::render_shows_device_tier",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::render_channels_none_when_both_disabled",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::render_channels_telegram_when_enabled",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json",
       "sourcePath": "SRC/neothd/src/cli/onboarding_status.rs",
-      "sourceSha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406",
+      "sourceSha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
       "junitClass": "neoth"
     }
   ],
@@ -58809,6 +58809,38 @@
       }
     ],
     "note": "2365portable/2140Linux/925Windows/128channel/41macOS selection. OriginalWindows889 authenticated874pass15fail across140rawsources/900receipt hashes. Channel118/publicCLI step success only; daemon primary error masked in prior artifact, GChat wrong_target all8counts0. Preserve primary/daemon/loopback failure precedence; no runtime acceptance/no local validation/no ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1875HostedFormat": {
+    "base": "e6721ce584051839dc1f0932071905074d66525a",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 532047,
+        "sha256": "9E742082B348AC9C6316AA0681D6FA41DE712385F1828D69CF5CACB038B175E7",
+        "blob": "35379d94725c6155843d54138667f6760174e091"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1568477,
+        "sha256": "BD5365A37389981FB3F1BADCAB048D5319ADF7286C00B702AE18718ECC7D32D6",
+        "blob": "7443f9193abcfde4d05da185ac3c46c37f710699"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2179487,
+        "sha256": "45D5E0A3E4FFE54F094D8ACF69687B6ED38C00C3E85D3B231B313B4803669FB1",
+        "blob": "3a8f12ef45608e6e98a2f0a8fca18e58d4c08975"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_status.rs",
+        "bytes": 19219,
+        "sha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921",
+        "blob": "e629c61a7fa3dd381f463da5e60d7499e6ad25d3"
+      }
+    ],
+    "note": "Original10970736210 and patch authenticated; exact onboarding_status postimagee629c61a7fa3dd381f463da5e60d7499e6ad25d3. No semantic changes; no local runtime or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

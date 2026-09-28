@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1875 hosted formatting import (2026-09-28):** Preflight36424013048 at e6721ce5
+found one assertion layout difference. Original10970736210 ZIP/API SHA256
+4316b0f6b9c27213504a9d8dd54ebd7d506f73bec2019d80a2cb141614366e88 and patch
+88c3d05a993d8d7600edf292aa0b59be5d025bbf068ce23a0a84dc75f8cdd8ae verified;
+onboarding_status Git postimage e629c61a7fa3dd381f463da5e60d7499e6ad25d3 imported.
+No semantic change, local formatter or test. Fresh hosted validation pending.
+
 **W1874-W1877 Windows recovery, complete status projection and daemon diagnostics (2026-09-28; hosted pending):**
 Root authenticated Windows889 run36415338533 at913a57ab against original10968977368
 ZIP/API SHA256 cb1c8bf514c950e8672ac3fc4a7bc41683ec572213720587098b0c68961603e4:

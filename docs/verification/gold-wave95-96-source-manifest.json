@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T12:41:11.8518304Z",
-  "validationStatus": "W1875 status/W1876 Windows repairs/W1877 diagnostic preservation; fresh native and product execution pending",
+  "capturedUtc": "2026-09-28T12:49:30.1585186Z",
+  "validationStatus": "Exact W1875 hosted formatter postimage imported; fresh native/product gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 531579,
-      "sha256": "31A63237DE73FAF6A78DBDC8FF692CE4C476E23FF0318666D501689BE910B99C"
+      "bytes": 532047,
+      "sha256": "9E742082B348AC9C6316AA0681D6FA41DE712385F1828D69CF5CACB038B175E7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1568009,
-      "sha256": "91D8D1DF84FE975F6448F79B2F124706C67F682C336601F093770E0504CE1EA7"
+      "bytes": 1568477,
+      "sha256": "BD5365A37389981FB3F1BADCAB048D5319ADF7286C00B702AE18718ECC7D32D6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2179019,
-      "sha256": "1270E169A12D7674A72A57E81C615726B6054164965963F941B1D0663335604F"
+      "bytes": 2179487,
+      "sha256": "45D5E0A3E4FFE54F094D8ACF69687B6ED38C00C3E85D3B231B313B4803669FB1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5048,8 +5048,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/onboarding_status.rs",
-      "bytes": 19185,
-      "sha256": "76659B217FD6C738208CBC4578671CDF924CFE7E9288CDC8DB827A6B3C0B9406"
+      "bytes": 19219,
+      "sha256": "7D165E5C5CCFCDBD308C9E66E2F14F5DBBF335E0D51DD38A74BCFCE2AF7D3921"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",

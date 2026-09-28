@@ -482,7 +482,10 @@ mod tests {
         let snapshot = OnboardingSnapshot::from_readiness(&cfg, &readiness);
 
         assert!(snapshot.ready);
-        assert_eq!(snapshot.enabled_channels, vec!["Telegram", "Keet", "Discord"]);
+        assert_eq!(
+            snapshot.enabled_channels,
+            vec!["Telegram", "Keet", "Discord"]
+        );
         assert!(snapshot.telegram_enabled);
         assert!(!snapshot.whatsapp_enabled);
         assert!(
