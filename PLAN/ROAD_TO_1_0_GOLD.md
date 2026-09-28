@@ -20,19 +20,32 @@ wire ID; public command google_chat and source googlechat stay unchanged.
 The receipt additionally binds the enum/registry sources, and a fixed material
 vector prevents repeating that alias error. Production validation is unchanged.
 New hosted product evidence is pending; LF00112 stays open. W1855 strict
-workspaceClippy36404410318 at896e4f7d continues after successful core types and
-CLI build. No local executable validation; ROAD1324/1081/241/2, WS-LF43/75.
+workspaceClippy36404410318 at896e4f7d failed only on a test-fake Clippy lint
+after successful core types and CLI build. The minimal repair is published as
+a1c640ff; exact replacement run36409692729 is active. W1859 daemon-adoption
+proof is published as7fa7c5fb and awaits a separate later product run. No local
+executable validation; ROAD1324/1081/241/2, WS-LF43/75.
 
 **W1855 Test fault-helper visibility repair (2026-09-28; hosted pending):**
 Scheduled CI36398949143 at8e7108e7 reported five private_bounds errors in
 cfg(test) migration fault helpers before the workspace-Clippy step timed out.
 Only those five methods are now private; their callers are their own nested
 test modules. Production code, fault types and regression assertions are
-unchanged. The existing CLI-reference lane with workspace_clippy=true will
-repeat the exact strict workspace command on the new source. No local
+unchanged. The first exact lane failed solely at test-fake
+clippy::obfuscated_if_else. Its behavior-preserving if/else repair is published
+as a1c640ff; run36409692729 repeats the exact strict workspace command. No local
 executable validation ran and no roadmap leaf closes. ROAD1324/1081/241/2,
 WS-LF43/75 and all native selections remain unchanged. GChat36402186588 at
 4d605c46 continues independently and cannot prove this later visibility fix.
+
+**W1859 BlueBubbles daemon-adoption canary (2026-09-28; published, hosted pending):**
+Commit 7fa7c5fb adds a Linux-hosted proof that a running `neoth serve` process
+adopts a public BlueBubbles relink only after an authenticated empty message
+poll. It proves the daemon PID lock and stable inode, the Pending no-poll
+window, endpoint-bound OpenAI-compatible consent, readiness reload consumption,
+and durable retry identity. Workflow static contracts, exact source hashes and
+a dedicated evidence artifact are wired. This is source integration only: no
+product run has executed it and no roadmap leaf closes.
 
 **W1847/W1850 Google Chat public-CLI canary source (2026-09-28; hosted pending):**
 A default-off debug-only gchat-product-canary feature enables one canonical
