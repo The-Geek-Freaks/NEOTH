@@ -23,6 +23,7 @@ const GUI_PENDING_DIR: &str = ".gui-init";
 const GUI_PENDING_FILE: &str = "pending.json";
 const GUI_LOCK_FILE: &str = ".gui-init.lock";
 const INTERFACE_PREFERENCE_FILE: &str = "interface.json";
+const INTERFACE_PREFERENCE_LOCK_FILE: &str = "interface.lock";
 
 /// A positive inspection result binds the entry-time identity state. Callers
 /// cannot turn a retained key into a create permission by re-inspecting later.
@@ -160,6 +161,7 @@ fn inspect_recognised_fresh_home(home: &Path) -> Result<InitialIdentityState> {
             }
             crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME
             | INTERFACE_PREFERENCE_FILE
+            | INTERFACE_PREFERENCE_LOCK_FILE
             | GUI_LOCK_FILE => require_real_file(&path, &metadata)?,
             GUI_PENDING_DIR => inspect_gui_pending_dir(&path, &metadata)?,
             WAL_DIR => identity = inspect_retained_wal(home, &path, &metadata)?,
@@ -402,6 +404,7 @@ fn inspect_bound_init_transient(
     let display = home.display_path.join(name);
     if name == OsStr::new(crate::cli::wizard_checkpoint::CHECKPOINT_FILENAME)
         || name == OsStr::new(INTERFACE_PREFERENCE_FILE)
+        || name == OsStr::new(INTERFACE_PREFERENCE_LOCK_FILE)
         || name == OsStr::new(GUI_LOCK_FILE)
     {
         let metadata = home
@@ -598,6 +601,27 @@ mod tests {
 
         provision_after_license(home.path(), Some(&candidate), false).unwrap();
         assert!(crate::wal::master_key::master_key_path(home.path()).exists());
+    }
+
+    #[test]
+    fn cli_interface_lock_transient_provisions_one_stable_identity() {
+        let home = tempfile::tempdir().unwrap();
+        let candidate = inspect(home.path());
+        crate::interface_preference::save_at(
+            home.path(),
+            crate::interface_preference::InterfacePreference::Cli,
+        )
+        .unwrap();
+        assert!(home.path().join(INTERFACE_PREFERENCE_LOCK_FILE).is_file());
+
+        provision_after_license(home.path(), Some(&candidate), false).unwrap();
+        let first = fs::read(crate::wal::master_key::master_key_path(home.path())).unwrap();
+        let candidate = inspect(home.path());
+        provision_after_license(home.path(), Some(&candidate), false).unwrap();
+        assert_eq!(
+            first,
+            fs::read(crate::wal::master_key::master_key_path(home.path())).unwrap()
+        );
     }
 
     #[test]

@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1764 ordinary CLI interface-lock continuation (2026-09-28):**
+Product36360760874 atfa421934 compiled successfully, then failed at init with
+command_failed; all six cleanup flags true. Original artifact10946065535,
+ZIP959a938e142ea7ac57a8fa7274f3d31f82c8717108aa1687397840e4fda2375b
+is API-digest/producer authenticated. It contains no inner error text.
+Source tracing proves --cli persists interface.lock before first-use key
+provisioning, but the new guard omitted that legitimate transient. The narrow
+repair admits only that exact regular-file name in both existing allowlists.
+A new regression invokes real interface_preference::save_at(Cli), then proves
+key creation and stable reuse. Independent source review PASS. The canary also
+retains bounded closed-class init failure diagnostics without raw paths/output
+or secrets. This fixes a demonstrated source-path defect; the failed original
+receipt alone does not establish its inner exception. New inventory:
+Portable2241 / Group2028 / Windows792, with14 first-use identities.
+Executable validation of this repair remains pending. ROAD1324/1077/245/2
+unchanged. No local compiler/formatter/parser/test/runtime was used.
 **W1757 CLI first-use identity / W1761 native follow-up (2026-09-28):**
 Fresh normal CLI initialization now provisions a private WAL/config identity
 after explicit license acceptance and before its first checkpoint/config write.

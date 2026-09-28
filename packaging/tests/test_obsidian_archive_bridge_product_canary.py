@@ -152,29 +152,68 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             calls: list[list[str]] = []
-            def fake_run(argv: list[str], env: dict[str, str], timeout: int = 45) -> bytes:
+            state: dict = {"init_diagnostics": []}
+            def fake_run(argv: list[str], **_: object) -> object:
                 calls.append(argv)
                 (home / "wal").mkdir()
                 key = home / "wal" / "master.key"
                 key.write_bytes(b"k" * 32); key.chmod(0o600)
-                return b"initialized"
-            with mock.patch.object(canary, "run", side_effect=fake_run):
-                identity = canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+                return canary.subprocess.CompletedProcess(argv, 0, b"initialized", b"")
+            with mock.patch.object(canary.subprocess, "run", side_effect=fake_run):
+                identity = canary.initialize_fresh_home(Path("/product/neoth"), home, {}, state)
             self.assertEqual(identity, b"k" * 32)
             self.assertEqual(calls, [["/product/neoth", "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"]])
+            self.assertEqual(state["init_diagnostics"], [])
 
     def test_first_setup_rejects_preexisting_state_and_missing_init_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
+            state: dict = {"init_diagnostics": []}
             (home / "freedom.yaml").write_bytes(b"prior")
-            with mock.patch.object(canary, "run") as command:
+            with mock.patch.object(canary.subprocess, "run") as command:
                 with self.assertRaisesRegex(canary.Failure, "init_home_not_fresh"):
-                    canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {}, state)
                 command.assert_not_called()
             (home / "freedom.yaml").unlink()
-            with mock.patch.object(canary, "run", return_value=b"success without key"):
+            completed = canary.subprocess.CompletedProcess([], 0, b"success without key", b"")
+            with mock.patch.object(canary.subprocess, "run", return_value=completed):
                 with self.assertRaisesRegex(canary.Failure, "init_identity_invalid"):
-                    canary.initialize_fresh_home(Path("/product/neoth"), home, {})
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {}, state)
+
+    def test_initialization_records_redacted_nonzero_and_timeout_subprocess_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            state: dict = {"init_diagnostics": []}
+            failed = canary.subprocess.CompletedProcess([], 23, b"first-install home changed after final fresh-state inspection: /private/interface.lock", b"token=never-persist")
+            with mock.patch.object(canary.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(canary.Failure, "command_failed"):
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {}, state)
+            diagnostic = state["init_diagnostics"].pop()
+            self.assertEqual(diagnostic["reason"], "exited_nonzero")
+            self.assertEqual(diagnostic["classification"], "interface_lock_residue")
+            self.assertEqual(diagnostic["returncode"], 23)
+            encoded = __import__("json").dumps(diagnostic)
+            self.assertNotIn("/private", encoded); self.assertNotIn("never-persist", encoded)
+            similarly_named = canary.redacted_init_diagnostic(
+                "exited_nonzero", 23,
+                b"first-install home changed after final fresh-state inspection: /private/interface.lock.extra",
+            )
+            self.assertEqual(similarly_named["classification"], "home_changed_after_inspection")
+            early_residue = canary.redacted_init_diagnostic(
+                "exited_nonzero", 23,
+                b"unrecognised NEOTH home residue blocks first-install identity provisioning: /private/interface.lock",
+            )
+            self.assertEqual(early_residue["classification"], "interface_lock_residue")
+            timeout = canary.subprocess.TimeoutExpired([], 45, output=b"first-install WAL identity changed after initial inspection /private/home", stderr=b"key=never-persist")
+            with mock.patch.object(canary.subprocess, "run", side_effect=timeout):
+                with self.assertRaisesRegex(canary.Failure, "command_failed"):
+                    canary.initialize_fresh_home(Path("/product/neoth"), home, {}, state)
+            diagnostic = state["init_diagnostics"].pop()
+            self.assertEqual(diagnostic["reason"], "timed_out")
+            self.assertEqual(diagnostic["classification"], "identity_changed_before_provision")
+            self.assertIsNone(diagnostic["returncode"])
+            encoded = __import__("json").dumps(diagnostic)
+            self.assertNotIn("/private", encoded); self.assertNotIn("never-persist", encoded)
 
     def test_first_setup_rejects_malformed_or_public_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

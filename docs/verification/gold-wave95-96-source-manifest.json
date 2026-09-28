@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T00:01:07.7638689Z",
-  "validationStatus": "W1763 fixes hosted E0599 with one capability extension trait import; W1757 product/native acceptance pending retry",
+  "capturedUtc": "2026-09-28T00:23:14.7963189Z",
+  "validationStatus": "independent_source_review_pass_hosted_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -159,7 +159,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 29286,
-      "sha256": "D2CC6CC871BC4317DB3625E162F3F2B955A260B5A9DA2CCC4AC51FC2720C3683"
+      "sha256": "428D02B08FDB361B810760C18E5688169DB0454F9928DB2AB96C0379546A2C06"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 137699,
-      "sha256": "4F6F55ADDF957487E1E5D767639618E603C4C8A68F2A2C5234E4C112C563255A"
+      "bytes": 137857,
+      "sha256": "BCEAA553454D9063515220D3E547A88B7D736157914D88302979A3C4D1FCB13B"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3523,8 +3523,8 @@
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_canary.py",
-      "bytes": 32424,
-      "sha256": "E5D32DD43A472C223A9D13EC52FE0C5A953B49D7247AFF9074E87E77663F86EA"
+      "bytes": 36825,
+      "sha256": "67F12F53A73905482F922B665EB5BD635F5B385A21B0ACB2CBB482376299F557"
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
@@ -3603,8 +3603,8 @@
     },
     {
       "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
-      "bytes": 13196,
-      "sha256": "0A58E22263F90F7D180A227826E6E7D7ABE81041721AB5CED4447EB3F820E883"
+      "bytes": 16117,
+      "sha256": "D7F81CA6E6E11DF0D53D45DC78AFBBDEBA84D2D434A935FB82BD868777C1BD39"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3673,13 +3673,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1517981,
-      "sha256": "E2C646CCCAFEACC76AD01BECB514188064D7D323D482E219B0F4D245FDA5D689"
+      "bytes": 1519159,
+      "sha256": "C2F6AFFE37DC461F4C6296D136B13E6DF6831F69708A263B5669A390FFCDD9D8"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2128504,
-      "sha256": "E24DE1FE2C34CF005335192D5EAEB788D4BE3E9C9EA9BFFD713A0B57197D155A"
+      "bytes": 2129682,
+      "sha256": "66F0CB89420B6CBA81BC4DF3D31A5473CD4D410505B0A06C37023AAF5E836EEF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4693,8 +4693,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "bytes": 29503,
-      "sha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B"
+      "bytes": 30536,
+      "sha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4"
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",

@@ -79,11 +79,74 @@ def observe_init_identity(home: Path) -> bytes:
     return raw
 
 
-def initialize_fresh_home(binary: Path, home: Path, env: dict[str, str]) -> bytes:
+def redacted_init_diagnostic(reason: str, returncode: int | None, raw: bytes) -> dict:
+    if reason not in {"exited_nonzero", "timed_out", "output_limit_exceeded", "spawn_unavailable"}:
+        raise Failure("init_diagnostic_reason_invalid")
+    bounded = raw[:LIMIT]
+    # These literals are source-owned first-install contexts.  The receipt
+    # contains only a closed class, never the surrounding diagnostic text.
+    signatures = (
+        (b"first-install WAL identity changed after initial inspection", "identity_changed_before_provision"),
+        (b"retained first-install WAL identity changed before provisioning", "retained_identity_changed"),
+        (b"existing NEOTH state at", "existing_state_not_eligible"),
+        (b"unrecognised NEOTH home residue blocks first-install identity provisioning", "unrecognised_home_residue"),
+        (b"first-install home changed after final fresh-state inspection", "home_changed_after_inspection"),
+        (b"first-install home changed before master-key publication", "home_changed_before_key_publish"),
+        (b"create first-install WAL master key", "master_key_create_failed"),
+        (b"resolve first-install NEOTH home", "home_resolution_failed"),
+        (b"first-install NEOTH home needs an existing parent anchor", "home_anchor_missing"),
+        (b"set owner-private directory", "private_directory_hardening_failed"),
+        (b"first-install directory is not owner-private mode 0700", "private_directory_mode_rejected"),
+        (b"sync first-install home after creating", "home_sync_failed"),
+        (b"--accept-license is required when running non-interactively", "license_not_accepted"),
+    )
+    # The ordinary CLI transient has a fixed source context and an actual
+    # path-component basename. Do not classify a similarly named arbitrary
+    # residue (for example, ``interface.lock.extra``) as this known first-use
+    # case, and never return either matched fragment in the receipt.
+    interface_lock_contexts = (
+        b"first-install home changed after final fresh-state inspection",
+        b"unrecognised NEOTH home residue blocks first-install identity provisioning",
+    )
+    interface_lock = b"interface.lock"
+    offset = bounded.find(interface_lock)
+    while offset >= 0:
+        before = bounded[offset - 1:offset]
+        after = bounded[offset + len(interface_lock):offset + len(interface_lock) + 1]
+        if before in {b"/", b"\\"} and after in {b"", b"\n", b"\r", b" ", b"\t", b":", b")", b"]", b"}", b"\"", b"'"}:
+            break
+        offset = bounded.find(interface_lock, offset + 1)
+    if offset >= 0 and any(context in bounded for context in interface_lock_contexts):
+        classification = "interface_lock_residue"
+    else:
+        classification = next((code for marker, code in signatures if marker in bounded), "unclassified")
+    return {"reason": reason, "classification": classification, "returncode": returncode, "log_sha256": hashlib.sha256(bounded).hexdigest(), "log_bytes": len(bounded), "log_truncated": len(raw) > LIMIT}
+
+
+def run_initialization(binary: Path, home: Path, env: dict[str, str], state: dict) -> None:
+    argv = [str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"]
+    try:
+        completed = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45, check=False)
+    except subprocess.TimeoutExpired as error:
+        state["init_diagnostics"].append(redacted_init_diagnostic("timed_out", None, (error.stdout or b"") + b"\n" + (error.stderr or b"")))
+        raise Failure("command_failed") from error
+    except OSError as error:
+        state["init_diagnostics"].append(redacted_init_diagnostic("spawn_unavailable", None, b""))
+        raise Failure("command_unavailable") from error
+    raw = completed.stdout + b"\n" + completed.stderr
+    if completed.returncode != 0:
+        state["init_diagnostics"].append(redacted_init_diagnostic("exited_nonzero", completed.returncode, raw))
+        raise Failure("command_failed")
+    if len(completed.stdout) > LIMIT or len(completed.stderr) > LIMIT:
+        state["init_diagnostics"].append(redacted_init_diagnostic("output_limit_exceeded", completed.returncode, raw))
+        raise Failure("command_failed")
+
+
+def initialize_fresh_home(binary: Path, home: Path, env: dict[str, str], state: dict) -> bytes:
     # No fixture key, restore operation or prior state may satisfy first use.
     if not home.is_dir() or home.is_symlink() or any(home.iterdir()):
         raise Failure("init_home_not_fresh")
-    run([str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "archive-bridge-canary", "--provider", "skip"], env)
+    run_initialization(binary, home, env, state)
     return observe_init_identity(home)
 
 def redacted_daemon_diagnostic(reason: str, returncode: int | None, raw: bytes) -> dict:
@@ -289,7 +352,7 @@ def cleanup_owned(root: Path, home: Path, vault: Path, host_home: Path, pairing:
 
 def bindings(asset: Path, driver_path: Path, workflow: Path) -> dict[str, str]:
     paths = {
-        "init": Path("SRC/neothd/src/cli/init.rs"), "init_identity": Path("SRC/neothd/src/cli/init/first_install_identity.rs"), "init_io": Path("SRC/neothd/src/cli/init/io.rs"), "master_key": Path("SRC/neothd/src/wal/master_key.rs"),
+        "init": Path("SRC/neothd/src/cli/init.rs"), "init_identity": Path("SRC/neothd/src/cli/init/first_install_identity.rs"), "init_io": Path("SRC/neothd/src/cli/init/io.rs"), "interface_preference": Path("SRC/neothd/src/interface_preference.rs"), "master_key": Path("SRC/neothd/src/wal/master_key.rs"),
         "private_store": Path("SRC/neothd/src/skills/store.rs"), "key_crypto": Path("SRC/neothd/src/wal/crypto.rs"),
         "audit_token": Path("SRC/neothd/src/daemon/audit_rpc/token.rs"),
         "key_storage": Path("SRC/neothd/src/wal/compaction.rs"),
@@ -310,7 +373,7 @@ def execute(binary: Path, root: Path, home: Path, vault: Path, workflow: Path, n
     env = dict(os.environ); env["NEOTH_HOME"] = str(home); env["HOME"] = str(host_home)
     # Initialize the product's own home/key material, then write the narrow
     # explicit archive-bridge configuration used by serve.
-    state["stage"] = "init"; initial_identity = initialize_fresh_home(binary, home, env)
+    state["stage"] = "init"; initial_identity = initialize_fresh_home(binary, home, env, state)
     write_bridge_config(home, vault)
     note = vault / "NEOTH-sessions" / "fixture.md"; note.parent.mkdir(); note.write_text("---\nsource: neoth-archive-bridge\n---\nfixture", encoding="utf-8")
     plugin_dir = vault / ".obsidian" / "plugins" / "neoth-archive-bridge"
@@ -391,12 +454,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--root", required=True); parser.add_argument("--home", required=True); parser.add_argument("--vault", required=True); parser.add_argument("--receipt", required=True); parser.add_argument("--node", default="node"); parser.add_argument("--workflow", required=True); args = parser.parse_args()
     binary, root, home, vault, receipt, workflow = Path(args.binary).resolve(), Path(args.root).resolve(), Path(args.home).resolve(), Path(args.vault).resolve(), Path(args.receipt).resolve(), Path(args.workflow).resolve()
     require_hosted(root, home, vault, receipt); receipt.parent.mkdir(parents=True, exist_ok=True)
-    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "artifacts": [], "daemons": [], "daemon_diagnostics": []}; outcome: dict | None = None; error = None
+    state: dict = {"stage": "prepare", "host_home": root / "host-home", "pairing": root / "pairing.json", "artifacts": [], "daemons": [], "daemon_diagnostics": [], "init_diagnostics": []}; outcome: dict | None = None; error = None
     try: outcome = execute(binary, root, home, vault, workflow, args.node, state)
     except Failure as caught: error = str(caught)
     except Exception: error = "unexpected_failure"
     cleanup = cleanup_owned(root, home, vault, state["host_home"], state["pairing"], state["artifacts"], state["daemons"])
-    result = {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "outcome": "passed" if outcome is not None and all(cleanup.values()) else "failed", "stage": "cleanup" if outcome is not None else state["stage"], "failure": error, "cleanup": cleanup, "daemon_start_diagnostics": state["daemon_diagnostics"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui"}
+    result = {"schema_version": 1, "source_head": os.environ["GITHUB_SHA"], "outcome": "passed" if outcome is not None and all(cleanup.values()) else "failed", "stage": "cleanup" if outcome is not None else state["stage"], "failure": error, "cleanup": cleanup, "init_diagnostics": state["init_diagnostics"], "daemon_start_diagnostics": state["daemon_diagnostics"], "host_adapter": "minimal_node_stub_loads_installed_main_js_no_obsidian_ui"}
     if outcome is not None: result.update(outcome)
     receipt.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     return 0 if result["outcome"] == "passed" else 1

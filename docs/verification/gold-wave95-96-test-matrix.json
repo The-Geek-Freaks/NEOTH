@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1763 fixes hosted E0599 with one capability extension trait import; W1757 product/native acceptance pending retry",
+  "status": "independent_source_review_pass_hosted_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 257910,
-    "sha256": "D84E011DF46A70D427DA44D68B8708869FD438F875606E24F01D1EF8D4D39203"
+    "bytes": 257841,
+    "sha256": "6C439DDBDC39F297E6A4F4EA0D4AB7AA4F7DE388FC52C01682A2D06DE0FE9F44"
   },
   "sourceInputs": 1433,
   "requiredNativeTests": [
@@ -13380,73 +13380,79 @@
     {
       "test": "cli::init::first_install_identity::tests::missing_and_empty_home_provision_one_stable_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_valid_key_and_checkpoint_are_reused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::configured_or_unknown_homes_never_receive_a_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::malformed_or_incomplete_retained_wal_is_refused_without_replacement",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_disappearing_after_inspection_never_regenerates",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::retained_identity_substitution_after_inspection_is_refused",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_candidate_refuses_key_added_after_initial_inspection",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::dry_run_does_not_create_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity",
       "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-      "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::first_install_identity::tests::cli_interface_lock_transient_provisions_one_stable_identity",
+      "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
       "junitClass": "neoth"
     }
   ],
@@ -15760,7 +15766,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+        "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
         "junitClass": "neoth"
       }
     ],
@@ -16158,7 +16164,7 @@
       {
         "test": "cli::init::first_install_identity::tests::symlink_home_or_master_key_is_refused",
         "sourcePath": "SRC/neothd/src/cli/init/first_install_identity.rs",
-        "sourceSha256": "E4151BCFAFF6CC5040887BE3A4785A9BBD0A7C233029108E6A1A3378AE9AB04B",
+        "sourceSha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
         "junitClass": "neoth"
       }
     ]
@@ -54179,10 +54185,11 @@
       "cli::init::first_install_identity::tests::bound_final_fresh_check_refuses_late_configuration_or_retained_wal",
       "cli::init::first_install_identity::tests::bound_prepublication_check_refuses_late_config_before_key_publish",
       "cli::init::first_install_identity::tests::failed_wal_parent_sync_never_publishes_a_master_key",
-      "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity"
+      "cli::init::first_install_identity::tests::fresh_checkpoint_resume_provisions_the_initial_identity",
+      "cli::init::first_install_identity::tests::cli_interface_lock_transient_provisions_one_stable_identity"
     ],
     "status": "independent_source_review_pass_hosted_pending",
-    "note": "CLI-only fresh initialization; retained identity cannot be regenerated; GUI and real desktop acceptance remain separate."
+    "note": "CLI-only initial identity; includes real CLI preference write/lock regression. Historical native13 and product retries remain distinct; no GUI acceptance."
   },
   "wave1761LinuxNativeAdmission": {
     "status": "accepted",
@@ -54345,6 +54352,56 @@
       }
     ],
     "note": "Original GitHub product36360291623 and group36360293343 logs identify three E0599 open_dir_nofollow calls due missing DirExt import. Minimal one-line import, no guard changes; no local compiler or test. Superseded Windows36360295078 cancelled; Root alone owns retries.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1764CliInterfaceLock": {
+    "base": "fa421934a4269a3b67411fa94a50f042f99f14ec",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29286,
+        "sha256": "428D02B08FDB361B810760C18E5688169DB0454F9928DB2AB96C0379546A2C06",
+        "blob": "dde834dc92f616a502468a304f342c7c6fb21379"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 137857,
+        "sha256": "BCEAA553454D9063515220D3E547A88B7D736157914D88302979A3C4D1FCB13B",
+        "blob": "013dd56eed62e9bf98b6267978bfc991f38fa527"
+      },
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 36825,
+        "sha256": "67F12F53A73905482F922B665EB5BD635F5B385A21B0ACB2CBB482376299F557",
+        "blob": "dd3738b627431b58c53f1e8870ed964c07a6fec1"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 16117,
+        "sha256": "D7F81CA6E6E11DF0D53D45DC78AFBBDEBA84D2D434A935FB82BD868777C1BD39",
+        "blob": "766eb4e5c03df73f1c8559eac636f4b44c4d2ae2"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1519159,
+        "sha256": "C2F6AFFE37DC461F4C6296D136B13E6DF6831F69708A263B5669A390FFCDD9D8",
+        "blob": "bd69e0a4a89d03c20acb08f591bef24bd94ecdb2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2129682,
+        "sha256": "66F0CB89420B6CBA81BC4DF3D31A5473CD4D410505B0A06C37023AAF5E836EEF",
+        "blob": "f03634a75c9a30b2d8fa27cf9eb6f5e414425b30"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+        "bytes": 30536,
+        "sha256": "71B0AA6BC70E854485144B884ACDFEC8827F6DE5CEB986433F4D449036AEEBF4",
+        "blob": "411efb49c119920ec81c69f253405ab8a5bb692d"
+      }
+    ],
+    "note": "Exact regular interface.lock transient matches real CLI preference writer; regression executes actual save_at(Cli) then stable first-use identity. Redacted init diagnostics only. Source review PASS; executable gates pending. Local BSOD hold; no GUI acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
