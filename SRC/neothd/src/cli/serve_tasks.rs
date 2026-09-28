@@ -6021,7 +6021,7 @@ mod converted_relink_traffic_tests {
     }
 
     fn begin_real_pending(home: &Path, kind: ChannelKind) {
-        let source = home.join("openclaw-source.json5");
+        let source = home.join("openclaw.json");
         let (source_kind, label, body) = match kind {
             ChannelKind::IMessageBlueBubbles => (
                 neoth_openclaw_custody::ConvertedRelinkChannel::IMessage,

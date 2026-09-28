@@ -1,0 +1,83 @@
+{
+  "schema": "neoth-hosted-relink-gate-diagnosis/v1",
+  "decision": "rejected",
+  "producer_commit": "50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+  "linux": {
+    "run": 36367920853,
+    "selected": 2049,
+    "executedMarkers": 7,
+    "failedFixtures": [
+      "channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate",
+      "channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused",
+      "channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite",
+      "channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages",
+      "channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked"
+    ],
+    "missing": "cli::tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials",
+    "reason": "Five selected fixtures used forbidden primary filename openclaw.yaml; exact CLI test name selected zero, ending discovery early.",
+    "originalArtifacts": [
+      {
+        "id": 10948491595,
+        "name": "w190-research-lifecycle-receipt-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "bd24d732796e3ab536fe855367d200ad1184d2d8c03535275ae2726c0340c51a",
+        "entries": [
+          "failed-fixtures.txt",
+          "neoth-lib-test-binary.json",
+          "selection.json",
+          "source-head.txt",
+          "source-ref.txt"
+        ]
+      },
+      {
+        "id": 10948087577,
+        "name": "w190-research-lifecycle-log-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "f801def1dcc4298c297fe73a87fa4f4e49f21ab1430e7d39b9b0e756386d2389",
+        "entries": [
+          "cargo-research-lifecycle.log",
+          "neoth-lib-test-artifacts.jsonl",
+          "neoth-lib-test-compile.stderr.log"
+        ]
+      },
+      {
+        "id": 10947928346,
+        "name": "w190-research-lifecycle-source-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "a1ed1ef6f4cde34b4f33c7728cb748029a2e3c3ceec67a4985472e7981cc6c86",
+        "entries": [
+          "fixture-names.txt",
+          "fixture-identities.json",
+          "inputs.sha256"
+        ]
+      },
+      {
+        "id": 10947734262,
+        "name": "openclaw-custody-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "c61a362e737f7cd5bf163539065b80838374c207d9444ed2038217d4dcb68c76",
+        "entries": [
+          "discovery.log",
+          "passed.txt",
+          "required.txt",
+          "source-head.txt",
+          "source-sha256.txt",
+          "tests.log"
+        ]
+      }
+    ]
+  },
+  "channel": {
+    "run": 36367924605,
+    "conclusion": "failure",
+    "productExecuted": false,
+    "reason": "Same invalid primary filenames in new runtime/backend fixtures; wrong CLI test registration."
+  },
+  "correction": {
+    "scope": "Fixture source paths and JSON5 syntax, actual Rust test module registration, compiled CLI canary source path/body.",
+    "productionRulesChanged": false,
+    "review": "W1780 independent source review PASS",
+    "hostedRetest": "pending"
+  },
+  "limits": [
+    "No full2049/37 acceptance; most grouped tests were not reached.",
+    "Windows old producer superseded; no acceptance.",
+    "No local executable validation."
+  ]
+}

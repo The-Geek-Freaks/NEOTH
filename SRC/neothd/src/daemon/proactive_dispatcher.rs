@@ -1742,7 +1742,7 @@ mod tests {
     }
 
     fn begin_imessage_pending(home: &Path) {
-        let source = home.join("openclaw-source.json5");
+        let source = home.join("openclaw.json");
         std::fs::write(
             &source,
             "{ channels: { imessage: { accounts: { personal: { cliPath: '/usr/bin/imsg' } } } } }",

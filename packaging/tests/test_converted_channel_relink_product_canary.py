@@ -13,6 +13,14 @@ import converted_channel_relink_product_canary as canary
 
 
 class ConvertedRelinkProductCanaryTests(unittest.TestCase):
+    def test_private_custody_source_is_the_exact_openclaw_json_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source = root / "openclaw.json"
+            canary.write_source(source)
+            self.assertEqual(source.read_bytes(), b'{"channels":{"imessage":{"accounts":{"personal":{"cliPath":"/usr/bin/imsg"}}}}}\n')
+            with self.assertRaisesRegex(canary.Failure, "openclaw_source_path_invalid"):
+                canary.write_source(root / "openclaw.yaml")
+
     def test_one_json_rejects_malformed_multiple_or_non_object_output(self) -> None:
         for raw in (b"", b"{", b"[]", b"{}\n{}", b'{"a":1,"a":2}'):
             with self.subTest(raw=raw), self.assertRaises(canary.Failure):
@@ -93,13 +101,13 @@ class ConvertedRelinkProductCanaryTests(unittest.TestCase):
     def test_cleanup_refuses_outside_or_symlink_paths_and_keeps_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"; root.mkdir(); home = root / "neoth-home"; home.mkdir()
-            source = root / "openclaw.yaml"; source.write_text("fixture", encoding="utf-8")
+            source = root / "openclaw.json"; source.write_text("fixture", encoding="utf-8")
             evidence = root / "evidence"; evidence.mkdir(); (evidence / "receipt-summary.json").write_text("{}", encoding="utf-8")
             flags = canary.cleanup_owned(root, home, source, evidence)
             self.assertTrue(all(flags.values()))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"; root.mkdir(); evidence = root / "evidence"; evidence.mkdir()
-            outside = Path(directory) / "outside"; outside.mkdir(); source = root / "openclaw.yaml"; source.symlink_to(outside, target_is_directory=True)
+            outside = Path(directory) / "outside"; outside.mkdir(); source = root / "openclaw.json"; source.symlink_to(outside, target_is_directory=True)
             flags = canary.cleanup_owned(root, root / "neoth-home", source, evidence)
             self.assertFalse(flags["source_removed"]); self.assertTrue(outside.exists())
 
@@ -110,10 +118,10 @@ class ConvertedRelinkProductCanaryTests(unittest.TestCase):
             try:
                 os.environ.update({"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/feature", "GITHUB_SHA": "a" * 40, "RUNNER_TEMP": directory})
                 with self.assertRaises(canary.Failure):
-                    canary.require_hosted(root, root / "neoth-home", root / "openclaw.yaml", root / "evidence", root / "receipt" / "receipt.json")
+                    canary.require_hosted(root, root / "neoth-home", root / "openclaw.json", root / "evidence", root / "receipt" / "receipt.json")
                 os.environ["GITHUB_REF"] = "refs/heads/main"; (root / "residue").write_text("x", encoding="utf-8")
                 with self.assertRaisesRegex(canary.Failure, "isolated_root_invalid"):
-                    canary.require_hosted(root, root / "neoth-home", root / "openclaw.yaml", root / "evidence", root / "receipt" / "receipt.json")
+                    canary.require_hosted(root, root / "neoth-home", root / "openclaw.json", root / "evidence", root / "receipt" / "receipt.json")
             finally:
                 os.environ.clear(); os.environ.update(original)
 

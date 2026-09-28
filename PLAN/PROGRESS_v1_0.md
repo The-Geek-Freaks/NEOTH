@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1780 Relink hosted fixture repair (2026-09-28):**
+Linux Group2049run36367920853 and Channel37run36367924605 at50aec1cb
+are rejected. GitHub compiled the source, but new fixtures incorrectly used
+openclaw.yaml/YAML or noncanonical primary filenames. The CLI parse test was
+registered under cli::tests instead of the actual default_invocation_tests;
+zero discovery stopped the grouped gate before the full cohort executed.
+Original Linux artifacts are API-digest authenticated; five backend failures
+share the exact primary-filename cause. W1780 fixes fixture names and JSON5,
+keeps sequential sources in separate directories, and corrects both native
+registrations plus the real CLI canary source. Independent review PASS source
+only; production custody/runtime rules unchanged. Fresh hosted gates pending.
+Evidence: docs/verification/gold-wave1780-relink-gate-diagnosis.json.
+No ROAD closure;1324/1077/245/2 unchanged. Absolute local BSOD hold.
+
 **W1774/W1776 public CLI Relink gate and W1775 Core (2026-09-28):**
 Core36367078660 at4e1f5e44 passed slim production Clippy, default test-target
 typecheck, public CLI build and reference export. Original CLI artifact10947069646

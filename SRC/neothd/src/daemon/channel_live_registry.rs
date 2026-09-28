@@ -434,7 +434,7 @@ mod tests {
     }
 
     fn begin_gchat_pending(home: &std::path::Path) {
-        let source = home.join("openclaw-source.json5");
+        let source = home.join("openclaw.json");
         std::fs::write(
             &source,
             "{ channels: { googlechat: { accounts: { work: { serviceAccount: { source: 'env', provider: 'default', id: 'test' } } } } } }",

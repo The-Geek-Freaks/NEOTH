@@ -161,7 +161,7 @@ jobs:
           run_case 27 lib channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked --lib
           run_case 28 lib config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage config::credentials::tests::relink_before_publish_observes_the_actual_encrypted_pair_postimage --lib
           run_case 29 lib config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged config::credentials::tests::relink_before_publish_rejection_keeps_the_exact_pair_unchanged --lib
-          run_case 30 lib cli::tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials cli::tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials --lib
+          run_case 30 lib cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials cli::default_invocation_tests::converted_relink_requires_explicit_source_target_and_private_stdin_credentials --lib
           run_case 31 lib cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request --lib
           run_case 32 lib cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused --lib
           run_case 33 lib cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes --lib
@@ -187,7 +187,7 @@ jobs:
             --binary "$PWD/SRC/target/debug/neoth" \
             --root "$W548_ROOT/product" \
             --home "$W548_ROOT/product/neoth-home" \
-            --source "$W548_ROOT/product/openclaw.yaml" \
+            --source "$W548_ROOT/product/openclaw.json" \
             --evidence-dir "$W548_ROOT/product/evidence" \
             --receipt "$W548_ROOT/product/receipt/receipt.json" \
             --workflow .github/workflows/gchat-live-regressions.yml

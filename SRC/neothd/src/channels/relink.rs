@@ -1337,8 +1337,12 @@ impl<'de> Visitor<'de> for NoDuplicateJsonVisitor {
 mod tests {
     use super::*;
     fn selected(root: &Path, label: &str) -> SelectedConvertedRelinkAccount {
-        let source = root.join("openclaw.yaml");
-        std::fs::write(&source, "channels:\n  imessage:\n    accounts:\n      personal:\n        cliPath: /usr/bin/imsg\n      work:\n        cliPath: /usr/bin/imsg\n").unwrap();
+        let source = root.join("openclaw.json");
+        std::fs::write(
+            &source,
+            r#"{"channels":{"imessage":{"accounts":{"personal":{"cliPath":"/usr/bin/imsg"},"work":{"cliPath":"/usr/bin/imsg"}}}}}"#,
+        )
+        .unwrap();
         neoth_openclaw_custody::select_converted_relink_account(
             &source,
             ConvertedRelinkChannel::IMessage,

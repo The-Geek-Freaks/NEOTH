@@ -111,7 +111,7 @@ def require_hosted(root: Path, home: Path, source: Path, evidence: Path, receipt
         raise Failure("hosted_guard_failed")
     if not root.is_dir() or root.is_symlink() or not contained(root, temp) or any(root.iterdir()):
         raise Failure("isolated_root_invalid")
-    if home != root / "neoth-home" or source != root / "openclaw.yaml":
+    if home != root / "neoth-home" or source != root / "openclaw.json":
         raise Failure("isolated_path_invalid")
     if evidence != root / "evidence" or receipt != root / "receipt" / "receipt.json":
         raise Failure("isolated_path_invalid")
@@ -162,7 +162,9 @@ def initialize_fresh_home(binary: Path, home: Path, env: dict[str, str]) -> None
 def write_source(path: Path) -> None:
     # This is OpenClaw custody provenance only.  The public NEOTH home remains
     # first-use and receives no hand-written configuration or restore seed.
-    path.write_text("channels:\n  imessage:\n    accounts:\n      personal:\n        cliPath: /usr/bin/imsg\n", encoding="utf-8")
+    if path.name != "openclaw.json" or path.is_symlink() or path.exists():
+        raise Failure("openclaw_source_path_invalid")
+    path.write_text('{"channels":{"imessage":{"accounts":{"personal":{"cliPath":"/usr/bin/imsg"}}}}}\n', encoding="utf-8")
     os.chmod(path, 0o600)
 
 

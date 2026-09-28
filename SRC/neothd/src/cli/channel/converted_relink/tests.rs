@@ -9,7 +9,7 @@ use crate::cli::channel::{ChannelAddFields, ChannelTestResult};
 fn source_body(channel: ConvertedRelinkChannel) -> &'static str {
     match channel {
         ConvertedRelinkChannel::IMessage => {
-            "channels:\n  imessage:\n    accounts:\n      personal:\n        cliPath: /usr/bin/imsg\n"
+            r#"{"channels":{"imessage":{"accounts":{"personal":{"cliPath":"/usr/bin/imsg"}}}}}"#
         }
         ConvertedRelinkChannel::GoogleChat => {
             "{ channels: { googlechat: { accounts: { work: { serviceAccount: { source: 'env', provider: 'default', id: 'test' } } } } } }"
@@ -128,7 +128,7 @@ async fn every_durable_checkpoint_recovers_the_same_encrypted_first_use_request(
         let home = temp.path().join("home");
         std::fs::create_dir(&home).unwrap();
         write_encrypted_first_use_home(&home);
-        let source = temp.path().join("openclaw.yaml");
+        let source = temp.path().join("openclaw.json");
         std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
         let prepared = prepare_ok(
             &home,
@@ -186,7 +186,7 @@ async fn ready_retry_is_idempotent_but_changed_request_material_is_refused() {
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let source = temp.path().join("openclaw.yaml");
+    let source = temp.path().join("openclaw.json");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
     let same = || {
         request(
@@ -218,7 +218,11 @@ async fn ready_retry_is_idempotent_but_changed_request_material_is_refused() {
     )
     .await;
     assert!(commit_prepared_converted_relink_at(&home, changed_target).is_err());
-    std::fs::write(&source, "channels:\n  imessage:\n    accounts:\n      personal:\n        cliPath: /usr/local/bin/imsg\n").unwrap();
+    std::fs::write(
+        &source,
+        r#"{"channels":{"imessage":{"accounts":{"personal":{"cliPath":"/usr/local/bin/imsg"}}}}}"#,
+    )
+    .unwrap();
     assert!(
         prepare_converted_relink_with_probe_at(&home, same(), |candidate, _| {
             Box::pin(async move { Ok(probe_ok(candidate.channel_id.as_str().into())) })
@@ -236,7 +240,7 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
         let home = temp.path().join("home");
         std::fs::create_dir(&home).unwrap();
         write_encrypted_first_use_home(&home);
-        let source = temp.path().join("openclaw.yaml");
+        let source = temp.path().join("openclaw.json");
         std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
         let home_for_probe = home.clone();
         let prepared = prepare_converted_relink_with_probe_at(
@@ -288,7 +292,7 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let source = temp.path().join("openclaw.yaml");
+    let source = temp.path().join("openclaw.json");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
     let failed = prepare_converted_relink_with_probe_at(
         &home,
@@ -334,7 +338,9 @@ async fn sequential_imessage_and_gchat_relinks_remain_independently_ready() {
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let imessage_source = temp.path().join("imessage-openclaw.yaml");
+    let imessage_source_root = temp.path().join("imessage-source");
+    std::fs::create_dir(&imessage_source_root).unwrap();
+    let imessage_source = imessage_source_root.join("openclaw.json");
     std::fs::write(
         &imessage_source,
         source_body(ConvertedRelinkChannel::IMessage),
@@ -354,7 +360,9 @@ async fn sequential_imessage_and_gchat_relinks_remain_independently_ready() {
         .await,
     )
     .unwrap();
-    let gchat_source = temp.path().join("gchat-openclaw.json5");
+    let gchat_source_root = temp.path().join("gchat-source");
+    std::fs::create_dir(&gchat_source_root).unwrap();
+    let gchat_source = gchat_source_root.join("openclaw.json");
     std::fs::write(
         &gchat_source,
         source_body(ConvertedRelinkChannel::GoogleChat),
@@ -395,7 +403,7 @@ async fn guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_r
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let source = temp.path().join("openclaw.yaml");
+    let source = temp.path().join("openclaw.json");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
 
     let mut guidless = request(
@@ -452,7 +460,7 @@ async fn gchat_key_replaced_during_successful_probe_is_rejected_before_publicati
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let source = temp.path().join("gchat-openclaw.json5");
+    let source = temp.path().join("openclaw.json");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
     let service_account = temp.path().join("service-account.json");
     std::fs::write(&service_account, "{\"private_key_id\":\"before\"}").unwrap();
@@ -489,7 +497,7 @@ async fn reserved_ambiguous_request_rejects_changed_password_but_recovers_exactl
     let home = temp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     write_encrypted_first_use_home(&home);
-    let source = temp.path().join("openclaw.yaml");
+    let source = temp.path().join("openclaw.json");
     std::fs::write(&source, source_body(ConvertedRelinkChannel::IMessage)).unwrap();
     let same = || {
         request(
