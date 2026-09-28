@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1838 Windows868 accepted (2026-09-28):**
+Windows run36387780331 at9fc9e065 completed successfully. Original artifact
+10956252817 matches the API ZIP digest; all868 selected/discovered/result
+identities and individual one-test PASS terminals agree. The869 log/compile
+hashes and10 evidence hashes match. All136 raw producer Git blobs (120 source
+paths plus16 inputs) match SHA256 and Git object identities. Root independently
+rechecked the original digest and every individual named PASS terminal.
+Evidence: docs/verification/gold-wave1838-windows868-admission.json.
+This accepts the earlier native batch, not W1835 policy source or live providers.
+ROAD1324/1080/242/2 remains unchanged; no additional leaf closed. No local runtime.
 **W1833/W1836 WhatsApp transport identity accepted (2026-09-28):**
 Linux2106 run36387777581 at9fc9e065 passed all2106 exact selected tests;
 Root verified every discovery/run/PASS block, including17 interleaved-output

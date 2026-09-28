@@ -1,0 +1,71 @@
+{
+  "schema": "neoth-native-windows868-admission/v1",
+  "decision": "accepted",
+  "scope": "Windows868 native regression evidence only; Linux, custody, later source changes, live providers, and parent-road acceptance remain separate.",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36387780331,
+    "workflow": "Windows storage regressions",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36387780331",
+    "producer_commit": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "ref": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10956252817,
+    "name": "windows-storage-regressions-9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "size_bytes": 419968,
+    "zip_members": 880,
+    "api_digest": "sha256:7087c13cb94cd382e79e27ef01ccb6295ece6d6b227909e9d4d726bd54ed9eb4",
+    "sha256": "7087c13cb94cd382e79e27ef01ccb6295ece6d6b227909e9d4d726bd54ed9eb4",
+    "api_digest_matches_download": true,
+    "expired": false
+  },
+  "receipt": {
+    "expected": 868,
+    "selection_valid": true,
+    "compile_status": 0,
+    "total": 868,
+    "listed": 868,
+    "passed": 868,
+    "failed": 0,
+    "missing": 0,
+    "source_head_matches_producer": true
+  },
+  "execution": {
+    "selection_identity_count": 868,
+    "selection_unique_identities": 868,
+    "result_identity_count": 868,
+    "result_unique_identities": 868,
+    "duplicate_results": 0,
+    "missing_selected_result_identities": 0,
+    "extra_result_identities": 0,
+    "nonpassing_result_rows": 0,
+    "single_test_log_terminals_checked": 868,
+    "per_log_terminal_receipt_failures": 0,
+    "log_manifest_entries": 869,
+    "log_manifest_mismatches": 0,
+    "evidence_file_hashes_verified": 10,
+    "evidence_file_hash_mismatches": 0,
+    "inner_hash_evidence": "work/gold-20260906/wave1838-windows868-admission/inner-hash-verification.json"
+  },
+  "producer_bindings": {
+    "source_binding_rows": 868,
+    "unique_source_paths": 120,
+    "input_paths": 16,
+    "unique_raw_producer_paths": 136,
+    "raw_producer_git_blob_sha256_mismatches": 0,
+    "raw_git_hash_object_no_filters_mismatches": 0,
+    "all_raw_producer_git_blob_sha256_values_match_artifact_bindings": true,
+    "all_exported_blobs_match_producer_git_object_ids": true,
+    "source": "Raw git cat-file exports at the exact producer commit, Get-FileHash SHA-256, and git hash-object --no-filters; working tree excluded.",
+    "binding_table": "work/gold-20260906/wave1838-windows868-admission/raw-producer-bindings/raw-producer-bindings.json"
+  },
+  "limits": [
+    "No local compiler, Cargo, Rustfmt, Node, Python, source parser, fixture, test, or product runtime was executed.",
+    "The artifact proves the selected Windows868 regressions at producer 9fc9e065 only.",
+    "It does not prove a live provider or daemon reload/adoption, a complete OpenClaw migration, or later working-tree changes."
+  ],
+  "roadmapClosure": false
+}

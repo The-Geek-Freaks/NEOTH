@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T07:24:39.7313491Z",
-  "validationStatus": "Hosted Linux2106 and separate Custody48 accepted at9fc9e065; LF00111 closed; W1835 source WIP excluded",
+  "capturedUtc": "2026-09-28T07:42:01.7326780Z",
+  "validationStatus": "Windows868 original artifacts accepted at9fc9e065; W1835 working source excluded",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2797,6 +2797,11 @@
       "sha256": "56D11F0F01F3B80E83D2877B626F8079B728F9326C9BFAE4B3797CA510F97B19"
     },
     {
+      "path": "docs/verification/gold-wave1838-windows868-admission.json",
+      "bytes": 2956,
+      "sha256": "148BC97978E1881E94CCA4FDD5622288D252289249DCE3057922E937E1896BDB"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3838,18 +3843,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 511559,
-      "sha256": "2842FEF6159E870A77D92752BA4C2272BF03970B085E28286297C3D37CAF5121"
+      "bytes": 512294,
+      "sha256": "07AFA52A53B594123749FF25194E1A8A1D2AAE38FE6A31AE77767C5292DF6CEE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1547869,
-      "sha256": "86539B1E5BB6A303E7FC2145D07437BF6C88C20CF3A7B4F245174891E56BA666"
+      "bytes": 1548604,
+      "sha256": "6CC695197796DAF9C58599086E072E1BA40EE5ACFBB84277F924F0B1D45FD417"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2159242,
-      "sha256": "925383826773A4B69AC381FFC4C962F35E77F02935BDF812750972A940636CC4"
+      "bytes": 2159977,
+      "sha256": "FC7C54508E4EDC6E7ECE9834EC6772E2CF94A74C73A908CD84D1F494D842EBB4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
