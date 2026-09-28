@@ -19,7 +19,8 @@ pub const OPENCLAW_COMMIT: &str = "4c667aac8859114bd8f0a589ac6cd1de8bfe1474";
 const EXPECTED_ROW_COUNT: usize = 3252;
 const EXPECTED_OPAQUE_ROW_COUNT: usize = 22;
 const FIXTURE_BYTES: &str = include_str!("fixtures/openclaw_channel_schema_v1.json");
-const POLICY_BYTES: &str = include_str!("fixtures/openclaw_channel_schema_migration_policy_v1.json");
+const POLICY_BYTES: &str =
+    include_str!("fixtures/openclaw_channel_schema_migration_policy_v1.json");
 
 const EXPECTED_CHANNELS: &[&str] = &[
     "clickclack",
@@ -130,13 +131,41 @@ struct SchemaLeaf {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Policy { policy_version: u64, policy_name: String, source: Source, rows: Vec<PolicyRow>, #[serde(default)] synthetic: Vec<SyntheticPolicy> }
+struct Policy {
+    policy_version: u64,
+    policy_name: String,
+    source: Source,
+    rows: Vec<PolicyRow>,
+    #[serde(default)]
+    synthetic: Vec<SyntheticPolicy>,
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PolicyRow { channel_id: String, path_template: String, json_type: String, scope: String, disposition: String, action_id: String, #[serde(default)] target_path: Option<String> }
+struct PolicyRow {
+    channel_id: String,
+    path_template: String,
+    json_type: String,
+    scope: String,
+    disposition: String,
+    action_id: String,
+    #[serde(default)]
+    target_path: Option<String>,
+}
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SyntheticPolicy { kind: String, #[serde(default)] channel_id: Option<String>, #[serde(default)] path_template: Option<String>, #[serde(default)] json_type: Option<String>, disposition: String, action_id: String, #[serde(default)] target_path: Option<String> }
+struct SyntheticPolicy {
+    kind: String,
+    #[serde(default)]
+    channel_id: Option<String>,
+    #[serde(default)]
+    path_template: Option<String>,
+    #[serde(default)]
+    json_type: Option<String>,
+    disposition: String,
+    action_id: String,
+    #[serde(default)]
+    target_path: Option<String>,
+}
 
 static FIXTURE: OnceLock<Result<Fixture, String>> = OnceLock::new();
 
@@ -172,14 +201,26 @@ pub fn lookup(
             // The validator guarantees same path/type rows cannot disagree in
             // their outcome. Composition branches are schema provenance, not
             // runtime paths.
-            return Ok(Some(schema_match(channel, first, SchemaScope::TypedLeaf, policy_row(fixture, channel, first)?)));
+            return Ok(Some(schema_match(
+                channel,
+                first,
+                SchemaScope::TypedLeaf,
+                policy_row(fixture, channel, first)?,
+            )));
         }
     }
 
     let opaque = channel_schema.leaves.iter().find(|row| {
         row.scope.as_deref() == Some("opaque_subtree") && template_matches(row, path, true)
     });
-    Ok(opaque.map(|row| schema_match(channel, row, SchemaScope::OpaqueSubtree, policy_row(fixture, channel, row).expect("validated policy row"))))
+    Ok(opaque.map(|row| {
+        schema_match(
+            channel,
+            row,
+            SchemaScope::OpaqueSubtree,
+            policy_row(fixture, channel, row).expect("validated policy row"),
+        )
+    }))
 }
 
 /// Whether a container matching an opaque subtree has an explicitly typed
@@ -212,7 +253,10 @@ fn secret_ref_match(
             && is_object_composition_member(row.path_template.as_str())
             && row.path_template.ends_with(".id")
     }) {
-        let parent = id_row.path_template.strip_suffix(".id")?;
+        let parent = id_row
+            .path_template
+            .strip_suffix(".id")
+            .context("pinned SecretRef id member lacks suffix")?;
         let mut member_path = path.to_vec();
         member_path.push(PathPart::Key("id"));
         if !template_matches(id_row, &member_path, false) {
@@ -286,7 +330,14 @@ pub fn account_container(channel: &str) -> Result<Option<SchemaMatch>> {
 pub fn whatsapp_auth_dir_legacy() -> Result<SchemaMatch> {
     let fixture = fixture()?;
     let policy = synthetic_policy(fixture, "whatsapp_auth_dir_string")?;
-    Ok(SchemaMatch { schema_id: "w1835:whatsapp:authDir:legacy_string".to_string(), path_template: "authDir".to_string(), scope: SchemaScope::TypedLeaf, disposition: policy.disposition.clone(), action_id: policy.action_id.clone(), target_path: None })
+    Ok(SchemaMatch {
+        schema_id: "w1835:whatsapp:authDir:legacy_string".to_string(),
+        path_template: "authDir".to_string(),
+        scope: SchemaScope::TypedLeaf,
+        disposition: policy.disposition.clone(),
+        action_id: policy.action_id.clone(),
+        target_path: None,
+    })
 }
 
 fn fixture() -> Result<&'static Fixture> {
@@ -305,10 +356,23 @@ fn load_fixture() -> Result<Fixture> {
     let mut fixture: Fixture =
         serde_json::from_str(FIXTURE_BYTES).context("parse pinned W169 schema fixture")?;
     let policy_actual = format!("{:X}", Sha256::digest(POLICY_BYTES.as_bytes()));
-    ensure!(policy_actual == POLICY_SHA256, "W1835 migration policy digest mismatch");
-    let policy: Policy = serde_json::from_str(POLICY_BYTES).context("parse W1835 migration policy")?;
-    ensure!(policy.policy_version == 1 && policy.policy_name == "neoth-openclaw-channel-schema-migration-policy-v1", "unexpected W1835 policy version");
-    ensure!(policy.source.repository == fixture.source.repository && policy.source.commit == fixture.source.commit && policy.source.metadata_path == fixture.source.metadata_path, "W1835 policy source pin mismatch");
+    ensure!(
+        policy_actual == POLICY_SHA256,
+        "W1835 migration policy digest mismatch"
+    );
+    let policy: Policy =
+        serde_json::from_str(POLICY_BYTES).context("parse W1835 migration policy")?;
+    ensure!(
+        policy.policy_version == 1
+            && policy.policy_name == "neoth-openclaw-channel-schema-migration-policy-v1",
+        "unexpected W1835 policy version"
+    );
+    ensure!(
+        policy.source.repository == fixture.source.repository
+            && policy.source.commit == fixture.source.commit
+            && policy.source.metadata_path == fixture.source.metadata_path,
+        "W1835 policy source pin mismatch"
+    );
     fixture.policy = policy;
     validate_synthetic_policy(&fixture)?;
     ensure!(
@@ -388,14 +452,22 @@ fn load_fixture() -> Result<Fixture> {
                         "opaque W169 row must have json_type any"
                     );
                     ensure!(
-                        row.disposition.as_deref() == Some("blocked_requires_explicit_leaf_mapping"),
+                        row.disposition.as_deref()
+                            == Some("blocked_requires_explicit_leaf_mapping"),
                         "opaque W169 row disposition drift"
                     );
                 }
                 Some(other) => bail!("unknown W169 schema scope `{other}`"),
             }
             let policy = policy_row(&fixture, channel.channel_id.as_str(), row)?;
-            ensure!(valid_policy_outcome(&policy.disposition, &policy.action_id, policy.target_path.as_deref()), "invalid W1835 policy outcome");
+            ensure!(
+                valid_policy_outcome(
+                    &policy.disposition,
+                    &policy.action_id,
+                    policy.target_path.as_deref()
+                ),
+                "invalid W1835 policy outcome"
+            );
         }
         if channel.account_template_present {
             ensure!(
@@ -408,7 +480,10 @@ fn load_fixture() -> Result<Fixture> {
         }
     }
     ensure!(rows == EXPECTED_ROW_COUNT, "W169 schema row count drift");
-    ensure!(fixture.policy.rows.len() == rows, "W1835 policy has extra or missing exact rows");
+    ensure!(
+        fixture.policy.rows.len() == rows,
+        "W1835 policy has extra or missing exact rows"
+    );
     ensure!(
         opaque_rows == EXPECTED_OPAQUE_ROW_COUNT,
         "W169 opaque schema row count drift"
@@ -440,24 +515,62 @@ fn validate_template(template: &str) -> Result<()> {
 
 fn policy_row<'a>(fixture: &'a Fixture, channel: &str, row: &SchemaLeaf) -> Result<&'a PolicyRow> {
     let scope = row.scope.as_deref().unwrap_or("typed_leaf");
-    let matches: Vec<_> = fixture.policy.rows.iter().filter(|policy| policy.channel_id == channel && policy.path_template == row.path_template && policy.json_type == row.json_type && policy.scope == scope).collect();
-    ensure!(matches.len() == 1, "W1835 policy exact join missing or duplicate");
+    let matches: Vec<_> = fixture
+        .policy
+        .rows
+        .iter()
+        .filter(|policy| {
+            policy.channel_id == channel
+                && policy.path_template == row.path_template
+                && policy.json_type == row.json_type
+                && policy.scope == scope
+        })
+        .collect();
+    ensure!(
+        matches.len() == 1,
+        "W1835 policy exact join missing or duplicate"
+    );
     Ok(matches[0])
 }
 
 fn valid_policy_outcome(disposition: &str, action: &str, target: Option<&str>) -> bool {
     let needs_target = matches!(disposition, "mapped" | "needs_secret");
-    let pair = matches!((disposition, action),
-        ("mapped", "direct_credential_mapping") | ("needs_secret", "neoth_credential_flow") |
-        ("needs_relink", "relink_required") | ("needs_runtime", "runtime_prerequisite_required") |
-        ("unsupported", "requires_target_contract" | "requires_neoth_adapter" | "requires_account_scoped_runtime") |
-        ("unknown", "blocked_requires_explicit_leaf_mapping" | "blocked_requires_explicit_account_mapping"));
-    pair && if needs_target { target.is_some_and(|value| !value.is_empty()) } else { target.is_none() }
+    let pair = matches!(
+        (disposition, action),
+        ("mapped", "direct_credential_mapping")
+            | ("needs_secret", "neoth_credential_flow")
+            | ("needs_relink", "relink_required")
+            | ("needs_runtime", "runtime_prerequisite_required")
+            | (
+                "unsupported",
+                "requires_target_contract"
+                    | "requires_neoth_adapter"
+                    | "requires_account_scoped_runtime"
+            )
+            | (
+                "unknown",
+                "blocked_requires_explicit_leaf_mapping"
+                    | "blocked_requires_explicit_account_mapping"
+            )
+    );
+    pair && if needs_target {
+        target.is_some_and(|value| !value.is_empty())
+    } else {
+        target.is_none()
+    }
 }
 
 fn synthetic_policy<'a>(fixture: &'a Fixture, kind: &str) -> Result<&'a SyntheticPolicy> {
-    let matches: Vec<_> = fixture.policy.synthetic.iter().filter(|item| item.kind == kind).collect();
-    ensure!(matches.len() == 1, "missing or duplicate W1835 synthetic policy {kind}");
+    let matches: Vec<_> = fixture
+        .policy
+        .synthetic
+        .iter()
+        .filter(|item| item.kind == kind)
+        .collect();
+    ensure!(
+        matches.len() == 1,
+        "missing or duplicate W1835 synthetic policy {kind}"
+    );
     Ok(matches[0])
 }
 
@@ -584,10 +697,7 @@ fn validate_synthetic_policy(fixture: &Fixture) -> Result<()> {
             "extra W1835 SecretRef family policy"
         );
     }
-    ensure!(
-        actual == expected,
-        "missing W1835 SecretRef family policy"
-    );
+    ensure!(actual == expected, "missing W1835 SecretRef family policy");
     ensure!(
         fixture.policy.synthetic.len() == expected.len() + 3,
         "extra W1835 synthetic policy"
@@ -595,7 +705,12 @@ fn validate_synthetic_policy(fixture: &Fixture) -> Result<()> {
     Ok(())
 }
 
-fn schema_match(channel: &str, row: &SchemaLeaf, scope: SchemaScope, policy: &PolicyRow) -> SchemaMatch {
+fn schema_match(
+    channel: &str,
+    row: &SchemaLeaf,
+    scope: SchemaScope,
+    policy: &PolicyRow,
+) -> SchemaMatch {
     SchemaMatch {
         schema_id: format!("w169:{channel}:{}:{}", row.path_template, row.json_type),
         path_template: row.path_template.clone(),
@@ -745,10 +860,18 @@ mod tests {
                     other => panic!("unhandled pinned type {other}"),
                 };
                 let path = ledger_path(&channel.channel_id, &row.path_template);
-                let entry = crate::classify_leaf(&value, &path, false, false)
-                    .unwrap_or_else(|error| panic!("{}:{}: {error:#}", channel.channel_id, row.path_template));
+                let entry =
+                    crate::classify_leaf(&value, &path, false, false).unwrap_or_else(|error| {
+                        panic!("{}:{}: {error:#}", channel.channel_id, row.path_template)
+                    });
                 let policy = policy_row(fixture, &channel.channel_id, row).unwrap();
-                assert_eq!(entry.disposition.as_str(), policy.disposition, "{}:{}", channel.channel_id, row.path_template);
+                assert_eq!(
+                    entry.disposition.as_str(),
+                    policy.disposition,
+                    "{}:{}",
+                    channel.channel_id,
+                    row.path_template
+                );
                 assert_eq!(entry.target_path, policy.target_path);
                 assert_eq!(entry.schema_binding.unwrap().action_id, policy.action_id);
                 checked += 1;
@@ -760,9 +883,15 @@ mod tests {
     #[test]
     fn every_secret_ref_family_and_account_container_agrees_with_runtime() {
         let fixture = fixture().unwrap();
-        let value = serde_json::json!({"source": "env", "provider": "default", "id": "PRIVATE_FIXTURE"});
+        let value =
+            serde_json::json!({"source": "env", "provider": "default", "id": "PRIVATE_FIXTURE"});
         let mut checked = 0;
-        for policy in fixture.policy.synthetic.iter().filter(|item| item.kind == "secret_ref_family") {
+        for policy in fixture
+            .policy
+            .synthetic
+            .iter()
+            .filter(|item| item.kind == "secret_ref_family")
+        {
             let channel = policy.channel_id.as_deref().unwrap();
             let template = policy.path_template.as_deref().unwrap();
             let entry = crate::classify_leaf(&value, &ledger_path(channel, template), true, false)
@@ -770,14 +899,33 @@ mod tests {
             assert_eq!(entry.disposition.as_str(), policy.disposition);
             assert_eq!(entry.target_path, policy.target_path);
             assert!(entry.sensitive && entry.effective_value_sha256.is_none());
-            assert_eq!(entry.schema_binding.as_ref().unwrap().action_id, policy.action_id);
-            assert!(!serde_json::to_string(&entry).unwrap().contains("PRIVATE_FIXTURE"));
+            assert_eq!(
+                entry.schema_binding.as_ref().unwrap().action_id,
+                policy.action_id
+            );
+            assert!(
+                !serde_json::to_string(&entry)
+                    .unwrap()
+                    .contains("PRIVATE_FIXTURE")
+            );
             checked += 1;
         }
         assert_eq!(checked, 150);
-        for channel in fixture.channels.iter().filter(|item| item.account_template_present) {
-            let entry = crate::classify_account_container(&ledger_path(&channel.channel_id, "accounts.{key}")).unwrap();
-            let kind = if crate::alias_target(&channel.channel_id).is_some() { "account_container" } else { "account_container_unmapped" };
+        for channel in fixture
+            .channels
+            .iter()
+            .filter(|item| item.account_template_present)
+        {
+            let entry = crate::classify_account_container(&ledger_path(
+                &channel.channel_id,
+                "accounts.{key}",
+            ))
+            .unwrap();
+            let kind = if crate::alias_target(&channel.channel_id).is_some() {
+                "account_container"
+            } else {
+                "account_container_unmapped"
+            };
             let policy = synthetic_policy(fixture, kind).unwrap();
             assert_eq!(entry.disposition.as_str(), policy.disposition);
             assert_eq!(entry.schema_binding.unwrap().action_id, policy.action_id);
@@ -790,16 +938,32 @@ mod tests {
             let mut fixture: Fixture = serde_json::from_str(FIXTURE_BYTES).unwrap();
             let mut policy: serde_json::Value = serde_json::from_str(POLICY_BYTES).unwrap();
             let records = policy["synthetic"].as_array_mut().unwrap();
-            let index = records.iter().position(|row| row["kind"] == "secret_ref_family").unwrap();
+            let index = records
+                .iter()
+                .position(|row| row["kind"] == "secret_ref_family")
+                .unwrap();
             match mutation {
-                0 => { records.remove(index); }
-                1 => { let extra = records[index].clone(); records.push(extra); }
-                2 => { records[index]["path_template"] = serde_json::json!("invented{anyOf:1}{oneOf:0}"); }
-                3 => { records[index]["action_id"] = serde_json::json!("relink_required"); }
+                0 => {
+                    records.remove(index);
+                }
+                1 => {
+                    let extra = records[index].clone();
+                    records.push(extra);
+                }
+                2 => {
+                    records[index]["path_template"] =
+                        serde_json::json!("invented{anyOf:1}{oneOf:0}");
+                }
+                3 => {
+                    records[index]["action_id"] = serde_json::json!("relink_required");
+                }
                 _ => unreachable!(),
             }
             fixture.policy = serde_json::from_value(policy).unwrap();
-            assert!(validate_synthetic_policy(&fixture).is_err(), "mutation {mutation}");
+            assert!(
+                validate_synthetic_policy(&fixture).is_err(),
+                "mutation {mutation}"
+            );
         }
     }
 
@@ -893,9 +1057,20 @@ mod tests {
         for channel in &fixture.channels {
             for row in &channel.leaves {
                 rows += 1;
-                assert!(identities.insert(format!("{}\u{1f}{}\u{1f}{}", channel.channel_id, row.path_template, row.json_type)));
+                assert!(identities.insert(format!(
+                    "{}\u{1f}{}\u{1f}{}",
+                    channel.channel_id, row.path_template, row.json_type
+                )));
                 let policy = policy_row(fixture, channel.channel_id.as_str(), row).unwrap();
-                assert!(matches!(policy.disposition.as_str(), "mapped" | "needs_secret" | "needs_relink" | "needs_runtime" | "unsupported" | "unknown"));
+                assert!(matches!(
+                    policy.disposition.as_str(),
+                    "mapped"
+                        | "needs_secret"
+                        | "needs_relink"
+                        | "needs_runtime"
+                        | "unsupported"
+                        | "unknown"
+                ));
                 assert!(!policy.action_id.is_empty());
             }
         }
@@ -904,22 +1079,75 @@ mod tests {
 
     #[test]
     fn policy_outcome_contract_rejects_incoherent_pairs_and_empty_targets() {
-        assert!(valid_policy_outcome("mapped", "direct_credential_mapping", Some("credentials.telegram_token")));
-        assert!(valid_policy_outcome("unsupported", "requires_neoth_adapter", None));
-        assert!(!valid_policy_outcome("mapped", "requires_neoth_adapter", Some("credentials.x")));
-        assert!(!valid_policy_outcome("needs_secret", "neoth_credential_flow", Some("")));
-        assert!(!valid_policy_outcome("unknown", "blocked_requires_explicit_leaf_mapping", Some("x")));
-        assert!(!valid_policy_outcome("unsupported", "requires_neoth_adapter", Some("")));
+        assert!(valid_policy_outcome(
+            "mapped",
+            "direct_credential_mapping",
+            Some("credentials.telegram_token")
+        ));
+        assert!(valid_policy_outcome(
+            "unsupported",
+            "requires_neoth_adapter",
+            None
+        ));
+        assert!(!valid_policy_outcome(
+            "mapped",
+            "requires_neoth_adapter",
+            Some("credentials.x")
+        ));
+        assert!(!valid_policy_outcome(
+            "needs_secret",
+            "neoth_credential_flow",
+            Some("")
+        ));
+        assert!(!valid_policy_outcome(
+            "unknown",
+            "blocked_requires_explicit_leaf_mapping",
+            Some("x")
+        ));
+        assert!(!valid_policy_outcome(
+            "unsupported",
+            "requires_neoth_adapter",
+            Some("")
+        ));
     }
 
     #[test]
     fn validated_policy_has_required_synthetic_contracts() {
         let fixture = fixture().unwrap();
-        assert_eq!(synthetic_policy(fixture, "account_container").unwrap().action_id, "requires_account_scoped_runtime");
-        assert_eq!(synthetic_policy(fixture, "whatsapp_auth_dir_string").unwrap().disposition, "needs_relink");
-        let families: BTreeSet<_> = fixture.policy.synthetic.iter().filter(|item| item.kind == "secret_ref_family").map(|item| (item.channel_id.as_deref().unwrap(), item.path_template.as_deref().unwrap())).collect();
+        assert_eq!(
+            synthetic_policy(fixture, "account_container")
+                .unwrap()
+                .action_id,
+            "requires_account_scoped_runtime"
+        );
+        assert_eq!(
+            synthetic_policy(fixture, "whatsapp_auth_dir_string")
+                .unwrap()
+                .disposition,
+            "needs_relink"
+        );
+        let families: BTreeSet<_> = fixture
+            .policy
+            .synthetic
+            .iter()
+            .filter(|item| item.kind == "secret_ref_family")
+            .map(|item| {
+                (
+                    item.channel_id.as_deref().unwrap(),
+                    item.path_template.as_deref().unwrap(),
+                )
+            })
+            .collect();
         assert_eq!(families.len(), 150);
-        assert_eq!(families.len(), fixture.policy.synthetic.iter().filter(|item| item.kind == "secret_ref_family").count());
+        assert_eq!(
+            families.len(),
+            fixture
+                .policy
+                .synthetic
+                .iter()
+                .filter(|item| item.kind == "secret_ref_family")
+                .count()
+        );
         validate_synthetic_policy(fixture).unwrap();
     }
 

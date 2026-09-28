@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1841 Hosted compiler and formatting repair (2026-09-28):**
+W1839 extractor source tests, fresh upstream extraction and exact fixture cmp
+passed in run36394905502 at49822c73. Custody and Core36394908350 failed on
+one E0277: an Option suffix lookup retained `?` after its function became
+Result-returning. The lookup now adds an explicit invariant error context.
+Preflight36394904421 supplied original format artifact10957163386; API ZIP
+and inner hashes verified, exact two-file formatting patch imported. No policy
+or classification semantics changed. New hosted gates pending; LF00102 and
+ROAD1324/1080/242/2 unchanged. No local executable validation.
 **W1835/W1839 Complete schema policy source (2026-09-28; hosted pending):**
 The original upstream schema fixture remains byte-identical. A separate pinned
 NEOTH policy specifies all3252 exact channel/path/type/scope identities, all150

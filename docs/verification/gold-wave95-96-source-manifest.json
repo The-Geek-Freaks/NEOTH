@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T07:58:35.5005815Z",
-  "validationStatus": "Exact separate schema migration policy source reviewed; hosted extractor/Custody/Core pending; LF00102 open",
+  "capturedUtc": "2026-09-28T08:03:58.7863079Z",
+  "validationStatus": "Extractor parity passed; E0277 repaired and authentic hosted formatting imported; Custody/Core revalidation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3843,18 +3843,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 513588,
-      "sha256": "16A75CB0ADB2389F083D95737B68B56EB943222C8F4E917E00CDCD788C2F73CD"
+      "bytes": 514244,
+      "sha256": "D85D34EA91F76884C2CE487F7AC33DA2C47A0F42B6EF8E750DE4F670C3CCAF30"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1549898,
-      "sha256": "8AF6BB9703CADFCF58AD05B6BFC6CF559C2AAC0A6627FA1C8FEC66BC05520492"
+      "bytes": 1550554,
+      "sha256": "509A75CE79BF1F19E63EF270D740FF3EEC191812408747004B047D520CA08F4B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2161271,
-      "sha256": "6C6A32DD5490FA78F0653686C151D4A9096939DBEE5F4646330693648FBC3D8D"
+      "bytes": 2161927,
+      "sha256": "3E9CBB1E3AB5A7950EE32F112278C5DDDA7A9C613B7BA718BEF53EF5AF5B3FF5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3998,8 +3998,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 110243,
-      "sha256": "FADF66DA6CBA14E5BCC91F8138E76E23AC75BF26CA225E784130439EC160D505"
+      "bytes": 111348,
+      "sha256": "7FA9EB561984331814C51D8BC3A224800F9BB77BAD490EA276E2F3385473C02C"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
@@ -4008,8 +4008,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "bytes": 39422,
-      "sha256": "C9EB10B1AE9B8BA6E8E9AED4B54B0D0C18BD7BBD208A67AEDACA041962106698"
+      "bytes": 42278,
+      "sha256": "654964A8F37C60E4AEF0D2DF3BB5A91BCCA4915AD00F921009CEF7508324956D"
     },
     {
       "path": "SRC/neothd-gui/AGENTS.md",
