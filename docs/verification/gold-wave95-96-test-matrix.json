@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Focused94 file-batch andQA exclusion admitted; Linux2106/Windows868 pending",
+  "status": "Hosted Linux2106 and separate Custody48 accepted at9fc9e065; LF00111 closed; W1835 source WIP excluded",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266804,
-    "sha256": "05C259E28D5196111B7605C938BF55FF88DC5232EF3681DCBB4648BBDC0E25A9"
+    "bytes": 267213,
+    "sha256": "458535995DBD2ABD9C535C4B614902FE041BBF2A10CD58B8F6F6586DAA3CE5C7"
   },
-  "sourceInputs": 1480,
+  "sourceInputs": 1482,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -56542,6 +56542,50 @@
       }
     ],
     "note": "Four original API-digest ZIPs,94 named discovery/one-test terminals,49 raw producerbindings.18 batch cases andQA94 prove LF00110. Loopback CLI Relink passes but does not prove externalprovider or reloadadoption. Onlyworkflow94to96 differs fromproducer tocurrent; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1836Linux2106WhatsAppAdmission": {
+    "base": "1d2d321471e59280b294f935601d950bda904def",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1833-custody48-admission.json",
+        "bytes": 2516,
+        "sha256": "F51A52C4C8902490158E55A4E1AA781B58EA2CF5ED24B081D676FD4C8BE21D41",
+        "blob": "2ed50b24d2eb5e504f77213157dcf1aa741b5e4b"
+      },
+      {
+        "path": "docs/verification/gold-wave1836-linux2106-admission.json",
+        "bytes": 2321,
+        "sha256": "56D11F0F01F3B80E83D2877B626F8079B728F9326C9BFAE4B3797CA510F97B19",
+        "blob": "fba0181c4507754fc55896f1307f51f2334a4f92"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 511559,
+        "sha256": "2842FEF6159E870A77D92752BA4C2272BF03970B085E28286297C3D37CAF5121",
+        "blob": "85a98f7b0e9487fcef7440a7c99d4a3d88680c18"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1547869,
+        "sha256": "86539B1E5BB6A303E7FC2145D07437BF6C88C20CF3A7B4F245174891E56BA666",
+        "blob": "eb832fd5830d61e2a7cc68950a8e8c825a493571"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2159242,
+        "sha256": "925383826773A4B69AC381FFC4C962F35E77F02935BDF812750972A940636CC4",
+        "blob": "5f85f5129d8a43211fb402b79cefe1ac00cc759c"
+      },
+      {
+        "path": "plans/001-openclaw-channel-migration-parity.md",
+        "bytes": 55615,
+        "sha256": "6600D04815886D8F960DE855F1EF2EDCA590626DD221F99EF79BCF581EFC8007",
+        "blob": "0bb80faef9769533a4b2a47d96f4d3a14a0bd7b3"
+      }
+    ],
+    "note": "Original API ZIP digests,2106 exact individual tests,329 raw producer paths; separate48 custody tests/10 raw paths. No live-provider or W1835 policy acceptance; no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

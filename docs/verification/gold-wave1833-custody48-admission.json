@@ -1,0 +1,53 @@
+{
+  "schema": "neoth-openclaw-custody48-admission/v1",
+  "decision": "accepted",
+  "run": {
+    "id": 36387777581,
+    "producer_commit": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "artifact": {
+    "id": 10954488579,
+    "role": "openclaw-custody-9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "zip_sha256": "6f54f45d214646051f9ea789972162ad77ec4585a9d7cb71542fc3a4479953b3",
+    "api_digest_verified": true,
+    "original_zip": "work/gold-20260906/wave1833-custody48-current/original-10954488579.zip"
+  },
+  "terminals": {
+    "discovered": 48,
+    "unique_discovered": 48,
+    "inline_ok_terminals": 48,
+    "unique_inline_ok_terminals": 48,
+    "missing_from_terminals": 0,
+    "unexpected_terminals": 0,
+    "suite_result": "48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+  },
+  "required_receipts": {
+    "required": 4,
+    "passed_receipt": 4,
+    "exact_set_match": true,
+    "tests": [
+      "tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
+      "tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
+      "tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
+      "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family"
+    ]
+  },
+  "raw_producer_bindings": {
+    "paths": 10,
+    "sha256_matches": 10,
+    "git_hash_object_no_filters_matches": 10,
+    "evidence": "work/gold-20260906/wave1833-custody48-current/raw-bindings/raw-producer-bindings.json"
+  },
+  "whatsapp_legacy_import": {
+    "test": "tests::whatsapp_alias_is_baileys_and_auth_requires_relink",
+    "passed": true,
+    "source_alias": "whatsapp",
+    "target_channel": "whatsapp_baileys",
+    "legacy_auth_dir_disposition": "NeedsRelink",
+    "business_target_absent": true,
+    "evidence": "The producer source declares OpenClaw whatsapp to be the Baileys/WhatsApp-Web transport, maps it to whatsapp_baileys, requires QR relink for authDir, and the executed test asserts serialized reports do not contain whatsapp_business."
+  },
+  "scope": "Admission is limited to the custody subjob artifact from Linux run 36387777581 at producer 9fc9e065. It proves the 48 discovered custody tests and four required receipts, including the legacy WhatsApp-to-Baileys relink boundary. It does not accept a live provider/daemon reload, a complete OpenClaw migration, later source changes, or Google Chat relink product behavior."
+}

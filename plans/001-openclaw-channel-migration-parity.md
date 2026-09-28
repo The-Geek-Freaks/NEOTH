@@ -525,7 +525,7 @@ Additionally:
 - [ ] Voice Call and WebChat are first-class, fully gated surfaces.
 - [ ] WeChat, Yuanbao, and Zalo ClawBot are either source-verified and fully managed or carry an explicit evidence-backed release decision; docs-only support claims are forbidden.
 - [x] QA Channel remains excluded from runtime while its deterministic multi-account harness patterns are adopted. **Accepted 2026-09-28 (W1831):** the pinned QA resolver/typed-reference boundary and18 four-account migration regressions passed in authentic Focused94; see `docs/verification/gold-wave1831-focused94-admission.json` for source bridge and scope.
-- [ ] WhatsApp Baileys and WhatsApp Business remain distinct; OpenClaw WhatsApp never maps to Business.
+- [x] WhatsApp Baileys and WhatsApp Business remain distinct; OpenClaw WhatsApp never maps to Business. **Accepted 2026-09-28 (W1833/W1836):** registry/operator/migration namespace tests passed in authentic Linux2106; custody48 proves legacy WhatsApp import targets Baileys with QR relink and never Business. See the two source-bound admissions under docs/verification; live-provider qualification remains separate.
 - [ ] iMessage and Google Chat transport conversions are guided relinks with blocked-until-probed activation.
 - [ ] OpenClaw migration supports plan/apply/status/rollback, exact source binding, atomicity, crash resume, idempotency, and secret-redacted audit.
 - [ ] CLI, GUI, and Buddy expose equivalent per-account onboarding, status, repair, migration, and progress states.

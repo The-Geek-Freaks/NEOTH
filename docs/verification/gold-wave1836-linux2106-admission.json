@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-linux2106-admission/v1",
+  "decision": "accepted",
+  "run": {
+    "id": 36387777581,
+    "producer_commit": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "receipt": {
+    "required": 2106,
+    "selected": 2106,
+    "executed": 2106,
+    "failed": 0
+  },
+  "individual_terminal_assertions": {
+    "producer": "9fc9e065e0a9ed85429314a9408ccafc2c032e5c",
+    "selected": 2106,
+    "unique": 2106,
+    "listed": 2106,
+    "run": 2106,
+    "passed": 2106,
+    "failed": 0,
+    "inline": 2089,
+    "separate": 17,
+    "guards": [
+      "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
+      "cli::docgen::tests::cli_commands_md_is_up_to_date",
+      "channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport",
+      "channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids"
+    ]
+  },
+  "raw_blob_checks": {
+    "unique_paths": 329,
+    "source_paths": 319,
+    "input_paths": 10,
+    "sha256_and_git_hash_object_no_filters_match": true,
+    "changed_at_head": [
+      "docs/verification/gold-wave95-96-test-matrix.json"
+    ],
+    "compared_head": "1d2d321471e59280b294f935601d950bda904def"
+  },
+  "guards": {
+    "parity_green": true,
+    "generated_reference_equality_green": true,
+    "whatsapp_namespace_identity_green": true,
+    "registry_uniqueness_green": true
+  },
+  "artifacts": [
+    {
+      "id": 10955881985,
+      "kind": "log",
+      "zip_sha256": "af1cf43157f8f1b5679d42f60cca831f57b0813771cd76bd9556cff43a6ac6eb",
+      "members": 3,
+      "bytes": 1779807
+    },
+    {
+      "id": 10955627741,
+      "kind": "source",
+      "zip_sha256": "9d06637224c734cdcbc6c58c077b0dbf8c7588f85acec46f2eab5ecbcac57e2b",
+      "members": 3,
+      "bytes": 795712
+    },
+    {
+      "id": 10955488211,
+      "kind": "receipt",
+      "zip_sha256": "ad726bc062608023b5df9def98a79b954c70f693dfd5969946f6da5c302b8b13",
+      "members": 6,
+      "bytes": 538
+    }
+  ],
+  "scope": "Linux producer9fc9e065 only. Separate custody48 subjob admitted in W1833, not added to2106. All319 fixture source paths unchanged at1d2d3214; input matrix alone differs. Does not accept uncommitted W1835 schema-policy, external provider behavior or daemon adoption."
+}

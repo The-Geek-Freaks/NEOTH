@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1833/W1836 WhatsApp transport identity accepted (2026-09-28):**
+Linux2106 run36387777581 at9fc9e065 passed all2106 exact selected tests;
+Root verified every discovery/run/PASS block, including17 interleaved-output
+terminals, CLI parity and generated reference equality. All329 unique raw
+producer paths (319 fixture sources and10 inputs) match SHA256 and Git blobs.
+Separate custody48 from the same run also passed: original ZIP/API digest,
+48 exact names,4 required receipts and10 raw producer bindings verified.
+GOLD-LF-001-11 is closed: operator whatsapp resolves to Business, migration
+whatsapp resolves to Baileys, registry identities remain distinct, and legacy
+OpenClaw authDir requires QR relink without a Business target. This bounded
+identity/import proof does not claim live-provider qualification or full migration.
+Evidence: docs/verification/gold-wave1836-linux2106-admission.json and
+ docs/verification/gold-wave1833-custody48-admission.json.
+Windows868 run36387780331 remains active. W1835 schema-policy source is
+unpublished and under correction after independent review; LF00102 stays open.
+ROAD1324/1080/242/2:244 raw/243 pre-tag blockers; WS-LF42done/76open.
+No local executable validation ran; absolute BSOD hold remains in force.
 **W1831 File-batch behavior and QA exclusion accepted (2026-09-28):**
 Focused94run36386346752 onb5eb32e7 completed successfully, including the
 actual public CLI loopback relink product. Root authenticated all4 original

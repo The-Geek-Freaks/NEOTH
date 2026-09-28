@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T06:52:47.7389318Z",
-  "validationStatus": "Focused94 file-batch andQA exclusion admitted; Linux2106/Windows868 pending",
+  "capturedUtc": "2026-09-28T07:24:39.7313491Z",
+  "validationStatus": "Hosted Linux2106 and separate Custody48 accepted at9fc9e065; LF00111 closed; W1835 source WIP excluded",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2787,6 +2787,16 @@
       "sha256": "004058B6563280F67577290466A4B684A8ED50ABFBC9FBD767E0637909A67E8A"
     },
     {
+      "path": "docs/verification/gold-wave1833-custody48-admission.json",
+      "bytes": 2516,
+      "sha256": "F51A52C4C8902490158E55A4E1AA781B58EA2CF5ED24B081D676FD4C8BE21D41"
+    },
+    {
+      "path": "docs/verification/gold-wave1836-linux2106-admission.json",
+      "bytes": 2321,
+      "sha256": "56D11F0F01F3B80E83D2877B626F8079B728F9326C9BFAE4B3797CA510F97B19"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3828,18 +3838,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 510304,
-      "sha256": "55866E187DEB0FF890BACADDE6477D1FDDA2BDB6A2B1546B4F3619AD838B45CA"
+      "bytes": 511559,
+      "sha256": "2842FEF6159E870A77D92752BA4C2272BF03970B085E28286297C3D37CAF5121"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1546572,
-      "sha256": "C57A9AB3482F4C8AE534EB19EEC663EFDA1471089C2B548CE2A14CB0AB8C381D"
+      "bytes": 1547869,
+      "sha256": "86539B1E5BB6A303E7FC2145D07437BF6C88C20CF3A7B4F245174891E56BA666"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2157675,
-      "sha256": "5DE844EBFEA1C6CB20BD8D8C8235218F662B5071364C13C4186CDABEC4CAFF03"
+      "bytes": 2159242,
+      "sha256": "925383826773A4B69AC381FFC4C962F35E77F02935BDF812750972A940636CC4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3853,8 +3863,8 @@
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
-      "bytes": 55303,
-      "sha256": "626A8D257CB59E9833D1A61DB16AE9A2A0F1A1C3477DFDC5C736AA50D875D4D1"
+      "bytes": 55615,
+      "sha256": "6600D04815886D8F960DE855F1EF2EDCA590626DD221F99EF79BCF581EFC8007"
     },
     {
       "path": "README.md",

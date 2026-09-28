@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1833/W1836 WhatsApp transport identity accepted (2026-09-28):**
+Linux2106 run36387777581 at9fc9e065 passed all2106 exact selected tests;
+Root verified every discovery/run/PASS block, including17 interleaved-output
+terminals, CLI parity and generated reference equality. All329 unique raw
+producer paths (319 fixture sources and10 inputs) match SHA256 and Git blobs.
+Separate custody48 from the same run also passed: original ZIP/API digest,
+48 exact names,4 required receipts and10 raw producer bindings verified.
+GOLD-LF-001-11 is closed: operator whatsapp resolves to Business, migration
+whatsapp resolves to Baileys, registry identities remain distinct, and legacy
+OpenClaw authDir requires QR relink without a Business target. This bounded
+identity/import proof does not claim live-provider qualification or full migration.
+Evidence: docs/verification/gold-wave1836-linux2106-admission.json and
+ docs/verification/gold-wave1833-custody48-admission.json.
+Windows868 run36387780331 remains active. W1835 schema-policy source is
+unpublished and under correction after independent review; LF00102 stays open.
+ROAD1324/1080/242/2:244 raw/243 pre-tag blockers; WS-LF42done/76open.
+No local executable validation ran; absolute BSOD hold remains in force.
 **W1831 File-batch behavior and QA exclusion accepted (2026-09-28):**
 Focused94run36386346752 onb5eb32e7 completed successfully, including the
 actual public CLI loopback relink product. Root authenticated all4 original
@@ -10032,7 +10049,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture and LF-001-10 QA exclusion/harness accepted: **41 done / 77
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation and LF-001-01 pinned channel fixture and LF-001-10 QA exclusion/harness and LF-001-11 WhatsApp transport identity accepted: **42 done / 76
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
