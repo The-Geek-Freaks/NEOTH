@@ -1,0 +1,312 @@
+{
+  "schema": "neoth-converted-relink-public-cli-admission/v1",
+  "decision": "accepted_for_exact_hosted_loopback_product_and_channel37",
+  "run": 36372343235,
+  "producerCommit": "5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+  "native": {
+    "selected": 37,
+    "executed": 37,
+    "passed": 37,
+    "failed": 0,
+    "exactOneTestTerminals": 37,
+    "integrationIdentity": "proactive_egress_contract_source_gate binary with exact google_chat_proactivity_uses_only_the_published_live_instance test"
+  },
+  "product": {
+    "cleanup": {
+      "evidence_retained": true,
+      "home_removed": true,
+      "source_removed": true,
+      "wrong_target_home_removed": true
+    },
+    "failure": null,
+    "initial_setup": {
+      "at_rest_encryption": "aes256_gcm_siv",
+      "created_without_restore": true,
+      "method": "neoth_init_cli_license_provider_skip",
+      "policy_set_after_init": true
+    },
+    "local_external_provider": false,
+    "outcome": "passed",
+    "relink": {
+      "expected_bindings": {
+        "credentials_before_state": "missing",
+        "freedom_before_state": "present",
+        "pair_before_sha256": "056184c3efe00e5818cde6cdf7dbf47e09929044ee8ae79fee95514ec79a399c",
+        "request_material_sha256": "bef3bf911884f5066f2e8d832ab57d49bde46b495093c75c3fe962928ec37918",
+        "routing_before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "routing_before_state": "missing",
+        "target_sha256": "37d9208641c00d9ddb5e33cbbece01ee560e71f401923a5ee6f394e3a4d115ee"
+      },
+      "first": {
+        "already_ready": false,
+        "reload_requested": true
+      },
+      "relink_id": "6eb3f935b02f38cbe244c9fa1c285015f074ae1915d7838cc9806dd7aa3175b0",
+      "requests": {
+        "ping": 3,
+        "post": 0,
+        "target": 2,
+        "unexpected_get": 0,
+        "wrong_target": 1
+      },
+      "retry": {
+        "already_ready": true,
+        "reload_requested": true
+      },
+      "sha256": {
+        ".channel-relink-imessage.transaction.json": "204ff114e41786c4431af537e5ef9a77daebafa59b511b1f6d18af70c1062bd8",
+        "channel_relinks.json": "3d994af7d76ccd18504677935586b0b914c6daceaf0f7142c01fce86402ea820",
+        "channel_routing.json": "16cdc88f1f3cdd71236326a1c69ecd07f3c10fa1398d48fa46b1ca2eae89f0f7",
+        "credentials.yaml": "fd28e6dfce8fe1c9de9464cff622ad52c4af11ecf3cc888678079f6d707bfbda",
+        "freedom.yaml": "c647ff436851084d6595020f2dfbfffd6cbd09574868802150f98b4addf6e6f4"
+      },
+      "wrong_target": {
+        "credentials_absent": true,
+        "pending_record_present": true,
+        "ready_transaction_absent": true,
+        "reload_absent": true,
+        "routing_absent": true
+      }
+    },
+    "schema_version": 1,
+    "sha256": {
+      ".github/workflows/gchat-live-regressions.yml": "8131d84c7a6db065dd6f994d733e12b416a1dff99043e9a202146e8f60f4a3a6",
+      "SRC/Cargo.lock": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "SRC/neoth-openclaw-custody/Cargo.toml": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+      "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+      "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+      "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+      "SRC/neoth-openclaw-custody/src/lib.rs": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+      "SRC/neoth-openclaw-custody/src/pinned_inventory.rs": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+      "SRC/neoth-openclaw-custody/src/pinned_schema.rs": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+      "SRC/neothd/Cargo.toml": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "SRC/neothd/src/channels/imessage_bluebubbles.rs": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "SRC/neothd/src/channels/relink.rs": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+      "SRC/neothd/src/channels/routing.rs": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+      "SRC/neothd/src/cli/channel.rs": "04f3f67a598b58c1b27fe5010e695556290213aa54986a24c428dd4cb4859dda",
+      "SRC/neothd/src/cli/channel/converted_relink.rs": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+      "SRC/neothd/src/cli/channel_relink.rs": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+      "SRC/neothd/src/cli/init.rs": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+      "SRC/neothd/src/cli/init/first_install_identity.rs": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+      "SRC/neothd/src/cli/init/io.rs": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "SRC/neothd/src/cli/init/steps_identity.rs": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+      "SRC/neothd/src/cli/init/steps_provider.rs": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "SRC/neothd/src/cli/mod.rs": "e979c83495fe56ccffca6fd89c58937f0b4b785623f9830a85e46bebd73ddcb1",
+      "SRC/neothd/src/cli/reload.rs": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+      "SRC/neothd/src/config/credentials.rs": "1c84c1b7caf5b7206eeb302faba65772f14c855f886850d2a56cdb1366003699",
+      "SRC/neothd/src/config/wal.rs": "c71194429b5bccbd5be098c8343c9841c70f3c7e67afdf2c7386f7f5c10ef888",
+      "SRC/neothd/src/wal/master_key.rs": "45d34471f65a2f5007b4968801ed36d8dd91c473fd6085cbd2536953cd1b1ed5",
+      "binary": "d00e072958420ce60501a65b43e00b47bb67a2e64ea0ca985fd40d023a948487",
+      "openclaw_source_fixture": "b64adc4d3f7af7bbc3648f5ea82037ceb038b027bc6398c7cbe5d22a0bbc9357",
+      "packaging/converted_channel_relink_product_canary.py": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+      "packaging/tests/test_converted_channel_relink_product_canary.py": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91"
+    },
+    "source_bindings": {
+      ".github/workflows/gchat-live-regressions.yml": "8131d84c7a6db065dd6f994d733e12b416a1dff99043e9a202146e8f60f4a3a6",
+      "SRC/Cargo.lock": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "SRC/neoth-openclaw-custody/Cargo.toml": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+      "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+      "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+      "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+      "SRC/neoth-openclaw-custody/src/lib.rs": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+      "SRC/neoth-openclaw-custody/src/pinned_inventory.rs": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+      "SRC/neoth-openclaw-custody/src/pinned_schema.rs": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+      "SRC/neothd/Cargo.toml": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "SRC/neothd/src/channels/imessage_bluebubbles.rs": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "SRC/neothd/src/channels/relink.rs": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+      "SRC/neothd/src/channels/routing.rs": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+      "SRC/neothd/src/cli/channel.rs": "04f3f67a598b58c1b27fe5010e695556290213aa54986a24c428dd4cb4859dda",
+      "SRC/neothd/src/cli/channel/converted_relink.rs": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+      "SRC/neothd/src/cli/channel_relink.rs": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+      "SRC/neothd/src/cli/init.rs": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+      "SRC/neothd/src/cli/init/first_install_identity.rs": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+      "SRC/neothd/src/cli/init/io.rs": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "SRC/neothd/src/cli/init/steps_identity.rs": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+      "SRC/neothd/src/cli/init/steps_provider.rs": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "SRC/neothd/src/cli/mod.rs": "e979c83495fe56ccffca6fd89c58937f0b4b785623f9830a85e46bebd73ddcb1",
+      "SRC/neothd/src/cli/reload.rs": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+      "SRC/neothd/src/config/credentials.rs": "1c84c1b7caf5b7206eeb302faba65772f14c855f886850d2a56cdb1366003699",
+      "SRC/neothd/src/config/wal.rs": "c71194429b5bccbd5be098c8343c9841c70f3c7e67afdf2c7386f7f5c10ef888",
+      "SRC/neothd/src/wal/master_key.rs": "45d34471f65a2f5007b4968801ed36d8dd91c473fd6085cbd2536953cd1b1ed5",
+      "packaging/converted_channel_relink_product_canary.py": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+      "packaging/tests/test_converted_channel_relink_product_canary.py": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91"
+    },
+    "source_head": "5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+    "stage": "cleanup"
+  },
+  "originalArtifacts": [
+    {
+      "id": 10950276148,
+      "name": "w548-gchat-live-regressions-log-5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+      "sha256": "b70448b11cdb5ac5fd88f61c8053c3b8e32a0315efcdf18e398ea01d3e6be641",
+      "entries": 74
+    },
+    {
+      "id": 10949697444,
+      "name": "w548-gchat-live-regressions-source-5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+      "sha256": "b45746da20753e84ca564a5557a1d4939daaa3bf4df3946c00634c08c78a98bf",
+      "entries": 2
+    },
+    {
+      "id": 10949658757,
+      "name": "converted-relink-public-cli-5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+      "sha256": "51281f95d55eb04d397318a8fd6ae9ac952123789c7a04516c8db352968ed0c9",
+      "entries": 2
+    },
+    {
+      "id": 10949632746,
+      "name": "w548-gchat-live-regressions-receipt-5ce049083bf6034f3ba9690c09bb33716d0ecb6c",
+      "sha256": "17166ec0a090ac5004a88a20ce681a248970a102767ce3de48a37cb1cf4b3a1b",
+      "entries": 4
+    }
+  ],
+  "rawProducerBindings": [
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "sha256": "8131d84c7a6db065dd6f994d733e12b416a1dff99043e9a202146e8f60f4a3a6",
+      "blob": "fc46679ab8b37b88025e71a8934920931bba368a"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/Cargo.toml",
+      "sha256": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+      "blob": "86b02711188fd588fc598a578f3b8d7a1567bafa"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
+      "sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+      "blob": "b695cf8e1bbedf82025441e54227f080060d42a3"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
+      "sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+      "blob": "139ecaf877f9756d3095fab0d1f04745235c0fc2"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json",
+      "sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+      "blob": "8119f09318695dd97bb4f051f28e42294105b51e"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sha256": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+      "blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+      "sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+      "blob": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+      "blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6"
+    },
+    {
+      "path": "SRC/neothd/src/channels/imessage_bluebubbles.rs",
+      "sha256": "a3802b075700b24a92b6dd68bca8033f89471dedc89a3aa87d70e0daa5e5a796",
+      "blob": "664678368a6f21332253924f6cb09e40445cdd20"
+    },
+    {
+      "path": "SRC/neothd/src/channels/relink.rs",
+      "sha256": "185238303c725e4fa8dbdefce8231c705043c2b1bccd8ea0f6fb490ab5b2045e",
+      "blob": "4a7ddf2c3915b6dedfe67ec9e145e5077cbc59b8"
+    },
+    {
+      "path": "SRC/neothd/src/channels/routing.rs",
+      "sha256": "c360f1cdf5de0acd3afa9fdd2954276ff84ff56e28b15a1f32bbb54241845574",
+      "blob": "f6f08083ee1a6747f3ba7469a787540064a3ecdd"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "sha256": "04f3f67a598b58c1b27fe5010e695556290213aa54986a24c428dd4cb4859dda",
+      "blob": "f615ca82ef0ebd936ebcc73e00cb77104ba2e4cf"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+      "sha256": "fe6c6cf846af17cac9458d42cb0ff37b8f5021de8f00c2a4ea55e39b4a0de0a0",
+      "blob": "358ff8824872b5c4af063c737f66ca080c83e351"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel_relink.rs",
+      "sha256": "3337fa8b21236608e4bda8b07bf25ddca83a5cafe8033e023d2f28363c5c10ee",
+      "blob": "74a0243d1122cf33d97cb5a8827a4572168ccdda"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "sha256": "37d32afdd9a5741dfada40eb3c62e3615a63beb87d7153d708f7ffa6a2955277",
+      "blob": "19b94663f34755bba0560b74c79c54396b8c0658"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
+      "sha256": "71b0aa6bc70e854485144b884acdfec8827f6de5ceb986433f4d449036aeebf4",
+      "blob": "411efb49c119920ec81c69f253405ab8a5bb692d"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/io.rs",
+      "sha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "blob": "d7646518596245a7c86137fd46f6e7619a73cc90"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_identity.rs",
+      "sha256": "20372ff75d992848903f1d434d07c2a8aa6b5f8e01146b5d79284c1bde134114",
+      "blob": "62928810ff3a68af0441a548e7dd9bca672b1512"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_provider.rs",
+      "sha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "sha256": "e979c83495fe56ccffca6fd89c58937f0b4b785623f9830a85e46bebd73ddcb1",
+      "blob": "6edc3b152dd06bd310db4a740ae110f45a2cf606"
+    },
+    {
+      "path": "SRC/neothd/src/cli/reload.rs",
+      "sha256": "b193ddc0e3e0b632001139b26948e672fb5b0bf99700400e5ea168521663f273",
+      "blob": "8183066d2f3873d42bc9bf661e01ddda7ddb2e7b"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "1c84c1b7caf5b7206eeb302faba65772f14c855f886850d2a56cdb1366003699",
+      "blob": "d08daec3c3050f9fd26dca4e8f4e23b54372829c"
+    },
+    {
+      "path": "SRC/neothd/src/config/wal.rs",
+      "sha256": "c71194429b5bccbd5be098c8343c9841c70f3c7e67afdf2c7386f7f5c10ef888",
+      "blob": "ccbb9827a78905555a9e222a3e4b5103a8a074a2"
+    },
+    {
+      "path": "SRC/neothd/src/wal/master_key.rs",
+      "sha256": "45d34471f65a2f5007b4968801ed36d8dd91c473fd6085cbd2536953cd1b1ed5",
+      "blob": "b6e7d83e72ee1f8b517ff5c9e9523e94bfcf3eb3"
+    },
+    {
+      "path": "packaging/converted_channel_relink_product_canary.py",
+      "sha256": "ab6c977e3e3b955c24d825336b9be5b7a6a4222180fc7d1f194f6bc974d280b6",
+      "blob": "20be27ca34fb6d352b327ced8f8a2af50221bf62"
+    },
+    {
+      "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
+      "sha256": "2a033cc97dc2f1ca5fc9af3596ef6018ceac46ad85104914f122e149de5d0b91",
+      "blob": "072eca898bd3128fce63579afe0fe71fecf24e3c"
+    }
+  ],
+  "limits": [
+    "Local loopback BlueBubbles transport; no real external provider or running daemon acceptance.",
+    "Reload requested is not reload adopted.",
+    "Slack migration and current changed credential backend remain separately gated.",
+    "No local executable validation."
+  ],
+  "roadmapClosure": false
+}

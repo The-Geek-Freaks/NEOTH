@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1793 Public Relink CLI accepted (2026-09-28):**
+Run36372343235 at5ce04908 passed native37/37 and the real compiled CLI
+lifecycle against loopback BlueBubbles: actual init without restore, explicit
+AEAD opt-in, wrong-target refusal with only Pending state, exact Ready pair/
+routing/receipt publication, byte-identical retry and all4 cleanup flags true.
+All4 original artifacts match GitHub API digests,28 raw producer bindings match,
+and37 named one-test terminals match the selected identities (integration binary
+prefix mapped explicitly). Evidence:
+docs/verification/gold-wave1793-relink-product-admission.json.
+No external-provider/live-daemon or new Slack-migration acceptance is implied.
 **W1790 Slack hosted compile repair (2026-09-28):**
 Core36372576208 at3f058e26 failed before tests: cap_std permissions require
 the cap_std PermissionsExt trait; the shared Slack finalizer moved a candidate

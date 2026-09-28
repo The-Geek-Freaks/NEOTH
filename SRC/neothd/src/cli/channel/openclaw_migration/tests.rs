@@ -147,7 +147,11 @@ where
         .await
         .is_err()
     );
-    assert_eq!(pair(&fixture.home), before, "failed probe cannot publish pair");
+    assert_eq!(
+        pair(&fixture.home),
+        before,
+        "failed probe cannot publish pair"
+    );
     assert!(
         !fixture
             .home

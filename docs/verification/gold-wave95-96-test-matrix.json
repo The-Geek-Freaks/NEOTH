@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "prior Linux2049 admitted; Slack hosted compile repaired pending retest",
+  "status": "real Relink CLI and channel37 admitted at5ce04908; Slack type/CLI gate active",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 261807,
-    "sha256": "07AA7A3B64B4E8904BBDCED9768AEDDDFE230F8E83CC1034BEEEB0DA2885CE36"
+    "bytes": 262195,
+    "sha256": "47B9317B8F49A58F0D7EE050F398ACD93D7D2E72898744D3B51FDBB05E4EAFD2"
   },
-  "sourceInputs": 1454,
+  "sourceInputs": 1456,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -13638,43 +13638,43 @@
     {
       "test": "cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     },
     {
@@ -13686,7 +13686,7 @@
     {
       "test": "cli::channel::openclaw_migration::tests::provider_failures_missing_workspace_and_timeout_publish_nothing",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "sourceSha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2",
+      "sourceSha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
       "junitClass": "neoth"
     }
   ],
@@ -55416,6 +55416,44 @@
       }
     ],
     "note": "Fix actual E0599/E0505 and unused-mut diagnostics; retain same pair authority;19 new migration regression identities. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1793RelinkPublicCliAdmission": {
+    "base": "1da6281f07e3f6bdbf92ecb742bf2102e573e413",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1792-hosted-format.json",
+        "bytes": 382,
+        "sha256": "57B07B2B6084F7DE5E689CC13E50FF6C9064C9ACA9582E446223273F6226FA14",
+        "blob": "433a9427dd94e9d223f5dd4913c0a23cffbe1581"
+      },
+      {
+        "path": "docs/verification/gold-wave1793-relink-product-admission.json",
+        "bytes": 16982,
+        "sha256": "D74B0C9FC3AD992A9478D6F1395EA7A16B2C3FB24B58E4E67C6EAB7AB235B47D",
+        "blob": "7d6b7aaf225178cad47c92d290db66ee00f169a1"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1531197,
+        "sha256": "4E528C472E589E00B11F7E0045EA06D71DD516B99A25CBBD639679A31EA1E7CE",
+        "blob": "ef9bf9e8fb32e2f0bd16b4c8e2750ad4a4c5c6f5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2141720,
+        "sha256": "B30E70838CD4F14BED566FDAD0BC3D06B8DB26DFB617F311ED81DECABC89405F",
+        "blob": "d4de2509ce70a7057440c077eda477e74056f4b3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
+        "bytes": 23664,
+        "sha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E",
+        "blob": "6a2de218de19fe2cb129f235f60ca42341f999e3"
+      }
+    ],
+    "note": "Originals/API digests/28 raw producer bindings and all37 native exact terminals verified. Authenticated one-hunk Slack test formatting imported. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

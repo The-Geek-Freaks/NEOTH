@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T03:18:07.5881414Z",
-  "validationStatus": "prior Linux2049 admitted; Slack hosted compile repaired pending retest",
+  "capturedUtc": "2026-09-28T03:26:37.9692135Z",
+  "validationStatus": "real Relink CLI and channel37 admitted at5ce04908; Slack type/CLI gate active",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2692,6 +2692,16 @@
       "sha256": "6CEF86514804105DB0785C0F481F5F7E963084334410FEB42663E0B11370B774"
     },
     {
+      "path": "docs/verification/gold-wave1792-hosted-format.json",
+      "bytes": 382,
+      "sha256": "57B07B2B6084F7DE5E689CC13E50FF6C9064C9ACA9582E446223273F6226FA14"
+    },
+    {
+      "path": "docs/verification/gold-wave1793-relink-product-admission.json",
+      "bytes": 16982,
+      "sha256": "D74B0C9FC3AD992A9478D6F1395EA7A16B2C3FB24B58E4E67C6EAB7AB235B47D"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3738,13 +3748,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1530500,
-      "sha256": "208450CAB4608FDFD094436366172D794248551C19108886AE594D6CD1F4F9AD"
+      "bytes": 1531197,
+      "sha256": "4E528C472E589E00B11F7E0045EA06D71DD516B99A25CBBD639679A31EA1E7CE"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2141023,
-      "sha256": "5886DF0FA2E4B92BDA9013B93299C42A095D0182887826F6E31260107998F7A3"
+      "bytes": 2141720,
+      "sha256": "B30E70838CD4F14BED566FDAD0BC3D06B8DB26DFB617F311ED81DECABC89405F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4608,8 +4618,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "bytes": 23634,
-      "sha256": "BA5493C1F5D1986EA52BBD4387583006DC72AE272D23D231753F0AA1A9CDA2F2"
+      "bytes": 23664,
+      "sha256": "73276B7C99423EA63201F34116EDB54403BF827EB582AA95EF2B2673F991EF5E"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",

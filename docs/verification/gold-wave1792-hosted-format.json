@@ -1,0 +1,10 @@
+{
+  "schema": "neoth-hosted-rustfmt-import/v1",
+  "run": 36373320317,
+  "producer": "1da6281f07e3f6bdbf92ecb742bf2102e573e413",
+  "artifact": 10950395493,
+  "zipDigest": "sha256:62fdde88a33e136624d590a8cd18b24e6b5ed8d5bff9d5f6ee3d6a310ea36515",
+  "innerHashesVerified": true,
+  "patchScope": "one assertion line-wrap in coordinator tests",
+  "localExecutableValidationRan": false
+}
