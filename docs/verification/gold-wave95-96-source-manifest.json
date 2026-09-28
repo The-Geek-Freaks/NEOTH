@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T04:55:10.5367921Z",
-  "validationStatus": "W1810 single-account Telegram75 and actual Relink CLI admitted; multi-account W1807 remains uncommitted WIP",
+  "capturedUtc": "2026-09-28T05:08:02.9720797Z",
+  "validationStatus": "W1807 aggregate Slack/Telegram migration source reviewed; new93/2104/865 hosted gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 27964,
-      "sha256": "EEFF04080E2F17E95CD930C28902795222159349DEF950BCB54A9A1032F3CDA4"
+      "bytes": 33283,
+      "sha256": "1F21F1476D0FB6047141FDD415D3D675C28FBCF897081D50088E8271F2C8F236"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29422,
-      "sha256": "EB261585A86CFA5DACBA23C7E19B85BFE63D4D977BB299A046AA59B3C937F4E8"
+      "bytes": 29470,
+      "sha256": "DEA1641CBA5BE71D5FD5E23C2CFFD381D383E3533C52DEFDA2ADC60DE45E6CBD"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 147399,
-      "sha256": "6694BFDF4571BB2CFE27AF8E70E31044CEA4F620C747EA51D820C6DFEB89BF78"
+      "bytes": 150904,
+      "sha256": "CDC4F8F11DE3A02A29EC3C8F667D0CEC663A226C5767C978A9FFE97DCA8C4564"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1343,8 +1343,8 @@
     },
     {
       "path": "docs/openclaw-slack-migration.md",
-      "bytes": 4444,
-      "sha256": "59917AA4102DDDA25740431EA7D2C46FC4820607FECF7300EB0CBBCFF54FBD78"
+      "bytes": 6051,
+      "sha256": "6E12955F27632F94708E40A3DDC3B9587A6AB729ADB81CF22C679E3A126295A7"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -2742,6 +2742,11 @@
       "sha256": "6567F794B228DC385AECB2E99BA8E2D3FA0DB25E7FA3B806C7B19FA4BCE7BF5E"
     },
     {
+      "path": "docs/verification/gold-wave1807-batch-source.json",
+      "bytes": 1804,
+      "sha256": "D999CD08C18394121E484D64006D5BDEB2BAA5A8BDE1B032E33B2A8F0ECA0585"
+    },
+    {
       "path": "docs/verification/gold-wave1810-focused75-admission.json",
       "bytes": 5018,
       "sha256": "3DFFE8956F44BE9F26F0CBCAA971E94BA249D76A48D7B112E1F300781385287B"
@@ -3788,18 +3793,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 501863,
-      "sha256": "EB367714D5D4DAF667E1E674E4ABD5B78BD5F2E8A1C88820A84A2FF904FF9491"
+      "bytes": 503247,
+      "sha256": "5D7C388348E4AFF44BD05BAFDF206F432A3EE1F3C9E34451E1ABD48146B5510A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1538059,
-      "sha256": "B162142977BBA964D495390DE6933A93ABD9275D112EC5579CCDDF4E074B06FA"
+      "bytes": 1539443,
+      "sha256": "B0998CBAC340250B3F63DE0C32C4F8A60FC6AC7B69D66E710CD0417F4D05CF91"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2148582,
-      "sha256": "5C636C7801ECCD18BE6D79366ADDBED6EA13CB2CB2F896C48F476A0EE151C8D1"
+      "bytes": 2149966,
+      "sha256": "81F3FD237EFA2662AA73A6DFEAE00A20F1D3EBF56003D8BC0E27BCFE5E18972E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4658,13 +4663,18 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
-      "bytes": 30930,
-      "sha256": "A20B345D572554C1571E04188056B75673546EA3AAC5892E5AAC1B4BB9740773"
+      "bytes": 33061,
+      "sha256": "DB4018BB558C8FB6B1E52BE2D938D9B7161B5D62FB226F59C01F23DBD47FDC2E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
+      "bytes": 14799,
+      "sha256": "21BECAE037B69730919F32291019D802EE02FEAFF1A453E0C8C3221A3C2B76C4"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration/participants.rs",
-      "bytes": 15808,
-      "sha256": "56A7AD3584888692DE5A69EA64DEEB79D2CA61345E2FE8ED8728B1C67DA1D3EC"
+      "bytes": 25103,
+      "sha256": "9F2BCFB63BCDD07C066BD593A0A26A08963864FC6C9029A78050DD2ED24BE2E5"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs",
@@ -4908,8 +4918,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 125727,
-      "sha256": "982DAD12E4DA629B1D1B1FF4995E4A8B1FD0F9759D1E9A98696F8F793136140C"
+      "bytes": 125733,
+      "sha256": "07BA442D577D029CFD8A919CE796AD580F6A29E67267F72A7BB68DE34E57F164"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -5333,8 +5343,18 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 436494,
-      "sha256": "677FB5E81397C9018662633CD91F98727DE69F78E7976834CD3C2B0111150E17"
+      "bytes": 436726,
+      "sha256": "CD4CC6985A834E28F7CB7C086BC4A2EB274A1065765FDE5EE13856E15ABBACF5"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
+      "bytes": 29818,
+      "sha256": "D8A0D60FCED79355B0B07AE1FD2AB9B0EEFD542DD6B127BBCE2FA2A025AA4B64"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
+      "bytes": 15805,
+      "sha256": "4266BC8A7C784499D92F891E7A4AE192A48A6C329581B7B7451EAD288BD8372B"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration.rs",

@@ -71,6 +71,9 @@ jobs:
             SRC/neothd/src/cli/channel/openclaw_migration/tests.rs \
             SRC/neothd/src/cli/channel/openclaw_migration/participants.rs \
             SRC/neothd/src/cli/channel/openclaw_migration/telegram_tests.rs \
+            SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs \
+            SRC/neothd/src/config/credentials/file_migration_batch.rs \
+            SRC/neothd/src/config/credentials/file_migration_batch/tests.rs \
             SRC/neothd/src/config/credentials/telegram_migration.rs \
             SRC/neothd/src/config/credentials/telegram_migration/tests.rs \
             SRC/neothd/src/config/credentials/slack_migration.rs \
@@ -137,6 +140,24 @@ jobs:
             fi
           }
 
+          run_case 76 lib config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses --lib
+          run_case 77 lib config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration --lib
+          run_case 78 lib config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback --lib
+          run_case 79 lib config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack --lib
+          run_case 80 lib config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody --lib
+          run_case 81 lib config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite --lib
+          run_case 82 lib config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes --lib
+          run_case 83 lib config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely --lib
+          run_case 84 lib config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction --lib
+          run_case 85 lib config::credentials::file_migration_batch::tests::symlinked_pair_is_rejected config::credentials::file_migration_batch::tests::symlinked_pair_is_rejected --lib
+          run_case 86 lib cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly --lib
+          run_case 87 lib cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write --lib
+          run_case 88 lib cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched --lib
+          run_case 89 lib cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe --lib
+          run_case 90 lib cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation --lib
+          run_case 91 lib cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody --lib
+          run_case 92 lib cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success --lib
+          run_case 93 lib cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct --lib
           run_case 75 lib cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity --lib
           run_case 57 lib config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly config::credentials::telegram_migration::tests::custody_commits_the_immutable_allowed_user_bound_pair_and_reverses_it_exactly --lib
           run_case 58 lib config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair config::credentials::telegram_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair --lib
@@ -219,9 +240,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 75
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 75
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 75
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 93
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 93
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 93
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

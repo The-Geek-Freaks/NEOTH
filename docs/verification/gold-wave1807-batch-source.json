@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-static-migration-batch-review/v1",
+  "decision": "source_review_pass_hosted_pending",
+  "scope": "One ordered file-backed Slack/Telegram batch, one exact pair custody and shared coordinator; old Slack-v1 and Telegram-v2 records retained",
+  "review": "work/gold-20260906/wave1809-migration-batch-review.md",
+  "reviewSha256": "0830A221FDEC600A66132C428C7183A8B0ACCDFEABEA25666CD7E7A348D41772",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
+      "sha256": "DB4018BB558C8FB6B1E52BE2D938D9B7161B5D62FB226F59C01F23DBD47FDC2E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration/participants.rs",
+      "sha256": "9F2BCFB63BCDD07C066BD593A0A26A08963864FC6C9029A78050DD2ED24BE2E5"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
+      "sha256": "16A5A669125295D44FF892582E6699F1DD8859F360EBE5718EF647974720131B"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
+      "sha256": "ADF6482BE383B61CAFFCFEF4832410265245C33C0800FF8DD7A1FFE2B39E9C4C"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
+      "sha256": "729F9FDB1459C111ADAE00157FE31771FE2C1AFF9037858BD47911AAEBBC6714"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "01B62DF4FFE5F132E031A870EC509B59261BE8978BAC6188622F7AF9B18B95AB"
+    }
+  ],
+  "cases": {
+    "new": 18,
+    "portable": 17,
+    "unix": 1,
+    "focused": 93,
+    "linux": 2104,
+    "windows": 865
+  },
+  "localExecutableValidationRan": false,
+  "limits": [
+    "Source review does not prove native or product execution",
+    "No keychain, converted routing, live traffic barrier or daemon adoption",
+    "No roadmap checkbox closure"
+  ]
+}

@@ -1178,7 +1178,7 @@ pub enum Commands {
     /// auto-reverser is a separate step.
     Undo(undo::UndoArgs),
 
-    /// Plan, apply, inspect, and roll back one file-backed OpenClaw Slack or Telegram account.
+    /// Plan, apply, inspect, and roll back file-backed OpenClaw Slack/Telegram accounts as one pair.
     OpenclawMigration {
         #[command(subcommand)]
         action: channel::openclaw_migration::OpenclawMigrationAction,

@@ -1,15 +1,14 @@
 # Reversible OpenClaw Slack and Telegram migration
 
-`neoth openclaw-migration` moves one explicitly selected OpenClaw Slack or
-Telegram account into one named NEOTH account of that channel. It supports the file credentials
-backend, including encrypted credentials. It provides a durable plan, apply,
-status, and rollback operation for that one account. Other channel families,
-multiple-account batches, and the keychain backend are not supported by this
-operation version.
+`neoth openclaw-migration` moves explicitly selected OpenClaw Slack and Telegram
+accounts into named NEOTH accounts. It supports the file credentials backend,
+including encrypted credentials. A single account or an ordered batch shares
+one durable plan, apply, status, and rollback operation. Other channel families
+and the keychain backend are not supported by this operation version.
 
 The existing individual import and converted-channel relink commands
-remain separate operations. A single-account migration does not claim atomic migration
-across those commands or completion of the full OpenClaw migration roadmap.
+remain separate operations. A migration batch owns the config/credentials file
+pair; it does not combine those separate commands or pause active channel traffic.
 
 ## Plan an explicit mapping
 
@@ -49,6 +48,50 @@ Telegram migration refuses keychain-backed homes before preparing the account
 or accessing its keychain token. Existing Slack v1 plans and recovery records
 remain usable; Telegram operations use their own participant-bound v2 plans.
 
+## Migrate several accounts together
+
+Use a version-3 batch mapping for between one and 32 accounts. Each entry uses
+the same version-1 account mapping shown above. Accounts are probed in request
+order, then their changes are published together in one config/credentials pair:
+
+```json
+{
+  "schema_version": 3,
+  "channel": "batch",
+  "participants": [
+    {
+      "schema_version": 1,
+      "channel": "slack",
+      "source_account": "work",
+      "account": "work",
+      "allowed_user_id": "U0123456789"
+    },
+    {
+      "schema_version": 1,
+      "channel": "telegram",
+      "source_account": "work",
+      "account": "work",
+      "allowed_user_id": 123456789
+    }
+  ]
+}
+```
+
+Source and destination account names must be unique within each channel. Slack
+and Telegram may use the same name. Empty or nested batches, duplicate mappings,
+unknown fields and unsupported participants are rejected. Every selected account
+must come from the same source configuration and its resolved include set.
+
+If any provider probe fails, no account in the batch is published. The complete
+source set and private mapping are checked again after each probe and before the
+single pair publication. A version-3 operation retains one immutable before/after
+pair for all participants, including their exact encrypted credential bytes.
+Rollback restores that entire pair only while it still matches this operation.
+Existing version-1 Slack and version-2 Telegram operations retain their original
+records and recovery behavior.
+
+The following commands work with either a single-account or batch mapping:
+
 ```text
 neoth --output json openclaw-migration plan --config /private/openclaw.json --request /private/migration-request.json
 ```
@@ -67,7 +110,8 @@ neoth --output json openclaw-migration status --id <operation-id>
 Apply verifies the exact Slack candidate with authenticated `auth.test` and binds
 the resulting workspace. Telegram uses authenticated `getMe`; its returned bot
 username is display information and never replaces the explicit allowed user
-or prepared account incarnation. Both recheck the source and mapping before publication. The
+or prepared account incarnation. All probes share a 60-second validity window,
+and the source and mapping are rechecked after each response. The
 private recovery record retains the exact file images, including encrypted
 credential bytes and account incarnation. If the process stops, repeat the
 same apply command with the original source and mapping. Recovery reconciles

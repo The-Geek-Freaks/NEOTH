@@ -30,8 +30,13 @@ use zeroize::Zeroize;
 
 use crate::secret::SecretString;
 
+mod file_migration_batch;
 mod slack_migration;
 mod telegram_migration;
+pub(crate) use file_migration_batch::{
+    FileMigrationBatchCustody, FileMigrationBatchCustodyLoad,
+    FileMigrationBatchState, FileMigrationInput, FileMigrationParticipant, PreparedFileMigrationBatch,
+};
 pub(crate) use slack_migration::{
     PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad, SlackMigrationState,
 };

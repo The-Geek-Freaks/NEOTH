@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1807/W1808/W1811 Atomic file-backed account batch (2026-09-28):**
+The public migration command now accepts an ordered v3 request with1..32
+Slack/Telegram mappings. It captures one raw config/credentials pair, accumulates
+all account changes in memory, probes every selected account, and rechecks the
+complete source/request after each await. One immutable final pair is published
+and reversed as a whole; no per-account commit prefix is exposed. Slack team
+and account incarnation behavior, Telegram policy, unknown YAML and encrypted
+credential bytes follow the existing contracts. Old Slack-v1/Telegram-v2 plans
+retain their original serialization and hash domains; only v3 binds its count.
+W1809 independent final source review passed after custody reread/binding and
+candidate-validation repairs.18 new tests (17 portable/1 Unix) cover mixed
+four-account behavior, AEAD byte-identical retries, absent credential files,
+all4 bidirectional pair faultpoints, all11 coordinator checkpoints, stale
+custody/receipts, provider failure/timeout and source/request/target drift.
+Registry: Portable2314; Linux2104/Windows865/focused93 hosted gates pending.
+Evidence: docs/verification/gold-wave1807-batch-source.json. Full keychain,
+converted routing/Ready and live-traffic migration remain open; no daemon
+adoption inferred from reload. ROAD1324/1077/245/2 unchanged. No local runtime.
+
 **W1810 Telegram focused behavior and Relink product admitted (2026-09-28):**
 Run36377726835 at9f5d96a9 passed all75 selected/started/executed identities.
 Each identity has exactly one matching one-test green terminal. All4 original

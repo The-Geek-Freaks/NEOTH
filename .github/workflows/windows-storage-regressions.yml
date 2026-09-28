@@ -918,6 +918,23 @@ jobs:
           cli::channel::openclaw_migration::telegram_tests::telegram_all_coordinator_checkpoints_recover_only_the_recorded_direction	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
           cli::channel::openclaw_migration::telegram_tests::telegram_missing_or_changed_custody_state_receipt_and_target_never_report_success	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
           cli::channel::openclaw_migration::telegram_tests::slack_v1_plan_request_and_custody_keep_their_original_serialization	neothd/src/cli/channel/openclaw_migration/telegram_tests.rs
+          config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely	neothd/src/config/credentials/file_migration_batch/tests.rs
+          config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction	neothd/src/config/credentials/file_migration_batch/tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_encrypted_mixed_slack_and_telegram_lifecycle_retries_without_reprobe_and_rolls_back_exactly	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_rejects_malformed_nested_empty_oversize_duplicate_or_keychain_request_before_pair_or_custody_write	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_provider_wrong_kind_and_timeout_at_each_position_leave_pair_and_custody_untouched	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_source_include_or_request_mutation_after_each_probe_holds_before_the_next_probe	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_target_pair_drift_refuses_and_never_publishes_a_mixed_generation	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_all_forward_and_reverse_checkpoints_recover_only_the_recorded_direction_with_immutable_raw_custody	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_stale_lost_or_malformed_custody_state_and_terminals_refuse_success	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
+          cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct	neothd/src/cli/channel/openclaw_migration/batch_tests.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -942,10 +959,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 848 ]]; then
+          if [[ "$expected" -ne 865 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"

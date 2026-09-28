@@ -1,4 +1,4 @@
-//! One source-bound, reversible, file-backed OpenClaw account migration.
+//! Source-bound, reversible, file-backed OpenClaw account migration.
 //! Provider probing is the only injected external effect in coordinator tests.
 
 use std::ffi::OsStr;
@@ -26,7 +26,7 @@ use crate::skills::store;
 mod participants;
 use participants::{
     PairState, ParticipantCustody, ParticipantKind, PreparedParticipant, PrivateRequest,
-    ProbeBinding, ProbeOutcome, SelectedSource,
+    ProbeBinding, ProbeEvidence, ProbeOutcome, SelectedSource,
 };
 
 const MAX_REQUEST: usize = 8 * 1024;
@@ -36,7 +36,7 @@ const PROBE_VALIDITY: Duration = Duration::from_secs(60);
 
 #[derive(Subcommand, Debug)]
 pub enum OpenclawMigrationAction {
-    /// Bind one supported Slack or Telegram account and the current target pair.
+    /// Bind supported Slack/Telegram accounts and one current target pair.
     Plan {
         #[arg(long)]
         config: PathBuf,
@@ -77,9 +77,11 @@ struct Plan {
     request_binding: String,
     pair_before: String,
     // Absent for existing Slack v1 plans: serialization and plan hashes stay
-    // unchanged. Only v2 Telegram plans carry an explicit participant.
+    // unchanged. Telegram v2 and file-backed batch v3 are explicit variants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     participant: Option<ParticipantKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    participant_count: Option<u8>,
 }
 
 impl Plan {
@@ -87,10 +89,14 @@ impl Plan {
         self.participant.unwrap_or(ParticipantKind::Slack)
     }
     fn valid_version(&self) -> bool {
-        matches!(
-            (self.version, self.participant),
-            (1, None) | (2, Some(ParticipantKind::Telegram))
-        )
+        match (self.version, self.participant, self.participant_count) {
+            (1, None, None) | (2, Some(ParticipantKind::Telegram), None) => true,
+            (3, Some(ParticipantKind::Batch), Some(count)) => (1..=32).contains(&count),
+            _ => false,
+        }
+    }
+    fn participant_count(&self) -> u8 {
+        self.participant_count.unwrap_or(1)
     }
 }
 
@@ -395,7 +401,7 @@ pub async fn run(action: OpenclawMigrationAction, output: &OutputFormat) -> Resu
             confirm,
         } => {
             ensure!(confirm, "apply requires --confirm");
-            apply_participant_at_with(&home, &id, &config, &request, participants::probe, |_| {
+            apply_many_at_with(&home, &id, &config, &request, participants::probe, |_| {
                 Ok(())
             })
             .await
@@ -432,16 +438,20 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
     let store = OperationStore::open(home, &id, true)?;
     let plan = with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         let plan = Plan {
-            version: if request.kind() == ParticipantKind::Slack {
-                1
-            } else {
-                2
+            version: match request.kind() {
+                ParticipantKind::Slack => 1,
+                ParticipantKind::Telegram => 2,
+                ParticipantKind::Batch => 3,
             },
             id: id.clone(),
             source_binding,
             request_binding,
             pair_before: pair_baseline(&store.home, request.kind())?,
             participant: (request.kind() != ParticipantKind::Slack).then_some(request.kind()),
+            participant_count: match &request {
+                PrivateRequest::Batch { participants, .. } => Some(u8::try_from(participants.len())?),
+                _ => None,
+            },
         };
         // The ordinary prepared candidate validates the supported backend,
         // account policy and credential shape, without publishing target data.
@@ -455,16 +465,16 @@ fn plan_at(home: &Path, config: &Path, request_path: &Path) -> Result<Status> {
     Ok(make_status(&plan, &state, "before", true))
 }
 
-async fn apply_participant_at_with<P, F>(
+async fn apply_many_at_with<P, F>(
     home: &Path,
     id: &str,
     config: &Path,
     request_path: &Path,
-    probe: P,
+    mut probe: P,
     mut checkpoint: impl FnMut(Checkpoint) -> Result<()>,
 ) -> Result<Status>
 where
-    P: FnOnce(ProbeBinding) -> F,
+    P: FnMut(ProbeBinding) -> F,
     F: Future<Output = Result<ProbeOutcome>>,
 {
     let store = OperationStore::open(home, id, false)?;
@@ -538,15 +548,25 @@ where
         );
         prepare_candidate(&store.home, &plan, &request, selected)
     })?;
-    let binding = prepared.probe_binding()?;
+    let bindings = prepared.probe_bindings()?;
     let started = Instant::now();
-    let outcome = tokio::time::timeout(PROBE_VALIDITY, probe(binding))
-        .await
-        .context("migration probe timed out")??;
-    let evidence = outcome.evidence(plan.kind())?;
-    if recheck_inputs(&plan, config, request_path).is_err() {
-        return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
+    let mut evidence = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let kind = binding.kind();
+        let remaining = PROBE_VALIDITY.saturating_sub(started.elapsed());
+        ensure!(!remaining.is_zero(), "migration probes expired");
+        let outcome = tokio::time::timeout(remaining, probe(binding))
+            .await
+            .context("migration probe timed out")??;
+        evidence.push(outcome.evidence(kind)?);
+        // Each await releases control to other processes. Revalidate the full
+        // source set and request before contacting the next provider or saving
+        // custody. No participant prefix has been published at this point.
+        if recheck_inputs(&plan, config, request_path).is_err() {
+            return store.hold(&mut state, HoldReason::SourceOrRequestChanged);
+        }
     }
+    let evidence = ProbeEvidence::from_outcomes(plan.kind(), evidence)?;
     with_coherent_pair_transaction_at(&store.home.join("freedom.yaml"), || {
         ensure!(
             started.elapsed() < PROBE_VALIDITY,
@@ -768,13 +788,13 @@ fn make_status(plan: &Plan, state: &State, pair_state: &'static str, consistent:
         id: plan.id.clone(),
         phase: state.phase,
         pair_state,
-        committed_steps: u8::from(consistent && state.phase == Phase::Committed),
-        reversed_steps: u8::from(consistent && state.phase == Phase::RolledBack),
+        committed_steps: if consistent && state.phase == Phase::Committed { plan.participant_count() } else { 0 },
+        reversed_steps: if consistent && state.phase == Phase::RolledBack { plan.participant_count() } else { 0 },
         held: state.held.is_some() || !consistent,
         reason: state
             .held
             .or((!consistent).then_some(HoldReason::TargetDrift)),
-        participants: 1,
+        participants: plan.participant_count(),
         reload_requested: state.reload_for == Some(state.phase),
     }
 }
@@ -822,10 +842,11 @@ fn request_binding(request: &PrivateRequest) -> Result<String> {
 
 fn plan_binding(plan: &Plan) -> Result<String> {
     Ok(hash(
-        if plan.version == 1 {
-            b"neoth-openclaw-migration-plan-v1\0"
-        } else {
-            b"neoth-openclaw-migration-plan-v2\0"
+        match plan.version {
+            1 => b"neoth-openclaw-migration-plan-v1\0",
+            2 => b"neoth-openclaw-migration-plan-v2\0",
+            3 => b"neoth-openclaw-migration-plan-v3\0",
+            _ => anyhow::bail!("unsupported migration plan version"),
         },
         &serde_json::to_vec(plan)?,
     ))
@@ -894,8 +915,38 @@ fn pair_baseline(home: &Path, kind: ParticipantKind) -> Result<String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+// Preserve the original single-participant test seam while production and
+// batch tests exercise the same coordinator with a reusable probe callback.
+#[cfg(test)]
+async fn apply_participant_at_with<P, F>(
+    home: &Path,
+    id: &str,
+    config: &Path,
+    request_path: &Path,
+    probe: P,
+    checkpoint: impl FnMut(Checkpoint) -> Result<()>,
+) -> Result<Status>
+where
+    P: FnOnce(ProbeBinding) -> F,
+    F: Future<Output = Result<ProbeOutcome>>,
+{
+    let mut probe = Some(probe);
+    apply_many_at_with(
+        home,
+        id,
+        config,
+        request_path,
+        |binding| probe.take().expect("single-participant test probe called twice")(binding),
+        checkpoint,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod telegram_tests;
+
+#[cfg(test)]
+mod batch_tests;
