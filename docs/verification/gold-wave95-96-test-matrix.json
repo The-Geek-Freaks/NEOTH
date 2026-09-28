@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1881 Doctor source and hosted registration statically approved; W1882 pinned macOS25 admitted; fresh runtime pending",
+  "status": "W1883 privacy and W1884/W1885 recovery source reviewed; hosted verification pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269677,
-    "sha256": "E63CC0D9B103AEE762873CCCA663AEE1F00CC5790AD5422F4FC26B82785D1A34"
+    "bytes": 269808,
+    "sha256": "83E2900FA37D2B604D96D432DA5172A8C0E40570D0A669DA772BB04DFA7712F6"
   },
-  "sourceInputs": 1495,
+  "sourceInputs": 1496,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -342,7 +342,7 @@
     {
       "test": "cli::doctor::checks::integrations::omi_tests::outline_enrichment_warns_for_stale_map_and_reports_fresh_physical_generation",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "sourceSha256": "826C3EEFD41C500A52FDE52F6B182DFFB21701DAA1EE83A0D00E76BA404CF2B2",
+      "sourceSha256": "32D51570F6EA37BC6815F9E57A3594C2F113382DBDC5D5E09CADDCB1BE0978C5",
       "junitClass": "neoth"
     },
     {
@@ -10224,73 +10224,73 @@
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_has_its_required_trigger_configuration_and_http_wiring",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -11124,7 +11124,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::email_threat_starter_uses_pinned_text_only_imap_contract",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -11190,7 +11190,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::paperless_consult_starter_is_manual_question_lookup_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -11310,7 +11310,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::dream_obsidian_starter_syncs_previous_utc_day_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -11646,7 +11646,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::reflection_starter_exports_current_utc_iso_week_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -13986,7 +13986,7 @@
     {
       "test": "installers::n8n_starter_workflows::tests::every_starter_pairs_with_a_session_item",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B",
+      "sourceSha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
       "junitClass": "neoth"
     },
     {
@@ -14263,6 +14263,36 @@
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_mixed_aggregates_to_warn",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
       "sourceSha256": "E948DCE7B1D1247389B3C21FF65DA0D5AE288259EBFF15D426034E10E628A397",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::privacy::tests::audit_lists_no_channels_when_credentials_empty",
+      "sourcePath": "SRC/neothd/src/cli/privacy.rs",
+      "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::privacy::tests::audit_warns_and_lists_configured_channels",
+      "sourcePath": "SRC/neothd/src/cli/privacy.rs",
+      "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only",
+      "sourcePath": "SRC/neothd/src/cli/privacy.rs",
+      "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::privacy::tests::audit_partial_gchat_configuration_remains_privacy_relevant",
+      "sourcePath": "SRC/neothd/src/cli/privacy.rs",
+      "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values",
+      "sourcePath": "SRC/neothd/src/cli/privacy.rs",
+      "sourceSha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
       "junitClass": "neoth"
     }
   ],
@@ -59131,6 +59161,198 @@
       }
     ],
     "note": "Four new Doctor behavior cases plus seven existing lifecycle tests.2376portable/2151Linux/936Windows/139channel/52macOS. Root verified macOS25 original10970629906 with25PASS/17producer hashes. No local runtime, no LF00105/ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1881HostedFormatter": {
+    "run": 36428238577,
+    "artifact": 10971783105,
+    "producer": "eefc26e238f9b5057b8bcd7824554c765f5322e2",
+    "zipSha256": "c6a71cdd1a40c57cb0a7dc4bef6a115384d5bec43e879d236d8262e5007695a1",
+    "patchSha256": "da9aa790b9b0e23169a5d024e9a133b4cb76564225dcedc7ba825b8d7e8b8d7d",
+    "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
+    "postimage": "7aa51224c5a94ff4d80e0e86810c9166c06a6bc6",
+    "localFormatterRan": false
+  },
+  "wave1884Linux2140Failure": {
+    "run": 36424960983,
+    "producer": "221defc357939fd4913fd2a02c6126c22e1b9687",
+    "artifacts": [
+      {
+        "id": 10971411691,
+        "name": "openclaw-custody-221defc357939fd4913fd2a02c6126c22e1b9687",
+        "api_digest": "sha256:6751c61d9a33ae0e048b7627f0b99a12721424f24873ab6a7cc3dbabcbe1e210",
+        "zip_sha256": "6751c61d9a33ae0e048b7627f0b99a12721424f24873ab6a7cc3dbabcbe1e210",
+        "digest_matches": true
+      },
+      {
+        "id": 10971822970,
+        "name": "w190-research-lifecycle-log-221defc357939fd4913fd2a02c6126c22e1b9687",
+        "api_digest": "sha256:0279aee0d2cd5590232f2a40e7fc7cf9f3bb4676dea7810a6c462b872a7bd271",
+        "zip_sha256": "0279aee0d2cd5590232f2a40e7fc7cf9f3bb4676dea7810a6c462b872a7bd271",
+        "digest_matches": true
+      },
+      {
+        "id": 10972322495,
+        "name": "w190-research-lifecycle-source-221defc357939fd4913fd2a02c6126c22e1b9687",
+        "api_digest": "sha256:e8ca1e76245731c7be616f779c3146d5bcc00cc83fd0e70250a9cd6094be6a04",
+        "zip_sha256": "e8ca1e76245731c7be616f779c3146d5bcc00cc83fd0e70250a9cd6094be6a04",
+        "digest_matches": true
+      },
+      {
+        "id": 10972886252,
+        "name": "w190-research-lifecycle-receipt-221defc357939fd4913fd2a02c6126c22e1b9687",
+        "api_digest": "sha256:e5bbaf34149d17a9db7a90a1e12caf4355029a03612fdf07d6ed74994178c3bb",
+        "zip_sha256": "e5bbaf34149d17a9db7a90a1e12caf4355029a03612fdf07d6ed74994178c3bb",
+        "digest_matches": true
+      }
+    ],
+    "result": {
+      "expected": 2140,
+      "executed": "2140",
+      "list_count": 2140,
+      "run_count": 2140,
+      "passed_count": 2139,
+      "failed_count": 1,
+      "failed_fixture": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
+      "failure_location": "SRC/neothd/src/installers/n8n_starter_workflows.rs:863:17",
+      "failure_message": "implemented adapter must not claim the broader consent audit",
+      "failure_log_context": "artifact-10971822970/cargo-research-lifecycle.log:8420-8442"
+    },
+    "status": "failed; not accepted as a green batch",
+    "repair": "Restore case-sensitive Partial typed permission-decision audit wording while keeping KF-06 reference and broader-audit exclusion. Test unchanged; hosted verification pending."
+  },
+  "wave1883PrivacyDescriptorProjection": {
+    "requiredTests": [
+      "cli::privacy::tests::audit_lists_no_channels_when_credentials_empty",
+      "cli::privacy::tests::audit_warns_and_lists_configured_channels",
+      "cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only",
+      "cli::privacy::tests::audit_partial_gchat_configuration_remains_privacy_relevant",
+      "cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values"
+    ],
+    "status": "static review approved; hosted pending",
+    "note": "Privacy audit projects configured and partial channels from canonical descriptors/probes and renders only display names. Three new cases plus two existing empty/legacy configuration cases."
+  },
+  "wave1886Windows925Failure": {
+    "artifact": {
+      "id": 10973045837,
+      "producer_commit": "221defc357939fd4913fd2a02c6126c22e1b9687",
+      "workflow_run_id": 36424849943,
+      "api_digest": "sha256:60c5bc66aaf19a563692dc72c06f06b74ba077bfa0cbb44ddc01473cdc8e9cc6",
+      "zip_sha256": "60c5bc66aaf19a563692dc72c06f06b74ba077bfa0cbb44ddc01473cdc8e9cc6",
+      "api_digest_matches_zip": true
+    },
+    "counts": {
+      "expected": 925,
+      "selected": 925,
+      "listed": 925,
+      "total": 925,
+      "passed": 924,
+      "failed": 1,
+      "missing": 0,
+      "compile_status": 0,
+      "selection_valid": true
+    },
+    "failure": {
+      "receipt": [
+        "597\tfailed\tinstallers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin\tneothd/src/installers/n8n_starter_workflows.rs"
+      ],
+      "ordinal": 597,
+      "identity": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
+      "path": "neothd/src/installers/n8n_starter_workflows.rs",
+      "log": "artifact-10973045837/logs/597.log",
+      "source_location": "SRC/neothd/src/installers/n8n_starter_workflows.rs:863:17",
+      "message": "implemented adapter must not claim the broader consent audit"
+    },
+    "rawProducerPaths": 130,
+    "status": "not admitted; same n8n case-sensitive description mismatch as Linux2140; narrow repair pending hosted execution"
+  },
+  "wave1885DaemonOnboardingFixture": {
+    "run": 36425611785,
+    "producer": "a80318405fbc338587c0005dfb73899a57ab5aea",
+    "artifact": 10972126929,
+    "zipSha256": "b70657214db02559d637300e9f4a03024663c6ca9c681ed8728044d6e9051a2e",
+    "observed": "daemon_exited_early, readiness, returncode1; raw log unavailable",
+    "sourceTrace": "Fresh init with skip provider leaves onboarding incomplete and no channel; serve gate rejects that setup.",
+    "repair": "Only isolated canary home persists documented onboarding_complete true, without fake pre-relink channel or consent bypass. Actual init_home mock added; static review approved; hosted pending."
+  },
+  "wave1883To1886SourceBindings": {
+    "base": "eefc26e238f9b5057b8bcd7824554c765f5322e2",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 49269,
+        "sha256": "96C30A26341AEC2E97AF38E8ADD9A6EFC9179C21B90EAF676B90784A8C1D7F73",
+        "blob": "3ed02da3fb5fa32ecbe57f8c207fae57a25ee2ff"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 12321,
+        "sha256": "E86356A4E11CA51BD40ABB78769E88EA7F67947CCF495A8314FC2682231AFF9A",
+        "blob": "a4600974e64f3798e29e13b0f78c24d8398d4b76"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29868,
+        "sha256": "7D05BEDFFC8FC4248E545C055BB41C04619CC43E005F7BC865176730F273FE61",
+        "blob": "b2c7aaf6c082e17b30ca960734b0e03ae40413c3"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 160436,
+        "sha256": "C49F5CE9315CD2B09B7B5BE06B804C29A953A56672E67A669C5B8C9DD2808952",
+        "blob": "6076402951b80a94b60c5ff93b0214a331a93c51"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 37647,
+        "sha256": "D1B2BB30642F830D453DAABCB17B8956213F99B65BADA36886FB3A0E7ABB7DC0",
+        "blob": "86645361a37b25236c9e0f000078a2e7d3f2a6aa"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 15489,
+        "sha256": "1296C4677E7075781C73F41DA57FFF31B937632259EA8391997DA243296E074B",
+        "blob": "7cbbc52fd284fd1ad58283c44310caf081b5eee9"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 537035,
+        "sha256": "7FC842C609EFFEB2E50E19F465CD5F94160A45D748202CD95C7D5938BF2FBB5A",
+        "blob": "3aec8c08d99a7fa4af55cf5c9f504afe75537298"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1573465,
+        "sha256": "4863279A0F1ADB34CB868D80B1A4AF07E77EB4EC98E711C39BEE4B1FD2FEEF65",
+        "blob": "4f863a7b5b3da10dbd7d9eea326e039be675cf7f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2184475,
+        "sha256": "5A70795CD0248FBE731DA5B7218246EEAB135A112464676DFC0DE7A7812DC956",
+        "blob": "633267dafb795356248da9fde53108dbb520f868"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
+        "bytes": 90207,
+        "sha256": "32D51570F6EA37BC6815F9E57A3594C2F113382DBDC5D5E09CADDCB1BE0978C5",
+        "blob": "7aa51224c5a94ff4d80e0e86810c9166c06a6bc6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/privacy.rs",
+        "bytes": 30090,
+        "sha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7",
+        "blob": "783707c402bf0dfad2269c6470aa534a51907436"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "bytes": 64870,
+        "sha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B",
+        "blob": "4ef73a7692b20352aedffd5900fc6482ee7101c6"
+      }
+    ],
+    "note": "2381portable/2156Linux/941Windows/144channel/57macOS. New privacy canonical projection, n8n one-character contract repair, isolated daemon onboarding fixture, authentic Doctor formatter. Earlier925Windows/2140Linux still red; no Road closure/local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

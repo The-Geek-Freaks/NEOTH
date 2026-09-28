@@ -126,6 +126,40 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_invalid"):
                 canary.grant_loopback_provider_consent(binary, {})
 
+    def test_init_home_marks_only_fresh_daemon_canary_onboarding_complete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "neoth-home"
+            home.mkdir()
+            binary = Path("/tmp/neoth")
+            env = {"NEOTH_HOME": str(home)}
+
+            def initialized(argv, received_env):
+                self.assertEqual(argv, [str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "bluebubbles-daemon-canary", "--provider", "skip"])
+                self.assertEqual(received_env, env)
+                (home / "freedom.yaml").write_text("unrelated_setting: preserve-me\nonboarding_complete: false\nprovider_kind: skip\n", encoding="utf-8")
+                wal = home / "wal"
+                wal.mkdir()
+                master = wal / "master.key"
+                master.write_bytes(b"x" * 32)
+                os.chmod(master, 0o600)
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+            with patch.object(canary, "command", side_effect=initialized) as invoked:
+                canary.init_home(binary, home, env, 43123)
+
+            invoked.assert_called_once()
+            config = (home / "freedom.yaml").read_text(encoding="utf-8")
+            self.assertIn("unrelated_setting: preserve-me\n", config)
+            self.assertIn("onboarding_complete: true\n", config)
+            self.assertEqual(config.count("onboarding_complete:"), 1)
+            self.assertIn("provider_kind: openai_compat\n", config)
+            self.assertIn("provider_endpoint: http://127.0.0.1:43123\n", config)
+            self.assertIn("provider_model: daemon-canary-model\n", config)
+            self.assertNotIn("channels:", config)
+            self.assertNotIn("one_shot", config)
+            self.assertNotIn("allow_clock_rollback", config)
+            self.assertNotIn("consent_bypass", config)
+
     def test_readiness_accepts_only_public_live_status_between_stable_owner_probes(self):
         process = self._Process(4242)
         home, binary, env = Path("/tmp/neoth-home"), Path("/tmp/neoth"), {"NEOTH_HOME": "/tmp/neoth-home"}

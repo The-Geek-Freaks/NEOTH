@@ -77,6 +77,7 @@ jobs:
             SRC/neothd/src/cli/onboarding_readiness.rs \
             SRC/neothd/src/cli/onboarding_status.rs \
             SRC/neothd/src/cli/doctor.rs \
+            SRC/neothd/src/cli/privacy.rs \
             SRC/neothd/src/cli/doctor/checks/integrations.rs \
             SRC/neothd/src/daemon/post_init_cron.rs \
             SRC/neothd/src/channels/slack.rs \
@@ -179,6 +180,11 @@ jobs:
             fi
           }
 
+          run_case 140 lib cli::privacy::tests::audit_lists_no_channels_when_credentials_empty cli::privacy::tests::audit_lists_no_channels_when_credentials_empty --lib
+          run_case 141 lib cli::privacy::tests::audit_warns_and_lists_configured_channels cli::privacy::tests::audit_warns_and_lists_configured_channels --lib
+          run_case 142 lib cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only cli::privacy::tests::audit_gchat_only_is_warn_and_never_claims_cli_only --lib
+          run_case 143 lib cli::privacy::tests::audit_partial_gchat_configuration_remains_privacy_relevant cli::privacy::tests::audit_partial_gchat_configuration_remains_privacy_relevant --lib
+          run_case 144 lib cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values cli::privacy::tests::audit_descriptor_channels_preserve_order_and_redact_configuration_values --lib
           run_case 129 lib cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim --lib
           run_case 130 lib cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback --lib
           run_case 131 lib cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair --lib
@@ -325,9 +331,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 139
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 139
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 139
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 144
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 144
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 144
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

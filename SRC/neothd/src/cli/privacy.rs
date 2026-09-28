@@ -19,6 +19,8 @@ use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
 
+use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
+use crate::channels::registry::channel_descriptors;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
@@ -386,16 +388,18 @@ pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFin
     }
 
     // ── Channel credentials ────────────────────────────────────────────
-    let mut channels: Vec<&'static str> = Vec::new();
-    if creds.telegram_token.is_some() {
-        channels.push("telegram");
-    }
-    if creds.slack_bot_token.is_some() || creds.slack_app_token.is_some() {
-        channels.push("slack");
-    }
-    if creds.whatsapp_token.is_some() {
-        channels.push("whatsapp");
-    }
+    let channel_view = ChannelCredsView::from_config(Some(cfg), creds);
+    let channels: Vec<&'static str> = channel_descriptors()
+        .iter()
+        .zip(probe_all(&channel_view))
+        .filter_map(|(descriptor, health)| {
+            (!matches!(
+                health.status,
+                ProbeStatus::NotConfigured | ProbeStatus::Unavailable
+            ))
+            .then_some(descriptor.display_name)
+        })
+        .collect();
     out.push(PrivacyFinding {
         category: "channels",
         severity: if channels.is_empty() { "info" } else { "warn" },
@@ -555,6 +559,7 @@ mod tests {
         let ch = findings.iter().find(|f| f.category == "channels").unwrap();
         assert_eq!(ch.severity, "info");
         assert!(ch.status.contains("none"));
+        assert!(ch.detail.contains("CLI-only"));
     }
 
     #[test]
@@ -568,8 +573,72 @@ mod tests {
         let findings = audit_posture(&cfg, &creds);
         let ch = findings.iter().find(|f| f.category == "channels").unwrap();
         assert_eq!(ch.severity, "warn");
-        assert!(ch.status.contains("telegram"));
-        assert!(ch.status.contains("slack"));
+        assert!(ch.status.contains("Telegram"));
+        assert!(ch.status.contains("Slack"));
+    }
+
+    #[test]
+    fn audit_gchat_only_is_warn_and_never_claims_cli_only() {
+        let cfg = cfg_with("local_qwen", false, None);
+        let creds = Credentials {
+            gchat_service_account_json: Some("/operator/service-account.json".to_string()),
+            gchat_subscription: Some("projects/example/subscriptions/neoth".to_string()),
+            gchat_allowed_sender: Some("users/operator".to_string()),
+            ..Default::default()
+        };
+        let findings = audit_posture(&cfg, &creds);
+        let ch = findings.iter().find(|f| f.category == "channels").unwrap();
+
+        assert_eq!(ch.severity, "warn");
+        assert!(ch.status.contains("Google Chat"));
+        assert!(!ch.detail.contains("CLI-only"));
+        assert!(!ch.detail.contains("No third-party messenger"));
+    }
+
+    #[test]
+    fn audit_partial_gchat_configuration_remains_privacy_relevant() {
+        let cfg = cfg_with("local_qwen", false, None);
+        let creds = Credentials {
+            gchat_service_account_json: Some("/operator/service-account.json".to_string()),
+            ..Default::default()
+        };
+        let findings = audit_posture(&cfg, &creds);
+        let ch = findings.iter().find(|f| f.category == "channels").unwrap();
+
+        assert_eq!(ch.severity, "warn");
+        assert!(ch.status.contains("Google Chat"));
+        assert!(!ch.detail.contains("CLI-only"));
+    }
+
+    #[test]
+    fn audit_descriptor_channels_preserve_order_and_redact_configuration_values() {
+        let mut cfg = cfg_with("local_qwen", false, None);
+        cfg.telegram_user_id = Some(42);
+        let creds = Credentials {
+            telegram_token: Some(SecretString::from("telegram-secret-token")),
+            discord_bot_token: Some(SecretString::from("discord-secret-token")),
+            discord_allowed_user_id: Some("123456789012345678".to_string()),
+            gchat_service_account_json: Some("/operator/service-account.json".to_string()),
+            gchat_subscription: Some("projects/example/subscriptions/neoth".to_string()),
+            gchat_allowed_sender: Some("users/operator".to_string()),
+            ..Default::default()
+        };
+        let findings = audit_posture(&cfg, &creds);
+        let ch = findings.iter().find(|f| f.category == "channels").unwrap();
+        let rendered = format!("{}\n{}", ch.status, ch.detail);
+
+        assert_eq!(ch.severity, "warn");
+        assert!(ch.status.contains("Telegram, Discord, Google Chat"));
+        for secret_or_config in [
+            "telegram-secret-token",
+            "discord-secret-token",
+            "/operator/service-account.json",
+            "projects/example/subscriptions/neoth",
+            "users/operator",
+            "123456789012345678",
+        ] {
+            assert!(!rendered.contains(secret_or_config), "{rendered}");
+        }
     }
 
     #[test]

@@ -1016,11 +1016,7 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
         || view.keet_allowed_senders
         || view.keet_bearer
         || view.keet_seed;
-    if view.keet_bridge_url
-        && view.keet_topic
-        && view.keet_allowed_senders
-        && view.keet_bearer
-    {
+    if view.keet_bridge_url && view.keet_topic && view.keet_allowed_senders && view.keet_bearer {
         rows.push((
             "keet",
             "CONFIGURED-NEEDS-LIVE-PROBE",

@@ -442,7 +442,7 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "consent_audit_export",
         name: "Typed permission-decision audit export",
-        description: "KF-06 partial typed permission-decision audit: read authenticated TrustDecision metadata for one explicit subject. This does not export the broader legacy consent audit.",
+        description: "KF-06 Partial typed permission-decision audit: read authenticated TrustDecision metadata for one explicit subject. This does not export the broader legacy consent audit.",
         cron: "0 20 * * 0",
         endpoint: "/api/permissions/audit",
         method: "POST",

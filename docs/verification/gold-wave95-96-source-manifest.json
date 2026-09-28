@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T13:21:06.4215319Z",
-  "validationStatus": "W1881 Doctor source and hosted registration statically approved; W1882 pinned macOS25 admitted; fresh runtime pending",
+  "capturedUtc": "2026-09-28T13:42:24.6654610Z",
+  "validationStatus": "W1883 privacy and W1884/W1885 recovery source reviewed; hosted verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 48306,
-      "sha256": "F02581D8E1215460093787A116E3782B81FF04244810BBA48C88F057F579CE04"
+      "bytes": 49269,
+      "sha256": "96C30A26341AEC2E97AF38E8ADD9A6EFC9179C21B90EAF676B90784A8C1D7F73"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 11744,
-      "sha256": "5824AA590D9674DE582CE130D5ADDE7E1E77E88EBB834DED0B427C5C57CF8E11"
+      "bytes": 12321,
+      "sha256": "E86356A4E11CA51BD40ABB78769E88EA7F67947CCF495A8314FC2682231AFF9A"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29812,
-      "sha256": "F8DBF34CDD8C59FBB7DEBD9B31DB06A591A288FA670EFA7D53D0745FB76BEDB0"
+      "bytes": 29868,
+      "sha256": "7D05BEDFFC8FC4248E545C055BB41C04619CC43E005F7BC865176730F273FE61"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 159879,
-      "sha256": "55F34EB1552B74FAB3C05EBF4CCD3A8EE8E25E92E1092F6EF8F2117AE23E7D3D"
+      "bytes": 160436,
+      "sha256": "C49F5CE9315CD2B09B7B5BE06B804C29A953A56672E67A669C5B8C9DD2808952"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3663,8 +3663,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 36776,
-      "sha256": "C1CD452B4D569FC62DDD9638C0871724A471FB46B43AE4FC8FF29518974A53E2"
+      "bytes": 37647,
+      "sha256": "D1B2BB30642F830D453DAABCB17B8956213F99B65BADA36886FB3A0E7ABB7DC0"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3768,8 +3768,8 @@
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
-      "bytes": 13587,
-      "sha256": "5F9EB8720CC292AD43FAEE72D64573B1EC34924296C0663ED7F33702A51DD4A1"
+      "bytes": 15489,
+      "sha256": "1296C4677E7075781C73F41DA57FFF31B937632259EA8391997DA243296E074B"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 534543,
-      "sha256": "DEE96C61EAB4FEC588C40A5EA07936C9762AB67E74297E77D88B8D33DB738160"
+      "bytes": 537035,
+      "sha256": "7FC842C609EFFEB2E50E19F465CD5F94160A45D748202CD95C7D5938BF2FBB5A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1570973,
-      "sha256": "3DC682AA567418AB9855ECD17F7A84FBE143224D9F45FCFE01F7BA174D5E8B9E"
+      "bytes": 1573465,
+      "sha256": "4863279A0F1ADB34CB868D80B1A4AF07E77EB4EC98E711C39BEE4B1FD2FEEF65"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2181983,
-      "sha256": "A42EC67B8AC2D79DE096B25F25DF1B5C8F4814D3AA185DD677247C35AC8778ED"
+      "bytes": 2184475,
+      "sha256": "5A70795CD0248FBE731DA5B7218246EEAB135A112464676DFC0DE7A7812DC956"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4893,8 +4893,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "bytes": 90235,
-      "sha256": "826C3EEFD41C500A52FDE52F6B182DFFB21701DAA1EE83A0D00E76BA404CF2B2"
+      "bytes": 90207,
+      "sha256": "32D51570F6EA37BC6815F9E57A3594C2F113382DBDC5D5E09CADDCB1BE0978C5"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
@@ -5065,6 +5065,11 @@
       "path": "SRC/neothd/src/cli/parity_drift.rs",
       "bytes": 82291,
       "sha256": "9ABDAD49FC1FE5F9089F235F398C33C700D62D3E26C13F5B5B627663B56A6D66"
+    },
+    {
+      "path": "SRC/neothd/src/cli/privacy.rs",
+      "bytes": 30090,
+      "sha256": "2AFE23BBEF85D13E9E2A877AE07C6CBE4048D0558D655E3DEEC6C1216CEA11D7"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -5974,7 +5979,7 @@
     {
       "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
       "bytes": 64870,
-      "sha256": "9B688BEC77E8FC1D3E9AF18F068DFCB1FA7B05529957B6F1D98A1212BD82513B"
+      "sha256": "27113FF8BE7257E0B8516E1594EB43490A5C6E73C2DBD6267777428CBCBB696B"
     },
     {
       "path": "SRC/neothd/src/installers/n8n_workflows.rs",

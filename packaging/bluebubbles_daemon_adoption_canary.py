@@ -277,6 +277,21 @@ def configure_loopback_provider(home: Path, port: int) -> None:
     config.write_text(raw, encoding="utf-8")
 
 
+def complete_daemon_test_onboarding(home: Path) -> None:
+    """Mark this fresh, channel-free canary home as intentionally daemon-ready."""
+    config = home / "freedom.yaml"
+    if not regular(config):
+        raise Failure("provider_config_missing")
+    raw = config.read_text(encoding="utf-8")
+    pattern = re.compile(r"(?m)^onboarding_complete:.*$")
+    if pattern.search(raw):
+        raw = pattern.sub("onboarding_complete: true", raw, count=1)
+    else:
+        raw += "" if raw.endswith("\n") else "\n"
+        raw += "onboarding_complete: true\n"
+    config.write_text(raw, encoding="utf-8")
+
+
 def init_home(binary: Path, home: Path, env: dict[str, str], port: int) -> None:
     if not home.is_dir() or home.is_symlink() or any(home.iterdir()):
         raise Failure("init_home_not_fresh")
@@ -287,6 +302,10 @@ def init_home(binary: Path, home: Path, env: dict[str, str], port: int) -> None:
     if not regular(master) or master.stat().st_size != 32 or master.stat().st_mode & 0o077:
         raise Failure("init_identity_invalid")
     configure_loopback_provider(home, port)
+    # The canary deliberately starts before its converted relink creates a
+    # channel. Persist the documented completion flag only in this fresh,
+    # isolated daemon test home; production still rejects incomplete homes.
+    complete_daemon_test_onboarding(home)
 
 
 def grant_loopback_provider_consent(binary: Path, env: dict[str, str]) -> None:

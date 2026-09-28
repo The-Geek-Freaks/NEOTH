@@ -3,6 +3,39 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1883/W1885/W1886 privacy projection and hosted recovery (2026-09-28; runtime pending):**
+Privacy audit now derives configured/partial channel visibility from canonical
+descriptors instead of three hardcoded credentials. Google Chat and Discord
+no longer disappear into a false CLI-only assurance. Only descriptor display
+names are rendered; GChat-only, partial setup and mixed-order/redaction cases
+join the retained empty/legacy tests. Independent static review approved.
+Five registered cases select2381portable/2156Linux/941Windows/144channel/57macOS.
+Windows925 run36424849943 at221defc3 independently confirms924PASS/1FAIL/0missing,
+the same lowercase Partial-description mismatch as Linux2140. Original10973045837
+ZIP/API SHA25660c5bc66aaf19a563692dc72c06f06b74ba077bfa0cbb44ddc01473cdc8e9cc6
+and925source rows/130unique raw producer paths are verified; failed batch stays red.
+Daemon artifact10972126929 ata8031840 proves readiness exit1, not adoption.
+Source trace shows its fresh init had no channel and onboarding_complete=false;
+the raw startup log is unavailable. W1885 marks only that isolated test home
+explicitly onboarding-complete, with a real init_home mock and unchanged actual
+provider-consent, live readiness, relink/adoption, and cleanup requirements.
+No product gate is weakened. Fresh GitHub verification is required for all repairs.
+LF00105/LF00112, ROAD totals and release acceptance remain open; no local runtime.
+
+**W1884 Linux failure recovery and W1881 hosted formatting (2026-09-28):**
+Authenticated run36424960983 at221defc3 executed2140 cases:2139passed/1failed.
+The failure is n8n each_starter_body_uses_generic_header_auth_and_visible_origin:
+the retained KF-06 description used lowercase partial, while the existing
+scope assertion requires Partial typed permission-decision audit. Root restores
+that exact wording and retains both the KF-06 reference and the explicit broader
+legacy consent-audit exclusion; no assertion, capability or auth gate changes.
+Fresh hosted execution remains pending; the failed Linux batch is not accepted.
+Doctor formatter original10971783105 from Preflight36428238577 ateefc26e2 is
+verified against ZIP/API SHA256 c6a71cdd1a40c57cb0a7dc4bef6a115384d5bec43e879d236d8262e5007695a1
+and patch da9aa790b9b0e23169a5d024e9a133b4cb76564225dcedc7ba825b8d7e8b8d7d.
+Only integrations.rs layout changed; postimage7aa51224c5a94ff4d80e0e86810c9166c06a6bc6.
+No local formatter/test, additional native dispatch or ROAD closure occurred.
+
 **W1881 Doctor descriptor projection (2026-09-28; hosted pending):**
 Doctor no longer reports a Google-Chat-only or Discord-only credential setup as
 CLI-only. The existing credential view feeds the canonical descriptor probes;
