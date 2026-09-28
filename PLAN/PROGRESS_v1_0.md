@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1881 Doctor descriptor projection (2026-09-28; hosted pending):**
+Doctor no longer reports a Google-Chat-only or Discord-only credential setup as
+CLI-only. The existing credential view feeds the canonical descriptor probes;
+typed exclusions preserve the four specialized lifecycle rows without duplicates.
+Additional rows distinguish needs-live-probe, configuration gaps and repair;
+they do not establish a live listener. Independent static review approved.
+Four new behavioral tests plus seven existing lifecycle regressions select
+portable2376/Linux2151/Windows936/channel139/macOS52. All four hosted workflows
+bind the Doctor implementation as well as its test source. LF00105 remains open.
+Original macOS25 artifact10970629906 from run36421784463 ataaefb26b is admitted:
+25exact cases passed,0failed; all32 ZIP entries and17raw producer source bindings
+rechecked by Root. ZIP/API SHA256 376123b5b5ece8fc71d9c9f5bc85f769de311755e420141cbc6455310e9aa9d6. Windows925/Linux2140 at221defc3 andchannel128 ata8031840
+continue as already dispatched. No local executable validation or ROAD closure.
+
 **W1879/W1880 pinned channel acceptance and Google Chat refusal diagnostics (2026-09-28):**
 The four original artifacts for run36419695485 atd820f919 are authenticated:
 10970013260 logs,10969819066 receipts,10969739161 source,10969676703 publicCLI.

@@ -995,6 +995,17 @@ jobs:
           cli::onboarding_status::tests::render_channels_telegram_when_enabled	neothd/src/cli/onboarding_status.rs
           cli::onboarding_status::tests::slack_only_readiness_projects_complete_channels_to_snapshot_markdown_and_json	neothd/src/cli/onboarding_status.rs
           cli::onboarding_status::tests::mixed_readiness_preserves_descriptor_order_in_snapshot_markdown_and_json	neothd/src/cli/onboarding_status.rs
+          cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim	neothd/src/cli/doctor.rs
+          cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback	neothd/src/cli/doctor.rs
+          cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair	neothd/src/cli/doctor.rs
+          cli::doctor::tests::channels_wiring_keeps_specialised_rows_without_descriptor_duplicates	neothd/src/cli/doctor.rs
+          cli::doctor::tests::r2_p0_2_channels_wiring_pass_when_no_credentials	neothd/src/cli/doctor.rs
+          cli::doctor::tests::r2_p0_2_channels_wiring_live_when_only_telegram_configured	neothd/src/cli/doctor.rs
+          cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_slack_partial	neothd/src/cli/doctor.rs
+          cli::doctor::tests::slack_inbound_live_when_both_tokens_present	neothd/src/cli/doctor.rs
+          cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_whatsapp_outbound_only	neothd/src/cli/doctor.rs
+          cli::doctor::tests::whatsapp_inbound_live_when_full_meta_secrets_present	neothd/src/cli/doctor.rs
+          cli::doctor::tests::r2_p0_2_channels_wiring_mixed_aggregates_to_warn	neothd/src/cli/doctor.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -1019,10 +1030,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 925 ]]; then
+          if [[ "$expected" -ne 936 ]]; then
             selection_valid=0
           fi
-          sha256sum neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum neothd/src/cli/doctor/checks/integrations.rs neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"
@@ -1105,7 +1116,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 925 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 936 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

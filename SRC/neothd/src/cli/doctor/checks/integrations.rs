@@ -963,13 +963,13 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
     // Tuple shape: (channel name, classification, note). Only configured
     // channels show up — silent on NOT-CONFIGURED to keep doctor output
     // focused on what the operator actually set up.
-    let mut rows: Vec<(&'static str, &'static str, &'static str)> = Vec::new();
+    let mut rows: Vec<(&'static str, &'static str, String)> = Vec::new();
 
     if creds.telegram_token.is_some() {
         rows.push((
             "telegram",
             "LIVE",
-            "polling loop spawned by serve; send + receive both real",
+            "polling loop spawned by serve; send + receive both real".to_string(),
         ));
     }
     match (
@@ -979,13 +979,14 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
         (true, true) => rows.push((
             "slack",
             "LIVE",
-            "socket-mode WS loop spawned by serve; send + receive both real",
+            "socket-mode WS loop spawned by serve; send + receive both real".to_string(),
         )),
         (true, false) | (false, true) => rows.push((
             "slack",
             "CONFIGURED-NOT-STARTED",
             "socket mode needs BOTH bot_token (xoxb-) and app_token (xapp-); \
-             only one supplied — send_text still works",
+             only one supplied — send_text still works"
+                .to_string(),
         )),
         (false, false) => {}
     }
@@ -997,35 +998,68 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
             rows.push((
                 "whatsapp",
                 "LIVE",
-                "Meta webhook listener spawned by serve; send + receive both real",
+                "Meta webhook listener spawned by serve; send + receive both real".to_string(),
             ));
         } else {
             rows.push((
                 "whatsapp",
                 "OUTBOUND-ONLY",
                 "send_text via Graph API works; inbound needs whatsapp_verify_token + \
-                 whatsapp_app_secret + whatsapp_phone_id in credentials.yaml",
+                 whatsapp_app_secret + whatsapp_phone_id in credentials.yaml"
+                    .to_string(),
             ));
         }
     }
-    let keet = crate::channels::probe::ChannelCredsView::from_config(None, &creds);
-    let keet_any = keet.keet_bridge_url
-        || keet.keet_topic
-        || keet.keet_allowed_senders
-        || keet.keet_bearer
-        || keet.keet_seed;
-    if keet.keet_bridge_url && keet.keet_topic && keet.keet_allowed_senders && keet.keet_bearer {
+    let view = crate::channels::probe::ChannelCredsView::from_config(None, &creds);
+    let keet_any = view.keet_bridge_url
+        || view.keet_topic
+        || view.keet_allowed_senders
+        || view.keet_bearer
+        || view.keet_seed;
+    if view.keet_bridge_url
+        && view.keet_topic
+        && view.keet_allowed_senders
+        && view.keet_bearer
+    {
         rows.push((
             "keet",
             "CONFIGURED-NEEDS-LIVE-PROBE",
-            "run `neoth channel test keet`; only authenticated full-duplex companion v1 is accepted",
+            "run `neoth channel test keet`; only authenticated full-duplex companion v1 is accepted"
+                .to_string(),
         ));
     } else if keet_any {
         rows.push((
             "keet",
             "CONFIGURED-NOT-STARTED",
-            "needs keet_bridge_url + keet_bridge_bearer_token + keet_topic + keet_allowed_senders; legacy seed is ignored",
+            "needs keet_bridge_url + keet_bridge_bearer_token + keet_topic + keet_allowed_senders; legacy seed is ignored"
+                .to_string(),
         ));
+    }
+
+    // Preserve the specialised lifecycle notes above. Every other configured
+    // descriptor is projected from the canonical static probe so a new or
+    // currently feature-gated channel cannot be misreported as CLI-only.
+    for (descriptor, health) in crate::channels::registry::channel_descriptors()
+        .iter()
+        .zip(crate::channels::probe::probe_all(&view))
+    {
+        if matches!(
+            descriptor.id,
+            crate::channels::ChannelKind::Telegram
+                | crate::channels::ChannelKind::Slack
+                | crate::channels::ChannelKind::WhatsAppBusiness
+                | crate::channels::ChannelKind::Keet
+        ) {
+            continue;
+        }
+        let classification = match health.status {
+            crate::channels::probe::ProbeStatus::Ok => "CONFIGURED-NEEDS-LIVE-PROBE",
+            crate::channels::probe::ProbeStatus::Warn => "CONFIGURED-WITH-GAP",
+            crate::channels::probe::ProbeStatus::Error => "CONFIGURED-NEEDS-REPAIR",
+            crate::channels::probe::ProbeStatus::NotConfigured
+            | crate::channels::probe::ProbeStatus::Unavailable => continue,
+        };
+        rows.push((descriptor.id.as_str(), classification, health.message));
     }
 
     if rows.is_empty() {
@@ -1138,13 +1172,16 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                   (send + receive both real), OUTBOUND-ONLY (send works, \
                   inbound receive loop not yet wired), CONFIGURED-NOT-\
                   STARTED (full inbound code ships but serve does not \
-                  bootstrap it), or absent (silent). Closes the \
+                  bootstrap it), CONFIGURED-NEEDS-LIVE-PROBE (static \
+                  requirements present), CONFIGURED-WITH-GAP (usable \
+                  static configuration with an advisory), CONFIGURED-NEEDS-\
+                  REPAIR (configured fields cannot start), or absent (silent). \
+                  Closes the \
                   documented gap where README/Status claimed channels \
                   were live while `cli::serve` only spawned Telegram.",
         common_failures: "Operator configures Slack/WhatsApp credentials \
                          + expects bidirectional chat. Aggregate Warn \
-                         when any partial (OUTBOUND-ONLY / CONFIGURED-NOT-\
-                         STARTED) channel is in the set so the gap \
+                         when any non-LIVE channel is in the set so the gap \
                          surfaces during install verification.",
         fix: "Telegram inbound + outbound: live today. Slack inbound: \
               live when BOTH bot_token + app_token configured (socket \
@@ -1152,7 +1189,9 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               secret set (token + phone_id + verify_token + app_secret) \
               configured (webhook listener auto-spawns on 127.0.0.1). \
               Partial configs surface as CONFIGURED-NOT-STARTED with a \
-              precise per-missing-field hint.",
+              precise per-missing-field hint. Other descriptor-backed \
+              channels remain configuration-only: Doctor reports their \
+              static probe result and never claims a live listener.",
     },
     CheckDoc {
         name: "vector index snapshot",

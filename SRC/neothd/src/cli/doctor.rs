@@ -1751,6 +1751,99 @@ mod tests {
     }
 
     #[test]
+    fn channels_wiring_gchat_only_is_visible_without_a_cli_only_claim() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "gchat_service_account_json: /operator/service-account.json\n\
+             gchat_subscription: projects/example/subscriptions/neoth\n\
+             gchat_allowed_sender: users/operator\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("gchat:"), "{}", outcome.detail);
+        assert!(
+            !outcome.detail.contains("CLI-only")
+                && !outcome.detail.contains("no channel credentials"),
+            "{}",
+            outcome.detail
+        );
+    }
+
+    #[test]
+    fn channels_wiring_discord_only_uses_descriptor_fallback() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "discord_bot_token: discord-token\ndiscord_allowed_user_id: \"123456789012345678\"\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("discord: CONFIGURED-NEEDS-LIVE-PROBE")
+        );
+    }
+
+    #[test]
+    fn channels_wiring_partial_descriptor_config_needs_repair() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "gchat_service_account_json: /operator/service-account.json\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("gchat: CONFIGURED-NEEDS-REPAIR"));
+    }
+
+    #[test]
+    fn channels_wiring_keeps_specialised_rows_without_descriptor_duplicates() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "telegram_token: 123:abc\n\
+             whatsapp_token: test-wa-token\n\
+             whatsapp_phone_id: \"123456789\"\n\
+             whatsapp_verify_token: verify-token\n\
+             whatsapp_app_secret: app-secret\n\
+             gchat_service_account_json: /operator/service-account.json\n\
+             gchat_subscription: projects/example/subscriptions/neoth\n\
+             gchat_allowed_sender: users/operator\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("telegram: LIVE"));
+        assert_eq!(
+            outcome.detail.matches("telegram:").count(),
+            1,
+            "{}",
+            outcome.detail
+        );
+        assert_eq!(
+            outcome.detail.matches("gchat:").count(),
+            1,
+            "{}",
+            outcome.detail
+        );
+        assert_eq!(
+            outcome.detail.matches("whatsapp:").count(),
+            1,
+            "{}",
+            outcome.detail
+        );
+    }
+
+    #[test]
     fn hooks_dir_missing_is_pass() {
         let dir = tempdir().unwrap();
         let o = check_hooks_dir(dir.path());

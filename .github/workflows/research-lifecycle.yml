@@ -342,6 +342,7 @@ jobs:
               "wave1870OnboardingReadiness": 22,
               "wave1873ArxivCanonicalUrl": 4,
               "wave1875StatusProjection": 8,
+              "wave1881DoctorDescriptorProjection": 11,
           }
           required_names = []
           # Run newest subsystem waves first; all exact catalog identities remain required.
@@ -354,8 +355,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
-          if expected_count != 2140:
-              raise SystemExit(f"Grouped required test catalog must contain exactly 2140 identities (got {expected_count})")
+          if expected_count != 2151:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 2151 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -401,7 +402,7 @@ jobs:
           (evidence_root / "source" / "inputs.sha256").write_text(
               "".join(
                   f"{hashlib.sha256((root / path).read_bytes()).hexdigest()}  {path}\n"
-                  for path in ("docs/verification/gold-wave95-96-test-matrix.json", "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_generation_rotation.rs", "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs", "SRC/Cargo.lock", "SRC/neothd/src/memory/drift.rs", "SRC/neothd/src/proactive/action_staging.rs", "SRC/neothd/assets/n8n_workflows/daily_summary.json", "SRC/neothd/assets/n8n_workflows/morning_brief.json", "SRC/neothd/assets/n8n_workflows/weekly_stats.json")
+                  for path in ("docs/verification/gold-wave95-96-test-matrix.json", "SRC/neothd/src/cli/doctor/checks/integrations.rs", "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_generation_rotation.rs", "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs", "SRC/Cargo.lock", "SRC/neothd/src/memory/drift.rs", "SRC/neothd/src/proactive/action_staging.rs", "SRC/neothd/assets/n8n_workflows/daily_summary.json", "SRC/neothd/assets/n8n_workflows/morning_brief.json", "SRC/neothd/assets/n8n_workflows/weekly_stats.json")
               ),
               encoding="utf-8",
               newline="\n",
@@ -424,8 +425,8 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
-          [[ "$expected_count" == "2140" ]] || {
-            echo "Grouped fixture catalog must contain exactly 2140 identities (got $expected_count)" >&2
+          [[ "$expected_count" == "2151" ]] || {
+            echo "Grouped fixture catalog must contain exactly 2151 identities (got $expected_count)" >&2
             exit 1
           }
           artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"

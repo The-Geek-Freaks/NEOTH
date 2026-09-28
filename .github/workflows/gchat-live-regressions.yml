@@ -76,6 +76,8 @@ jobs:
             SRC/neothd/src/cli/doctor/checks/onboarding.rs \
             SRC/neothd/src/cli/onboarding_readiness.rs \
             SRC/neothd/src/cli/onboarding_status.rs \
+            SRC/neothd/src/cli/doctor.rs \
+            SRC/neothd/src/cli/doctor/checks/integrations.rs \
             SRC/neothd/src/daemon/post_init_cron.rs \
             SRC/neothd/src/channels/slack.rs \
             SRC/neothd/src/channels/whatsapp_webhook.rs \
@@ -177,6 +179,17 @@ jobs:
             fi
           }
 
+          run_case 129 lib cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim --lib
+          run_case 130 lib cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback --lib
+          run_case 131 lib cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair --lib
+          run_case 132 lib cli::doctor::tests::channels_wiring_keeps_specialised_rows_without_descriptor_duplicates cli::doctor::tests::channels_wiring_keeps_specialised_rows_without_descriptor_duplicates --lib
+          run_case 133 lib cli::doctor::tests::r2_p0_2_channels_wiring_pass_when_no_credentials cli::doctor::tests::r2_p0_2_channels_wiring_pass_when_no_credentials --lib
+          run_case 134 lib cli::doctor::tests::r2_p0_2_channels_wiring_live_when_only_telegram_configured cli::doctor::tests::r2_p0_2_channels_wiring_live_when_only_telegram_configured --lib
+          run_case 135 lib cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_slack_partial cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_slack_partial --lib
+          run_case 136 lib cli::doctor::tests::slack_inbound_live_when_both_tokens_present cli::doctor::tests::slack_inbound_live_when_both_tokens_present --lib
+          run_case 137 lib cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_whatsapp_outbound_only cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_whatsapp_outbound_only --lib
+          run_case 138 lib cli::doctor::tests::whatsapp_inbound_live_when_full_meta_secrets_present cli::doctor::tests::whatsapp_inbound_live_when_full_meta_secrets_present --lib
+          run_case 139 lib cli::doctor::tests::r2_p0_2_channels_wiring_mixed_aggregates_to_warn cli::doctor::tests::r2_p0_2_channels_wiring_mixed_aggregates_to_warn --lib
           run_case 119 lib cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim --lib
           run_case 120 lib cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory --lib
           run_case 121 lib cli::onboarding_status::tests::render_fully_configured_contains_ready_yes cli::onboarding_status::tests::render_fully_configured_contains_ready_yes --lib
@@ -312,9 +325,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 128
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 128
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 128
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 139
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 139
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 139
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle
