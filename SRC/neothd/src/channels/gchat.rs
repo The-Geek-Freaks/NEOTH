@@ -52,7 +52,9 @@ const PULL_BATCH: u32 = 10;
 const ERROR_BACKOFF: Duration = Duration::from_secs(5);
 
 #[cfg(all(feature = "gchat-product-canary", not(debug_assertions)))]
-compile_error!("gchat-product-canary is a debug-only local canary and must not ship in release builds");
+compile_error!(
+    "gchat-product-canary is a debug-only local canary and must not ship in release builds"
+);
 
 #[cfg(feature = "gchat-product-canary")]
 const CANARY_EMAIL: &str = "bot@neoth-canary.invalid";
@@ -270,7 +272,10 @@ impl GChatChannel {
         canary_origin: Option<url::Url>,
     ) -> Result<Self> {
         #[cfg(not(feature = "gchat-product-canary"))]
-        anyhow::ensure!(canary_origin.is_none(), "gchat canary feature is not enabled");
+        anyhow::ensure!(
+            canary_origin.is_none(),
+            "gchat canary feature is not enabled"
+        );
         let subscription = validate_subscription_resource(&subscription.into())?;
         let raw = std::fs::read_to_string(sa_json_path).with_context(|| {
             format!(
@@ -730,7 +735,10 @@ mod tests {
             canary_origin("http://127.0.0.1:18470").unwrap().as_str(),
             "http://127.0.0.1:18470/"
         );
-        assert_eq!(canary_origin("http://[::1]:18470").unwrap().port(), Some(18470));
+        assert_eq!(
+            canary_origin("http://[::1]:18470").unwrap().port(),
+            Some(18470)
+        );
         for bad in [
             "https://127.0.0.1:1",
             "http://localhost:1",

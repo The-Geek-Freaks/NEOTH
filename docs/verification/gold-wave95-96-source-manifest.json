@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T09:05:00.8653599Z",
-  "validationStatus": "Source reviewed Google Chat debug-only public CLI canary and exact receipt contracts; hosted behavior pending",
+  "capturedUtc": "2026-09-28T09:09:41.6737683Z",
+  "validationStatus": "Authenticated hosted Rust formatting imported; GChat canary source behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4588,8 +4588,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/gchat.rs",
-      "bytes": 40985,
-      "sha256": "F815B2B26EC8FCEFF045DE17644A8246098D469891C943F5F84FCF9283A148C3"
+      "bytes": 41059,
+      "sha256": "8C1DB9A633A63B5A8CEB40F8999E6B2FCD5E1DF767110590F15FFD6EEC85C7E8"
     },
     {
       "path": "SRC/neothd/src/channels/identity.rs",

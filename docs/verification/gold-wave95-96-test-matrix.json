@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Source reviewed Google Chat debug-only public CLI canary and exact receipt contracts; hosted behavior pending",
+  "status": "Authenticated hosted Rust formatting imported; GChat canary source behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 268592,
-    "sha256": "FB32341CE87924C1F36FCA38BEF5ADE6F473DAE1E5D74DEBABBC70398370F20B"
+    "bytes": 268566,
+    "sha256": "C3C4F7B636248B30E2693F014B857D1C682D43558B5315681F82F7611379779D"
   },
   "sourceInputs": 1489,
   "requiredNativeTests": [
@@ -56937,6 +56937,20 @@
       }
     ],
     "note": "Default-off debug-only synthetic IP-loopback origin; normal Google token pin/env non-observation preserved, canary traffic blocked. Three feature guard tests plus genuine public CLI wrong-target/wrong-returned-space/Ready/retry and independent material/pair/routing/source/binary hashes. Normal96+BlueBubbles lane retained. LF00112 and release/provider/daemon claims remain open. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1853AuthenticatedGChatFormat": {
+    "base": "95c6de4489487c231e32c61027bb7aed2ff76329",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/channels/gchat.rs",
+        "bytes": 41059,
+        "sha256": "8C1DB9A633A63B5A8CEB40F8999E6B2FCD5E1DF767110590F15FFD6EEC85C7E8",
+        "blob": "d7fdc67434bbdd0df45e400d104adb774bd527e2"
+      }
+    ],
+    "note": "Preflight36401527920 original artifact10960582612 API digest a17018dc2d4d502e55334a54a23c68242ddef7a14c897377e9803e848944bba8 and inner hashes verified; three format-only hunks applied, exact postimage d7fdc674. No local formatter/compiler/runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
