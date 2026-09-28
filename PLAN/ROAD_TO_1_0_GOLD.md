@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1843 Root-composition policy correction (2026-09-28):**
+Run36395999380 compiled and passed55/56 Custody tests. The full schema sweep
+exposed Twitch root-level anyOf branches:3 direct credential fields and14
+account fields require the existing classifier's actual actions. These17
+policy rows and their hash are corrected; classifier and all tests unchanged.
+Fresh schema verification pending. Core36396002270 continues; LF00102 open.
 **W1842 Policy context precedence repair (2026-09-28):**
 Schema run36395347453 at00dce00d passed extraction/cmp and compiled Custody;
 54 tests passed,2 failed. The new3252-row classifier sweep exposed315 typed

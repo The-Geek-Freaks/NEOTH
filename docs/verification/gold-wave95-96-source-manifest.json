@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T08:09:37.6391159Z",
-  "validationStatus": "Custody compiled54PASS2FAIL exposed policy context mismatch;315 exact policy rows repaired; new hosted pending",
+  "capturedUtc": "2026-09-28T08:15:31.4440055Z",
+  "validationStatus": "Custody55PASS1FAIL identified Twitch root-composition policy gap;17 exact data rows repaired; full sweep unchanged",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3843,18 +3843,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 514914,
-      "sha256": "88A661B45F8693DAD8A522E30779D8BC1C743968F2EE6A7E15E8B95318F56AF6"
+      "bytes": 515351,
+      "sha256": "F4500C690C5D0A92F61B2CC50D23B15BF1A7BC4FF6E51D64683F3C00A26823BB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1551224,
-      "sha256": "ED5C64D70FD17B254AC23C4B3F45805DB9EAEA785613FEACF19724A41433E32B"
+      "bytes": 1551661,
+      "sha256": "16198C6ACAD702EC0654688B2CFDACA1C2BA7265A5077AEEDFB7B50F4926F7E2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2162597,
-      "sha256": "D26C1F71DF1B3CFD2E3AF1F6DE15CD80284C396AAD353C3C14E65293F5E89407"
+      "bytes": 2163034,
+      "sha256": "C61B2E63F41BAE3F501804F25EE0235F94A0D760893DDAECB684F0F37EAD856A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3978,8 +3978,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json",
-      "bytes": 832770,
-      "sha256": "4F3BB299684CB12547B4592549E20837D09BD826BC3A115894E9B349EEE3E0AC"
+      "bytes": 833017,
+      "sha256": "C79A1B00173BFA8E620D0AC55B791426900405F0F0C779C6BA6F500D8C84F25B"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
@@ -4009,7 +4009,7 @@
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
       "bytes": 42278,
-      "sha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960"
+      "sha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B"
     },
     {
       "path": "SRC/neothd-gui/AGENTS.md",

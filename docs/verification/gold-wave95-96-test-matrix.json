@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Custody compiled54PASS2FAIL exposed policy context mismatch;315 exact policy rows repaired; new hosted pending",
+  "status": "Custody55PASS1FAIL identified Twitch root-composition policy gap;17 exact data rows repaired; full sweep unchanged",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 267639,
-    "sha256": "EB2155189A9E14EEF803724624CBF2CA710978E9AB32890B11A237110EDE9311"
+    "bytes": 267643,
+    "sha256": "FF4B8F5843BC5A3166A0E596C09929C725BC049F6DE147CB42109D74685AF537"
   },
   "sourceInputs": 1484,
   "requiredNativeTests": [
@@ -2406,19 +2406,19 @@
     {
       "test": "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+      "sourceSha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+      "sourceSha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+      "sourceSha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -2466,7 +2466,7 @@
     {
       "test": "pinned_schema::tests::explicit_typed_leaves_take_precedence_over_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+      "sourceSha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -13374,7 +13374,7 @@
     {
       "test": "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "46A66C2959D14237433C57D12BD10A51F5247EAE967C3769E8194EB4762CB960",
+      "sourceSha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
       "junitClass": "neoth-openclaw-custody"
     },
     {
@@ -56774,6 +56774,44 @@
       }
     ],
     "note": "No production classifier/guard relaxation. Existing no-adapter/account precedence restored in static policy; real typed vs opaque test assertions corrected. No local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1843RootCompositionPolicy": {
+    "base": "f110c7aae469a164a0edabc9b9b6e19523c8438b",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 515351,
+        "sha256": "F4500C690C5D0A92F61B2CC50D23B15BF1A7BC4FF6E51D64683F3C00A26823BB",
+        "blob": "d690b6899c835b5ead075ed477026743be5242e9"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1551661,
+        "sha256": "16198C6ACAD702EC0654688B2CFDACA1C2BA7265A5077AEEDFB7B50F4926F7E2",
+        "blob": "448f9c5268dc93d4728ff3345f357ad86536b8ce"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2163034,
+        "sha256": "C61B2E63F41BAE3F501804F25EE0235F94A0D760893DDAECB684F0F37EAD856A",
+        "blob": "f3913f70f6ad0a8769610afe907ddec6f927d554"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json",
+        "bytes": 833017,
+        "sha256": "C79A1B00173BFA8E620D0AC55B791426900405F0F0C779C6BA6F500D8C84F25B",
+        "blob": "f762610b64b188a120b512826bfcf35a063b02d3"
+      },
+      {
+        "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+        "bytes": 42278,
+        "sha256": "A086796DB42A986E24F0AC5DA2A6D5C31931387FB9EADCC613E90DB5F203E55B",
+        "blob": "98a4a6ed5aa282ffa11b045f8aa9204309865aae"
+      }
+    ],
+    "note": "Only reviewed policy actions/targets and hash corrected:3 direct Twitch fields,14 account fields. No classifier/test changes, no local execution. Core prior producer active.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
