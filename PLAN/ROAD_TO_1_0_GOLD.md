@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1887 hosted formatter import (2026-09-28):** Preflight36432652934 at aac07c78
+requested only Rust layout changes. Original10974490574 ZIP/API SHA256
+a1f6e10363725f077739c44e1cc67971ec5db04457d3cc752fdcd5b094e3a795 and patch
+9b15f5a1190f09253a7524ff3353b8b6a51150f9d86c04288f037f3a2ae66172 verified; both converted-relink
+source/test Git postimages match the authentic patch. No local formatter ran.
+Fresh hosted checks pending; registered2382/2157/942/145/58 unchanged.
+
 **W1887 Google Chat probe diagnosis propagation (2026-09-28; hosted pending):**
 The authenticated product artifact10972873571 at a8031840 returned unknown with
 zero observed HTTP requests. Zero counters do not establish pre-bearer failure.

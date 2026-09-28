@@ -538,42 +538,105 @@ async fn failed_gchat_probe_keeps_generic_error_outside_canary() {
 #[test]
 fn gchat_canary_diagnostic_codes_are_fixed_and_complete() {
     let cases = [
-        ("NEOTH_GCHAT_CANARY_ORIGIN is not Unicode", "constructor-origin-not-unicode"),
-        ("NEOTH_GCHAT_CANARY_ORIGIN must be canonical", "constructor-origin-invalid"),
+        (
+            "NEOTH_GCHAT_CANARY_ORIGIN is not Unicode",
+            "constructor-origin-not-unicode",
+        ),
+        (
+            "NEOTH_GCHAT_CANARY_ORIGIN must be canonical",
+            "constructor-origin-invalid",
+        ),
         ("gchat canary feature is not enabled", "constructor-feature"),
-        ("this binary lacks the `gchat-channel` runtime feature", "constructor-feature"),
-        ("gchat canary key must use synthetic identity", "constructor-identity"),
+        (
+            "this binary lacks the `gchat-channel` runtime feature",
+            "constructor-feature",
+        ),
+        (
+            "gchat canary key must use synthetic identity",
+            "constructor-identity",
+        ),
         ("official Google OAuth endpoint", "constructor-token-uri"),
-        ("gchat subscription must be canonical", "constructor-subscription"),
+        (
+            "gchat subscription must be canonical",
+            "constructor-subscription",
+        ),
         ("read gchat service-account key", "constructor-key-read"),
-        ("parse gchat service-account JSON key", "constructor-key-json"),
-        ("build reqwest client for gchat adapter", "constructor-http-client"),
-        ("gchat: service-account private_key is not a valid RSA PEM", "bearer-rsa-pem"),
+        (
+            "parse gchat service-account JSON key",
+            "constructor-key-json",
+        ),
+        (
+            "build reqwest client for gchat adapter",
+            "constructor-http-client",
+        ),
+        (
+            "gchat: service-account private_key is not a valid RSA PEM",
+            "bearer-rsa-pem",
+        ),
         ("gchat: claims serialization", "bearer-claims"),
         ("gchat: JWT signing failed", "bearer-jwt-sign"),
         ("gchat token POST failed", "token-post"),
         ("gchat token grant response body read failed", "token-body"),
         ("gchat token grant rejected", "token-status"),
         ("gchat token response parse", "token-json"),
-        ("gchat token response omitted access_token", "token-access-token"),
+        (
+            "gchat token response omitted access_token",
+            "token-access-token",
+        ),
         ("gchat subscription probe failed", "subscription-request"),
-        ("gchat subscription probe response exceeds", "subscription-body"),
-        ("Google Chat service account cannot read the Pub/Sub subscription", "subscription-forbidden"),
-        ("Google Chat subscription probe returned HTTP", "subscription-status"),
-        ("Google Chat subscription probe returned malformed JSON", "subscription-json"),
-        ("Google Chat subscription probe returned `wrong`", "subscription-identity"),
-        ("gchat space target contains an unsafe path identity", "space-path"),
+        (
+            "gchat subscription probe response exceeds",
+            "subscription-body",
+        ),
+        (
+            "Google Chat service account cannot read the Pub/Sub subscription",
+            "subscription-forbidden",
+        ),
+        (
+            "Google Chat subscription probe returned HTTP",
+            "subscription-status",
+        ),
+        (
+            "Google Chat subscription probe returned malformed JSON",
+            "subscription-json",
+        ),
+        (
+            "Google Chat subscription probe returned `wrong`",
+            "subscription-identity",
+        ),
+        (
+            "gchat space target contains an unsafe path identity",
+            "space-path",
+        ),
         ("gchat space target probe failed", "space-request"),
-        ("gchat space target probe response body read failed", "space-body"),
-        ("Google Chat service account cannot read the configured space", "space-forbidden"),
-        ("Google Chat space target probe returned HTTP", "space-status"),
-        ("Google Chat space target probe returned malformed JSON", "space-json"),
-        ("Google Chat space target probe returned a different space", "space-identity"),
+        (
+            "gchat space target probe response body read failed",
+            "space-body",
+        ),
+        (
+            "Google Chat service account cannot read the configured space",
+            "space-forbidden",
+        ),
+        (
+            "Google Chat space target probe returned HTTP",
+            "space-status",
+        ),
+        (
+            "Google Chat space target probe returned malformed JSON",
+            "space-json",
+        ),
+        (
+            "Google Chat space target probe returned a different space",
+            "space-identity",
+        ),
     ];
     for (detail, expected) in cases {
         assert_eq!(gchat_canary_probe_diagnostic_code(detail), expected);
     }
-    assert_eq!(gchat_canary_probe_diagnostic_code("https://private.invalid/unknown"), "unknown");
+    assert_eq!(
+        gchat_canary_probe_diagnostic_code("https://private.invalid/unknown"),
+        "unknown"
+    );
 }
 
 #[cfg(feature = "gchat-product-canary")]
@@ -612,7 +675,10 @@ async fn failed_gchat_probe_emits_only_fixed_canary_code() {
     .err()
     .expect("injected failed Google Chat probe must emit a canary diagnostic");
     let rendered = format!("{error:#}");
-    assert_eq!(rendered, "gchat canary exact target probe diagnostic: token-post");
+    assert_eq!(
+        rendered,
+        "gchat canary exact target probe diagnostic: token-post"
+    );
     assert!(!rendered.contains("private.invalid"));
 }
 
