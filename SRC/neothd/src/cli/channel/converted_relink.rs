@@ -39,6 +39,7 @@ pub(crate) struct PreparedConvertedRelink {
     target: String,
     pending_id: String,
     request_material_sha256: String,
+    probed_pair_sha256: String,
     expected_routing_after_sha256: String,
     routing_before: Vec<u8>,
     routing_after: ChannelRouting,
@@ -108,8 +109,18 @@ where
                 id.as_str().to_owned()
             }
         };
-    let prepared =
-        prepare_channel_add_with_fields_at(home, request.destination.channel_id, request.fields)?;
+    let (prepared, probed_pair_sha256) =
+        crate::config::credentials::with_coherent_pair_transaction_at(
+            &home.join("freedom.yaml"),
+            || {
+                let prepared = prepare_channel_add_with_fields_at(
+                    home,
+                    request.destination.channel_id,
+                    request.fields,
+                )?;
+                Ok((prepared, relink::pair_commitment_at(home)?))
+            },
+        )?;
     let request_material_sha256 = relink::candidate_material_commitment(
         &prepared.candidate_credentials,
         &request.destination,
@@ -145,6 +156,7 @@ where
         target: request.target,
         pending_id,
         request_material_sha256,
+        probed_pair_sha256,
         expected_routing_after_sha256,
         routing_before,
         routing_after,
@@ -187,6 +199,14 @@ fn commit_prepared_converted_relink_with_checkpoint_at(
         &home.join("freedom.yaml"),
         || {
             recheck_candidate(&candidate)?;
+            // The general channel writer compares parsed semantic fields.
+            // Relink recovery additionally binds raw bytes, including unknown
+            // YAML and presence, so concurrent edits cannot become part of
+            // the verified transaction after the external probe completes.
+            ensure!(
+                relink::pair_commitment_at(home)? == candidate.probed_pair_sha256,
+                "converted relink raw configuration pair changed during target verification"
+            );
             if let RelinkGate::Ready(id) = relink::gate_for_at(home, &candidate.destination)? {
                 ensure!(
                     id.as_str() == candidate.pending_id,

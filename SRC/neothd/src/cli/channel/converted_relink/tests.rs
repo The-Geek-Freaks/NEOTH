@@ -277,7 +277,10 @@ async fn drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes() {
         )
         .await
         .unwrap();
-        assert!(commit_prepared_converted_relink_at(&home, prepared).is_err());
+        assert!(
+            commit_prepared_converted_relink_at(&home, prepared).is_err(),
+            "{drift} drift during the exact target probe must prevent publication"
+        );
         assert!(!matches!(
             relink::gate_for_at(
                 &home,

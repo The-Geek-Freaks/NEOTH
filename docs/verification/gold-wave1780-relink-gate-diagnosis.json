@@ -67,7 +67,33 @@
     "run": 36367924605,
     "conclusion": "failure",
     "productExecuted": false,
-    "reason": "Same invalid primary filenames in new runtime/backend fixtures; wrong CLI test registration."
+    "reason": "Same invalid primary filenames in new runtime/backend fixtures; wrong CLI test registration.",
+    "originalArtifacts": [
+      {
+        "id": 10948281309,
+        "name": "w548-gchat-live-regressions-receipt-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "8385e20ade26a2a305165701d460740e32c7ac96405ae5bf91c1451f24403087",
+        "entries": 4
+      },
+      {
+        "id": 10948096605,
+        "name": "w548-gchat-live-regressions-source-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "dbe678b33a64c592f92a0c0c58411bc0eed45a3b90fede9d294d58d711b45978",
+        "entries": 2
+      },
+      {
+        "id": 10947947167,
+        "name": "w548-gchat-live-regressions-log-50aec1cbce07b170fc8a60b9613dd646aa4b4134",
+        "sha256": "70db0909a58d5a3bc4079c773cb34522742de48bb8d47fa10e39110294f415d7",
+        "entries": 59
+      }
+    ],
+    "exactTerminalCounts": {
+      "started": 30,
+      "executed": 29,
+      "passed": 20,
+      "failed": 10
+    }
   },
   "correction": {
     "scope": "Fixture source paths and JSON5 syntax, actual Rust test module registration, compiled CLI canary source path/body.",
@@ -79,5 +105,10 @@
     "No full2049/37 acceptance; most grouped tests were not reached.",
     "Windows old producer superseded; no acceptance.",
     "No local executable validation."
-  ]
+  ],
+  "producerBindings": {
+    "paths": 26,
+    "allMatchRawProducerGitBlobs": true,
+    "scope": "Channel lane bound sources and first eight grouped fixture sources."
+  }
 }

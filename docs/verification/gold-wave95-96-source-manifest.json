@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T02:11:24.2134235Z",
-  "validationStatus": "W1780 hosted-fixture correction; source review PASS; executable retest pending",
+  "capturedUtc": "2026-09-28T02:32:14.4799678Z",
+  "validationStatus": "W1784 actual raw-pair drift corrected after36/37; independent source PASS, hosted retry pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2663,8 +2663,13 @@
     },
     {
       "path": "docs/verification/gold-wave1780-relink-gate-diagnosis.json",
-      "bytes": 3253,
-      "sha256": "BD3DE62AD691C406D3DB889DD4BEBDCB1A62FF83B35ADCFF1D058FAD8787AD9E"
+      "bytes": 4311,
+      "sha256": "1A4DCF559646BB1EEF490C1C8F97B3E7664D6044DA742A34988C574422457647"
+    },
+    {
+      "path": "docs/verification/gold-wave1784-relink-raw-pair-regression.json",
+      "bytes": 7240,
+      "sha256": "6BBA669BFEDD6652B3B701F1B3D8863CA1F0AEA2856AFC26E467B9DE767A2E2A"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -3713,13 +3718,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1526265,
-      "sha256": "38A82F5757A227F5C47F5AD8B9D19C25346109F6BF523B0979E49B59A318FFBE"
+      "bytes": 1527276,
+      "sha256": "4A766CC1D4F0EF2A7628085E2A43C0A169FF8AEA2CFB26A1B9DFA0575FDD6906"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2136788,
-      "sha256": "AA5F818B2B89D8995F4ECA63C704EC84F31842423E398A9A75E466ABE79BD659"
+      "bytes": 2137799,
+      "sha256": "8CD9ED261B98DD16F40CB074EE5EC6039754DFF3AB4CAD9D4372342D40C58704"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4568,13 +4573,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
-      "bytes": 13570,
-      "sha256": "19BDAAC7D78FC7077E218B0066F393A3F4E4FC54098FB181F10F35EB31EAC1C7"
+      "bytes": 14493,
+      "sha256": "FE6C6CF846AF17CAC9458D42CB0FF37B8F5021DE8F00C2A4EA55E39B4A0DE0A0"
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "bytes": 18845,
-      "sha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19"
+      "bytes": 18951,
+      "sha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",

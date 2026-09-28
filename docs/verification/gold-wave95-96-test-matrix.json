@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1780 hosted-fixture correction; source review PASS; executable retest pending",
+  "status": "W1784 actual raw-pair drift corrected after36/37; independent source PASS, hosted retry pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 260116,
-    "sha256": "66A53C7B36F16B744971471C2344B24322019971AE1E789EA1302A28826703E5"
+    "bytes": 260331,
+    "sha256": "416B6E2BAF77B285F6303CDF28D75C2AB409AA20FCC639FF0DF5B8B8641FF6C1"
   },
-  "sourceInputs": 1445,
+  "sourceInputs": 1446,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -13506,43 +13506,43 @@
     {
       "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "0EEA6669CA891E06719EB8896A6EFE0B8FA72FA1C995C084F2AAF23C3F852E19",
+      "sourceSha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
       "junitClass": "neoth"
     },
     {
@@ -54997,6 +54997,50 @@
       }
     ],
     "note": "Rejected Linux2049/Channel37 old producer50aec1cb. Correct canonical OpenClaw JSON fixtures and actual CLI module identity. No production weakening or local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1784RelinkRawPair": {
+    "base": "171839df2d5105e93033283b79c293dca5752ba7",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1780-relink-gate-diagnosis.json",
+        "bytes": 4311,
+        "sha256": "1A4DCF559646BB1EEF490C1C8F97B3E7664D6044DA742A34988C574422457647",
+        "blob": "319d0cbdea4526106d78a281f4cba91a92832957"
+      },
+      {
+        "path": "docs/verification/gold-wave1784-relink-raw-pair-regression.json",
+        "bytes": 7240,
+        "sha256": "6BBA669BFEDD6652B3B701F1B3D8863CA1F0AEA2856AFC26E467B9DE767A2E2A",
+        "blob": "cbe18d0f13ad50ce1395e51e08860818de094fef"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1527276,
+        "sha256": "4A766CC1D4F0EF2A7628085E2A43C0A169FF8AEA2CFB26A1B9DFA0575FDD6906",
+        "blob": "b87cf1494a0db6eb46f5097865eb7fd20bb502c7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2137799,
+        "sha256": "8CD9ED261B98DD16F40CB074EE5EC6039754DFF3AB4CAD9D4372342D40C58704",
+        "blob": "7dfad22c74d9c4526ad4010861555e357ae3a854"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "bytes": 14493,
+        "sha256": "FE6C6CF846AF17CAC9458D42CB0FF37B8F5021DE8F00C2A4EA55E39B4A0DE0A0",
+        "blob": "358ff8824872b5c4af063c737f66ca080c83e351"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "bytes": 18951,
+        "sha256": "75FD27B611CF5E9A71D2ADE4B9FDE176E213A1B7F6C9AE1FEA9BA9A4F40B661A",
+        "blob": "0022464767bec442b7ac84529aca23df977621d2"
+      }
+    ],
+    "note": "Candidate and presence-aware raw pair captured under coherent authority before external probe; exact raw pair CAS inside final authority. Separate Slack WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

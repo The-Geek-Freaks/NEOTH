@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1784 Relink raw-pair drift repair (2026-09-28):**
+Channel37run36369102469 at171839df selected and executed all37:36 passed,
+one real drift regression failed; actual CLI product was not reached. Original
+receipt10949120873 ZIP24da6ff20969bdb703fc502fbd986d10da289f2e438ccd5d90c20f2d79db78fe
+and source/log archives are API-digest authenticated, with producer Git bindings.
+Cause: ordinary channel CAS compares parsed fields, so unknown-YAML/raw-byte
+changes during the target probe could enter the relink commit. The coordinator
+now captures its candidate and raw pair under one coherent authority before
+await, then rechecks that exact pair before any reservation or Ready decision.
+The regression remains strict; independent source review PASS. Hosted retest
+pending. Evidence: docs/verification/gold-wave1784-relink-raw-pair-regression.json.
+W1781/W1782 single-Slack reversible migration is separate unpublished WIP under
+review; no acceptance inferred. ROAD1324/1077/245/2; absolute BSOD hold unchanged.
+
 **W1780 Relink hosted fixture repair (2026-09-28):**
 Linux Group2049run36367920853 and Channel37run36367924605 at50aec1cb
 are rejected. GitHub compiled the source, but new fixtures incorrectly used
