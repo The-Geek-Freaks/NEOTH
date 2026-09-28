@@ -373,7 +373,11 @@ impl RestoreFake {
                         .any(|v| name == volume_name(project, v.logical_name))
                 });
             return Ok(CommandOutput {
-                stdout: known.then(|| format!("{name}\n")).unwrap_or_default(),
+                stdout: if known {
+                    format!("{name}\n")
+                } else {
+                    String::new()
+                },
             });
         }
         let name = argv
