@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T09:09:41.6737683Z",
-  "validationStatus": "Authenticated hosted Rust formatting imported; GChat canary source behavior pending",
+  "capturedUtc": "2026-09-28T09:32:13.5783384Z",
+  "validationStatus": "W1855 source repair; exact hosted workspace Clippy pending; no local execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3868,18 +3868,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 518675,
-      "sha256": "73694809E3E61BCFD4E2468D02ABF293A9750BA7A683A592B55F69790D292689"
+      "bytes": 519424,
+      "sha256": "EF0517F75E28A1167512B21898957E8CF419AB7622398CF78C45C779C9827CC7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1555105,
-      "sha256": "8E7FB3B0F900D8E8AA30060DF34034CC53F14940E2D4088A1ABD8D34A0470E90"
+      "bytes": 1555854,
+      "sha256": "6E34E17C7E018C42B38A92430DAEC64F026640FB52A90781FAFAC266A1B09C47"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2166115,
-      "sha256": "05C8183E25103E0EDDC553957ABB1BB34BBE2E2F1E3C536E6FA255B10CA0BDCB"
+      "bytes": 2166864,
+      "sha256": "587A9A5BECD030A6B6035D6029DEB7A041D0AC631BBDFA0C4CF2D458D6B69247"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5428,8 +5428,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
-      "bytes": 37284,
-      "sha256": "2553C3E7F164952738BE3A04365E88FFA4BE318CFFABCE1AD5CEA336A5094D45"
+      "bytes": 37273,
+      "sha256": "1520FAC7A101E178BF264BFF8DFA773784B64B9C31056EBC274DC70FB9376932"
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
@@ -5438,8 +5438,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
-      "bytes": 32890,
-      "sha256": "4ACB8A1BB6B44484B431A427AB7DA238B0640B301A399D90171FA21FF1B69C12"
+      "bytes": 32868,
+      "sha256": "2FDD94E7895547CBDD6567C7FAAF43752C2E4F9AB82A8B4882883D173AA7E4EA"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration/tests.rs",
@@ -5448,8 +5448,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials/telegram_migration.rs",
-      "bytes": 32932,
-      "sha256": "23633CF11555AD41DC13EC01A9530E6AFBFC871FF6EC4212982EDD4F7575C5F8"
+      "bytes": 32910,
+      "sha256": "F2FE7F2DF7E7CED787CA4955F5EBA3C0B455956F397A0272C7354BD639DEFAA8"
     },
     {
       "path": "SRC/neothd/src/config/credentials/telegram_migration/tests.rs",

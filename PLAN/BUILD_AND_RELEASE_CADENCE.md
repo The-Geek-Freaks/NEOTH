@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1855 Test fault-helper visibility repair (2026-09-28; hosted pending):**
+Scheduled CI36398949143 at8e7108e7 reported five private_bounds errors in
+cfg(test) migration fault helpers before the workspace-Clippy step timed out.
+Only those five methods are now private; their callers are their own nested
+test modules. Production code, fault types and regression assertions are
+unchanged. The existing CLI-reference lane with workspace_clippy=true will
+repeat the exact strict workspace command on the new source. No local
+executable validation ran and no roadmap leaf closes. ROAD1324/1081/241/2,
+WS-LF43/75 and all native selections remain unchanged. GChat36402186588 at
+4d605c46 continues independently and cannot prove this later visibility fix.
 **W1847/W1850 Google Chat public-CLI canary source (2026-09-28; hosted pending):**
 A default-off debug-only gchat-product-canary feature enables one canonical
 IP-loopback origin for synthetic service-account probes. Normal builds never

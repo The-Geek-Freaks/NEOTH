@@ -692,7 +692,7 @@ fn with_pair_locks<T>(
 
 #[cfg(test)]
 impl FileMigrationBatchCustody {
-    pub(crate) fn publish_with_test_fault<F>(
+    fn publish_with_test_fault<F>(
         &self,
         freedom: &Path,
         credentials: &Path,

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Authenticated hosted Rust formatting imported; GChat canary source behavior pending",
+  "status": "W1855 source repair; exact hosted workspace Clippy pending; no local execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 268566,
-    "sha256": "C3C4F7B636248B30E2693F014B857D1C682D43558B5315681F82F7611379779D"
+    "bytes": 268561,
+    "sha256": "B79770B2051DA39D6591BF5059DF1A3C870A7A7401F80B38F76264F53F135252"
   },
   "sourceInputs": 1489,
   "requiredNativeTests": [
@@ -56951,6 +56951,50 @@
       }
     ],
     "note": "Preflight36401527920 original artifact10960582612 API digest a17018dc2d4d502e55334a54a23c68242ddef7a14c897377e9803e848944bba8 and inner hashes verified; three format-only hunks applied, exact postimage d7fdc674. No local formatter/compiler/runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1855PrivateFaultHelpers": {
+    "base": "4d605c464d9ea1702ffec96ac591d68a0c54f4b3",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 519424,
+        "sha256": "EF0517F75E28A1167512B21898957E8CF419AB7622398CF78C45C779C9827CC7",
+        "blob": "87632536ef039b8cfc2beb32d01c81e87fc11ea7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1555854,
+        "sha256": "6E34E17C7E018C42B38A92430DAEC64F026640FB52A90781FAFAC266A1B09C47",
+        "blob": "128156abd11e996854bba92d1a085bcb0dfe8109"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2166864,
+        "sha256": "587A9A5BECD030A6B6035D6029DEB7A041D0AC631BBDFA0C4CF2D458D6B69247",
+        "blob": "5ae5557a620bb167c006b1b7f52cf4608c47f59a"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
+        "bytes": 37273,
+        "sha256": "1520FAC7A101E178BF264BFF8DFA773784B64B9C31056EBC274DC70FB9376932",
+        "blob": "f96c8e059264bbaf825e9aa8758c3a0fb4dd29c3"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
+        "bytes": 32868,
+        "sha256": "2FDD94E7895547CBDD6567C7FAAF43752C2E4F9AB82A8B4882883D173AA7E4EA",
+        "blob": "9af7f94b7fc7b4f776121a05834df747f2e6740f"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/telegram_migration.rs",
+        "bytes": 32910,
+        "sha256": "F2FE7F2DF7E7CED787CA4955F5EBA3C0B455956F397A0272C7354BD639DEFAA8",
+        "blob": "b14b7d3641e10bd6fd495ca74c9f9972cea7e7c2"
+      }
+    ],
+    "note": "Five cfg(test) method visibility reductions only; no production behavior or test assertions changed. ROAD1324/1081/241/2 and native selections unchanged. GChat36402186588 producer predates this fix.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

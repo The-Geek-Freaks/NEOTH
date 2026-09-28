@@ -389,7 +389,7 @@ impl SlackMigrationCustody {
     }
 
     #[cfg(test)]
-    pub(crate) fn commit_if_before_at_using_test_fault<F>(
+    fn commit_if_before_at_using_test_fault<F>(
         &self,
         freedom_path: &Path,
         credentials_path: &Path,
@@ -483,7 +483,7 @@ impl SlackMigrationCustody {
     }
 
     #[cfg(test)]
-    pub(crate) fn rollback_if_exact_at_using_test_fault<F>(
+    fn rollback_if_exact_at_using_test_fault<F>(
         &self,
         freedom_path: &Path,
         credentials_path: &Path,
