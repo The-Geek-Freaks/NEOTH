@@ -581,7 +581,9 @@ mod tests {
     #[test]
     fn document_discovery_list_without_state_does_not_create_home() {
         let root = tempfile::tempdir().unwrap();
-        let home = std::fs::canonicalize(root.path()).unwrap().join("absent-home");
+        let home = std::fs::canonicalize(root.path())
+            .unwrap()
+            .join("absent-home");
         run_proactive(ProactiveArgs {
             action: ProactiveAction::Documents,
             home: Some(home.clone()),

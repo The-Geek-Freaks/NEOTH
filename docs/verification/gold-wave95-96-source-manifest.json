@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T11:11:54.8345137Z",
-  "validationStatus": "GChat redacted failure evidence and macOS temp-root fixtures reviewed; native behavior pending",
+  "capturedUtc": "2026-09-28T11:18:54.1745199Z",
+  "validationStatus": "Exact hosted rustfmt patch imported; fresh Preflight and native/product gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3883,18 +3883,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 524768,
-      "sha256": "85F108C85664D47BB701DF05CE6D95FD1D9E13F8BA648F7B87935B37292C94C5"
+      "bytes": 525322,
+      "sha256": "FA01B54EA6A4C1E15B17B132405055160F7BBEA84A1D89368DB7ECCB13CA1522"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1561198,
-      "sha256": "AAC787319CB8612DF88065D5982B13BF2AE02B735E10908C1D74BB302EEE0531"
+      "bytes": 1561752,
+      "sha256": "8E671E0935887D9FEEBAEE1A57C5792ED8215B4794B831C8485B20EDCF9D8906"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2172208,
-      "sha256": "043533B3596EBD1C3213C9E2F711AC0D469CFA9477AD97B2A8732E415D7DB787"
+      "bytes": 2172762,
+      "sha256": "5B52D72EDC754549E6267D802394E2D84A56DBC96472B8DE9FB57D169461EDB6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5053,8 +5053,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
-      "bytes": 60313,
-      "sha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D"
+      "bytes": 60339,
+      "sha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26"
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
@@ -5068,8 +5068,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
-      "bytes": 62888,
-      "sha256": "915128F2CC51C3D440B3113348B1C4114881563A223DF0DB062B432224518620"
+      "bytes": 62867,
+      "sha256": "A7AA2F7613E25DFBCE1058C79ABE7E1EFAAA38F560C901EA415B08EBF9EF7ABE"
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",

@@ -1563,8 +1563,7 @@ mod tests {
                 digest.input_sha256
             );
             assert_eq!(
-                std::fs::read(output_path.join(format!("grader-input-{grader_id}.json")))
-                    .unwrap(),
+                std::fs::read(output_path.join(format!("grader-input-{grader_id}.json"))).unwrap(),
                 *bytes
             );
         }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "GChat redacted failure evidence and macOS temp-root fixtures reviewed; native behavior pending",
+  "status": "Exact hosted rustfmt patch imported; fresh Preflight and native/product gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269136,
-    "sha256": "6CD3EFD119DA31ED7BB12E63216332479538BA08B6D13CCA6D81B7C12FA68C17"
+    "bytes": 269127,
+    "sha256": "E052ADA8EF2A4B33AD9C7099A452EB6C5385364B666C8431BB583A0DC571B3D2"
   },
   "sourceInputs": 1492,
   "requiredNativeTests": [
@@ -7494,7 +7494,7 @@
     {
       "test": "cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output",
       "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
-      "sourceSha256": "915128F2CC51C3D440B3113348B1C4114881563A223DF0DB062B432224518620",
+      "sourceSha256": "A7AA2F7613E25DFBCE1058C79ABE7E1EFAAA38F560C901EA415B08EBF9EF7ABE",
       "junitClass": "neoth"
     },
     {
@@ -7518,7 +7518,7 @@
     {
       "test": "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker",
       "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
-      "sourceSha256": "915128F2CC51C3D440B3113348B1C4114881563A223DF0DB062B432224518620",
+      "sourceSha256": "A7AA2F7613E25DFBCE1058C79ABE7E1EFAAA38F560C901EA415B08EBF9EF7ABE",
       "junitClass": "neoth"
     },
     {
@@ -7698,25 +7698,25 @@
     {
       "test": "cli::proactive::tests::default_and_failure_routes_reject_unknown_channel_names",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::mapped_telegram_route_requires_and_persists_an_exact_account",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::matrix_route_destination_is_validated_and_persisted",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::route_account_rejects_non_telegram_and_unknown_bindings",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
@@ -9384,37 +9384,37 @@
     {
       "test": "cli::proactive::tests::document_reject_is_a_terminal_status_only_decision",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::malformed_document_accept_records_approval_before_route_error",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::document_memory_accept_replays_ledger_without_confidence_inflation_and_audits_metadata",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::document_memory_audit_failure_reports_committed_effect_and_reaccept_reconciles",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::document_skill_accept_is_inactive_idempotent_and_preserves_operator_edit",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
@@ -9504,13 +9504,13 @@
     {
       "test": "cli::proactive::tests::document_discovery_list_without_state_does_not_create_home",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::proactive::tests::document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect",
       "sourcePath": "SRC/neothd/src/cli/proactive.rs",
-      "sourceSha256": "AA77EDC51124E9F67C818F8067A9F49464F19B5876C1E3782871BEB85983130D",
+      "sourceSha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
       "junitClass": "neoth"
     },
     {
@@ -57331,6 +57331,44 @@
       }
     ],
     "note": "Authenticated W1866 hosted formatter postimages imported. Seven macOS fixture roots normalized without production nofollow changes; exact21 native lane. GChat refusal keeps same auth/request thresholds and gains fixed stage/counters only. Prior strictWorkspaceClippy36409692729@a1c640ff succeeded; newer source unproven. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1868HostedFormatter": {
+    "base": "23b049b3ec06d95d2f912807c1f8e66f7e7769bf",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 525322,
+        "sha256": "FA01B54EA6A4C1E15B17B132405055160F7BBEA84A1D89368DB7ECCB13CA1522",
+        "blob": "c5acf505d6d3567667fe498a4ff7929c37ffc38b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1561752,
+        "sha256": "8E671E0935887D9FEEBAEE1A57C5792ED8215B4794B831C8485B20EDCF9D8906",
+        "blob": "511129a468bab87eb15b0fbbe742c19bcd15831e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2172762,
+        "sha256": "5B52D72EDC754549E6267D802394E2D84A56DBC96472B8DE9FB57D169461EDB6",
+        "blob": "25c1a7dc027c49e98a63ef584f11203082f38a0b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/proactive.rs",
+        "bytes": 60339,
+        "sha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26",
+        "blob": "9c39fdbfc4471bbae4c9404b6698a240d44db223"
+      },
+      {
+        "path": "SRC/neothd/src/cli/recall_score.rs",
+        "bytes": 62867,
+        "sha256": "A7AA2F7613E25DFBCE1058C79ABE7E1EFAAA38F560C901EA415B08EBF9EF7ABE",
+        "blob": "ef5c4b6463a75c92d8d15cc63c2c6751b3d5464e"
+      }
+    ],
+    "note": "Original10966837414@23b049b3 ZIP/API SHA verified; exact patch and both Git postimages matched. No local executable validation, no ROAD checkbox closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

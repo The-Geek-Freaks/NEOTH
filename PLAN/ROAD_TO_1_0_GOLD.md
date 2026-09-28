@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1868 hosted formatter follow-up (2026-09-28):**
+Preflight36414419707 at23b049b3 found only two rustfmt differences in the
+macOS proactive/recall test fixtures. Original10966837414 matches API ZIP
+SHA2560bfcd090eb5ecb6c5007dd843dccd6da4fcc200a71e97c2ed82762209e117891;
+patch dda12e81200a948f0ae80f4af3de1cbb485653c61f9ad9a371e6d8c9a163d9ed
+and both exact Git postimages are verified and imported. No local formatter
+ran. Fresh Preflight precedes Windows889, macOS21 and channel/product lanes.
+No runtime acceptance or ROAD checkbox change is implied.
+
 **W1867/W1868 Hosted failure diagnosis and focused macOS recovery (2026-09-28):**
 GChat36408351275 atb4b43cac failed refusal_probe_contract_invalid after Pending
 and unchanged-file checks, before Ready. Original10964432555 ZIP/API digest
