@@ -1,0 +1,78 @@
+{
+  "schema": "neoth-group2049-hosted-admission/v1",
+  "decision": "accepted_for_exact_hosted_group_scope",
+  "run": {
+    "id": 36370685426,
+    "workflow": "Research and loop lifecycle quality",
+    "event": "workflow_dispatch",
+    "ref": "refs/heads/main",
+    "producerCommit": "00ce2966357757f9afd0ceb41edc69370fad518a",
+    "conclusion": "success",
+    "jobConclusions": {
+      "Research and loop lifecycle quality": "success",
+      "OpenClaw source custody and converted relink selection": "success"
+    }
+  },
+  "groupedLifecycle": {
+    "selected": 2049,
+    "required": 2049,
+    "executed": 2049,
+    "passed": 2049,
+    "failed": 0,
+    "ignored": 0,
+    "runHeaders": 2049,
+    "oneTestPassTerminals": 2049,
+    "failedTerminalMarkers": 0,
+    "fixtureIdentityRows": 2049,
+    "fixtureSourcePaths": 313,
+    "fixtureSourceBindingsVerifiedAgainstProducerBlobs": 313
+  },
+  "openclawCustody": {
+    "executed": 48,
+    "passed": 48,
+    "failed": 0,
+    "required": 4,
+    "passedRequired": 4,
+    "sourceBindingsVerifiedAgainstProducerBlobs": 10
+  },
+  "artifactAuthentication": [
+    {
+      "id": 10949915430,
+      "name": "w190-research-lifecycle-receipt-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "7472ccdda751e9791758ce50d0cf659c0047565e47a186c83e009712049e05df",
+      "entryCount": 6
+    },
+    {
+      "id": 10949870663,
+      "name": "w190-research-lifecycle-log-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "fe467f9ccb5c31977a71f89db741051b72c948867164649be39f8bb604dcc826",
+      "entryCount": 3
+    },
+    {
+      "id": 10949815622,
+      "name": "w190-research-lifecycle-source-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "460369143ddd3150335450ebca1c8e6aaf3f73957f50b9b8613557f1b279be4d",
+      "entryCount": 3
+    },
+    {
+      "id": 10949390448,
+      "name": "openclaw-custody-00ce2966357757f9afd0ceb41edc69370fad518a",
+      "sha256": "9feb917384694e39529f4e5ff3517dcbc64f5bce17fb0de2ce52e8b36331c576",
+      "entryCount": 6
+    }
+  ],
+  "producerSourceAuthentication": {
+    "commit": "00ce2966357757f9afd0ceb41edc69370fad518a",
+    "fixtureBindings": 313,
+    "fixtureBindingMatches": 313,
+    "groupAndCustodyInputBindings": 19,
+    "groupAndCustodyInputBindingMatches": 19,
+    "method": "git show commit:path materialized each producer blob; SHA-256 compared with hosted identity artifacts; git ls-tree recorded every blob id"
+  },
+  "evidenceDirectory": "work/gold-20260906/wave1788-group2049",
+  "limits": [
+    "Admission is limited to the exact completed Linux Group2049 and OpenClaw custody scopes on producer commit 00ce2966.",
+    "It does not admit unpublished Slack migration work, current worktree changes, later main commits, Windows, product CLI, daemon readiness, or an external provider.",
+    "All executable evidence was produced by GitHub Actions; no local compiler, Cargo, formatter, parser, or test was run."
+  ]
+}

@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1790 Slack hosted compile repair (2026-09-28):**
+Core36372576208 at3f058e26 failed before tests: cap_std permissions require
+the cap_std PermissionsExt trait; the shared Slack finalizer moved a candidate
+while its paths were borrowed by nested locks. Correct trait and independent
+path clones retain the same lock order and final bytes. Unused mut removed;
+optional custody uses boxed storage. Auth failure/missing-team/timeout and
+source/include drift during probe are now covered (19 new identities;
+2280 portable /2068 Linux group /831 Windows). Hosted retest pending.
+Authenticated rustfmt artifact10949488286 is already imported; no local runtime.
+**W1788 Linux2049 exact admission (2026-09-28):**
+Run36370685426 at00ce2966 passed all2049 selected/required/executed cases,
+with0 failed/ignored and2049 matching one-test green terminals. Custody crate
+passed48/48 plus4/4 required identities. All4 original ZIP digests match GitHub;
+313 fixture and19 additional producer bindings match exact raw Git blobs.
+Evidence: docs/verification/gold-wave1788-group2049-admission.json.
+This accepts the prior Relink/Linux cohort only: Slack migration, current HEAD,
+Windows and public CLI product remain separately gated. ROAD counts unchanged.
 **W1786 Reversible single-account Slack migration (2026-09-28):**
 Public openclaw-migration plan/apply/status/rollback now has an immutable
 source/request/baseline-bound plan, exact private before/after custody and

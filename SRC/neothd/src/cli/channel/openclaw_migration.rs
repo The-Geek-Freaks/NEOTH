@@ -313,7 +313,7 @@ impl OperationStore {
                 } else {
                     state.custody_binding = Some(digest);
                 }
-                Ok(Some(custody))
+                Ok(Some(*custody))
             }
         }
     }

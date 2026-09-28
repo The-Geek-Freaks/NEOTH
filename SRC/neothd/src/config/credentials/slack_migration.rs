@@ -47,7 +47,7 @@ pub(crate) struct SlackMigrationCustody {
 /// absent is `Absent`; malformed, unreadable or substituted files are errors.
 pub(crate) enum SlackMigrationCustodyLoad {
     Absent,
-    Present(SlackMigrationCustody),
+    Present(Box<SlackMigrationCustody>),
 }
 
 /// Observable raw-pair state, deliberately independent of the coordinator's
@@ -263,6 +263,7 @@ impl SlackMigrationCustody {
             Err(error) => Err(error)
                 .with_context(|| format!("inspect Slack migration custody {}", path.display())),
             Ok(_) => Self::load_at(freedom_path, operation_id, request_commitment)
+                .map(Box::new)
                 .map(SlackMigrationCustodyLoad::Present),
         }
     }
@@ -330,7 +331,7 @@ impl SlackMigrationCustody {
         credentials_path: &Path,
         operation_id: &str,
         request_commitment: &str,
-        mut fault: F,
+        fault: F,
     ) -> Result<SlackMigrationCommit>
     where
         F: FnMut(super::DualFileFaultPoint) -> Result<()>,
@@ -434,7 +435,7 @@ impl SlackMigrationCustody {
         credentials_path: &Path,
         operation_id: &str,
         request_commitment: &str,
-        mut fault: F,
+        fault: F,
     ) -> Result<SlackMigrationState>
     where
         F: FnMut(super::DualFileFaultPoint) -> Result<()>,
@@ -782,7 +783,7 @@ fn read_custody_bounded(path: &Path) -> Result<Option<zeroize::Zeroizing<Vec<u8>
             );
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt as _;
+                use cap_std::fs::PermissionsExt as _;
                 anyhow::ensure!(
                     metadata.permissions().mode() & 0o077 == 0,
                     "Slack migration custody {} is readable outside its owner",

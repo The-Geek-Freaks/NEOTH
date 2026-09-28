@@ -3,6 +3,7 @@ use super::*;
 use crate::channels::registry::ChannelAccountId;
 use crate::config::FreedomConfig;
 use anyhow::Result;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -125,6 +126,85 @@ fn pair(home: &Path) -> (Vec<u8>, Vec<u8>) {
         std::fs::read(home.join("freedom.yaml")).unwrap(),
         std::fs::read(home.join("credentials.yaml")).unwrap(),
     )
+}
+
+async fn assert_probe_refusal_without_publication<P, F>(fixture: Fixture, probe: P)
+where
+    P: FnOnce(SlackProbeBinding) -> F,
+    F: Future<Output = Result<SlackProbeOutcome>>,
+{
+    let before = pair(&fixture.home);
+    let id = plan(&fixture).id;
+    assert!(
+        apply_at_with(
+            &fixture.home,
+            &id,
+            &fixture.source,
+            &fixture.request,
+            probe,
+            |_| Ok(())
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(pair(&fixture.home), before, "failed probe cannot publish pair");
+    assert!(
+        !fixture
+            .home
+            .join(format!(".openclaw-slack-migration-{id}.custody.yaml"))
+            .exists()
+    );
+    for suffix in ["committed", "rolled-back"] {
+        assert!(
+            !fixture
+                .home
+                .join("openclaw-migrations")
+                .join(format!("{id}.{suffix}.json"))
+                .exists()
+        );
+    }
+    assert!(
+        !fixture
+            .home
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+            .exists()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_failures_missing_workspace_and_timeout_publish_nothing() {
+    assert_probe_refusal_without_publication(new_fixture(false), |_| async {
+        anyhow::bail!("fixture provider transport failure")
+    })
+    .await;
+    assert_probe_refusal_without_publication(new_fixture(false), |_| async {
+        Ok(SlackProbeOutcome {
+            report: crate::cli::channel::ChannelTestResult {
+                channel: "slack".into(),
+                account: None,
+                status: "fail",
+                detail: "fixture auth.test rejected".into(),
+            },
+            verified_team_id: None,
+        })
+    })
+    .await;
+    assert_probe_refusal_without_publication(new_fixture(false), |_| async {
+        Ok(SlackProbeOutcome {
+            report: crate::cli::channel::ChannelTestResult {
+                channel: "slack".into(),
+                account: None,
+                status: "ok",
+                detail: "fixture auth.test has no workspace".into(),
+            },
+            verified_team_id: None,
+        })
+    })
+    .await;
+    assert_probe_refusal_without_publication(new_fixture(false), |_| async {
+        std::future::pending::<Result<SlackProbeOutcome>>().await
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -430,6 +510,60 @@ async fn source_include_request_and_target_drift_hold_without_publication() {
         std::fs::read_to_string(fixture.home.join("freedom.yaml")).unwrap(),
         "raced: true\n"
     );
+
+    let fixture = new_fixture(false);
+    let id = plan(&fixture).id;
+    let before = pair(&fixture.home);
+    assert!(
+        apply_at_with(
+            &fixture.home,
+            &id,
+            &fixture.source,
+            &fixture.request,
+            |_: SlackProbeBinding| {
+                let source = fixture.source.clone();
+                async move {
+                    std::fs::write(source, "{ channels: { slack: { accounts: { work: { botToken: 'xoxb-source-raced', appToken: 'xapp-source-raced' } } } } }").unwrap();
+                    Ok(ok_outcome())
+                }
+            },
+            |_| Ok(())
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        status_at(&fixture.home, &id).unwrap().reason,
+        Some(HoldReason::SourceOrRequestChanged)
+    );
+    assert_eq!(pair(&fixture.home), before);
+
+    let fixture = new_fixture(true);
+    let id = plan(&fixture).id;
+    let before = pair(&fixture.home);
+    assert!(
+        apply_at_with(
+            &fixture.home,
+            &id,
+            &fixture.source,
+            &fixture.request,
+            |_: SlackProbeBinding| {
+                let included = fixture._root.path().join("slack.json5");
+                async move {
+                    std::fs::write(included, "{ slack: { accounts: { work: { botToken: 'xoxb-include-raced', appToken: 'xapp-include-raced' } } } }").unwrap();
+                    Ok(ok_outcome())
+                }
+            },
+            |_| Ok(())
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        status_at(&fixture.home, &id).unwrap().reason,
+        Some(HoldReason::SourceOrRequestChanged)
+    );
+    assert_eq!(pair(&fixture.home), before);
 
     let fixture = new_fixture(false);
     let id = plan(&fixture).id;

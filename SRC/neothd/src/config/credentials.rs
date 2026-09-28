@@ -3049,9 +3049,11 @@ impl Credentials {
             freedom_dir == transaction_directory(&prepared.credentials_path),
             "prepared Slack account paths are not sibling files"
         );
-        with_dual_file_transaction_lock(&prepared.freedom_path, || {
-            with_config_writer_guard(&prepared.freedom_path, || {
-                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+        let freedom_path = prepared.freedom_path.clone();
+        let credentials_path = prepared.credentials_path.clone();
+        with_dual_file_transaction_lock(&freedom_path, || {
+            with_config_writer_guard(&freedom_path, || {
+                with_legacy_pair_locks(&freedom_path, &credentials_path, || {
                     anyhow::ensure!(
                         FileSnapshot::capture(&prepared.freedom_path)?
                             .same_as(&prepared.freedom_before)
