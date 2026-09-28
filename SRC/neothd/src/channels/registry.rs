@@ -1105,6 +1105,53 @@ mod tests {
     }
 
     #[test]
+    fn pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime() {
+        let inventory: serde_json::Value = serde_json::from_str(
+            neoth_openclaw_custody::pinned_inventory::pinned_inventory_fixture_json(),
+        )
+        .unwrap();
+        let test_only = inventory["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["role"].as_str() == Some("qa_test_only"))
+            .collect::<Vec<_>>();
+        assert_eq!(test_only.len(), 1);
+        assert_eq!(test_only[0]["canonical_id"].as_str(), Some("qa-channel"));
+        validate_registry().unwrap();
+
+        for row in test_only {
+            let mut names = vec![row["canonical_id"].as_str().unwrap().to_owned()];
+            names.extend(
+                row["openclaw_aliases"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|alias| alias.as_str().unwrap().to_owned()),
+            );
+            names.extend(["qa_channel", "QA-CHANNEL", " qa-channel "].map(str::to_owned));
+            for name in names {
+                assert_eq!(resolve_channel_id(&name), None, "operator entry: {name}");
+                assert_eq!(resolve_migration_channel_id(&name), None, "import: {name}");
+                assert!(name.parse::<ChannelId>().is_err(), "typed channel: {name}");
+                let runtime_ref = serde_json::json!({
+                    "channel_id": name,
+                    "account_id": "work"
+                });
+                assert!(serde_json::from_value::<ChannelRef>(runtime_ref).is_err());
+            }
+        }
+
+        let supported: ChannelRef = serde_json::from_value(serde_json::json!({
+            "channel_id": "telegram",
+            "account_id": "work"
+        }))
+        .unwrap();
+        assert_eq!(supported.channel_id, ChannelId::Telegram);
+        assert_eq!(supported.account_id.as_str(), "work");
+    }
+
+    #[test]
     fn account_ids_validate_boundaries_characters_length_and_default() {
         for valid in ["default", "work", "work_2", "family-chat", "a1"] {
             assert_eq!(ChannelAccountId::new(valid).unwrap().as_str(), valid);

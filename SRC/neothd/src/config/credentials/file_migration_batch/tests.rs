@@ -235,7 +235,7 @@ fn batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed
         &freedom,
         &credentials,
         account("one"),
-        "OLDONE".into(),
+        "UOLDONE".into(),
         SecretString::from("xoxb-old-one"),
         SecretString::from("xapp-old-one"),
     )
@@ -245,7 +245,7 @@ fn batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed
         &freedom,
         &credentials,
         account("three"),
-        "OLDTHREE".into(),
+        "UOLDTHREE".into(),
         SecretString::from("xoxb-old-three"),
         SecretString::from("xapp-old-three"),
     )
@@ -524,17 +524,12 @@ fn absent_credentials_member_and_foreign_home_are_handled_safely() {
         !credentials.exists(),
         "rollback must restore an absent credentials image"
     );
-    std::fs::write(&credentials, "future_private: retained\n").unwrap();
-    let custody = Credentials::prepare_file_migration_batch_at(
-        &freedom,
-        &credentials,
-        inputs(),
-        id(),
-        binding(),
-    )
-    .unwrap()
-    .persist_custody(&[Some("TONE".into()), None, Some("TTHREE".into()), None])
-    .unwrap();
+    assert_eq!(
+        custody
+            .inspect_at(&freedom, &credentials, id(), binding())
+            .unwrap(),
+        FileMigrationBatchState::Before
+    );
     let other = dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
     let foreign_freedom = other.join("freedom.yaml");

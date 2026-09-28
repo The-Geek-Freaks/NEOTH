@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Batch Core/CLI admitted; native865/focused93 pending; Linux2104 ready after reference import",
+  "status": "W1823 custody fixture accepted; W1824 QA boundary and W1825 fixture repairs statically reviewed, hosted behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 266246,
-    "sha256": "767CB610E79EF416DED97E81E17499ACE448F5EBC9FFE66D01591458D6D3E4F4"
+    "bytes": 266657,
+    "sha256": "DFDB962A150B3284F1269C9171939137D4F51B709BA82DCEF14E099AECCEBBC8"
   },
-  "sourceInputs": 1477,
+  "sourceInputs": 1479,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7974,7 +7974,7 @@
     {
       "test": "channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids",
       "sourcePath": "SRC/neothd/src/channels/registry.rs",
-      "sourceSha256": "962DACDC9AAF7F0DAF42A1AC99D67646DC5C806C7C295921AE71C7D689B8F506",
+      "sourceSha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE",
       "junitClass": "neoth"
     },
     {
@@ -13794,55 +13794,55 @@
     {
       "test": "config::credentials::file_migration_batch::tests::aggregate_four_participants_publishes_one_unknown_preserving_pair_and_reverses",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::aggregate_batch_publishes_the_complete_runtime_configuration",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::encrypted_postimage_is_immutable_across_reopen_resume_and_exact_rollback",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::batch_preserves_telegram_and_same_team_slack_incarnations_but_rotates_changed_team_slack",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::rejects_duplicate_keychain_and_wrong_team_vector_before_custody",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::custody_tamper_and_raw_drift_hold_without_overwrite",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::optional_custody_is_absent_only_when_the_exact_capability_is_missing_and_collision_keeps_bytes",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::absent_credentials_member_and_foreign_home_are_handled_safely",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
       "test": "config::credentials::file_migration_batch::tests::every_dual_file_faultpoint_is_recoverable_in_forward_and_reverse_direction",
       "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+      "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
       "junitClass": "neoth"
     },
     {
@@ -13891,6 +13891,12 @@
       "test": "cli::channel::openclaw_migration::batch_tests::batch_slack_v1_and_telegram_v2_plans_remain_readable_while_v3_batch_is_distinct",
       "sourcePath": "SRC/neothd/src/cli/channel/openclaw_migration/batch_tests.rs",
       "sourceSha256": "F2A12C8B80D0E37EBEA477AE5DBCAAC7D1843830BE30A1D1365DD12032A061AA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime",
+      "sourcePath": "SRC/neothd/src/channels/registry.rs",
+      "sourceSha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE",
       "junitClass": "neoth"
     }
   ],
@@ -16222,7 +16228,7 @@
       {
         "test": "config::credentials::file_migration_batch::tests::symlinked_pair_is_rejected",
         "sourcePath": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-        "sourceSha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75",
+        "sourceSha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
         "junitClass": "neoth"
       }
     ],
@@ -56334,6 +56340,87 @@
       }
     ],
     "note": "Authenticated original CLI export on7e751b68. No product source change or local runtime; native behavior acceptance separate.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1824QaProductionBoundary": {
+    "requiredTests": [
+      "channels::registry::tests::pinned_test_only_channels_cannot_resolve_or_deserialize_for_runtime"
+    ],
+    "status": "Source registered; hosted behavior pending",
+    "note": "Canonical, alias, migration, typed-channel and runtime ChannelRef exclusion with positive Telegram control. QA leaf stays open pending targeted hosted receipt and batch harness evidence."
+  },
+  "wave1825BatchFixtures": {
+    "base": "1bfcf4f09cd0c3e67936945faf8807285d275bba",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 33555,
+        "sha256": "C1256D38B6526AF7682596B75D6D2998BD75005659DCE014089321D430241EB1",
+        "blob": "c8beeaf7f393fb4e37e068b861bef0e12b224456"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 29519,
+        "sha256": "F7ED33E8ECB1DF3DA4DB238698B4D34154D9D5987285B40A6883C5019678DAD5",
+        "blob": "83575b898815d203b5dbe5474a0316636f05d01d"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 151041,
+        "sha256": "1A40CF92514BD120E96DC9F8D54CF57F9A03F8F34ABE05D4E2191453E5F0B150",
+        "blob": "79c9a9f0117078e7b4a9ce02cbd260e685dee0ea"
+      },
+      {
+        "path": "docs/verification/gold-wave1823-custody48-admission.json",
+        "bytes": 15663,
+        "sha256": "3A4B2156E117C22C8B744C3505911A6685B15873DC8F00C608D872199E95AE6F",
+        "blob": "fe46ba415b63204703e3e3d364e15d900479a5fe"
+      },
+      {
+        "path": "docs/verification/gold-wave1825-batch-fixture-repair.json",
+        "bytes": 925,
+        "sha256": "92AC0E51C54F3BC19B3A53AE610A208984FA45C47DBD2BCA59E807219D929D7D",
+        "blob": "4c087a57c5127728f8d7c5ab095518f476f17a34"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 507562,
+        "sha256": "80DDF0FFAAF48D72BB62D1BBE34074C643A530CA09DC05482E5BBE4E2AAF7829",
+        "blob": "acc22edd1720a253477c5e0cef4e52e41d2338a4"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1543758,
+        "sha256": "568680294CF369204A2513A12970F40A928C3EA2EF11F6C6122B3B69AD8A5E84",
+        "blob": "6d5e2957f40f5096e2294f46512c57a2897a90ff"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2154610,
+        "sha256": "C26DB9EE5FEC9D40D81FAADD00A6DDE757BDD13ACA3DE3D3F5CCE7E4D6C6AC8A",
+        "blob": "39e436d84fffad16fed1370b7554733c122b5aee"
+      },
+      {
+        "path": "plans/001-openclaw-channel-migration-parity.md",
+        "bytes": 55058,
+        "sha256": "D501672193C31D9B5C15A4BE32FCB2DB13FE2B16B3FB9B92F299CBC8CED5A69F",
+        "blob": "ea29773e44df3326a3475bcc93b36baf8b5c4e05"
+      },
+      {
+        "path": "SRC/neothd/src/channels/registry.rs",
+        "bytes": 39628,
+        "sha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE",
+        "blob": "630ca32862f82283866df705158dfc57cfd9889d"
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
+        "bytes": 20580,
+        "sha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13",
+        "blob": "858a234f243717250188b606a5eb9bdfdfb90e85"
+      }
+    ],
+    "note": "Only GOLD-LF-001-01 accepted from authentic custody48 and31 raw upstream hashes. Focused93/Linux2104 failed invalid Slack fixture seeds and duplicate custody setup; test-only repairs preserve production guards. QA runtime/harness leaf remains open until Focused94 passes. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,393 @@
+{
+  "schema": "neoth-openclaw-custody-admission/v1",
+  "decision": "accepted_for_custody48_only",
+  "run": 36383986007,
+  "producer": "1bfcf4f09cd0c3e67936945faf8807285d275bba",
+  "job": "OpenClaw source custody and converted relink selection",
+  "artifact": 10952804721,
+  "zip_sha256": "de6aaab8be5465c90789bc013f6a37148135786428ca66af14581f9bb14e8f39",
+  "listed": 48,
+  "passed": 48,
+  "failed": 0,
+  "duplicates": 0,
+  "required_receipts": 4,
+  "tests": [
+    "pinned_inventory::tests::bundled_fixture_matches_importer_manifest_contract",
+    "pinned_inventory::tests::rejects_alias_canonical_collision",
+    "pinned_inventory::tests::rejects_bad_evidence_hash_or_unpinned_source_commit",
+    "pinned_inventory::tests::rejects_clickclack_test_only_or_excluded_classification",
+    "pinned_inventory::tests::rejects_manifest_key_drift",
+    "pinned_inventory::tests::rejects_targetable_or_public_qa_channel",
+    "pinned_inventory::tests::rejects_unmapped_current_importer_or_registry_claim",
+    "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
+    "pinned_schema::tests::explicit_typed_leaves_take_precedence_over_opaque_map_prefixes",
+    "pinned_schema::tests::googlechat_service_account_secret_ref_accepts_its_pinned_anyof_two_family",
+    "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
+    "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
+    "tests::converted_relink_selection_binds_the_exact_source_set_and_reinspects_drift",
+    "tests::converted_relink_selection_is_explicit_schema_bound_and_value_opaque",
+    "tests::converted_relink_selection_rejects_ambiguous_or_unsupported_selected_shapes_redacted",
+    "tests::direct_targets_use_real_neoth_credential_keys",
+    "tests::duplicate_keys_fail_closed_without_leaking_values",
+    "tests::every_effective_leaf_including_empty_containers_is_ledgered_once",
+    "tests::include_arrays_deep_merge_objects_and_concatenate_arrays",
+    "tests::manifest_evidenced_channel_inventory_includes_raft_reef_and_sms",
+    "tests::parses_json5_and_resolves_nested_includes_with_sibling_overrides",
+    "tests::rejects_include_cycles",
+    "tests::rejects_include_depth_and_file_size_limits",
+    "tests::rejects_include_outside_root",
+    "tests::rejects_symlink_include_escape",
+    "tests::rejects_total_include_size_limit_before_parsing",
+    "tests::report_keeps_canonical_primary_and_include_paths_from_relative_invocation",
+    "tests::runtime_and_multi_account_gaps_are_hard_blockers",
+    "tests::secret_ref_is_one_redacted_ledger_leaf",
+    "tests::secret_values_and_parser_excerpts_never_leak",
+    "tests::selected_account_rejects_direct_or_extra_shapes_without_token_in_error",
+    "tests::selected_slack_account_is_exact_and_never_serializes_its_tokens",
+    "tests::selected_slack_account_keeps_the_exact_loaded_source_set",
+    "tests::selected_slack_account_rejects_broad_or_ambiguous_shapes_without_tokens_in_error",
+    "tests::selected_telegram_account_is_exact_and_never_serializes_its_token",
+    "tests::source_binding_rejects_non_unicode_relative_paths",
+    "tests::source_set_binding_covers_primary_and_included_bytes",
+    "tests::unknown_account_secret_and_root_blockers_keep_exact_source_paths",
+    "tests::unknown_channel_and_nested_field_are_fail_closed",
+    "tests::unusual_object_keys_are_ledgered_instead_of_silently_dropped",
+    "tests::w169_ledgers_separate_account_containers_and_redacts_account_secrets",
+    "tests::w169_never_binds_credential_bearing_string_urls",
+    "tests::w169_opaque_subtree_blocks_at_its_exact_account_path",
+    "tests::w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids",
+    "tests::w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding",
+    "tests::w169_walks_typed_descendants_under_opaque_map_prefixes",
+    "tests::whatsapp_alias_is_baileys_and_auth_requires_relink",
+    "tests::whatsapp_auth_dir_requires_the_legacy_string_shape"
+  ],
+  "source_bindings": [
+    {
+      "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sha256": "422a889238cbf9ed88cf83ce80a80a8c38d3ca6c9f154f39c5fbb3a4ae20ea9c",
+      "blob": "fbeaf6adc96c262a5682732f4d3b9d9606faf929",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+      "sha256": "24f9c915915fc072bba62ac1ebf8702bcbf77ed72e94eb12cdaf4e54a1a34cc2",
+      "blob": "78ff2192aef15038b2a5ecbf9ec2667e7f6dda13",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sha256": "b4e5378f70c7514f09a598ad7220caa9d44c5e3c5915674dadd34c87cb8613cd",
+      "blob": "4bf85ff9bc115afb4921a73e0ac244cc43568df8",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
+      "sha256": "a7e60afbb1e0d013100ee8c30f5237307e6552923f34b55a39b2dc1263b0283f",
+      "blob": "b695cf8e1bbedf82025441e54227f080060d42a3",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
+      "sha256": "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b",
+      "blob": "139ecaf877f9756d3095fab0d1f04745235c0fc2",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json",
+      "sha256": "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9",
+      "blob": "8119f09318695dd97bb4f051f28e42294105b51e",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/Cargo.toml",
+      "sha256": "8925b0d248cb58f233a227f22946b395789f88fff808622fb9a5d571eb115817",
+      "blob": "86b02711188fd588fc598a578f3b8d7a1567bafa",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/Cargo.toml",
+      "sha256": "df95718cf41e64a978132f997db8fc36333890c4d10705d127b771e3a5d6fd96",
+      "blob": "7ade02339da8aa72549fec7b0f5e4e4019d1e657",
+      "current_blob_equal": true
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "current_blob_equal": true
+    },
+    {
+      "path": ".github/workflows/research-lifecycle.yml",
+      "sha256": "dea1641cba5be71d5fd5e23c2cffd381d383e3533c52defda2adc60de45e6cbd",
+      "blob": "ccb62b4437356acf0c8401766a2c9e7ca0a493e6",
+      "current_blob_equal": true
+    }
+  ],
+  "limits": [
+    "Separate subjob; not counted within2104",
+    "No full migration or production-channel runtime acceptance"
+  ],
+  "localExecutableValidationRan": false,
+  "upstream_rehash": [
+    {
+      "row": "01-discord",
+      "path": "extensions/discord/src/shared.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "3382888c28dc498232d97a3be3d9bb5f7b935d3c8bc7a8891aef87f9cb5e886a",
+      "bytes": 6576,
+      "status": 200
+    },
+    {
+      "row": "02-feishu",
+      "path": "extensions/feishu/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "50c8edbfc45cd124c608474746ab70a3d5ea46a535b0b8b24c0cee31439ee684",
+      "bytes": 65680,
+      "status": 200
+    },
+    {
+      "row": "03-googlechat",
+      "path": "extensions/googlechat/src/channel-base.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "6bdc33c0ed87bf4208c61da79a07cb8f8a465992b5a026a065021b6e3da403d4",
+      "bytes": 3905,
+      "status": 200
+    },
+    {
+      "row": "04-imessage",
+      "path": "extensions/imessage/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "9210b6f47261d7c35cd7c6e3cda89c15b9f24e22ca2895a03cdf1d0690d3bb4f",
+      "bytes": 15864,
+      "status": 200
+    },
+    {
+      "row": "05-irc",
+      "path": "extensions/irc/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "ff49e528eb156c2ded4701015534f2c4b402b894938ab60be309de08a4db01ed",
+      "bytes": 12207,
+      "status": 200
+    },
+    {
+      "row": "06-line",
+      "path": "extensions/line/src/channel-shared.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "3aa1cf006bf05cf734be371cab25c0e9a3c329ff9d842e6bdbe71be56b92d630",
+      "bytes": 1565,
+      "status": 200
+    },
+    {
+      "row": "07-matrix",
+      "path": "extensions/matrix/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "e021adf852344984c3f9904475ebbc10b0947e2d7502d6640a62b5c5151a81c8",
+      "bytes": 24468,
+      "status": 200
+    },
+    {
+      "row": "08-mattermost",
+      "path": "extensions/mattermost/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "7e7a9f1e6ea30d9dcb03e06eb3b4a7761d28d70393672c761fd2a90977f69b8a",
+      "bytes": 34063,
+      "status": 200
+    },
+    {
+      "row": "09-msteams",
+      "path": "extensions/msteams/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "dea4970386ee4b496f2122d4cfe61ed552a82bbebd288b6d7d34d309f5573948",
+      "bytes": 50353,
+      "status": 200
+    },
+    {
+      "row": "10-nextcloud-talk",
+      "path": "extensions/nextcloud-talk/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "2e89e83098d455489bd0edc737648022b1ce99d4373356325487d424b5d8e622",
+      "bytes": 8256,
+      "status": 200
+    },
+    {
+      "row": "11-nostr",
+      "path": "extensions/nostr/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "a9ce61c8c50ded322799af1b56fe390646bc45e505c9c65278200f9c98de1212",
+      "bytes": 6903,
+      "status": 200
+    },
+    {
+      "row": "12-qqbot",
+      "path": "extensions/qqbot/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "3b4603edfbdf59bdd4a07cfc04ebbc6c42e4dc8172a6c69f3e01dcb16ac1e0c7",
+      "bytes": 16831,
+      "status": 200
+    },
+    {
+      "row": "13-reef",
+      "path": "extensions/reef/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "e8811ffb7ca4cacc2022ebfbd5d6b1f689eced3f5bb6105e79413c32021db559",
+      "bytes": 11204,
+      "status": 200
+    },
+    {
+      "row": "14-raft",
+      "path": "extensions/raft/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "91f10f9b29cbc307f6810993cde784572bf6a93e600a6cc39f0934f7c2e33293",
+      "bytes": 3508,
+      "status": 200
+    },
+    {
+      "row": "15-signal",
+      "path": "extensions/signal/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "172f0bfe8ce3329cfc252acc1c4f19da3842ce2fbc05d560a1f6610c1deeca9a",
+      "bytes": 25354,
+      "status": 200
+    },
+    {
+      "row": "16-slack",
+      "path": "extensions/slack/src/shared.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "847e94222193859ae7c6c9bc8c2627f045eaa52f94b5933f7ee78483d41f8b57",
+      "bytes": 6482,
+      "status": 200
+    },
+    {
+      "row": "17-sms",
+      "path": "extensions/sms/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "c3037e6d172e7e6bcc0d67badc31b31d4b520ca3df917f82891d48a521766c4e",
+      "bytes": 11441,
+      "status": 200
+    },
+    {
+      "row": "18-synology-chat",
+      "path": "extensions/synology-chat/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "2d0a1476347472264ec8f77eceec21c592cf9360b39b08aece99f1a6f4dfc2ee",
+      "bytes": 16908,
+      "status": 200
+    },
+    {
+      "row": "19-telegram",
+      "path": "extensions/telegram/src/shared.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "1b6266a529a0993e1e2ea65c38496116b8cfe51798c22e0654b111d2def38492",
+      "bytes": 10261,
+      "status": 200
+    },
+    {
+      "row": "20-tlon",
+      "path": "extensions/tlon/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "f24846330539e35ff016abcee0ed879a8b18e4f50e30224f406007fb829c037f",
+      "bytes": 6665,
+      "status": 200
+    },
+    {
+      "row": "21-twitch",
+      "path": "extensions/twitch/src/plugin.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "9587e8f410167ad6b3b8f9afd1e4ccaa70049de8f2e4c3de320ce17955099283",
+      "bytes": 9405,
+      "status": 200
+    },
+    {
+      "row": "22-voice-call",
+      "path": "docs/plugins/voice-call.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "d5cc3700f6d63f2bb1db2b3d0a5f9128c89719d06b48721c32db3d85353e423f",
+      "bytes": 39804,
+      "status": 200
+    },
+    {
+      "row": "23-webchat",
+      "path": "docs/web/webchat.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "e31558b3f82fc75b660455ad7835e0b43ea07de28fbbc98d4efd82f5d30425fc",
+      "bytes": 7904,
+      "status": 200
+    },
+    {
+      "row": "24-wechat",
+      "path": "docs/channels/wechat.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "98faf95f9fb76deedb7df9adf3092083722a77bdd793de98c41a6f715cc0d14a",
+      "bytes": 5764,
+      "status": 200
+    },
+    {
+      "row": "25-whatsapp",
+      "path": "extensions/whatsapp/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "ca3fb23b114dc5713f186aea44c0d88bb1de36cca9eb50142c40094950f6c4aa",
+      "bytes": 15177,
+      "status": 200
+    },
+    {
+      "row": "26-yuanbao",
+      "path": "docs/channels/yuanbao.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "43488834f588530206b290cb0fb185fd1fe2e1f214ab4a4ccccc49b9b549b6ac",
+      "bytes": 11764,
+      "status": 200
+    },
+    {
+      "row": "27-zalo",
+      "path": "extensions/zalo/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "31a9a9f608c977590b45714e5200a088a0303d11121414bd89a4cfe04a6f0f86",
+      "bytes": 11026,
+      "status": 200
+    },
+    {
+      "row": "28-zaloclawbot",
+      "path": "docs/channels/zaloclawbot.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "76c9f79d114856b86026a5e4b98a43f451b0d3f16dd41a67e9226da4f8b37b33",
+      "bytes": 3908,
+      "status": 200
+    },
+    {
+      "row": "29-zalouser",
+      "path": "extensions/zalouser/src/channel.ts",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "081efc5f979c22c4dbd151e0d8b831f86a67792bea846be4dfde21654ac90e0d",
+      "bytes": 8291,
+      "status": 200
+    },
+    {
+      "row": "30-clickclack",
+      "path": "docs/channels/clickclack.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "f298115a7b13070065266c78951a8f8d4a5cf5bf012b305c475c12fda3d0b6da",
+      "bytes": 14074,
+      "status": 200
+    },
+    {
+      "row": "31-qa-channel",
+      "path": "docs/channels/qa-channel.md",
+      "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+      "sha256": "a43c35e197116a6bd44b238010eb508aed23dea99ab872d10e6fc853b5f4d4a7",
+      "bytes": 3939,
+      "status": 200
+    }
+  ],
+  "roadmap_admission": {
+    "closed_leaf": "GOLD-LF-001-01",
+    "total": 31,
+    "public": 29,
+    "clickclack": 1,
+    "qa_test_only": 1,
+    "upstream_commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+    "raw_upstream_bytes": 469550,
+    "all_raw_source_hashes_match": true,
+    "independent_review": "W1822 PASS for fixture/custody only",
+    "qa_runtime_leaf_remains_open": true
+  }
+}

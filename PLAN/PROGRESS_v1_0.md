@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1823-W1825 Pinned fixture accepted; batch fixtures repaired (2026-09-28):**
+GOLD-LF-001-01 is closed for fixture/custody scope only. Hosted custody48
+subjob of run36383986007 at1bfcf4f0 passed all48 discovered tests; original
+artifact10952804721, all10 producer inputs and all31 upstream witnesses were
+verified by raw hashes. The pinned31 rows classify29 public, ClickClack and
+QA test-only at upstream4c667aac8859114bd8f0a589ac6cd1de8bfe1474 (469550 bytes).
+Evidence: docs/verification/gold-wave1823-custody48-admission.json; W1822
+independent review supports this exact leaf, not overall Plan001 completion.
+Focused93run36383575673 and Linux2104run36383986007 failed the same two
+batch fixtures: invalid Slack seed member IDs and duplicate create-new custody.
+W1825 repairs only those test setups, preserves every production guard and
+adds a positive Before-state check after restoring an absent credentials file.
+W1824 adds a fixture-bound QA rejection test for both resolvers, ChannelId and
+ChannelRef, with a valid Telegram control. Independent static review passed;
+executed QA/multi-account acceptance is pending. GOLD-LF-001-10 remains open.
+Registry: Portable2315 / Linux2105 / Windows866 / Focused94. Windows865
+run36383573851 on the previous test source remains active; no duplicate run.
+Core/CLI production code is unchanged from admitted7e751b68. Keychain, live
+traffic atomicity and complete migration remain open. ROAD1324/1078/244/2:
+246 raw blockers,245 pre-tag blockers. No local executable validation ran.
+
 **W1821 Batch Core/CLI admitted (2026-09-28):**
 Core36382850795 at7e751b68 passed slim production Clippy, default core test
 typechecking and the public CLI build. The authentic generated reference is

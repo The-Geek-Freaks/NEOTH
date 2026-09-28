@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-batch-fixture-repair/v1",
+  "base": "1bfcf4f09cd0c3e67936945faf8807285d275bba",
+  "focusedFailureRun": 36383575673,
+  "linuxFailureRun": 36383986007,
+  "repairs": [
+    "Valid U-prefixed Slack seed identities preserve incarnation assertions",
+    "Reuse retained immutable custody after rollback; require Before with absent credentials before foreign-home rejection"
+  ],
+  "productionChanged": false,
+  "qaBoundary": "Fixture-bound production resolvers, typed identity and runtime reference reject QA; Telegram positive control",
+  "review": [
+    "W1824 static PASS",
+    "W1825 static PASS"
+  ],
+  "behaviorStatus": "pending new hosted producer",
+  "localExecutableValidationRan": false,
+  "roadmapClosed": "GOLD-LF-001-01 via separate W1823 custody admission",
+  "roadmapStillOpen": "GOLD-LF-001-10",
+  "counts": {
+    "linux": 2105,
+    "focused": 94,
+    "portable": 2315,
+    "windows": 866
+  }
+}

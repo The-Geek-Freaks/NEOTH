@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T05:53:04.7360265Z",
-  "validationStatus": "Batch Core/CLI admitted; native865/focused93 pending; Linux2104 ready after reference import",
+  "capturedUtc": "2026-09-28T06:21:55.8199256Z",
+  "validationStatus": "W1823 custody fixture accepted; W1824 QA boundary and W1825 fixture repairs statically reviewed, hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 33283,
-      "sha256": "1F21F1476D0FB6047141FDD415D3D675C28FBCF897081D50088E8271F2C8F236"
+      "bytes": 33555,
+      "sha256": "C1256D38B6526AF7682596B75D6D2998BD75005659DCE014089321D430241EB1"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -158,8 +158,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 29470,
-      "sha256": "DEA1641CBA5BE71D5FD5E23C2CFFD381D383E3533C52DEFDA2ADC60DE45E6CBD"
+      "bytes": 29519,
+      "sha256": "F7ED33E8ECB1DF3DA4DB238698B4D34154D9D5987285B40A6883C5019678DAD5"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 150904,
-      "sha256": "CDC4F8F11DE3A02A29EC3C8F667D0CEC663A226C5767C978A9FFE97DCA8C4564"
+      "bytes": 151041,
+      "sha256": "1A40CF92514BD120E96DC9F8D54CF57F9A03F8F34ABE05D4E2191453E5F0B150"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -2772,6 +2772,16 @@
       "sha256": "3FE8DA8B59742C50EF0ECBCE39E05D9941737C5712C9150D173AC19A49751A1A"
     },
     {
+      "path": "docs/verification/gold-wave1823-custody48-admission.json",
+      "bytes": 15663,
+      "sha256": "3A4B2156E117C22C8B744C3505911A6685B15873DC8F00C608D872199E95AE6F"
+    },
+    {
+      "path": "docs/verification/gold-wave1825-batch-fixture-repair.json",
+      "bytes": 925,
+      "sha256": "92AC0E51C54F3BC19B3A53AE610A208984FA45C47DBD2BCA59E807219D929D7D"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3813,18 +3823,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 506032,
-      "sha256": "4DB32E3CCAB1D8F424ADB18287406525FE6547952B0D30C7DAD22DBC70788BEB"
+      "bytes": 507562,
+      "sha256": "80DDF0FFAAF48D72BB62D1BBE34074C643A530CA09DC05482E5BBE4E2AAF7829"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1542228,
-      "sha256": "F83E17437A33358B8EB94ABD28157710A0E8CB2D11C631963B4CCD972AEAF2CC"
+      "bytes": 1543758,
+      "sha256": "568680294CF369204A2513A12970F40A928C3EA2EF11F6C6122B3B69AD8A5E84"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2152751,
-      "sha256": "72855B529BF8DC90B5EFC7C3EFC236BD4AA5E07DFFB5901E62D81604EDBEE8E4"
+      "bytes": 2154610,
+      "sha256": "C26DB9EE5FEC9D40D81FAADD00A6DDE757BDD13ACA3DE3D3F5CCE7E4D6C6AC8A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3838,8 +3848,8 @@
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
-      "bytes": 54829,
-      "sha256": "B26A58769D2DEE562F58396DCF41A4D17729CAEF70F6F5E456B11129F4282EEC"
+      "bytes": 55058,
+      "sha256": "D501672193C31D9B5C15A4BE32FCB2DB13FE2B16B3FB9B92F299CBC8CED5A69F"
     },
     {
       "path": "README.md",
@@ -4573,8 +4583,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/registry.rs",
-      "bytes": 37668,
-      "sha256": "962DACDC9AAF7F0DAF42A1AC99D67646DC5C806C7C295921AE71C7D689B8F506"
+      "bytes": 39628,
+      "sha256": "C1369CF88A582542094299C66CD675A89275A68BBD0502B4598809672104F2DE"
     },
     {
       "path": "SRC/neothd/src/channels/relink.rs",
@@ -5373,8 +5383,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch/tests.rs",
-      "bytes": 20754,
-      "sha256": "6EA646A68301822DC8A47BD1CC0F005C718E711EFC1F9156C6D81CD9DDE1AD75"
+      "bytes": 20580,
+      "sha256": "5FFDBEED9D8ADA3919B083CD4B9D5366EBCD201BAEAFD1666E6D4D309D953C13"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
