@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1795 Focused Slack/Relink gate expansion (2026-09-28):**
+The existing focused channel lane now runs all19 new migration identities
+first, followed by its37 prior channel cases and actual Relink CLI product.
+Source evidence includes the new coordinator/participant/test modules. This
+56-case gate exposes migration failures before the full2068/831 cohorts finish;
+it does not replace either broader lane. Core1da6281f production Clippy and
+default test-target typecheck succeeded; actual CLI build remains active.
 **W1791 Windows813 exact admission (2026-09-28):**
 Run36370727372 at00ce2966 selected/listed/executed/passed813/813, with0
 failed/missing/duplicate identities. Every numbered test log has its matching

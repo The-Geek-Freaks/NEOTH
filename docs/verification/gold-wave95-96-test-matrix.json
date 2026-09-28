@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "prior Windows813 fully admitted; Slack Clippy and test types success, CLI/native pending",
+  "status": "Slack Clippy/types success; focused56 and actual CLI verification pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 262398,
-    "sha256": "2DAC630288501BD0A7557831A016597E38A08E06591C05BBBBECCFED299A93EC"
+    "bytes": 262383,
+    "sha256": "B683E3FCC08FDEFC56C168E26F04468FC6201FD61C6AB0840B1601E942231681"
   },
   "sourceInputs": 1457,
   "requiredNativeTests": [
@@ -55480,6 +55480,32 @@
       }
     ],
     "note": "813 exact selected/results/named logs; original API digest and126 raw producer sources matched. Slack Core36373320839 Clippy/types green; new native execution not yet admitted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1795FocusedMigration": {
+    "base": "308bf12a82318ded400857ed98c7f05d91d4d63e",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 22534,
+        "sha256": "C973698A7615E44A8A0E9D88D310EA542BF84500C55B148F0D26D5ABE306BAB0",
+        "blob": "7e57e62befea9b8dd7bf073b4b65078bc51369bc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1532273,
+        "sha256": "6216F88DBDBEDB7952115FF3663472F00854116B9369B9675766FF9E3C9F41E3",
+        "blob": "fc4a02fe6aaa6dcf8924657d8d10b5bf8c7af40f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2142796,
+        "sha256": "A8A5C3724360D0259DC64686D4E849B024C9D5B7EE24BBBBE2A8365A8ED3E9C6",
+        "blob": "6e42f9206e5894b6883f5c4874692e5630afeb6b"
+      }
+    ],
+    "note": "19 migration exact identities precede existing37 channel tests; same real CLI product. Broader native gates remain required. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

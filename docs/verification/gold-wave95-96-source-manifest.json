@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T03:33:19.3280711Z",
-  "validationStatus": "prior Windows813 fully admitted; Slack Clippy and test types success, CLI/native pending",
+  "capturedUtc": "2026-09-28T03:35:23.0836391Z",
+  "validationStatus": "Slack Clippy/types success; focused56 and actual CLI verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 17367,
-      "sha256": "8131D84C7A6DB065DD6F994D733E12B416A1DFF99043E9A202146E8F60F4A3A6"
+      "bytes": 22534,
+      "sha256": "C973698A7615E44A8A0E9D88D310EA542BF84500C55B148F0D26D5ABE306BAB0"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3753,13 +3753,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1531757,
-      "sha256": "43E3C234DBA56FC8C665D21646C294BE890717867DECBA0954ED732DCEDB48B5"
+      "bytes": 1532273,
+      "sha256": "6216F88DBDBEDB7952115FF3663472F00854116B9369B9675766FF9E3C9F41E3"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2142280,
-      "sha256": "553B692C7F3D5C69203B19F8D786A1E239F5B0B97692665850B11C4C28CD5E8D"
+      "bytes": 2142796,
+      "sha256": "A8A5C3724360D0259DC64686D4E849B024C9D5B7EE24BBBBE2A8365A8ED3E9C6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

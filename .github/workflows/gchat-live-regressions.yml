@@ -67,6 +67,11 @@ jobs:
             SRC/neothd/src/cli/channel_relink.rs \
             SRC/neothd/src/channels/relink.rs \
             SRC/neothd/src/config/credentials.rs \
+            SRC/neothd/src/cli/channel/openclaw_migration.rs \
+            SRC/neothd/src/cli/channel/openclaw_migration/tests.rs \
+            SRC/neothd/src/config/credentials/slack_migration.rs \
+            SRC/neothd/src/config/credentials/slack_migration/tests.rs \
+            SRC/neothd/src/cli/mod.rs \
             SRC/neothd/src/channels/imessage_bluebubbles.rs \
             SRC/neothd/src/channels/gchat.rs \
             SRC/neothd/src/channels/readiness.rs \
@@ -127,6 +132,26 @@ jobs:
             fi
           }
 
+          run_case 38 lib config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it config::credentials::slack_migration::tests::snapshot_capture_preserves_missing_parent_as_absent_without_creating_it --lib
+          run_case 39 lib config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly config::credentials::slack_migration::tests::custody_commits_the_immutable_team_bound_pair_and_reverses_it_exactly --lib
+          run_case 40 lib config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair config::credentials::slack_migration::tests::custody_refuses_tampering_and_never_overwrites_a_mixed_pair --lib
+          run_case 41 lib config::credentials::slack_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image config::credentials::slack_migration::tests::every_forward_and_reverse_pair_journal_boundary_recovers_to_one_exact_image --lib
+          run_case 42 lib config::credentials::slack_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability config::credentials::slack_migration::tests::optional_custody_is_absent_only_for_the_exact_missing_capability --lib
+          run_case 43 lib config::credentials::slack_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it config::credentials::slack_migration::tests::custody_create_new_refuses_a_second_capability_without_replacing_it --lib
+          run_case 44 lib config::credentials::slack_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it config::credentials::slack_migration::tests::bounded_pair_capture_refuses_an_oversized_credentials_leaf_before_loading_it --lib
+          run_case 45 lib config::credentials::slack_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches config::credentials::slack_migration::tests::custody_handle_rejects_a_foreign_home_even_if_the_pair_shape_matches --lib
+          run_case 46 lib config::credentials::slack_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback config::credentials::slack_migration::tests::encrypted_credentials_postimage_is_immutable_across_resume_and_exact_rollback --lib
+          run_case 47 lib cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before cli::channel::openclaw_migration::tests::slack_migration_happy_path_keeps_one_postimage_and_restores_exact_before --lib
+          run_case 48 lib cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication cli::channel::openclaw_migration::tests::every_forward_checkpoint_reopens_to_committed_without_reprobing_after_publication --lib
+          run_case 49 lib cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair cli::channel::openclaw_migration::tests::every_reverse_checkpoint_reopens_to_the_exact_before_pair --lib
+          run_case 50 lib cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication cli::channel::openclaw_migration::tests::source_include_request_and_target_drift_hold_without_publication --lib
+          run_case 51 lib cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success cli::channel::openclaw_migration::tests::malformed_custody_and_terminal_receipt_never_become_success --lib
+          run_case 52 lib cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions cli::channel::openclaw_migration::tests::missing_state_after_custody_or_rollback_direction_refuses_both_directions --lib
+          run_case 53 lib cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound cli::channel::openclaw_migration::tests::planning_refuses_keychain_and_public_status_is_redacted_and_lock_bound --lib
+          run_case 54 lib cli::default_invocation_tests::openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation cli::default_invocation_tests::openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation --lib
+          run_case 55 lib config::credentials::slack_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf config::credentials::slack_migration::tests::nofollow_pair_capture_rejects_a_symlinked_credentials_leaf --lib
+          run_case 56 lib cli::channel::openclaw_migration::tests::provider_failures_missing_workspace_and_timeout_publish_nothing cli::channel::openclaw_migration::tests::provider_failures_missing_workspace_and_timeout_publish_nothing --lib
+
           run_case 01 lib daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases --lib
           run_case 02 lib daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send --lib
           run_case 03 lib daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config --lib
@@ -169,9 +194,9 @@ jobs:
           run_case 35 lib cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready --lib
           run_case 36 lib cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication --lib
           run_case 37 lib cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 37
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 37
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 37
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 56
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 56
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 56
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle
