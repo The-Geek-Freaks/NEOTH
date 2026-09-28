@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T01:36:46.6380135Z",
-  "validationStatus": "Exact hosted Relink formatting imported; native/Clippy pending",
+  "capturedUtc": "2026-09-28T01:41:36.5538880Z",
+  "validationStatus": "Exact hosted Clippy op_ref fix; behavior validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3693,13 +3693,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1523758,
-      "sha256": "3A6484F48BB3A42152A09DFCB50A2E11975A3CEEE2ED7E02DBFA99713CCA6FE1"
+      "bytes": 1524196,
+      "sha256": "9B54EB516008B7AF6E05A52D2D6D5FADF03C938F89A914BBC39162B88EFE5862"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2134281,
-      "sha256": "50EAD4CC7FCA3BC47BC6F01193075D0D3065CF0DD306497F70BA06BA5B470756"
+      "bytes": 2134719,
+      "sha256": "D4E19B3860AD48E6BDAF993FE1C14BE9345ED8001E19A5B4AFD0EC1745B3BC8E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4453,8 +4453,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/relink.rs",
-      "bytes": 62961,
-      "sha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302"
+      "bytes": 62959,
+      "sha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2"
     },
     {
       "path": "SRC/neothd/src/channels/routing.rs",

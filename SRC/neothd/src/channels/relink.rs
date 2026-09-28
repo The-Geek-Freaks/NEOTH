@@ -1041,7 +1041,7 @@ pub(crate) fn mark_ready_at(home: &Path, token: &RelinkCompletionToken) -> Resul
     let entry = index
         .pending
         .iter_mut()
-        .find(|entry| &entry.destination == &token.destination)
+        .find(|entry| entry.destination == token.destination)
         .context("converted relink target is not imported")?;
     ensure!(
         entry.id == token.pending_id && matches!(entry.state, PersistedRelinkState::Prepared),

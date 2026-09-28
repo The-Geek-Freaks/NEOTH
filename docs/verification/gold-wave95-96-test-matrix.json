@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted Relink formatting imported; native/Clippy pending",
+  "status": "Exact hosted Clippy op_ref fix; behavior validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 259331,
-    "sha256": "603E592E75A5A9AAD5B2C27BAB8B01D42FC74B76BCCAA086E4CD8523ED596881"
+    "bytes": 259328,
+    "sha256": "D3B3A808F61D3737F5C771E7404A42480C2EDAA7F0619A33947B342EC043D2A2"
   },
   "sourceInputs": 1441,
   "requiredNativeTests": [
@@ -13458,31 +13458,31 @@
     {
       "test": "channels::relink::tests::pending_write_reopen_idempotence_conflict_and_legacy_gate",
       "sourcePath": "SRC/neothd/src/channels/relink.rs",
-      "sourceSha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302",
+      "sourceSha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
       "junitClass": "neoth"
     },
     {
       "test": "channels::relink::tests::defaultless_destination_and_corrupt_or_duplicate_index_are_refused",
       "sourcePath": "SRC/neothd/src/channels/relink.rs",
-      "sourceSha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302",
+      "sourceSha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
       "junitClass": "neoth"
     },
     {
       "test": "channels::relink::tests::tampered_recomputed_schema_or_inventory_pin_is_refused_without_rewrite",
       "sourcePath": "SRC/neothd/src/channels/relink.rs",
-      "sourceSha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302",
+      "sourceSha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
       "junitClass": "neoth"
     },
     {
       "test": "channels::relink::tests::prepared_pair_route_and_ready_require_the_exact_receipt_postimages",
       "sourcePath": "SRC/neothd/src/channels/relink.rs",
-      "sourceSha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302",
+      "sourceSha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
       "junitClass": "neoth"
     },
     {
       "test": "channels::relink::tests::prepared_receipt_refuses_pair_drift_and_keeps_traffic_blocked",
       "sourcePath": "SRC/neothd/src/channels/relink.rs",
-      "sourceSha256": "1A4D9F83362649614485E14AECF4631291A2E427AC3FEAB04DB6FF084FDCB302",
+      "sourceSha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
       "junitClass": "neoth"
     },
     {
@@ -54841,6 +54841,32 @@
       }
     ],
     "note": "Original10947178125/API ZIP02961790, producer53cd01af and inner hashes verified. Two unused private helpers removed. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1775RelinkClippyFix": {
+    "base": "3288deeb1cccc1ba27c4faef145397df784d766f",
+    "sources": [
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1524196,
+        "sha256": "9B54EB516008B7AF6E05A52D2D6D5FADF03C938F89A914BBC39162B88EFE5862",
+        "blob": "a09196aaaed451c7cb73224063e2f4d549ebe361"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2134719,
+        "sha256": "D4E19B3860AD48E6BDAF993FE1C14BE9345ED8001E19A5B4AFD0EC1745B3BC8E",
+        "blob": "451a0133319e24d305c6ad94b9c492ca73db803a"
+      },
+      {
+        "path": "SRC/neothd/src/channels/relink.rs",
+        "bytes": 62959,
+        "sha256": "97647B682E9DAD6F482ED38F0C26D3E2678AC4CFCCE4BACBBDB3FC385ECA2AE2",
+        "blob": "11ac40b38641a48bf28841b1a9ca54bfdedf25ce"
+      }
+    ],
+    "note": "Core36366770559 identified one needless-ref lint at Ready destination lookup. Only direct comparison substituted; no local execution. Public CLI canary WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1775 hosted Relink Clippy correction (2026-09-28):**
+Core36366770559 at3288deeb reached slim production Clippy and reported one
+clippy::op_ref in the Ready destination lookup. Removed only the two redundant
+operand references, preserving equality/ownership behavior. Preflight36366769946
+passed on3288deeb. Core/test-target compilation and native behavior still need
+fresh GitHub evidence. No local executable checks; no ROAD closure.
 **W1773 hosted Relink formatting imported (2026-09-28):**
 Preflight36366546217 at53cd01af passed metadata but required formatting.
 Original10947178125 ZIP02961790f994a68e1620152841f58c80348392f4f7dcd000f41dadf6d7fe4171
