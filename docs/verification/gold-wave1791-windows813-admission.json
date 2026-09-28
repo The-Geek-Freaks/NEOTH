@@ -1,0 +1,60 @@
+{
+  "schema": "neoth-native-windows-admission/v1",
+  "decision": "accepted",
+  "scope": "Windows813 native regression evidence only; other lanes are admitted separately.",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36370727372,
+    "workflow": "Windows storage regressions",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36370727372",
+    "producer_commit": "00ce2966357757f9afd0ceb41edc69370fad518a",
+    "ref": "refs/heads/main",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "original_artifact": {
+    "id": 10950041374,
+    "name": "windows-storage-regressions-00ce2966357757f9afd0ceb41edc69370fad518a",
+    "api_digest": "sha256:d3b7330ae5bc487988979fb4c14611e11ee45115696525b8e194544e23742b9e",
+    "sha256": "d3b7330ae5bc487988979fb4c14611e11ee45115696525b8e194544e23742b9e",
+    "api_digest_matches_download": true
+  },
+  "receipt": {
+    "expected": 813,
+    "selected": 813,
+    "listed": 813,
+    "executed": 813,
+    "passed": 813,
+    "failed": 0,
+    "missing": 0,
+    "compile_status": 0,
+    "source_head_matches_producer": true
+  },
+  "execution": {
+    "result_identity_count": 813,
+    "selection_identity_count": 813,
+    "duplicate_results": 0,
+    "missing_selected_result_identities": 0,
+    "extra_result_identities": 0,
+    "single_pass_terminal_count": 813,
+    "per_log_terminal_receipt_failures": 0,
+    "all_numbered_test_log_hashes_match_artifact_manifest": true,
+    "log_manifest_entries": 814,
+    "evidence_file_hashes_verified": 10,
+    "evidence_file_hash_mismatches": 0
+  },
+  "producer_bindings": {
+    "source_binding_rows": 813,
+    "input_paths": 13,
+    "unique_source_paths": 126,
+    "raw_producer_git_blob_sha256_mismatches": 0,
+    "all_raw_producer_git_blob_sha256_values_match_artifact_bindings": true,
+    "source": "git cat-file/git rev-parse at exact producer commit; working tree excluded",
+    "binding_table": "work/gold-20260906/wave1791-windows813/producer-bindings.json"
+  },
+  "limits": [
+    "No local compiler, Cargo, Rustfmt, Node, Python, XML parser, fixture, test, or runtime execution.",
+    "No product lifecycle or parent-road acceptance.",
+    "This record does not admit current Slack WIP, later main, Linux, CLI, product, or other native lanes."
+  ]
+}

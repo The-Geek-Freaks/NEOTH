@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T03:26:37.9692135Z",
-  "validationStatus": "real Relink CLI and channel37 admitted at5ce04908; Slack type/CLI gate active",
+  "capturedUtc": "2026-09-28T03:33:19.3280711Z",
+  "validationStatus": "prior Windows813 fully admitted; Slack Clippy and test types success, CLI/native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2692,6 +2692,11 @@
       "sha256": "6CEF86514804105DB0785C0F481F5F7E963084334410FEB42663E0B11370B774"
     },
     {
+      "path": "docs/verification/gold-wave1791-windows813-admission.json",
+      "bytes": 2278,
+      "sha256": "D0BE06A4E86E6F37A765D3275E77501B4061F7BBEE94E5D9C419A05A092320EA"
+    },
+    {
       "path": "docs/verification/gold-wave1792-hosted-format.json",
       "bytes": 382,
       "sha256": "57B07B2B6084F7DE5E689CC13E50FF6C9064C9ACA9582E446223273F6226FA14"
@@ -3748,13 +3753,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1531197,
-      "sha256": "4E528C472E589E00B11F7E0045EA06D71DD516B99A25CBBD639679A31EA1E7CE"
+      "bytes": 1531757,
+      "sha256": "43E3C234DBA56FC8C665D21646C294BE890717867DECBA0954ED732DCEDB48B5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2141720,
-      "sha256": "B30E70838CD4F14BED566FDAD0BC3D06B8DB26DFB617F311ED81DECABC89405F"
+      "bytes": 2142280,
+      "sha256": "553B692C7F3D5C69203B19F8D786A1E239F5B0B97692665850B11C4C28CD5E8D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

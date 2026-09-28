@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1791 Windows813 exact admission (2026-09-28):**
+Run36370727372 at00ce2966 selected/listed/executed/passed813/813, with0
+failed/missing/duplicate identities. Every numbered test log has its matching
+one-test green terminal and authenticated inner hash. Original artifact
+10950041374 matches its GitHub API digest;813 source rows across126 distinct
+producer paths and13 inputs match the exact Git producer. Evidence:
+docs/verification/gold-wave1791-windows813-admission.json.
+Prior Windows/Relink cohort accepted; newer Slack source remains separately gated.
 **W1793 Public Relink CLI accepted (2026-09-28):**
 Run36372343235 at5ce04908 passed native37/37 and the real compiled CLI
 lifecycle against loopback BlueBubbles: actual init without restore, explicit
