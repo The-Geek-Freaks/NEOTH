@@ -1,0 +1,13 @@
+{
+  "schema": "neoth-hosted-rustfmt-import/v1",
+  "run": 36372537738,
+  "producer": "3f058e260bff98376e749eab6675141835ddd136",
+  "artifact": 10949488286,
+  "zipDigest": "sha256:6ecf437f58d1376f71fb9b026a021524ccd2ae829a14532f4c8362c208963a0c",
+  "innerHashesVerified": true,
+  "exactProducerVerified": true,
+  "patchScope": "six Rust Slack migration files only",
+  "additionalRepair": "rename test fixture function to new_fixture to avoid local-variable shadowing on sequential fixture creation",
+  "localExecutableValidationRan": false,
+  "validation": "format imported; hosted compile/native pending"
+}

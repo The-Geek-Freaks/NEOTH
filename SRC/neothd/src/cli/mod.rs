@@ -2408,23 +2408,49 @@ mod default_invocation_tests {
         .unwrap();
         assert!(matches!(plan.command, Commands::OpenclawMigration { .. }));
         assert!(
-            Cli::try_parse_from(["neoth", "openclaw-migration", "plan", "--config", "openclaw.json"])
-                .is_err()
-        );
-        assert!(
-            Cli::try_parse_from(["neoth", "openclaw-migration", "apply", "--id", "operation", "--confirm"])
-                .is_err()
-        );
-        assert!(
             Cli::try_parse_from([
-                "neoth", "openclaw-migration", "apply", "--id", "operation",
-                "--config", "openclaw.json", "--request", "private-request.json",
+                "neoth",
+                "openclaw-migration",
+                "plan",
+                "--config",
+                "openclaw.json"
             ])
             .is_err()
         );
         assert!(
-            Cli::try_parse_from(["neoth", "openclaw-migration", "rollback", "--id", "operation"])
-                .is_err()
+            Cli::try_parse_from([
+                "neoth",
+                "openclaw-migration",
+                "apply",
+                "--id",
+                "operation",
+                "--confirm"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "openclaw-migration",
+                "apply",
+                "--id",
+                "operation",
+                "--config",
+                "openclaw.json",
+                "--request",
+                "private-request.json",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "openclaw-migration",
+                "rollback",
+                "--id",
+                "operation"
+            ])
+            .is_err()
         );
         assert!(
             Cli::try_parse_from(["neoth", "openclaw-migration", "status", "--id", "operation"])

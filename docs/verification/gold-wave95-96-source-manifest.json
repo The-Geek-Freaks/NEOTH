@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T03:06:36.1431939Z",
-  "validationStatus": "single Slack migration source-reviewed; hosted formatting/types/CLI/native pending",
+  "capturedUtc": "2026-09-28T03:09:49.5389797Z",
+  "validationStatus": "authenticated hosted Slack rustfmt imported; compile/native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2682,6 +2682,11 @@
       "sha256": "48A08B7263705D16D47F324F58DE3FB733692B87B9265AD19C5B099A1DABB6E3"
     },
     {
+      "path": "docs/verification/gold-wave1789-hosted-slack-format.json",
+      "bytes": 606,
+      "sha256": "6CEF86514804105DB0785C0F481F5F7E963084334410FEB42663E0B11370B774"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -4593,13 +4598,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
-      "bytes": 28380,
-      "sha256": "BAA02B5811E31B3ED59066175BCF4AB72C4ABDBC632F46671027A7D7922F8F95"
+      "bytes": 32548,
+      "sha256": "066F8EDFF3CEF92540036833CD91E44B968944C5F9C6C97E901C5C55607E09F6"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration/tests.rs",
-      "bytes": 15356,
-      "sha256": "2B81B1D1C1785B1C6BCA41C0335B89C7238F0536B5F5EE2C7A917F8B86C2BCFF"
+      "bytes": 19518,
+      "sha256": "AEEE99A60A68EE93E8C39AB85CCABDE69A0AF978894AE4058A7FE8B32A7D60B5"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -4833,8 +4838,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 125317,
-      "sha256": "242DAC9D3585D95CBFE5941290FD784861E2C05754EA3AE7747CA676C22FFD98"
+      "bytes": 125715,
+      "sha256": "135453124558BE3CCE6C39135FC43BEB2DDE934E1DACA6D9F52BBABDAEBD9492"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -5258,18 +5263,18 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 435951,
-      "sha256": "6B5FD2BCD751F44A2210584E3BAA415F35B4681AAE745F490DAF1F7F91458990"
+      "bytes": 436227,
+      "sha256": "C45A2F66137D7C4DC8472E3BDC4F24836E76860E6587ED84341A8D0BDDD89EDC"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration.rs",
-      "bytes": 29417,
-      "sha256": "C3105444252129D22108E05D48FB63325D41AF27CCE3B7131474BD782CD743E4"
+      "bytes": 32868,
+      "sha256": "75D0CC0133B0F6B455E809A3A3DC4099A4C366389FAB9654D5AB13D0E90EC857"
     },
     {
       "path": "SRC/neothd/src/config/credentials/slack_migration/tests.rs",
-      "bytes": 12052,
-      "sha256": "3D04DB5C4354EBED4F72D696E6232B2AE8AE626DB5F99E6CE9D1AEB81AE5B3BB"
+      "bytes": 15485,
+      "sha256": "6967287DB54D9A6452EC6BA01E899E0F3154293BC4EDD8A7827EDAC74665D983"
     },
     {
       "path": "SRC/neothd/src/config/doc_ingest.rs",

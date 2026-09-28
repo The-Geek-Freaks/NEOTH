@@ -32,8 +32,7 @@ use crate::secret::SecretString;
 
 mod slack_migration;
 pub(crate) use slack_migration::{
-    PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad,
-    SlackMigrationState,
+    PreparedSlackMigration, SlackMigrationCustody, SlackMigrationCustodyLoad, SlackMigrationState,
 };
 
 /// Cross-process-safe credential-store status classifier.
@@ -3030,7 +3029,8 @@ impl Credentials {
         prepared: PreparedSlackAccountUpsert,
         verified_team_id: &str,
     ) -> Result<()> {
-        let finalized = Self::finalize_prepared_slack_account_upsert_at(prepared, verified_team_id)?;
+        let finalized =
+            Self::finalize_prepared_slack_account_upsert_at(prepared, verified_team_id)?;
         Self::publish_finalized_slack_account_upsert_at(finalized)
     }
 
@@ -3045,7 +3045,10 @@ impl Credentials {
         let verified_team_id = crate::config::normalize_slack_team_id(verified_team_id)
             .context("verified Slack team_id is invalid")?;
         let freedom_dir = transaction_directory(&prepared.freedom_path);
-        anyhow::ensure!(freedom_dir == transaction_directory(&prepared.credentials_path), "prepared Slack account paths are not sibling files");
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(&prepared.credentials_path),
+            "prepared Slack account paths are not sibling files"
+        );
         with_dual_file_transaction_lock(&prepared.freedom_path, || {
             with_config_writer_guard(&prepared.freedom_path, || {
                 with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
@@ -3101,7 +3104,10 @@ impl Credentials {
                         .as_bytes()
                         .to_vec(),
                     ));
-                    Ok(FinalizedSlackAccountUpsert { prepared, freedom_after })
+                    Ok(FinalizedSlackAccountUpsert {
+                        prepared,
+                        freedom_after,
+                    })
                 })
             })
         })
@@ -3116,8 +3122,10 @@ impl Credentials {
             with_config_writer_guard(&prepared.freedom_path, || {
                 with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
                     anyhow::ensure!(
-                        FileSnapshot::capture(&prepared.freedom_path)?.same_as(&prepared.freedom_before)
-                            && FileSnapshot::capture(&prepared.credentials_path)?.same_as(&prepared.credentials_before),
+                        FileSnapshot::capture(&prepared.freedom_path)?
+                            .same_as(&prepared.freedom_before)
+                            && FileSnapshot::capture(&prepared.credentials_path)?
+                                .same_as(&prepared.credentials_before),
                         "Slack account configuration changed after its reviewed candidate; retry the command"
                     );
                     publish_prepared_file_pair(
@@ -5621,16 +5629,24 @@ fn render_freedom_preserving_unknown_yaml(
 
 impl FileSnapshot {
     fn capture(path: &Path) -> Result<Self> {
-        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         let parent = std::path::absolute(parent).context("resolve config snapshot parent")?;
-        let name = path.file_name().context("snapshot path needs one file name")?;
-        let Some(bound) = crate::skills::store::open_bound_directory(&parent, false, "config snapshot parent")? else {
+        let name = path
+            .file_name()
+            .context("snapshot path needs one file name")?;
+        let Some(bound) =
+            crate::skills::store::open_bound_directory(&parent, false, "config snapshot parent")?
+        else {
             return Ok(Self::Missing);
         };
         match bound.dir.symlink_metadata(name) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::Missing),
-            Err(error) => Err(error).with_context(|| format!("inspect snapshot {}", path.display())),
+            Err(error) => {
+                Err(error).with_context(|| format!("inspect snapshot {}", path.display()))
+            }
             Ok(_) => crate::skills::store::read_regular_file_bounded(
                 &bound.dir,
                 name,
