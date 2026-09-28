@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-28
 
+**W1769 Linux first-use regressions admitted (2026-09-28):**
+Group2028run36362250590 at7a9ae772 completed success. Original source10947045389,
+receipt10947095308 and log10946383219 ZIPs match their GitHub API digests.
+The receipt and terminal logs prove2028 selected/discovered/executed individual
+PASS results with zero failures. All311 fixture source paths and10 input paths
+match raw Git blobs at the exact producer commit; current Relink WIP is excluded.
+Evidence: docs/verification/gold-wave1769-linux-group2028-admission.json.
+Windows792run36362252138 is still running and has no new admission yet.
+This complements W1764 actual CLI first-use product acceptance; it does not
+accept GUI onboarding, native Obsidian UI, external providers or Relink WIP.
+ROAD1324/1077/245/2 unchanged. No local executable validation.
 **W1764 hosted actual CLI first-use product admitted (2026-09-28):**
 Run36362248893 at7a9ae772 passed its actual compiled CLI init and isolated
 Archive Bridge daemon/plugin lifecycle. Original artifact10946540544 ZIP

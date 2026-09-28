@@ -1,0 +1,78 @@
+{
+  "schema": "neoth-native-group-admission/v1",
+  "decision": "accepted",
+  "scope": "Linux Group2028 only; OpenClaw custody sibling excluded because separately admitted.",
+  "run": {
+    "id": 36362250590,
+    "producer_commit": "7a9ae7724ae9735e940b31ba804d84c0df56f1a6",
+    "status": "completed",
+    "conclusion": "success",
+    "attempt": 1
+  },
+  "original_artifacts": [
+    {
+      "id": 10947045389,
+      "kind": "source",
+      "sha256": "1061b0a75a4eec0116d0658a5704b58c572991e1f3e700e7ebb625c349758ae8",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10947095308,
+      "kind": "receipt",
+      "sha256": "e052ef22690e54787c00ea43dd08621061fcf1051953c927c2686f4b8539cd74",
+      "api_digest_matches_download": true
+    },
+    {
+      "id": 10946383219,
+      "kind": "log",
+      "sha256": "372ee9f943a83d46cc937ff2002551ffc2c236f007334d337566bbb80f458110",
+      "api_digest_matches_download": true
+    }
+  ],
+  "zip_safety": {
+    "entry_count": 12,
+    "duplicate_entries": 0,
+    "unsafe_entries": 0
+  },
+  "receipt": {
+    "required": 2028,
+    "selected": 2028,
+    "executed": 2028,
+    "failed_fixtures": [],
+    "source_head_matches_producer": true,
+    "source_ref": "refs/heads/main"
+  },
+  "log_terminals": {
+    "discovered": 2028,
+    "executed": 2028,
+    "single_pass": 2028,
+    "failure_markers": 0,
+    "log_sha256": "bb5b1826264535ddd1f80376478bee799d2b78be287a4ba3f2918f1d39e498fc",
+    "all_extracted_log_hashes": [
+      {
+        "file": "cargo-research-lifecycle.log",
+        "sha256": "bb5b1826264535ddd1f80376478bee799d2b78be287a4ba3f2918f1d39e498fc"
+      },
+      {
+        "file": "neoth-lib-test-artifacts.jsonl",
+        "sha256": "47912f76783e6ebca153c5dcfdce698556219285eaec690640ad09b5dfed806a"
+      },
+      {
+        "file": "neoth-lib-test-compile.stderr.log",
+        "sha256": "9f957dbd2f2da8fc9c4b8e77fbc3287a13ee0195cfc634a98cf77358c42b82fa"
+      }
+    ]
+  },
+  "producer_bindings": {
+    "fixture_identity_count": 2028,
+    "unique_source_paths": 311,
+    "input_paths": 10,
+    "all_raw_producer_git_blob_sha256s_match": true,
+    "source": "git cat-file blob at exact producer commit; working tree excluded"
+  },
+  "limits": [
+    "No Windows admission in this record.",
+    "No custody-sibling double count.",
+    "No local compiler, Cargo, Rustfmt, Node, Python, XML parser, fixture, test, or runtime execution."
+  ]
+}
