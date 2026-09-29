@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1927 original focused regression admission (2026-09-29):**
+Root admitted only the pinned regression/public-CLI portion of36549337426
+atcf38a6b2:6 original ZIP/API digests,344 extracted entries,158 exact workflow,
+discovery and single-PASS case identities,18 distinct GChat guards (11adapter
+plus7CLI, with4discovery prerequisites included rather than counted again),
+and100 raw producer source bindings (86manifest+13daemon+1publicCLI backfills).
+Both new W1915 WAL-root regression cases passed. The separate BlueBubbles
+public CLI passed first-use Ready, wrong-target refusal, byte-idempotent retry
+and cleanup with zero message POST. The daemon and GChat products still failed
+on that producer; this is not release or current9744f6c0 runtime acceptance.
+Root record: work/gold-20260906/wave1927-product158-guards18-admission/ROOT_ACCEPTANCE.json
+SHA256 f981907fcb770bb29a6ab7ab6dad4e621fe292a92dcdea19ba996879d3ef2525.
+The sole current successor36554877043 at9744f6c0 was dispatched after successful
+Preflight36554656491/Quality36554656642 and remains the executable validation
+for W1922 crypto backend plus W1925 checkpoints. No duplicate run or ROAD closure.
+
 **W1922/W1926 Google Chat crypto backend imported (2026-09-29):**
 Enable jsonwebtoken rust_crypto while retaining default PEM support. Hosted
 resolver36554232166 at324d664d generated the complete manifest/lock pair and

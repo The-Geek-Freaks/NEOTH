@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1922 RSA backend/hosted lock imported and reviewed; product verification pending",
+  "status": "W1927 pinned158/18guards/publicCLI admitted; current crypto+shutdown product pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269990,
-    "sha256": "E2537732D64ACAFFA2EB90DF8E9BCDBE73FD31FCD0AE5BD1FC8EF4164E49062B"
+    "bytes": 269993,
+    "sha256": "F143FD4422FCDE37FA9BC8D406AFF99A6286B1EF25543C67D1BC009CEA01EC3A"
   },
   "sourceInputs": 1497,
   "requiredNativeTests": [
@@ -61050,6 +61050,32 @@
       }
     ],
     "note": "Root authenticated hosted36554232166@324d664d artifact11027265426 ZIP/API and5sealed hashes, exact manifest+lock postimages; full diff independent APPROVE. Import recordC1D1345A383EC85C41F51E296B1C4847BFF4098B1BB1024BFA87894636ED1456. W1926 original11024854505/17entries confirms workerpanic before network, exact cause not in receipt. No local runtime. Existing product36549337426 terminal failed bothproducts; next sole dispatch after Preflight.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1927OriginalFocusedAdmission": {
+    "base": "9744f6c07108a1f84da5e3c0acf48c1b950ff5c3",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 565434,
+        "sha256": "BC06E1CC01164AD4204997EA177DA07EEC49DF3644332CD69555D908BA5F349E",
+        "blob": "2c44410eb0a1b957a9b5994fb59ab67dc198d6cd"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1601864,
+        "sha256": "C4CBE88BDCA20C21963186658289B4BCABC9614FF3E4647E47FD31343DA38F26",
+        "blob": "13868dfb29f54d28c44569387acee54228502f2e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2212874,
+        "sha256": "CF3E9061B86F714374E9432112836A5096171F8439ACA658716577AC3281C200",
+        "blob": "8575dd33d9733225d85f254a779f69353b312ca5"
+      }
+    ],
+    "note": "Root original36549337426@cf38a6b2:6ZIPs/344entries/158exactcases/18distinctguards/100rawsources. BothWALnewtests pass; separatepublicCLI pass. Daemonstop_timeout/-9 andGChatworkerpanic remain rejected. RootrecordF981907FCB770BB29A6AB7AB6DAD4E621FE292A92DCDEA19BA996879D3EF2525. Current single36554877043@9744f6c0 still active; no local runtime or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
