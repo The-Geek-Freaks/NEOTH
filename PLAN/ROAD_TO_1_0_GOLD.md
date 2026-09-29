@@ -8,6 +8,33 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1940-W1942 OMI repair and both daemon products accepted (2026-09-29):**
+Run36563622981 at39afd7df completed SUCCESS. Root independently authenticated
+all7 original ZIP/API digests,350 extracted entry hashes and106 raw producer
+source bindings,159 exact workflow/discovery/started/executed/PASS identities,
+and20 distinct GChat guards. The61 Python-contract step also passed. All106
+bound runtime inputs are identical on the later documentation headc709b01b.
+
+All four isolated loopback products pass: BlueBubbles public CLI, Google Chat
+public CLI, and both actual running-daemon relink/adoption journeys. BlueBubbles
+observes authenticated_empty_message_query; GChat observes one authenticated
+empty Pub/Sub pull after reload with all9 forbidden traffic counters zero.
+Both daemons exit0, report no other WAL senders, close the receiver, drain WAL
+and complete all cleanup. Neither needs forced reaping. This repairs the prior
+concrete default-OMI retention ownership leak in the tested daemon paths.
+
+Root complete admission:
+work/gold-20260906/wave1942-product159-clean-admission/ROOT_ACCEPTANCE.json
+SHA256 115D8737F8DC4C6C209543616909C767DED88692BA3A80F5E46EB538EF30BF07.
+Separate BlueBubbles record EF17F414FCB3013D3770DE427AFC540ABFBAE802450F8FACAE4A9EAFC22AB98D
+and GChat record 90ED360A60157814F28D27F3316CD7158A273F24C180B4EF2E38F31D88BF93A2
+retain each original artifact's64/67 raw source bindings and shutdown markers.
+
+Scope is pinned hosted source plus authenticated loopback product acceptance.
+External service qualification, OS-wide release gates and ROAD checkboxes are
+unchanged. No local executable validation, .slint change or second CI loop ran.
+No product run remains active; all source writers are frozen. Claude is paused.
+
 **W1938/W1939 original live adoption and partial product admission (2026-09-29):**
 Root verified all7 originals from36559843840 at2b7ea985:348 extracted entries,
 104 raw producer sources,158 exact channel identities and20 distinct GChat

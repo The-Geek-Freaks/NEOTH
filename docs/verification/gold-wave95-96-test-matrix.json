@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Pinned158/20/bothpublicCLI admitted; bothliveadoption witnesses prove adoption but stop failed",
+  "status": "OMI repair hosted proven:159cases20guards61Python and bothCLI/bothdaemon products passed39afd7df",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270367,
-    "sha256": "02870B7F4737711ECE43F6EB4C9ECE1F7601ADF55831BBFDD318F07B991EC6E2"
+    "bytes": 270369,
+    "sha256": "C0EA922329F68F737B0751CA25B4CC7F4145EFCE2C35CD4283C13D55E3C43B58"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -61249,7 +61249,7 @@
   },
   "wave1935OmiOwnedShutdown": {
     "note": "OMI supervisor owns stop and join; normal daemon shutdown reaps retention and native children before WAL drain. Real disabled-supervisor/WAL regression. No product/runtime acceptance yet.",
-    "status": "independent static review approved after Root test type correction; hosted pending",
+    "status": "source reviewed; exact real-WAL regression passed in159case run36563622981; both realdaemon products clean on39afd7df",
     "requiredTests": [
       "cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join"
     ]
@@ -61428,6 +61428,59 @@
       }
     ],
     "note": "Root7ZIP348entries104rawsources exact158+20 at2b7ea985. First actual GChatdaemon authenticatedemptyPubSubpull proven, cleanstop remains rejected asBB. New OMIrepair sole36563622981@39afd7df active after61PythonPASS. No local runtime or roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1942BothDaemonProductsAccepted": {
+    "producer": "39afd7df3137fd89e422d280c8f8a866500436fe",
+    "run": 36563622981,
+    "conclusion": "success",
+    "rootRecord": "work/gold-20260906/wave1942-product159-clean-admission/ROOT_ACCEPTANCE.json",
+    "rootRecordSha256": "115d8737f8dc4c6c209543616909c767ded88692ba3a80f5e46eb538ef30bf07",
+    "originalArchives": 7,
+    "extractedEntries": 350,
+    "rootVerifiedSourceUnion": 106,
+    "exactChannelCases": 159,
+    "distinctFeatureGuards": 20,
+    "pythonContracts": 61,
+    "productsPassed": [
+      "BlueBubbles publicCLI",
+      "GChat publicCLI",
+      "BlueBubbles live daemon adoption and clean shutdown",
+      "GChat live daemon adoption and clean shutdown"
+    ],
+    "bothDaemonExitCode": 0,
+    "otherSendersAbsent": true,
+    "receiverClosed": true,
+    "walDrained": true,
+    "cleanupComplete": true,
+    "releaseQualification": false,
+    "roadmapClosure": false,
+    "localExecutableValidationRan": false
+  },
+  "wave1940to1942RootCleanProductPublication": {
+    "base": "c709b01bed54bdc0e9df8d66553bcd8ee0efcae2",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 575004,
+        "sha256": "2C84484007D5D2CA19F281AA7ADBF494ED1B798F046924A1708DD79FA6888B76",
+        "blob": "90c7f582a3ba253ff8cc82726b9657e2fbdb8ad7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1611434,
+        "sha256": "F3C0BCC4EA2BC8097FE6F4085821889322D9149D1E34D5A17344EFC053CAD3DD",
+        "blob": "fa7c683f8028930aab7c2fa0f8e36e043e9aa950"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2222444,
+        "sha256": "8B1F85EAEEFFAD0C418860A45BA15D8B239005BAA4216BA48A9B21C35374746A",
+        "blob": "89dc4e1f8108fef84d0c4b81a3bc8d1e68aed755"
+      }
+    ],
+    "note": "Root7originalZIP350entries106rawsources,159exactcase identities,20distinctguards. Both realdaemonadoptions exit0 with otherWALsendersabsent receiverclosed WALdrained and completecleanup. Rootrecord115d8737. No local runtime/.slint/ROAD closure or release qualification. Runtime106inputs identical on documentationheadc709b01b.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
