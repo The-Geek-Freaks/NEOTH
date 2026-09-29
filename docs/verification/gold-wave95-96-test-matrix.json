@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1899 exact account guidance and W1900 effective provider alignment reviewed; hosted pending",
+  "status": "W1899/W1900 source reviewed; W1901 authentic hosted formatter imported; current hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269817,
-    "sha256": "1B500EB324BBF5955156E453B24A34B3720CCC5BDEA3D3FB11FE3B34924DB384"
+    "bytes": 269830,
+    "sha256": "5E8401008CB8B72FD951FBB38EA32695E8C97507A99AC4477033E6F045C78C72"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -14322,54 +14322,54 @@
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::mapped_slack_connect_guidance_uses_an_exact_named_account"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::account_selection_rejects_a_foreign_child_channel_ref"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::mapped_connect_row_enumerates_exact_accounts_without_parent_test"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::mapped_connect_detail_requires_and_binds_exact_account"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::account_selection_is_refused_for_scalar_parent"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::invalid_active_map_is_repair_only_and_never_emits_test_instruction"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "test": "cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial"
     },
     {
       "test": "cli::connect::tests::slack_error_without_children_is_generic_configuration_repair",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
       "junitClass": "neoth"
     },
     {
       "test": "cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent",
-      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
       "junitClass": "neoth"
     }
@@ -60216,6 +60216,20 @@
       }
     ],
     "note": "W1899 source9cases;2394portable/2169Linux/954Windows/156channel/70macOS. W1900 authentic product147 daemon consent failure traced to stale ClaudeCli inference slot; fresh canary aligns exact loopback topology before real consent. No guard bypass, local runtime or ROAD closure. Product147 remains pinned9195c911; no duplicate dispatch.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1901HostedConnectFormatter": {
+    "base": "165687c4353d3341e6dca1017a13831496fcae84",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/connect.rs",
+        "bytes": 32371,
+        "sha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
+        "blob": "ed5a5accadbab96aa793be512691e86ddb71a782"
+      }
+    ],
+    "note": "Preflight36534561869 at165687c4 format-only failure; artifact11016879128 ZIP/API SHA25693d0c73a24cc4bc57da095f4586644dc5b122868e3a72ba141556081c02d37dd. Patch b412f949f746ab6dbe41cb6784c29116aef5e46169343d57abb2dacc951a17c5 and exact Git pre/postimages verified. Only two connect expression layouts changed. CodeQuality165687c4 succeeded. Product147 terminal failure, both products unaccepted.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

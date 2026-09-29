@@ -161,10 +161,7 @@ fn connect_rows(statuses: &[crate::cli::channel::ChannelStatus]) -> Vec<ChannelR
 fn connect_detail(row: &ChannelRow, account: Option<&ChannelAccountId>) -> Result<String> {
     if row.repair_only {
         if row.name == ChannelId::Slack.as_str() {
-            return Ok(format!(
-                "Slack configuration needs repair: {}",
-                row.note
-            ));
+            return Ok(format!("Slack configuration needs repair: {}", row.note));
         }
         return Ok(
             "Telegram account map needs repair. No account is usable or testable until matching policy, nonzero sender, and credential entries are complete."
@@ -183,10 +180,7 @@ fn connect_detail(row: &ChannelRow, account: Option<&ChannelAccountId>) -> Resul
                         && candidate.channel_ref.account_id == *account
                 })
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "{} account `{account}` is not configured",
-                        row.name
-                    )
+                    anyhow::anyhow!("{} account `{account}` is not configured", row.name)
                 })?;
             Ok(format!(
                 "{} account {}/{} — {}\n\
