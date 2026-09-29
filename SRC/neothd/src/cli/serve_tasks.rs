@@ -9431,6 +9431,11 @@ pub(crate) async fn shutdown_background_tasks(
     // before closing the last WAL sender; each owns a sender even when its
     // corresponding feature is disabled.
     release_wal_sender_roots(shared_provider, companion_state);
+    if writer.has_other_senders() {
+        info!("shutdown checkpoint: WAL other senders present");
+    } else {
+        info!("shutdown checkpoint: WAL other senders absent");
+    }
     drop(writer);
     info!("shutdown checkpoint: WAL join entry");
     let writer_join_result = match writer_join_result {

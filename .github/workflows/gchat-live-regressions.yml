@@ -72,6 +72,8 @@ jobs:
             packaging/tests/test_converted_channel_relink_product_canary.py \
             packaging/gchat_converted_relink_product_canary.py \
             packaging/tests/test_gchat_converted_relink_product_canary.py \
+            packaging/gchat_daemon_adoption_canary.py \
+            packaging/tests/test_gchat_daemon_adoption_canary.py \
             packaging/bluebubbles_daemon_adoption_canary.py \
             packaging/tests/test_bluebubbles_daemon_adoption_canary.py \
             SRC/neoth-openclaw-custody/src/pinned_inventory.rs \
@@ -150,6 +152,7 @@ jobs:
         run: |
           python3 packaging/tests/test_converted_channel_relink_product_canary.py
           python3 packaging/tests/test_gchat_converted_relink_product_canary.py
+          python3 packaging/tests/test_gchat_daemon_adoption_canary.py
           python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py
 
       - name: Run focused channel and exact-target regressions
@@ -426,7 +429,7 @@ jobs:
           mkdir -p "$W548_ROOT/gchat-guards"
           cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
             channels::gchat::tests:: -- --list > "$W548_ROOT/gchat-guards/discovery.log" 2>&1
-          for name in canary_origin_is_strict_loopback_http_with_explicit_port canary_constructor_requires_exact_synthetic_key_and_origin_token_uri canary_refuses_traffic_before_bearer_or_network new_pins_the_google_token_uri_against_key_file_endpoint_poisoning; do
+          for name in canary_origin_is_strict_loopback_http_with_explicit_port canary_constructor_requires_exact_synthetic_key_and_origin_token_uri canary_pull_uses_loopback_while_ack_and_send_remain_refused pull_endpoint_uses_exact_loopback_path_and_preserves_production_host canary_rejects_nonempty_pull_response_before_run_can_ack_or_send new_pins_the_google_token_uri_against_key_file_endpoint_poisoning; do
             grep -Fx "channels::gchat::tests::$name: test" "$W548_ROOT/gchat-guards/discovery.log"
           done
           cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
@@ -475,6 +478,31 @@ jobs:
             ${{ runner.temp }}/w548-gchat-live-regressions/gchat-guards/
             ${{ runner.temp }}/w548-gchat-live-regressions/gchat-product/evidence/
             ${{ runner.temp }}/w548-gchat-live-regressions/gchat-product/receipt/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Exercise running daemon adoption of a public Google Chat relink
+        if: ${{ !cancelled() && steps.gchat-cli-build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          mkdir -p "$W548_ROOT/gchat-daemon-product"
+          python3 packaging/gchat_daemon_adoption_canary.py \
+            --binary "$PWD/SRC/target/debug/neoth" \
+            --root "$W548_ROOT/gchat-daemon-product" \
+            --home "$W548_ROOT/gchat-daemon-product/neoth-home" \
+            --source "$W548_ROOT/gchat-daemon-product/openclaw.json" \
+            --evidence-dir "$W548_ROOT/gchat-daemon-product/evidence" \
+            --receipt "$W548_ROOT/gchat-daemon-product/receipt/receipt.json" \
+            --workflow .github/workflows/gchat-live-regressions.yml
+
+      - name: Upload Google Chat daemon adoption evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gchat-daemon-adoption-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w548-gchat-live-regressions/gchat-daemon-product/evidence/
+            ${{ runner.temp }}/w548-gchat-live-regressions/gchat-daemon-product/receipt/
           if-no-files-found: warn
           retention-days: 14
 

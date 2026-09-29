@@ -8,6 +8,34 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1929-W1931 live Google Chat adoption and WAL diagnosis (2026-09-29):**
+The new hosted canary starts the real daemon before relink, proves the Pending
+window has no pulls, then requires a durable Ready generation, an authenticated
+empty Pub/Sub pull and a consumed reload sentinel. Ready validation tolerates
+sentinel consumption before CLI return. Retry retains byte-identical durable
+state and a live daemon while ordinary empty polling may continue. The existing
+debug-only feature permits only canonical loopback pulls, rejects nonempty
+responses before message handling and still refuses acknowledgements and sends.
+Source review includes the actual HTTP tests and all eight custody provenance
+inputs. New selection: 61 Python contracts and 20 separate GChat feature guards;
+portable/native/channel selections stay 2396/2171 Linux/956 Windows/158/72 macOS.
+Two new Python sources bring the source inventory to1499 after rebinding.
+
+Root authenticated W1930 original11027639991 from36554877043 at9744f6c0:
+ZIP/API SHA018fb0a1b07c588e1b0c4899d3414a9b1cc90aa56a78dcf6a70ef1acade53446,
+3 extracted entries and62 exact producer source hashes. BlueBubbles adoption
+passed but clean shutdown failed: all checkpoints through WAL join are observed,
+WAL drain is absent, then timeout/SIGKILL/-9. This does not distinguish an open
+sender from request/finalization IO. W1931 adds observation-only sender-presence
+and receiver-closed markers; it changes no shutdown order, budget or outcome.
+Root record: work/gold-20260906/wave1930-daemon-checkpoint-diagnosis/ROOT_DIAGNOSIS.json.
+
+The same run completed its Google Chat guards, CLI build and authenticated public
+relink product successfully after the crypto backend fix; exact original admission
+is W1932 and remains separate. The run overall failed at BlueBubbles daemon stop.
+W1929/W1931 executable validation is pending. LF00112 and all roadmap boxes remain
+unchanged; no local executable validation ran under the absolute BSOD hold.
+
 **W1927 original focused regression admission (2026-09-29):**
 Root admitted only the pinned regression/public-CLI portion of36549337426
 atcf38a6b2:6 original ZIP/API digests,344 extracted entries,158 exact workflow,

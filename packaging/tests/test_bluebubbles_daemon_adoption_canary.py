@@ -232,7 +232,9 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             "shutdown checkpoint: core authority drained\n"
             "shutdown checkpoint: transports drained\n"
             "shutdown checkpoint: final pre-WAL tasks drained\n"
+            "shutdown checkpoint: WAL other senders absent\n"
             "shutdown checkpoint: WAL join entry\n"
+            "WAL writer diagnostic: receiver closed\n"
             "webhook drain timed out — abandoning remaining connections\n"
             "COR-34: webhook dispatch drain timed out — aborting remaining fan-out tasks\n"
             "SelfMap cron is still draining; retaining owner and suppressing replacement\n"
@@ -244,7 +246,15 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             log = Path(directory) / "daemon.log"
             log.write_text(raw, encoding="utf-8")
             progress = canary.daemon_shutdown_progress(canary.daemon_log_snapshot(log))
-            self.assertEqual(set(progress.values()), {"observed"})
+            self.assertEqual(progress["shutdown_wal_other_senders_present"], "not_observed")
+            self.assertEqual(
+                {
+                    value
+                    for name, value in progress.items()
+                    if name != "shutdown_wal_other_senders_present"
+                },
+                {"observed"},
+            )
             self.assertNotIn(secret, json.dumps(progress, sort_keys=True))
             log.write_text(
                 "channels running; idling until shutdown signal (SIGTERM / Ctrl+C)\n"

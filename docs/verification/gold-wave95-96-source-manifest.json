@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T10:25:13.4128169Z",
-  "validationStatus": "W1927 pinned158/18guards/publicCLI admitted; current crypto+shutdown product pending",
+  "capturedUtc": "2026-09-29T11:01:03.7191233Z",
+  "validationStatus": "W1929 live GChat daemon proof and W1931 WAL diagnostics source reviewed; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 53715,
-      "sha256": "54409F6869D569C651D21F092F6F0DB3D79DE2F4E6DA15FCE622FDEDB804A565"
+      "bytes": 55327,
+      "sha256": "A261443C9D21B2B857EE2694A4320920F23041D797F58710474D71F7D06A0452"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3668,8 +3668,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 44820,
-      "sha256": "25C1D543FAFE1938BEF9EF7129305F98CA3A1A7538E2088E90125D00885C1788"
+      "bytes": 45077,
+      "sha256": "7C71E5E4432453F971C98C90F17FA717F21E725B0232A6E2150D5321932F350F"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3680,6 +3680,11 @@
       "path": "packaging/gchat_converted_relink_product_canary.py",
       "bytes": 37544,
       "sha256": "C156A951D178B2F79A80976CA1D33BE3651CF6F54940AF827F67D32851963488"
+    },
+    {
+      "path": "packaging/gchat_daemon_adoption_canary.py",
+      "bytes": 26144,
+      "sha256": "EF426EA4AEB36CD92A6FC5D333E9F671768E98559C74B3947B921877041247BB"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -3773,8 +3778,8 @@
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
-      "bytes": 27557,
-      "sha256": "DEC7BD21BEB3E2E3201258B1089FBEBA63D6024A8670B6EBD1154E08DDC43731"
+      "bytes": 27961,
+      "sha256": "4958C858A5815A5DDF0E2F1EC87F5E84FF5C4DBFAB158A576A94C4DA5E227D0B"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -3790,6 +3795,11 @@
       "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
       "bytes": 22090,
       "sha256": "9A6F1523021C0A2129A45F8EC4B3EDF35C77967F11130F5BD8A1A2D805E28EB5"
+    },
+    {
+      "path": "packaging/tests/test_gchat_daemon_adoption_canary.py",
+      "bytes": 9550,
+      "sha256": "BEA5A7A60C25CC10E4F56662994FB5D073AEE77E98BABAF435A439373C2D81FC"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3893,18 +3903,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 565434,
-      "sha256": "BC06E1CC01164AD4204997EA177DA07EEC49DF3644332CD69555D908BA5F349E"
+      "bytes": 567418,
+      "sha256": "E5AF345CF055329B863BEDAF59D8902DF2FB77E5F6A33248DE6BF01F54C13497"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1601864,
-      "sha256": "C4CBE88BDCA20C21963186658289B4BCABC9614FF3E4647E47FD31343DA38F26"
+      "bytes": 1603848,
+      "sha256": "3864B7ED204B05DC613A33BFE2AB8B0630B8BE685E45FC43EDC4FDD5093BF302"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2212874,
-      "sha256": "CF3E9061B86F714374E9432112836A5096171F8439ACA658716577AC3281C200"
+      "bytes": 2214858,
+      "sha256": "BF5004FDC196EA4820909A7A5577271DDA98C5278DDF5482F0199AFC2B7AFC11"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4613,8 +4623,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/gchat.rs",
-      "bytes": 41059,
-      "sha256": "8C1DB9A633A63B5A8CEB40F8999E6B2FCD5E1DF767110590F15FFD6EEC85C7E8"
+      "bytes": 45673,
+      "sha256": "B9BA8F7B068ADE001E053246151DDC74A78D3AC08FFE77B4726034653F4780B3"
     },
     {
       "path": "SRC/neothd/src/channels/identity.rs",
@@ -5133,8 +5143,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 569214,
-      "sha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243"
+      "bytes": 569398,
+      "sha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -7348,8 +7358,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 452491,
-      "sha256": "A96BF3DF2098206E623596D1EB5B23CA949576A9289E2CA49EAD292937AD1B80"
+      "bytes": 452876,
+      "sha256": "0AC4F82F7E7C39A8E47FFEF8F632C61C4B05EC09183A2CD78F531386CF8A9710"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

@@ -1588,6 +1588,14 @@ impl WalWriterHandle {
         !self.tx.is_closed()
     }
 
+    /// Snapshot whether another producer sender exists besides this observing
+    /// handle. This is diagnostic-only: the count may change immediately after
+    /// it is read and must not influence shutdown behavior.
+    #[must_use]
+    pub(crate) fn has_other_senders(&self) -> bool {
+        self.tx.strong_count() > 1
+    }
+
     pub async fn append(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<u64, WalError> {
         self.append_with_marker_policy(header, payload, false).await
     }
@@ -6017,6 +6025,8 @@ async fn run_writer(
             }
         }
     }
+
+    info!("WAL writer diagnostic: receiver closed");
 
     if !state.is_fixed()
         && let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key)

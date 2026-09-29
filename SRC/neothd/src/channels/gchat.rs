@@ -470,20 +470,11 @@ impl GChatChannel {
     /// one request per server hold period, well inside the 120s client
     /// timeout.
     async fn pull(&self) -> Result<PullResponse, ChannelError> {
-        #[cfg(feature = "gchat-product-canary")]
-        if self.is_canary() {
-            return Err(ChannelError::Transport(
-                "gchat canary refuses traffic pull".to_string(),
-            ));
-        }
         let bearer = self.bearer().await?;
-        let url = format!(
-            "https://pubsub.googleapis.com/v1/{}:pull",
-            self.subscription
-        );
+        let endpoint = self.pull_endpoint();
         let resp = self
             .http
-            .post(&url)
+            .post(endpoint)
             .bearer_auth(&bearer)
             .json(&serde_json::json!({ "maxMessages": PULL_BATCH }))
             .send()
@@ -502,9 +493,37 @@ impl GChatChannel {
                 "gchat pubsub pull failed (HTTP {status})"
             )));
         }
-        resp.json()
+        let pulled: PullResponse = resp
+            .json()
             .await
-            .map_err(|_| ChannelError::Transport("gchat pull response parse".to_string()))
+            .map_err(|_| ChannelError::Transport("gchat pull response parse".to_string()))?;
+        self.require_empty_canary_pull(&pulled)?;
+        Ok(pulled)
+    }
+
+    /// The only canary transport exception is an empty Pub/Sub pull to its
+    /// strict loopback origin. Production always keeps Google's exact host.
+    fn pull_endpoint(&self) -> url::Url {
+        let mut endpoint =
+            url::Url::parse("https://pubsub.googleapis.com").expect("static Pub/Sub URL");
+        #[cfg(feature = "gchat-product-canary")]
+        if let Some(canary) = self.canary_endpoint() {
+            endpoint = canary;
+        }
+        endpoint.set_path(&format!("/v1/{}:pull", self.subscription));
+        endpoint
+    }
+
+    fn require_empty_canary_pull(&self, pulled: &PullResponse) -> Result<(), ChannelError> {
+        #[cfg(feature = "gchat-product-canary")]
+        if self.is_canary() && !pulled.received_messages.is_empty() {
+            return Err(ChannelError::Transport(
+                "gchat canary refuses nonempty pull response".to_string(),
+            ));
+        }
+        #[cfg(not(feature = "gchat-product-canary"))]
+        let _ = pulled;
+        Ok(())
     }
 
     /// Ack processed messages so Pub/Sub stops redelivering them.
@@ -793,24 +812,40 @@ mod tests {
 
     #[cfg(feature = "gchat-product-canary")]
     #[tokio::test]
-    async fn canary_refuses_traffic_before_bearer_or_network() {
+    async fn canary_pull_uses_loopback_while_ack_and_send_remain_refused() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
         let dir = tempfile::tempdir().unwrap();
         let key = dir.path().join("canary.json");
-        std::fs::write(&key, r#"{"client_email":"bot@neoth-canary.invalid","private_key":"not-a-pem","token_uri":"http://127.0.0.1:18470/token"}"#).unwrap();
+        let server = MockServer::start().await;
+        std::fs::write(
+            &key,
+            format!(
+                r#"{{"client_email":"bot@neoth-canary.invalid","private_key":"not-a-pem","token_uri":"{}/token"}}"#,
+                server.uri()
+            ),
+        )
+        .unwrap();
         let channel = GChatChannel::new_with_origin(
             &key,
             "projects/p/subscriptions/s",
-            Some(canary_origin("http://127.0.0.1:18470").unwrap()),
+            Some(canary_origin(&server.uri()).unwrap()),
         )
         .unwrap();
-        assert!(
-            channel
-                .pull()
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("refuses traffic pull")
-        );
+        *channel.token.lock().await = Some((
+            "fixedtoken".to_string(),
+            Instant::now() + Duration::from_secs(60),
+        ));
+        Mock::given(method("POST"))
+            .and(path("/v1/projects/p/subscriptions/s:pull"))
+            .and(header("authorization", "Bearer fixedtoken"))
+            .and(body_json(serde_json::json!({ "maxMessages": 10 })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(channel.pull().await.unwrap().received_messages.is_empty());
         assert!(
             channel
                 .ack(&["a".to_string()])
@@ -827,6 +862,90 @@ mod tests {
                 .to_string()
                 .contains("refuses message send")
         );
+    }
+
+    #[cfg(feature = "gchat-product-canary")]
+    #[test]
+    fn pull_endpoint_uses_exact_loopback_path_and_preserves_production_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let canary_key = dir.path().join("canary.json");
+        std::fs::write(
+            &canary_key,
+            r#"{"client_email":"bot@neoth-canary.invalid","private_key":"x","token_uri":"http://127.0.0.1:18470/token"}"#,
+        )
+        .unwrap();
+        let canary = GChatChannel::new_with_origin(
+            &canary_key,
+            "projects/p/subscriptions/s",
+            Some(canary_origin("http://127.0.0.1:18470").unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            canary.pull_endpoint().as_str(),
+            "http://127.0.0.1:18470/v1/projects/p/subscriptions/s:pull"
+        );
+
+        let production_key = dir.path().join("production.json");
+        std::fs::write(
+            &production_key,
+            r#"{"client_email":"bot@example.invalid","private_key":"x","token_uri":"https://oauth2.googleapis.com/token"}"#,
+        )
+        .unwrap();
+        let production = GChatChannel::new_with_origin(
+            &production_key,
+            "projects/p/subscriptions/s",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            production.pull_endpoint().as_str(),
+            "https://pubsub.googleapis.com/v1/projects/p/subscriptions/s:pull"
+        );
+    }
+
+    #[cfg(feature = "gchat-product-canary")]
+    #[tokio::test]
+    async fn canary_rejects_nonempty_pull_response_before_run_can_ack_or_send() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("canary.json");
+        let server = MockServer::start().await;
+        std::fs::write(
+            &key,
+            format!(
+                r#"{{"client_email":"bot@neoth-canary.invalid","private_key":"not-a-pem","token_uri":"{}/token"}}"#,
+                server.uri()
+            ),
+        )
+        .unwrap();
+        let channel = GChatChannel::new_with_origin(
+            &key,
+            "projects/p/subscriptions/s",
+            Some(canary_origin(&server.uri()).unwrap()),
+        )
+        .unwrap();
+        *channel.token.lock().await = Some((
+            "fixedtoken".to_string(),
+            Instant::now() + Duration::from_secs(60),
+        ));
+        Mock::given(method("POST"))
+            .and(path("/v1/projects/p/subscriptions/s:pull"))
+            .and(header("authorization", "Bearer fixedtoken"))
+            .and(body_json(serde_json::json!({ "maxMessages": 10 })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "receivedMessages": [{"ackId": "must-not-be-acked"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(channel
+            .pull()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("refuses nonempty pull response"));
     }
 
     #[test]
