@@ -126,6 +126,64 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_invalid"):
                 canary.grant_loopback_provider_consent(binary, {})
 
+    def test_daemon_diagnostic_classifies_real_startup_markers_without_retaining_sensitive_log(self):
+        secret = "https://127.0.0.1:43123/v1 bot@neoth-canary.invalid Bearer secret-token BEGIN PRIVATE KEY"
+        cases = (
+            ("process", "interrupted_install_recovery", "recover interrupted NEOTH installation before startup: failed\n" + secret),
+            ("process", "tokio_runtime", "build the tokio runtime: failed\n" + secret),
+            ("config", "runtime_config_pair", "runtime config pair at /private/home/freedom.yaml cannot be loaded\n" + secret),
+            ("consent", "provider_consent", "consent gate (V03-08 + A-2): denied\n" + secret),
+            ("wal", "boot_write", "write BOOT WAL frame: disk failure\n" + secret),
+            ("authority", "audit_rpc", "start daemon membership/audit RPC: bind failed\n" + secret),
+            ("authority", "audit_rpc", "start mandatory daemon audit RPC: bind failed\n" + secret),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "daemon.log"
+            for expected_stage, expected_reason, raw in cases:
+                with self.subTest(reason=expected_reason):
+                    log.write_text(raw, encoding="utf-8")
+                    diagnostic = canary.daemon_failure_diagnostic(canary.daemon_log_snapshot(log))
+                    self.assertEqual(diagnostic["stage"], expected_stage)
+                    self.assertEqual(diagnostic["reason"], expected_reason)
+                    rendered = json.dumps(diagnostic, sort_keys=True)
+                    self.assertNotIn(secret, rendered)
+                    self.assertNotIn("https://", rendered)
+                    self.assertNotIn(canary.PASSWORD, rendered)
+                    self.assertRegex(diagnostic["log_fingerprint_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_daemon_diagnostic_keeps_unknown_and_oversized_logs_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "daemon.log"
+            secret = "https://secret.invalid/path Bearer value"
+            log.write_text(secret, encoding="utf-8")
+            diagnostic = canary.daemon_failure_diagnostic(canary.daemon_log_snapshot(log))
+            self.assertEqual(diagnostic["stage"], "unknown")
+            self.assertEqual(diagnostic["reason"], "unknown")
+            self.assertNotIn(secret, json.dumps(diagnostic, sort_keys=True))
+            log.write_bytes(b"x" * (canary.LIMIT + 1))
+            bounded = canary.daemon_failure_diagnostic(canary.daemon_log_snapshot(log))
+            self.assertEqual(bounded["stage"], "unknown")
+            self.assertEqual(bounded["reason"], "log_exceeds_bound")
+            self.assertRegex(bounded["log_fingerprint_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_retain_daemon_diagnostics_bounds_oversized_log_without_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence, log = root / "evidence", root / "daemon.log"
+            evidence.mkdir()
+            secret = b"https://secret.invalid/path Bearer private-token "
+            log.write_bytes((secret * ((canary.LIMIT // len(secret)) + 2))[: canary.LIMIT + 1])
+            with patch.object(canary, "digest", side_effect=AssertionError("retention must not full-hash daemon log")):
+                canary.retain_daemon_diagnostics(evidence, log, self._Process(4242, returncode=1))
+            diagnostic = json.loads((evidence / "daemon-diagnostics.json").read_text(encoding="utf-8"))
+            self.assertTrue(diagnostic["log_present"])
+            self.assertEqual(diagnostic["log_size"], canary.LIMIT + 1)
+            self.assertIsNone(diagnostic["log_sha256"])
+            self.assertEqual(diagnostic["startup_cause"]["stage"], "unknown")
+            self.assertEqual(diagnostic["startup_cause"]["reason"], "log_exceeds_bound")
+            self.assertRegex(diagnostic["startup_cause"]["log_fingerprint_sha256"], r"^[0-9a-f]{64}$")
+            self.assertNotIn(secret.decode("utf-8"), json.dumps(diagnostic, sort_keys=True))
+
     def test_init_home_marks_only_fresh_daemon_canary_onboarding_complete(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "neoth-home"
@@ -228,6 +286,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.assertEqual(diagnostic["primary_phase"], "readiness")
             self.assertEqual(diagnostic["stop_failure"], "daemon_stop_failed")
             self.assertEqual(diagnostic["loopback_failure"], "loopback_cleanup_failed")
+            self.assertEqual(diagnostic["startup_cause"], {"stage": "unknown", "reason": "log_unavailable", "log_fingerprint_sha256": None})
             self.assertIsNone(state["daemon"])
             flags = canary.cleanup(root, home, source_path, root / "daemon.log", state["daemon"], evidence)
             self.assertTrue(flags["daemon_reaped"])

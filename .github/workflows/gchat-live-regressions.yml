@@ -54,6 +54,8 @@ jobs:
           mkdir -p "$W548_ROOT"/{source,log,receipt}
           git -C SRC rev-parse HEAD > "$W548_ROOT/source/head.txt"
           sha256sum \
+            SRC/neothd/src/main.rs \
+            SRC/neothd/src/lib.rs \
             SRC/neothd/src/cli/channel.rs \
             SRC/neothd/src/cli/channel/converted_relink.rs \
             SRC/neothd/src/cli/channel/converted_relink/tests.rs \
@@ -410,7 +412,7 @@ jobs:
           cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
             channels::gchat::tests:: -- --test-threads=1 2>&1 | tee "$W548_ROOT/gchat-guards/tests.log"
 
-          for name in gchat_canary_diagnostic_codes_are_fixed_and_complete failed_gchat_probe_emits_only_fixed_canary_code; do
+          for name in gchat_canary_diagnostic_codes_are_fixed_and_complete failed_gchat_probe_emits_only_fixed_canary_code failed_gchat_candidate_preparation_emits_only_fixed_canary_code_after_reservation gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain; do
             identity="cli::channel::converted_relink::tests::$name"
             discovery="$W548_ROOT/gchat-guards/${name}-discovery.log"
             actual="$W548_ROOT/gchat-guards/${name}-actual.log"

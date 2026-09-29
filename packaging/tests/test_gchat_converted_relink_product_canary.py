@@ -94,19 +94,20 @@ class GChatRelinkCanaryTests(unittest.TestCase):
     def test_fixed_canary_diagnostic_literals_cover_each_failure_phase(self):
         secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
         cases = (
-            ("constructor-key-read", "gchat_constructor", "constructor_key_read"),
-            ("bearer-rsa-pem", "gchat_bearer", "bearer_rsa_pem"),
-            ("token-post", "gchat_token", "token_post"),
-            ("subscription-body", "gchat_subscription", "subscription_body"),
-            ("space-identity", "gchat_space", "space_identity_mismatch"),
+            ("preparation", "prepare-candidate", "gchat_prepare", "prepare_candidate"),
+            ("probe", "constructor-key-read", "gchat_constructor", "constructor_key_read"),
+            ("probe", "bearer-rsa-pem", "gchat_bearer", "bearer_rsa_pem"),
+            ("probe", "token-post", "gchat_token", "token_post"),
+            ("probe", "subscription-body", "gchat_subscription", "subscription_body"),
+            ("probe", "space-identity", "gchat_space", "space_identity_mismatch"),
         )
-        for code, expected_stage, expected_reason in cases:
+        for kind, code, expected_stage, expected_reason in cases:
             with self.subTest(code=code):
                 process = subprocess.CompletedProcess(
                     ["neoth"],
                     1,
                     b"ignored",
-                    f"gchat canary exact target probe diagnostic: {code}{secret}".encode("utf-8"),
+                    f"gchat canary exact target {kind} diagnostic: {code}{secret}".encode("utf-8"),
                 )
                 diagnostic = canary.refusal_failure_diagnostic(process)
                 self.assertEqual(diagnostic["stage"], expected_stage)

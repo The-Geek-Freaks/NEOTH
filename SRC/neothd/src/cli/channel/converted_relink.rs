@@ -117,6 +117,26 @@ fn gchat_canary_probe_diagnostic_code(detail: &str) -> &'static str {
         .unwrap_or("unknown")
 }
 
+/// Collapse failures after durable GChat reservation into a fixed canary code.
+/// The public CLI must not expose the underlying error chain because it can
+/// contain the home path, a private endpoint, or credential-adjacent details.
+/// Non-canary and non-GChat callers preserve their original errors verbatim.
+fn gchat_canary_stage<T>(
+    destination: ChannelId,
+    code: &'static str,
+    result: Result<T>,
+) -> Result<T> {
+    #[cfg(feature = "gchat-product-canary")]
+    if destination == ChannelId::GoogleChat {
+        return result.map_err(|_| {
+            anyhow::anyhow!("gchat canary exact target preparation diagnostic: {code}")
+        });
+    }
+    #[cfg(not(feature = "gchat-product-canary"))]
+    let _ = (destination, code);
+    result
+}
+
 /// Secret-bearing input has no Debug implementation. The source path stays
 /// private and is never copied into the durable provenance records.
 pub(crate) struct ConvertedRelinkRequest {
@@ -203,7 +223,9 @@ where
                 id.as_str().to_owned()
             }
         };
-    let (prepared, probed_pair_sha256) =
+    let (prepared, probed_pair_sha256) = gchat_canary_stage(
+        request.destination.channel_id,
+        "prepare-candidate",
         crate::config::credentials::with_coherent_pair_transaction_at(
             &home.join("freedom.yaml"),
             || {
@@ -214,31 +236,51 @@ where
                 )?;
                 Ok((prepared, relink::pair_commitment_at(home)?))
             },
-        )?;
-    let request_material_sha256 = relink::candidate_material_commitment(
-        &prepared.candidate_credentials,
-        &request.destination,
-        &request.target,
+        ),
+    )?;
+    let request_material_sha256 = gchat_canary_stage(
+        request.destination.channel_id,
+        "prepare-material",
+        relink::candidate_material_commitment(
+            &prepared.candidate_credentials,
+            &request.destination,
+            &request.target,
+        ),
     )?;
     // Capture the route before awaiting the probe, so an ordinary routing
     // mutation during verification cannot be silently folded into our commit.
-    let (routing_before, mut routing_after) =
-        crate::channels::routing::load_for_converted_relink_at(home)?;
-    ensure!(
-        routing_after.destinations.set_for_channel(
+    let (routing_before, mut routing_after) = gchat_canary_stage(
+        request.destination.channel_id,
+        "prepare-routing",
+        crate::channels::routing::load_for_converted_relink_at(home),
+    )?;
+    let route_set: Result<()> =
+        if routing_after.destinations.set_for_channel(
             request.destination.channel_id.as_str(),
             request.target.clone(),
-        ),
-        "converted relink destination cannot have an outbound route"
-    );
-    let expected_routing_after_sha256 = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec_pretty(&routing_after)?)
-    );
+        ) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "converted relink destination cannot have an outbound route"
+            ))
+        };
+    gchat_canary_stage(request.destination.channel_id, "prepare-routing", route_set)?;
+    let expected_routing_after_sha256 = gchat_canary_stage(
+        request.destination.channel_id,
+        "prepare-routing",
+        serde_json::to_vec_pretty(&routing_after).map_err(anyhow::Error::from),
+    )
+    .map(|serialized| format!("{:x}", Sha256::digest(serialized)))?;
     let probe_started = Instant::now();
-    let result = tokio::time::timeout(PROBE_VALIDITY, probe(&prepared, &request.target))
-        .await
-        .context("converted relink exact target probe timed out")??;
+    let result = gchat_canary_stage(
+        request.destination.channel_id,
+        "probe-execution",
+        tokio::time::timeout(PROBE_VALIDITY, probe(&prepared, &request.target))
+            .await
+            .context("converted relink exact target probe timed out")
+            .and_then(|result| result),
+    )?;
     if result.status != "ok" {
         #[cfg(feature = "gchat-product-canary")]
         if request.destination.channel_id == ChannelId::GoogleChat {

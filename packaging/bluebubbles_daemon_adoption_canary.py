@@ -26,6 +26,7 @@ except ImportError:  # The hosted canary is deliberately POSIX-only.
 
 
 LIMIT = 256 * 1024
+DAEMON_DIAGNOSTIC_HASH_DOMAIN = b"neoth-bluebubbles-daemon-diagnostic-v1\0"
 TARGET = "iMessage;-;+491701234567"
 WRONG_TARGET = "iMessage;-;+491700000000"
 PASSWORD = "bluebubbles-daemon-canary-password"
@@ -34,6 +35,21 @@ RELOAD = ".reload-requested"
 DESTINATION = {"channel_id": "imessage_bluebubbles", "account_id": "default"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
 FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}")
+DAEMON_DIAGNOSTIC_MARKERS = (
+    ("recover interrupted NEOTH installation before startup", "process", "interrupted_install_recovery"),
+    ("build the tokio runtime", "process", "tokio_runtime"),
+    ("spawn the neoth main worker thread", "process", "main_worker_spawn"),
+    ("neoth main worker thread panicked", "process", "main_worker_panic"),
+    ("runtime config pair at ", "config", "runtime_config_pair"),
+    ("operator hooks at ", "config", "startup_hooks"),
+    ("GOLD-ADAPT-OH-03: onboarding incomplete", "onboarding", "onboarding_incomplete"),
+    ("consent gate (V03-08 + A-2)", "consent", "provider_consent"),
+    ("daemon startup cannot retain Allow Once consent", "consent", "ephemeral_consent"),
+    ("write BOOT WAL frame", "wal", "boot_write"),
+    ("start daemon membership/audit RPC", "authority", "audit_rpc"),
+    ("start mandatory daemon audit RPC", "authority", "audit_rpc"),
+    ("load skill registry for daemon instance", "runtime", "skill_registry"),
+)
 
 
 class Failure(RuntimeError):
@@ -61,6 +77,38 @@ def sha256(raw: bytes) -> str:
 
 def digest(path: Path) -> str:
     return sha256(path.read_bytes())
+
+
+def daemon_log_snapshot(log: Path) -> dict:
+    """Read daemon output once, with a hard bound suitable for retention."""
+    if not regular(log):
+        return {"log_present": False, "log_size": 0, "raw": None, "log_exceeds_bound": False}
+    try:
+        observed_size = log.stat().st_size
+        with log.open("rb") as stream:
+            raw = stream.read(LIMIT + 1)
+    except OSError:
+        return {"log_present": False, "log_size": 0, "raw": None, "log_exceeds_bound": False}
+    if len(raw) > LIMIT:
+        return {"log_present": True, "log_size": observed_size, "raw": None, "log_exceeds_bound": True}
+    return {"log_present": True, "log_size": observed_size, "raw": raw, "log_exceeds_bound": False}
+
+
+def daemon_failure_diagnostic(snapshot: dict) -> dict:
+    """Retain an allowlisted startup cause, never daemon log text."""
+    if not snapshot["log_present"]:
+        return {"stage": "unknown", "reason": "log_unavailable", "log_fingerprint_sha256": None}
+    if snapshot["log_exceeds_bound"]:
+        fingerprint = sha256(DAEMON_DIAGNOSTIC_HASH_DOMAIN + b"oversized\0" + str(snapshot["log_size"]).encode("ascii"))
+        return {"stage": "unknown", "reason": "log_exceeds_bound", "log_fingerprint_sha256": fingerprint}
+    raw = snapshot["raw"]
+    assert raw is not None
+    fingerprint = sha256(DAEMON_DIAGNOSTIC_HASH_DOMAIN + raw)
+    rendered = raw.decode("utf-8", "replace")
+    for marker, stage, reason in DAEMON_DIAGNOSTIC_MARKERS:
+        if marker in rendered:
+            return {"stage": stage, "reason": reason, "log_fingerprint_sha256": fingerprint}
+    return {"stage": "unknown", "reason": "unknown", "log_fingerprint_sha256": fingerprint}
 
 
 def contained(path: Path, root: Path) -> bool:
@@ -522,7 +570,7 @@ def stop_daemon(process: subprocess.Popen[bytes]) -> None:
 def source_bindings(workflow: Path) -> dict[str, str]:
     relatives = (
         "packaging/bluebubbles_daemon_adoption_canary.py", "packaging/tests/test_bluebubbles_daemon_adoption_canary.py", "packaging/converted_channel_relink_product_canary.py", ".github/workflows/gchat-live-regressions.yml",
-        "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
+        "SRC/neothd/src/main.rs", "SRC/neothd/src/lib.rs", "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/cli/init/types.rs", "SRC/neothd/src/cli/init/io.rs", "SRC/neothd/src/cli/init/first_install_identity.rs", "SRC/neothd/src/cli/init/steps_identity.rs", "SRC/neothd/src/cli/init/steps_provider.rs",
         "SRC/neothd/src/channels/imessage_bluebubbles.rs", "SRC/neothd/src/channels/relink.rs", "SRC/neothd/src/channels/routing.rs", "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs", "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs",
         "SRC/neothd/src/cluster/status_wire.rs", "SRC/neothd/src/cluster/membership.rs", "SRC/neothd/src/daemon/pidfile.rs", "SRC/neothd/src/daemon/audit_rpc/mod.rs", "SRC/neothd/src/daemon/audit_rpc/client.rs", "SRC/neothd/src/daemon/audit_rpc/server.rs", "SRC/neothd/src/daemon/audit_rpc/sidecar.rs", "SRC/neothd/src/daemon/audit_rpc/token.rs", "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs", "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs", "SRC/neothd/src/skills/store.rs",
@@ -537,15 +585,18 @@ def source_bindings(workflow: Path) -> dict[str, str]:
 
 def retain_daemon_diagnostics(evidence: Path, log: Path, process: subprocess.Popen[bytes] | None, primary_failure: Failure | None = None, primary_phase: str | None = None, stop_failure: Failure | None = None, loopback_failure: Failure | None = None) -> None:
     """Keep only redacted lifecycle facts; the daemon log itself is removed."""
+    log_snapshot = daemon_log_snapshot(log)
+    raw = log_snapshot["raw"]
     diagnostic = {
-        "log_present": regular(log),
-        "log_size": log.stat().st_size if regular(log) else 0,
-        "log_sha256": digest(log) if regular(log) else None,
+        "log_present": log_snapshot["log_present"],
+        "log_size": log_snapshot["log_size"],
+        "log_sha256": sha256(raw) if raw is not None else None,
         "returncode": process.returncode if process is not None else None,
         "primary_failure": failure_code(primary_failure),
         "primary_phase": primary_phase if primary_failure is not None else None,
         "stop_failure": failure_code(stop_failure),
         "loopback_failure": failure_code(loopback_failure),
+        "startup_cause": daemon_failure_diagnostic(log_snapshot),
     }
     (evidence / "daemon-diagnostics.json").write_text(json.dumps(diagnostic, sort_keys=True), encoding="utf-8")
 

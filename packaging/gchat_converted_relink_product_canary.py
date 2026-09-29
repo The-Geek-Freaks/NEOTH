@@ -33,7 +33,7 @@ DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REFUSAL_STAGES = frozenset(("wrong_target", "wrong_returned_space"))
 REFUSAL_COUNTERS = ("token", "subscription", "space", "wrong_space", "bad_token", "bad_bearer", "forbidden_post", "unexpected_get")
-REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_constructor", "gchat_bearer", "gchat_token", "gchat_subscription", "gchat_space", "gchat_probe", "unknown"))
+REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_prepare", "gchat_constructor", "gchat_bearer", "gchat_token", "gchat_subscription", "gchat_space", "gchat_probe", "unknown"))
 REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "candidate_service_account_file",
     "candidate_subscription_resource",
@@ -67,11 +67,19 @@ REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "space_path",
     "space_request",
     "space_body",
+    "prepare_candidate",
+    "prepare_material",
+    "prepare_routing",
+    "probe_execution",
     "unknown",
 ))
 # Fixed codes emitted only by the gchat-product-canary feature. They never
 # contain provider detail, endpoint text, key data, token material, or stderr.
 GCHAT_CANARY_DIAGNOSTIC_CODES = {
+    "prepare-candidate": ("gchat_prepare", "prepare_candidate"),
+    "prepare-material": ("gchat_prepare", "prepare_material"),
+    "prepare-routing": ("gchat_prepare", "prepare_routing"),
+    "probe-execution": ("gchat_prepare", "probe_execution"),
     "constructor-origin-not-unicode": ("gchat_constructor", "canary_origin_not_unicode"),
     "constructor-origin-invalid": ("gchat_constructor", "canary_origin_invalid"),
     "constructor-feature": ("gchat_constructor", "constructor_feature_disabled"),
@@ -166,7 +174,7 @@ def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> d
     output = b"\n".join(value for value in (process.stdout, process.stderr) if isinstance(value, bytes))
     rendered = output.decode("utf-8", "replace")
     stage, reason = "unknown", "unknown"
-    match = re.search(r"gchat canary exact target probe diagnostic: ([a-z-]+)", rendered)
+    match = re.search(r"gchat canary exact target (?:probe|preparation) diagnostic: ([a-z-]+)", rendered)
     if match is not None:
         stage, reason = GCHAT_CANARY_DIAGNOSTIC_CODES.get(match.group(1), ("unknown", "unknown"))
     else:

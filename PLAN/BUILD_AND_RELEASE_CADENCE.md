@@ -3,6 +3,28 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1894-W1898 native acceptance and product diagnosis (2026-09-29):**
+The existing b19fa69f runs completed successfully and their original ZIPs match
+GitHub API digests: Linux2160 run36436136387 (324 raw source paths), Windows945
+run36436129827 (132 raw source paths), macOS61 run36436142668 (24 raw inputs,
+including two explicit test modules). Selection/discovery/terminal identities
+match the bounded lane requirements; no failed or missing selected cases.
+Root acceptance records are under work/gold-20260906/wave1894-native2160-945-admission
+and wave1898-macos61-admission. Separate Linux custody scope confirms four required
+cases. These admit the published Nostr/Doctor/privacy/n8n source at b19fa69f.
+Product145 run36434782901 at ab556641 remains FAILED overall. Its original six
+artifacts authenticate 145 exact passing cases, 13 canary-feature guards, the
+successful public BlueBubbles relink CLI, and 85 unique raw producer bindings.
+The daemon exited 1 during readiness; Google Chat failed its wrong-target contract
+with unknown diagnosis and all eight HTTP counters zero. Neither product is
+accepted, and no proxy or inner failure cause is inferred from those counters.
+W1896/W1897 extend fixed, redacted pre-probe/startup diagnosis for the next hosted
+product run. New source validation is pending; no runtime cause is claimed fixed.
+Inventories remain1496sources/2385portable/2160Linux/945Windows/147channel/61macOS;
+four separately selected canary-feature diagnostics now cover the extra stages.
+ROAD remains1324/1081done/241open/2partial; WS-LF43done/75open; no checkbox closure.
+No local executable validation, .slint change or duplicate dispatch.
+
 **W1889/W1891 Nostr setup preflight and Linux2156 acceptance (2026-09-28):**
 A build without nostr-channel now rejects Nostr setup before flag collection or
 private-key prompting, configuration loading, staging or persistence. Both actual

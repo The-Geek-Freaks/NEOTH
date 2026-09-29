@@ -640,6 +640,72 @@ fn gchat_canary_diagnostic_codes_are_fixed_and_complete() {
 }
 
 #[cfg(feature = "gchat-product-canary")]
+#[test]
+fn gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain() {
+    for code in [
+        "prepare-candidate",
+        "prepare-material",
+        "prepare-routing",
+        "probe-execution",
+    ] {
+        let error = gchat_canary_stage(
+            ChannelId::GoogleChat,
+            code,
+            Err::<(), anyhow::Error>(anyhow::anyhow!(
+                "https://private.invalid/secret-adjacent"
+            )),
+        )
+        .err()
+        .expect("failed canary preparation must produce a fixed diagnostic");
+        let rendered = format!("{error:#}");
+        assert_eq!(
+            rendered,
+            format!("gchat canary exact target preparation diagnostic: {code}")
+        );
+        assert!(!rendered.contains("private.invalid"));
+    }
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[tokio::test]
+async fn failed_gchat_candidate_preparation_emits_only_fixed_canary_code_after_reservation() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    write_encrypted_first_use_home(&home);
+    let source = temp.path().join("openclaw.json");
+    std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    let service_account_directory = temp.path().join("private-service-account-directory");
+    std::fs::create_dir(&service_account_directory).unwrap();
+
+    let error = prepare_converted_relink_with_probe_at(
+        &home,
+        request(
+            &source,
+            ConvertedRelinkChannel::GoogleChat,
+            Some(&service_account_directory),
+            "spaces/AAAA-converted-relink",
+        ),
+        |_, _| {
+            Box::pin(async { panic!("candidate preparation must fail before the injected probe") })
+        },
+    )
+    .await
+    .err()
+    .expect("a directory cannot become a Google Chat service-account file");
+    let rendered = format!("{error:#}");
+    assert_eq!(
+        rendered,
+        "gchat canary exact target preparation diagnostic: prepare-candidate"
+    );
+    assert!(!rendered.contains("private-service-account-directory"));
+    assert!(matches!(
+        relink::gate_for_at(&home, &ChannelRef::default_account(ChannelId::GoogleChat)).unwrap(),
+        RelinkGate::Pending(_)
+    ));
+}
+
+#[cfg(feature = "gchat-product-canary")]
 #[tokio::test]
 async fn failed_gchat_probe_emits_only_fixed_canary_code() {
     let temp = tempfile::tempdir().unwrap();

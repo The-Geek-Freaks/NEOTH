@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-28T14:23:53.5766188Z",
-  "validationStatus": "W1889 source approved; W1891/92/93 pinned native recovery accepted; fresh source gates pending",
+  "capturedUtc": "2026-09-29T06:22:07.2553297Z",
+  "validationStatus": "Native2160/945/61 and priorChannel145/publicCLI admitted; W1896/97 diagnostics reviewed, hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 50751,
-      "sha256": "AB9716649DFB8A9055252A3B04C3A0EFF83214BA5D225E5D110E75DD4975B2CD"
+      "bytes": 50975,
+      "sha256": "3463C66791BF1F97B5FAF0D6C50B50C640753A0A9981C53B7A34A9686AF8E23D"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3663,8 +3663,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 37647,
-      "sha256": "D1B2BB30642F830D453DAABCB17B8956213F99B65BADA36886FB3A0E7ABB7DC0"
+      "bytes": 40576,
+      "sha256": "041ABA4A62BFFB503E55F32213F34C77E36D73881C59302BD40DC2083B895E3E"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3673,8 +3673,8 @@
     },
     {
       "path": "packaging/gchat_converted_relink_product_canary.py",
-      "bytes": 34801,
-      "sha256": "E54449DCD845565F9A3495A693106E99B4B3E998A6A733E4A06851BD06ECC649"
+      "bytes": 35179,
+      "sha256": "627648CA7939FB632E30990C584798242882722251AAE39382EB21B357FDCD51"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -3768,8 +3768,8 @@
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
-      "bytes": 15492,
-      "sha256": "B3B51F296B8ED351F72D5063B1D0F398E8D41D639446E654C2698C1BFCE665FC"
+      "bytes": 19736,
+      "sha256": "A529076F2E7AAF9A5AEDCFB4B918FC8CFCA95C5ED688D8233DCE8FCC5B9652B1"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -3783,8 +3783,8 @@
     },
     {
       "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
-      "bytes": 15937,
-      "sha256": "F5E47FF05B48C63EA54FA7259A0872CAADE54E22EFC45E3597EDC40B2D774555"
+      "bytes": 16077,
+      "sha256": "A9AA20DAD310227C1BF69D96506FF06D030230AEB830C0720B5EC7A6A6D2D630"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 541865,
-      "sha256": "793C87E8BAD15B0E57EDC2BA41563A7B16B979DDDBBE06C2BCF411DDCCF664C0"
+      "bytes": 543532,
+      "sha256": "E87480CAF8D7F4DC1EF70F52F7C98E67981948C6AB8F0A339D3EDC6C73E5712A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1578295,
-      "sha256": "226AF746E6EDF9CC9C4ABAE932E0BA952100C818AD56C865A4662C254F6A3AA6"
+      "bytes": 1579962,
+      "sha256": "15CE8295E08EAAAC98895042B4F09B278A532A059117486B680E4E1D987EDBC5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2189305,
-      "sha256": "2AE882FC9176C1E2C77541A4417F700154A8374CDBD090F2EFF9C5F9C03B39DC"
+      "bytes": 2190972,
+      "sha256": "774216B04A8ACF3944EB4A6F18D51DFAF2524B52319C80B44E45B18D5955B72E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4753,13 +4753,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
-      "bytes": 18342,
-      "sha256": "895CD1B2127FE8F8C9D403C56BDB7D053CE473C6B156AB7E6A7F67DCDDBC60AF"
+      "bytes": 19910,
+      "sha256": "0FEE9B0556ED4B89E118BED19E93FC50724A9FCBE0845201FCD025A7C78AA3D9"
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "bytes": 25384,
-      "sha256": "72F32CE72008A968776EC93646C3F68B5C8A2C4D4C4B5C9107BCCB5639FF17E8"
+      "bytes": 27710,
+      "sha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
