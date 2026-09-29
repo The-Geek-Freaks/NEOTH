@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T10:05:34.0637104Z",
-  "validationStatus": "W1925 fixed shutdown checkpoints; original W1924 product failure admitted; next hosted validation pending",
+  "capturedUtc": "2026-09-29T10:15:31.6273517Z",
+  "validationStatus": "W1922 RSA backend/hosted lock imported and reviewed; product verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3893,18 +3893,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 563050,
-      "sha256": "318C8D6B680705AE8E0C9C7CD9957F86E15937120AFEB67DC3397048C38F9DF3"
+      "bytes": 564267,
+      "sha256": "54A0DA4B780F62096A274185889A2F4FA62392DE7852BB4E6D85DB5DC899B329"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1599480,
-      "sha256": "04082903A16B856EA077AEE60B98BAC34B78ADC8AE1C00C620E6D30FAA963A52"
+      "bytes": 1600697,
+      "sha256": "D16C20B7A9F88B75A65FA2CE4DE8D59C25ABA5B9058F4F9299EF3B60C02BA1AE"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2210490,
-      "sha256": "5860CC014B57D0FBB047ED678E211AC8177C3F18CD55AC521E7E86B6E52DEF03"
+      "bytes": 2211707,
+      "sha256": "B66C78FEE6DD55DEF8FA12281AF84217AC3FF6F9BABF9F200E3161241B6F86C7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3963,8 +3963,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 385403,
-      "sha256": "EAF75EAF1045B7736010227542DAC09D0FA0711E59F9338FEFB057F711322B56"
+      "bytes": 390182,
+      "sha256": "9D2DBE2EE1718F8F6BB69423E336735D220E89E6F4CCF1E68F0BE48B3A7F3171"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -4588,8 +4588,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46469,
-      "sha256": "B13CB479F79CE37A6F287F77A564A41322D5ACF3702FF2FF1D6442B7E8D733AC"
+      "bytes": 46580,
+      "sha256": "439F965DA5871C09C653319AD57AD9BB31D630C7EC4FCE02B9001A87C0E30900"
     },
     {
       "path": "SRC/neothd/src/analytics/mod.rs",

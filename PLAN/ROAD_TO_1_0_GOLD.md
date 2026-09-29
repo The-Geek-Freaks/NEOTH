@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1922/W1926 Google Chat crypto backend imported (2026-09-29):**
+Enable jsonwebtoken rust_crypto while retaining default PEM support. Hosted
+resolver36554232166 at324d664d generated the complete manifest/lock pair and
+passed metadata plus repeated --locked metadata. Root authenticated original
+11027265426 ZIP/API SHA dbc7bf106f8b4243f2ba55f27f708e7ef90d6241bd99cd3e9bea21e1dd5c1069,
+all5 SHA256SUMS, exact producer, lock preimage and both exact postimages.
+Independent review APPROVE: required RSA/ECC backend additions and version
+qualification only; existing packages remain pinned. Import record:
+work/gold-20260906/wave1922-gchat-crypto-backend/hosted-lock/ROOT_IMPORT.json.
+W1926 separately authenticates original11024854505 from36549337426 atcf38a6b2:
+17entries; refusal diagnostic runtime/worker_thread_panic, returncode1 and
+all provider counters zero. This proves a worker panic, not its exact payload
+or source location; missing crypto backend is separately proven by source.
+Both products on that producer remain rejected. Next single product run must
+validate this source pair plus W1925 checkpoints after current Preflight.
+No local runtime, no source-only product acceptance and no roadmap closure.
+
 **W1924/W1925 daemon shutdown boundary (2026-09-29):**
 Root verified original11024439033 from36549337426 atcf38a6b2: ZIP/API digest,
 3 extracted entries and62 retained Git/GitHub raw source bindings. The actual

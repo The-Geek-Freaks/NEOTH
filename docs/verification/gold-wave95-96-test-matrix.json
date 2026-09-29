@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1925 fixed shutdown checkpoints; original W1924 product failure admitted; next hosted validation pending",
+  "status": "W1922 RSA backend/hosted lock imported and reviewed; product verification pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270014,
-    "sha256": "5D1B9B65577AD5B7B469B8FE1FD823822B9D915F1C2932A349F5FDEBDE5C21FE"
+    "bytes": 269990,
+    "sha256": "E2537732D64ACAFFA2EB90DF8E9BCDBE73FD31FCD0AE5BD1FC8EF4164E49062B"
   },
   "sourceInputs": 1497,
   "requiredNativeTests": [
@@ -61012,6 +61012,44 @@
       }
     ],
     "note": "W1924 original11024439033/run36549337426/cf38a6b2 ZIP0d1909b2bb7c74830e6f97cc848621c8bb28b5ed8f915ed719804be7676025b7,3entries/62raw sources Root rehashed; stop_timeout/-9 remains fatal despite adoption. Root record0764635baf6167b882abea73449c9dde28a908cdc15d1a8be02ff745c0a06b60. W1925 adds13 fixed payload-free checkpoints only; core authority marker scoped precisely after independent review; existing Python contract expanded, no count change. W1922 manifest candidate unpublished; no local executable validation or roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1922CryptoBackendImport": {
+    "base": "324d664d4250858ca50dfaf863f0d5ef90e9cd34",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 564267,
+        "sha256": "54A0DA4B780F62096A274185889A2F4FA62392DE7852BB4E6D85DB5DC899B329",
+        "blob": "74d660420c8b7c20c8f2547810cadaac266c71e7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1600697,
+        "sha256": "D16C20B7A9F88B75A65FA2CE4DE8D59C25ABA5B9058F4F9299EF3B60C02BA1AE",
+        "blob": "1e91aa111814a8fe8c50164350338fa0a06d9261"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2211707,
+        "sha256": "B66C78FEE6DD55DEF8FA12281AF84217AC3FF6F9BABF9F200E3161241B6F86C7",
+        "blob": "ef7e91e25864489ecc3ab26c7d8ebbdfe50c7a46"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 390182,
+        "sha256": "9D2DBE2EE1718F8F6BB69423E336735D220E89E6F4CCF1E68F0BE48B3A7F3171",
+        "blob": "83e1651bf51ae589435806b316db45dc4f43b992"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46580,
+        "sha256": "439F965DA5871C09C653319AD57AD9BB31D630C7EC4FCE02B9001A87C0E30900",
+        "blob": "d12c02fdfe782080667db28a7a0813f64702713f"
+      }
+    ],
+    "note": "Root authenticated hosted36554232166@324d664d artifact11027265426 ZIP/API and5sealed hashes, exact manifest+lock postimages; full diff independent APPROVE. Import recordC1D1345A383EC85C41F51E296B1C4847BFF4098B1BB1024BFA87894636ED1456. W1926 original11024854505/17entries confirms workerpanic before network, exact cause not in receipt. No local runtime. Existing product36549337426 terminal failed bothproducts; next sole dispatch after Preflight.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
