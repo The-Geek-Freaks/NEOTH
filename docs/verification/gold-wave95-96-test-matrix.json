@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static reviewed canary shutdown budget and GChat test import; fresh hosted validation pending",
+  "status": "pinned Linux2169 and prior156channel plus publicCLI admitted; new product36542284543 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269818,
-    "sha256": "4D04AEF9F6BC601B31BFABE076C830425FAE957D71BB00FE5E28CA242D17664B"
+    "bytes": 269817,
+    "sha256": "CD981FD94B63BD4D35DD2B80C823543D025068AF31F15756CFD496C2A65ED4C8"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -60565,7 +60565,7 @@
     "pythonCanaryContracts": 50,
     "daemonPythonContracts": 25,
     "sourceBindings": 60,
-    "hostedValidation": "pending",
+    "hostedValidation": "all50Python canary contracts passed36542284543@12cc0005; real daemon shutdown pending",
     "localExecutableValidationRan": false
   },
   "wave1911GchatGuardImport": {
@@ -60628,6 +60628,77 @@
       }
     ],
     "note": "W1909 actual daemon adoption witnessed, SIGTERM15s timeout still fatal. W1910 bounded120s canary grace with fixed redacted shutdown observations; forced kill/unreaped/nonzero fatal;50Python contracts. W1911 original E0432 fixed only gated Credentials import. Independent final static APPROVE. Linux2169d358ed9f SUCCESS original admission active. No local executable validation, native redispatch or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1912Linux2169Admission": {
+    "run": 36538876474,
+    "producer": "d358ed9f28a92af7ae0dfd4d5e83ab7c597df756",
+    "record": "work/gold-20260906/wave1912-linux2169-admission/ROOT_ACCEPTANCE.json",
+    "recordSha256": "0c9806788283fd4a11a766a082dc40e07a0de73a71f484faf2de370696e91851",
+    "selected": 2169,
+    "discovery": 2169,
+    "started": 2169,
+    "passed": 2169,
+    "failed": 0,
+    "missing": 0,
+    "originalArtifacts": 3,
+    "extractedEntries": 12,
+    "rawProducerBindings": 343,
+    "scope": "Pinned Linux2169 lifecycle only",
+    "localExecutableValidationRan": false
+  },
+  "wave1913Product156Admission": {
+    "run": 36537978930,
+    "producer": "5e345e08a59cfc899d3c5b68d292c03cd19c1307",
+    "record": "work/gold-20260906/wave1913-product156-admission/ROOT_ACCEPTANCE.json",
+    "recordSha256": "d76370f98ac16e9d88f44a2fd096301ea15286637a3be0ada942061e10df3029",
+    "channelCases": 156,
+    "publicCLI": "admitted",
+    "originalArtifacts": 4,
+    "extractedEntries": 320,
+    "rawProducerBindings": 88,
+    "gchatGuards": "unaccepted_compiler_failure",
+    "gchatProduct": "not_reached",
+    "daemon": "adoption_witness_confirmed_shutdown_failed_unaccepted",
+    "localExecutableValidationRan": false
+  },
+  "wave1910to1913HostedRunLedger": {
+    "producer": "12cc00055aff98c672ca1077d7967e3a9aaa74cf",
+    "preflight": 36542070309,
+    "preflightConclusion": "success",
+    "codeQuality": 36542069945,
+    "codeQualityConclusion": "success",
+    "product": 36542284543,
+    "pythonContracts": 50,
+    "pythonStepConclusion": "success",
+    "productStatus": "in_progress",
+    "localExecutableValidationRan": false,
+    "roadmapBoxesClosed": 0
+  },
+  "wave1912to1913EvidenceBindings": {
+    "base": "12cc00055aff98c672ca1077d7967e3a9aaa74cf",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 557362,
+        "sha256": "4FEE0DCF2FE67A62C410F334E74975E949FEBE733D0C3CE4BD9D629D6C44FEE0",
+        "blob": "d56bf8935eb9fc0790650f18e79905f017b85019"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1593792,
+        "sha256": "EC2405086017ADF842E375BE9A032BE4E38622D6A17010B67B49B64FEAC669DD",
+        "blob": "fbfa474c3097781e502a4d6c6276d904473b9a67"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2204802,
+        "sha256": "2FA4EDA33C7CD788113B223838CB573A7B239E12F51DB0B6BD37B8001F176141",
+        "blob": "581f542b9929b88bb3ae83a84c3d05f4a653e02a"
+      }
+    ],
+    "note": "W1912 Root verified3originalZIPs/12entries/2169exactcases/343rawpaths atd358ed9f. W1913 Root verified4ZIPs/320entries/156channel cases/publicCLI/88rawpaths at5e345e08;18GChatguards and daemon shutdown remain unaccepted. New12cc0005 Preflight/Quality SUCCESS and50Python contracts PASS; single product36542284543 active. No local runtime, duplicate dispatch or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

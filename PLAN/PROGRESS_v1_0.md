@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
+**W1912/W1913 original lifecycle admissions (2026-09-29):**
+Root admitted Linux2169 run36538876474 atd358ed9f:2169 exact selected, listed,
+started and single-test PASS identities, zero failed/missing. All3 original
+ZIP/API digests and12 extracted entries match;343 raw producer paths cover
+325 selected-source paths,12 input paths and6 project target roots from Cargo
+receipts. This confirms the hosted CLI-reference correction at that producer.
+Root also admitted156 channel regression cases and the separate public BlueBubbles
+CLI lifecycle from failed run36537978930 at5e345e08:4 original ZIPs,320 extracted
+entries and88 raw producer bindings. The single integration-test display alias
+is tied to its literal workflow target and own discovery/PASS logs. The public
+CLI first reaches Ready, retry is byte-idempotent, wrong target is refused and
+cleanup completes. The18 GChat guards and daemon shutdown remain UNACCEPTED.
+Records: work/gold-20260906/wave1912-linux2169-admission/ROOT_ACCEPTANCE.json and
+work/gold-20260906/wave1913-product156-admission/ROOT_ACCEPTANCE.json.
+W1910/W1911 changes are published12cc0005; Preflight36542070309 and
+CodeQuality36542069945 passed. Single successor product156run36542284543 is
+pinned12cc0005 and has passed all50 Python contracts; remaining native/product
+steps are pending. No native redispatch, local execution or roadmap closure.
+
 **W1909-W1911 daemon shutdown evidence and isolated GChat compiler repair (2026-09-29):**
 Product156 run36537978930 at5e345e08 failed after the45-Python,156-channel and
 public BlueBubbles CLI steps passed. Root verified original daemon artifact
