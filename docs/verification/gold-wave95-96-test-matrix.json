@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1922 missing JWT backend diagnosed; exact hosted lock reconciliation prepared; source candidate unpublished",
+  "status": "W1925 fixed shutdown checkpoints; original W1924 product failure admitted; next hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270017,
-    "sha256": "0219F20EB5F050B793675EE492DBDC5B74CAC7C8ED0105A3668339AEEB1AB964"
+    "bytes": 270014,
+    "sha256": "5D1B9B65577AD5B7B469B8FE1FD823822B9D915F1C2932A349F5FDEBDE5C21FE"
   },
   "sourceInputs": 1497,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -7818,13 +7818,13 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_startup_factory_keeps_two_named_accounts_and_reload_is_account_scoped",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_framed_tokens_disambiguate_health_and_reload_fingerprints",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -8148,7 +8148,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_workspace_change_retires_only_matching_runtime_health_and_reload_generation",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -9528,13 +9528,13 @@
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::document_ingest_is_absent_by_default_and_reload_disable_stops_it",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::disabled_document_ingest_returns_before_worker_construction",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -13548,19 +13548,19 @@
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD",
+      "sourceSha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
       "junitClass": "neoth"
     },
     {
@@ -60968,6 +60968,50 @@
       }
     ],
     "note": "Only workflow+PLAN+inventories published. Manifest rust_crypto candidate remains Root WIP until hosted resolver artifact; no hand-edited lock, no local runtime, no duplicate dispatch.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1925ShutdownCheckpoints": {
+    "base": "656ec36175f2d2bb4e7e36ab554a1b4b80e7123c",
+    "sources": [
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 44820,
+        "sha256": "25C1D543FAFE1938BEF9EF7129305F98CA3A1A7538E2088E90125D00885C1788",
+        "blob": "c1e60b0f2eff0b4174aa14d0261594c8030e0528"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 27557,
+        "sha256": "DEC7BD21BEB3E2E3201258B1089FBEBA63D6024A8670B6EBD1154E08DDC43731",
+        "blob": "72b42a30dbf2bd82787da0af20b168271ac9961a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 563050,
+        "sha256": "318C8D6B680705AE8E0C9C7CD9957F86E15937120AFEB67DC3397048C38F9DF3",
+        "blob": "df7e3b0969b2a5e928a572f3dc4b6a6b4cd8646e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1599480,
+        "sha256": "04082903A16B856EA077AEE60B98BAC34B78ADC8AE1C00C620E6D30FAA963A52",
+        "blob": "969ebefe92f47433b65f7edf4667ac5737b0444c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2210490,
+        "sha256": "5860CC014B57D0FBB047ED678E211AC8177C3F18CD55AC521E7E86B6E52DEF03",
+        "blob": "09b3aa5157932f79b1093a914560a117d2504765"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 569214,
+        "sha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243",
+        "blob": "38966954f6d6d30cdd1c2017ad299235213eb8e9"
+      }
+    ],
+    "note": "W1924 original11024439033/run36549337426/cf38a6b2 ZIP0d1909b2bb7c74830e6f97cc848621c8bb28b5ed8f915ed719804be7676025b7,3entries/62raw sources Root rehashed; stop_timeout/-9 remains fatal despite adoption. Root record0764635baf6167b882abea73449c9dde28a908cdc15d1a8be02ff745c0a06b60. W1925 adds13 fixed payload-free checkpoints only; core authority marker scoped precisely after independent review; existing Python contract expanded, no count change. W1922 manifest candidate unpublished; no local executable validation or roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T09:43:25.4766880Z",
-  "validationStatus": "W1922 missing JWT backend diagnosed; exact hosted lock reconciliation prepared; source candidate unpublished",
+  "capturedUtc": "2026-09-29T10:05:34.0637104Z",
+  "validationStatus": "W1925 fixed shutdown checkpoints; original W1924 product failure admitted; next hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3668,8 +3668,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 43711,
-      "sha256": "ABFCE7A645D5C1B2F3225E6C410077D0CDC946AAF4BBF8BD045525C51986AE6E"
+      "bytes": 44820,
+      "sha256": "25C1D543FAFE1938BEF9EF7129305F98CA3A1A7538E2088E90125D00885C1788"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3773,8 +3773,8 @@
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
-      "bytes": 26792,
-      "sha256": "4FD1EDF1CF24D01D449D8F09F1ADA7E26CFC1920907DD79E55572BFCAFAACDB1"
+      "bytes": 27557,
+      "sha256": "DEC7BD21BEB3E2E3201258B1089FBEBA63D6024A8670B6EBD1154E08DDC43731"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -3893,18 +3893,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 561902,
-      "sha256": "4386BD23A33FC1227B43DCECE9633405C6E03AA26F70FB800B58C5594EAA5CAE"
+      "bytes": 563050,
+      "sha256": "318C8D6B680705AE8E0C9C7CD9957F86E15937120AFEB67DC3397048C38F9DF3"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1598332,
-      "sha256": "9B6C4077FD17F37BD6DCDF632C4E81772A279C193B8471F065EFCAB3D835A610"
+      "bytes": 1599480,
+      "sha256": "04082903A16B856EA077AEE60B98BAC34B78ADC8AE1C00C620E6D30FAA963A52"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2209342,
-      "sha256": "80713C54B1BC9F1E77EFF7AB81150C7A215F50282B9568906395956E1EB07703"
+      "bytes": 2210490,
+      "sha256": "5860CC014B57D0FBB047ED678E211AC8177C3F18CD55AC521E7E86B6E52DEF03"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5133,8 +5133,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 568474,
-      "sha256": "3F3EC3E8A359BA8CFFAE712D012C54B1B5DBC0C72FBEAA4AB3781BFD38AFF6AD"
+      "bytes": 569214,
+      "sha256": "AF2D1E874A473EE754AD57EA9D451A44A1BAF26F8DF2A26DF38D2CFBBA65B243"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",

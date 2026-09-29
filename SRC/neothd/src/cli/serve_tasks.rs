@@ -8961,12 +8961,15 @@ pub(crate) async fn shutdown_background_tasks(
         confirm_drain_task,
     } = handles;
 
+    info!("shutdown checkpoint: background entry");
+
     // Close every generation-bound effect authority before tearing down any
     // other subsystem. Publication uses the same lock, so a concurrent reload
     // cannot create fresh gates after this point; admitted Dream commits and
     // updater leaves drain through their mandatory terminal WAL result before
     // the shutdown sequence advances.
     retire_generation_effect_runtime(&reload_controller).await;
+    info!("shutdown checkpoint: generation effects retired");
 
     // No hook may start a new plugin invocation after OnShutdown. The
     // registration guard owns the compiled invoker and its WAL sender.
@@ -8990,6 +8993,7 @@ pub(crate) async fn shutdown_background_tasks(
 
     // Close new proactive acquisition first, then retain already leased sends
     // through their registry drain before any receive adapter is aborted.
+    info!("shutdown checkpoint: channel revoke entry");
     live_channels.revoke_all_and_drain().await;
     abort_channel_readiness_publishers(&readiness_publishers).await;
 
@@ -9043,6 +9047,7 @@ pub(crate) async fn shutdown_background_tasks(
             dispatch_join.lock().await.shutdown().await;
         }
     }
+    info!("shutdown checkpoint: channels and dispatch drained");
 
     // Abort the cron scheduler — same reasoning as channels: stop emitting
     // new WAL frames before the writer drains.
@@ -9072,6 +9077,7 @@ pub(crate) async fn shutdown_background_tasks(
     // drain below.  A SelfMap timeout is permitted to return early, so it
     // cannot retain an `UpdaterSupervisorHandle` whose Drop would detach an
     // admitted updater pass or its WAL root.
+    info!("shutdown checkpoint: updater shutdown entry");
     if let Some(failure) = updater_supervisor.shutdown().await {
         match failure {
             crate::daemon::updater_cron::UpdaterSupervisorFailure::DeadlineExceeded(passes) => {
@@ -9083,6 +9089,7 @@ pub(crate) async fn shutdown_background_tasks(
         }
     }
     let retained_updater_deadline = !retained_updater_passes.is_empty();
+    info!("shutdown checkpoint: retained updater joins entry");
     let mut retained_updater_error = None;
     for pass in retained_updater_passes {
         if let Err(error) = pass.join().await {
@@ -9112,6 +9119,7 @@ pub(crate) async fn shutdown_background_tasks(
             return Err(SelfMapShutdownTimeout { phase }.into());
         }
     }
+    info!("shutdown checkpoint: cron fleet drained");
 
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
     // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
@@ -9138,6 +9146,7 @@ pub(crate) async fn shutdown_background_tasks(
         // executor, iroh foreign writer and mDNS before the WAL writer closes.
         cluster_runtime_supervisor.shutdown().await;
     }
+    info!("shutdown checkpoint: cluster drained");
 
     // Abort the installer_ran + credentials_import sidecar ingesters.
     // Same at-least-once contract — any sidecars still on disk get
@@ -9203,6 +9212,7 @@ pub(crate) async fn shutdown_background_tasks(
             "counterparty-consent audit final-drain failed; denial retained for next start"
         ),
     }
+    info!("shutdown checkpoint: outboxes drained");
 
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
     // start picks up from `wal_cursor`.
@@ -9244,6 +9254,7 @@ pub(crate) async fn shutdown_background_tasks(
         let _ = tokio::task::spawn_blocking(move || owner.shutdown()).await;
     }
     drop(obsidian_archive_bridge_owner);
+    info!("shutdown checkpoint: core authority drained");
     // Abort the independent /healthz listener; it never writes WAL.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 
@@ -9380,6 +9391,7 @@ pub(crate) async fn shutdown_background_tasks(
         info!(local_port = t.local_port(), "stopping ssh tunnel");
         t.shutdown();
     }
+    info!("shutdown checkpoint: transports drained");
 
     // GOLD-ADAPT-GOOSE-03: abort the confirm-bus drain task. WAL-free so it
     // can safely stop here, just before the writer closes.
@@ -9413,12 +9425,14 @@ pub(crate) async fn shutdown_background_tasks(
                 error.context("reconcile interrupted updater leaves before daemon WAL shutdown"),
             ),
         };
+    info!("shutdown checkpoint: final pre-WAL tasks drained");
 
     // Every task that cloned either root has now stopped. Consume both roots
     // before closing the last WAL sender; each owns a sender even when its
     // corresponding feature is disabled.
     release_wal_sender_roots(shared_provider, companion_state);
     drop(writer);
+    info!("shutdown checkpoint: WAL join entry");
     let writer_join_result = match writer_join_result {
         Some(result) => result,
         None => writer_join.await,

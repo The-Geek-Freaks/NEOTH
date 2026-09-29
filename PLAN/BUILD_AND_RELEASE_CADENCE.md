@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1924/W1925 daemon shutdown boundary (2026-09-29):**
+Root verified original11024439033 from36549337426 atcf38a6b2: ZIP/API digest,
+3 extracted entries and62 retained Git/GitHub raw source bindings. The actual
+BlueBubbles daemon again proves authenticated empty-message-query adoption,
+but120s stop timeout requires SIGKILL/-9 and remains a failed product gate.
+SIGTERM and serve_shutdown_entered are observed; WAL-drained and the existing
+later failure markers are absent. The serve-entry marker is AFTER GUI/chat
+admission drains, W1915 local-root releases and initial effect retirement, so
+those phases completed. No exact later wait is attributed from this receipt.
+W1925 adds only fixed, payload-free shutdown checkpoints and extends the
+existing redaction/allowlist contract so the next hosted run brackets the wait.
+Shutdown ordering, budgets and acceptance gates are unchanged. Hosted validation
+for these checkpoints is pending. Current run passed53Python/158channel and
+publicCLI API steps; full original admission is separate. No roadmap closure.
+Root record: work/gold-20260906/wave1924-daemon-shutdown-diagnosis/ROOT_DIAGNOSIS.json.
+
 **W1922 Google Chat JWT backend diagnosis (2026-09-29; candidate only):**
 Pinned jsonwebtoken10.4.0 defaults to use_pem without a crypto backend. NEOTH
 activates neither rust_crypto/aws_lc_rs nor a custom CryptoProvider. Its RS256
