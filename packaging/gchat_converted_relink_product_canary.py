@@ -33,7 +33,7 @@ DURABLE = ("credentials.yaml", "freedom.yaml", "channel_routing.json", "channel_
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REFUSAL_STAGES = frozenset(("wrong_target", "wrong_returned_space"))
 REFUSAL_COUNTERS = ("token", "subscription", "space", "wrong_space", "bad_token", "bad_bearer", "forbidden_post", "unexpected_get")
-REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_prepare", "gchat_constructor", "gchat_bearer", "gchat_token", "gchat_subscription", "gchat_space", "gchat_probe", "unknown"))
+REFUSAL_DIAGNOSTIC_STAGES = frozenset(("candidate", "gchat_prepare", "gchat_constructor", "gchat_bearer", "gchat_token", "gchat_subscription", "gchat_space", "gchat_probe", "runtime", "unknown"))
 REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "candidate_service_account_file",
     "candidate_subscription_resource",
@@ -76,6 +76,8 @@ REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "begin_pending",
     "recheck_candidate",
     "probe_unclassified",
+    "panic_hook_observed",
+    "worker_thread_panic",
     "unknown",
 ))
 # Fixed codes emitted only by the gchat-product-canary feature. They never
@@ -122,6 +124,15 @@ GCHAT_CANARY_DIAGNOSTIC_CODES = {
     "unknown": ("gchat_probe", "probe_unclassified"),
 }
 REFUSAL_OUTPUT_HASH_DOMAIN = b"neoth-gchat-refusal-output-v1\0"
+# The public binary's installed hook emits this complete, line-oriented
+# signature before an unwind reaches the launcher. The canary retains only
+# this fixed observation, never the hook payload or source location.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+NEOTH_PANIC_HOOK_LINE = re.compile(
+    r"^\[neoth panic\] ts_unix=\d+ at [^\r\n]+:\d+: .+ \(version=[^()\r\n]+\)$",
+    re.MULTILINE,
+)
+NEOTH_WORKER_PANIC_LINE = re.compile(r"^Error: neoth main worker thread panicked$", re.MULTILINE)
 REFUSAL_ERROR_MARKERS = (
     ("Google Chat relink lacks service-account file", "candidate", "candidate_service_account_file"),
     ("subscription must be the full resource name", "candidate", "candidate_subscription_resource"),
@@ -181,7 +192,7 @@ def refusal_output_hash(process: subprocess.CompletedProcess[bytes]) -> str:
 def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> dict:
     """Classify bounded output without ever retaining its untrusted text."""
     output = b"\n".join(value for value in (process.stdout, process.stderr) if isinstance(value, bytes))
-    rendered = output.decode("utf-8", "replace")
+    rendered = ANSI_ESCAPE.sub("", output.decode("utf-8", "replace")).replace("\r\n", "\n")
     stage, reason = "unknown", "unknown"
     match = re.search(r"gchat canary exact target (?:probe|preparation) diagnostic: ([a-z-]+)", rendered)
     if match is not None:
@@ -191,6 +202,14 @@ def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> d
             if marker in rendered:
                 stage, reason = candidate_stage, candidate_reason
                 break
+        else:
+            # The hook is preferred because it proves an in-process Rust panic;
+            # the join marker alone only proves that the worker unwound. Both
+            # values are fixed receipt categories and retain no raw diagnostics.
+            if NEOTH_PANIC_HOOK_LINE.search(rendered) is not None:
+                stage, reason = "runtime", "panic_hook_observed"
+            elif NEOTH_WORKER_PANIC_LINE.search(rendered) is not None:
+                stage, reason = "runtime", "worker_thread_panic"
     return {
         "stage": stage,
         "reason": reason,

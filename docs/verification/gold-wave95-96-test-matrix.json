@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1915 local WAL ownership roots released; independent static review approved; hosted regression/product pending",
+  "status": "W1915 shutdown roots + W1918 redacted panic observations; static approved; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269836,
-    "sha256": "20CC330AB3D631161DE72D783A63577F1BAB54B87ABC7C08553D2CB633FA3BEA"
+    "bytes": 269814,
+    "sha256": "E96D2A4A4E0D183E9166EDAF7B94624D20DEFD7EDD8E866022A0D945555BD641"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -3900,7 +3900,7 @@
     {
       "test": "cli::serve::tests::ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
+      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
       "junitClass": "neoth"
     },
     {
@@ -14376,13 +14376,13 @@
     {
       "test": "cli::serve::tests::run_serve_roots_release_wal_senders_before_join",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
+      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
+      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
       "junitClass": "neoth"
     }
   ],
@@ -60809,6 +60809,66 @@
       }
     ],
     "note": "Root alone stages source/workflows/PLAN. W1914 original daemon timeout remains rejected; W1916 GChat pre-network refusal remains rejected. Two new tests registered2396/2171/956/158/72. No local executable validation, no roadmap closure, no .slint.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1918GchatPanicObservations": {
+    "note": "Two fixed panic observations, no source location or payload retained; existing diagnostics priority and fatal product conditions preserved. Prior pre-network failure cause unproven.",
+    "gchatPythonCases": 18,
+    "totalPythonCases": 53,
+    "status": "independent static review APPROVE; hosted pending"
+  },
+  "wave1919HostedFormat": {
+    "producer": "2bc7a9cca6872336c96c957dd2ed5964169cbff2",
+    "run": 36547043780,
+    "artifact": 11022982090,
+    "zipSha256": "352047940721b8754f26ae8f63b1804a38aa0e2a6ae023d21fa33d845aa083e5",
+    "path": "SRC/neothd/src/cli/serve_tests.rs",
+    "preimage": "bfc5bb3dae1fef528f02ac76f428d11dc7b01437",
+    "postimage": "b40d49e00e0eab4fd9c4bdc6215619fc3088a80c",
+    "localFormatterRan": false
+  },
+  "wave1918to1919SourceBindings": {
+    "base": "2bc7a9cca6872336c96c957dd2ed5964169cbff2",
+    "sources": [
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 37544,
+        "sha256": "C156A951D178B2F79A80976CA1D33BE3651CF6F54940AF827F67D32851963488",
+        "blob": "6c0966bb009a1c698d124f7a68e3f0c24607f501"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 22090,
+        "sha256": "9A6F1523021C0A2129A45F8EC4B3EDF35C77967F11130F5BD8A1A2D805E28EB5",
+        "blob": "6125cbe7c81702674a716af91b8374e433362bae"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 559776,
+        "sha256": "33DBFFBC8B92645163C54F12F71C3FA9BC1C0F0699D34AA44C6EA7404882DFF4",
+        "blob": "56e37301103e36e76b981116833dc304cbb22922"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1596206,
+        "sha256": "5E4B752E801BFDAE168EDF371E7B23B3E75BD3240B8E69571F7CAB78C9F87A62",
+        "blob": "e86bd6f98c34332ac9609057c74248523ab6bfc2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2207216,
+        "sha256": "EF66856C34C2A309818C90F9EC6621CC73A5B91B0FFA7329276F845DAD52FAB5",
+        "blob": "aa2fc8e818b2d584aa5fd7510654355aa28e7b52"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tests.rs",
+        "bytes": 24196,
+        "sha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
+        "blob": "b40d49e00e0eab4fd9c4bdc6215619fc3088a80c"
+      }
+    ],
+    "note": "53Python contracts registered, no local runtime. Exact original11022982090 rustfmt pre/postimage imported only for serve_tests.rs. Original products remain rejected. No roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

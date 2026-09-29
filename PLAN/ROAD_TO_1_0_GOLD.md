@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1918/W1919 diagnostic and hosted-format follow-up (2026-09-29):**
+The GChat canary now recognizes the installed panic-hook line and exact worker
+panic marker as two fixed observations. Payloads/paths remain hash-only, existing
+stage diagnostics retain priority, and unknown failures stay unknown. Three
+regression cases increase GChat Python contracts15->18 (53 total); execution is
+pending. This observes a possible failure mode without claiming the prior run
+panicked or weakening the refusal/product gates. W1915 is published2bc7a9cc.
+Preflight36547043780 failed only rustfmt. Root verified original11022982090
+ZIP/API/receipt hashes and imported the exact serve_tests.rs pre/postimage patch;
+no local formatter ran. Next product dispatch waits for current Preflight.
+
 **W1914-W1916 shutdown-root correction and current product boundary (2026-09-29):**
 Root verified daemon artifact11021757326 from product36542284543 at12cc0005:
 ZIP/API digest,3 extracted entries and60 raw source bindings. SIGTERM and serve

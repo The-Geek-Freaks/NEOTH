@@ -162,6 +162,55 @@ class GChatRelinkCanaryTests(unittest.TestCase):
                 self.assertEqual(diagnostic["stage"], "unknown")
                 self.assertEqual(diagnostic["reason"], "unknown")
 
+    def test_runtime_panic_hook_and_worker_join_are_fixed_and_redacted(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid BEGIN PRIVATE KEY"
+        stderr = (
+            "\x1b[31m[neoth panic] ts_unix=1760000000 at src/channels/gchat.rs:411: "
+            f"panic payload{secret} (version=1.2.3)\x1b[0m\n"
+            "Error: neoth main worker thread panicked\n"
+        )
+        process = subprocess.CompletedProcess(["neoth"], 1, b"", stderr.encode("utf-8"))
+        diagnostic = canary.refusal_failure_diagnostic(process)
+        self.assertEqual(diagnostic["stage"], "runtime")
+        self.assertEqual(diagnostic["reason"], "panic_hook_observed")
+        self.assertEqual(diagnostic["returncode"], 1)
+        rendered = json.dumps(diagnostic, sort_keys=True)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("gchat.rs", rendered)
+        self.assertNotIn("panic payload", rendered)
+        canary.validate_receipt_redaction(rendered)
+
+    def test_runtime_worker_panic_without_hook_is_fixed_and_redacted(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid BEGIN PRIVATE KEY"
+        process = subprocess.CompletedProcess(
+            ["neoth"], 1, b"", f"\x1b[31mError: neoth main worker thread panicked\x1b[0m\n{secret}".encode("utf-8")
+        )
+        diagnostic = canary.refusal_failure_diagnostic(process)
+        self.assertEqual(diagnostic["stage"], "runtime")
+        self.assertEqual(diagnostic["reason"], "worker_thread_panic")
+        rendered = json.dumps(diagnostic, sort_keys=True)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("https://", rendered)
+        canary.validate_receipt_redaction(rendered)
+
+    def test_runtime_panic_classifier_rejects_misleading_unanchored_text(self):
+        secret = " https://127.0.0.1:12345/token bot@neoth-canary.invalid BEGIN PRIVATE KEY"
+        cases = (
+            f"prefix [neoth panic] ts_unix=1760000000 at src/channels/gchat.rs:411: fake{secret} (version=1.2.3)",
+            f"Error: neoth main worker thread panicked: fake{secret}",
+            f"[neoth panic] ts_unix=not-a-number at src/channels/gchat.rs:411: fake{secret}",
+        )
+        for stderr in cases:
+            with self.subTest(stderr=stderr.split()[0]):
+                diagnostic = canary.refusal_failure_diagnostic(
+                    subprocess.CompletedProcess(["neoth"], 1, b"", stderr.encode("utf-8"))
+                )
+                self.assertEqual(diagnostic["stage"], "unknown")
+                self.assertEqual(diagnostic["reason"], "unknown")
+                rendered = json.dumps(diagnostic, sort_keys=True)
+                self.assertNotIn(secret, rendered)
+                self.assertNotIn("https://", rendered)
+
     def test_refusal_diagnostic_redacts_unknown_sensitive_output(self):
         secret = b"https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
         process = subprocess.CompletedProcess(["neoth"], 1, secret, b"unrecognized failure")

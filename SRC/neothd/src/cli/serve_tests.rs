@@ -29,14 +29,13 @@ async fn run_serve_roots_release_wal_senders_before_join() {
         reload_controller,
         writer.clone(),
     ));
-    let gui_chat_runtime: Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime> = Arc::new(
-        crate::daemon::gui_chat_runtime::DaemonGuiChatRuntime::new(
+    let gui_chat_runtime: Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime> =
+        Arc::new(crate::daemon::gui_chat_runtime::DaemonGuiChatRuntime::new(
             Arc::clone(&chat_runtime),
             home.path().to_path_buf(),
             config_path,
             "serve-webchat-root-test".to_owned(),
-        ),
-    );
+        ));
     let webchat_state = Arc::new(crate::daemon::webchat::WebChatState::new(
         0,
         home.path().to_path_buf(),
