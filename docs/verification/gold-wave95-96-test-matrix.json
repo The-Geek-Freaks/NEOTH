@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "pinned Windows954/macOS70 and custody56 admitted; Linux2169 active; daemon product failed and unaccepted",
+  "status": "static reviewed canary shutdown budget and GChat test import; fresh hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269829,
-    "sha256": "E6130054D98F512F8A85F8A60FF51733D34E94C707C8557521F832DF16B0A27B"
+    "bytes": 269818,
+    "sha256": "4D04AEF9F6BC601B31BFABE076C830425FAE957D71BB00FE5E28CA242D17664B"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -13506,43 +13506,43 @@
     {
       "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
@@ -14298,7 +14298,7 @@
     {
       "test": "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805",
+      "sourceSha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
       "junitClass": "neoth"
     },
     {
@@ -60547,6 +60547,87 @@
       }
     ],
     "note": "Root verified original ZIPs, exact native/custody terminals and raw producer bindings. Windows/macOS producer71fef1ca; custody producerd358ed9f. Product36537978930 Python/channel/publicCLI steps pass, daemon step fails, GChat active. API step state is not original product admission. No source change, local runtime or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1910DaemonShutdownBudget": {
+    "failedRun": 36537978930,
+    "producer": "5e345e08a59cfc899d3c5b68d292c03cd19c1307",
+    "rootDiagnosis": "work/gold-20260906/wave1909-daemon-adoption-diagnosis/ROOT_DIAGNOSIS.json",
+    "rootDiagnosisSha256": "dd5469a8cfae8113acb1afcc6f41b56b26e47a1f992bde12a09ef0c823fcca24",
+    "adoption": "authenticated_empty_message_query_observed",
+    "shutdown": "SIGTERM15s_timeout_then_SIGKILL_unaccepted",
+    "innerShutdownCause": "unknown",
+    "gracefulCanaryBudgetSeconds": 120,
+    "forcedReapSeconds": 5,
+    "forcedKillIsFatal": true,
+    "rawLogRetained": false,
+    "pythonCanaryContracts": 50,
+    "daemonPythonContracts": 25,
+    "sourceBindings": 60,
+    "hostedValidation": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1911GchatGuardImport": {
+    "failedRun": 36537978930,
+    "producer": "5e345e08a59cfc899d3c5b68d292c03cd19c1307",
+    "artifact": 11020760630,
+    "zipSha256": "47cc6ed194b1664f9c78b30581306ec4fd64b6196c0b717d867921d7f1a66dd7",
+    "rootDiagnosis": "work/gold-20260906/wave1911-gchat-guards-diagnosis/ROOT_DIAGNOSIS.json",
+    "rootDiagnosisSha256": "254491a971dc0487f4d4bc4b370b1dda503901af01299676a70867e5c8b9ad35",
+    "failure": "E0432 unresolved import crate::config::Credentials",
+    "fix": "gated test import crate::config::credentials::Credentials",
+    "gchatProductReached": false,
+    "hostedValidation": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1910to1911SourceBindings": {
+    "base": "51e5e201d71198a0ace3c2219ab210fecdbee772",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 53203,
+        "sha256": "EE0BAB3276726B59EB8EC6C2F8CF2FC2DA4F293B45FD647C76C2D108DE2FB9E3",
+        "blob": "99fec9c84d58b1060b94155b6e9973431cc4b39d"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 43627,
+        "sha256": "A86F56E6D3D0B83FE6FB6CB248F4FC593FE1CBB97C98AD9CF2BF647CC804B1BE",
+        "blob": "4092a883a8d82c846e7c4f3f18cae8009ff09998"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 26792,
+        "sha256": "4FD1EDF1CF24D01D449D8F09F1ADA7E26CFC1920907DD79E55572BFCAFAACDB1",
+        "blob": "69f7671ba49b4d87b166689a4aa9e664bcdfa204"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 555983,
+        "sha256": "E59311196A72679A103E62563651B97035B7C7B49965B83259EBFFAC9C1F557A",
+        "blob": "3f304ff0939a5d814277d9857676e8bde2d9b36e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1592413,
+        "sha256": "41B0FF16C5E70E6E4187D6F4A49A2BEC58FE9A2A555C04A9F00B14F66BEFDDA4",
+        "blob": "9e433ae8aa94056f1532ebb01c16516279c35947"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2203423,
+        "sha256": "7C87D0DF43D04360920E6A4553D3AAC6AB3178DE1FAD9F171E4DC8C1585C3D77",
+        "blob": "515afe5dec3afd40fa6b47114bf527dee761ca78"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "bytes": 32836,
+        "sha256": "D80BEEC17003B21453DDA57DF5E814F694E9FB6EE3593CE3345FF5DA7DEE4220",
+        "blob": "9b4c6f0f36c23e49614a21b5235c525a7ec7606e"
+      }
+    ],
+    "note": "W1909 actual daemon adoption witnessed, SIGTERM15s timeout still fatal. W1910 bounded120s canary grace with fixed redacted shutdown observations; forced kill/unreaped/nonzero fatal;50Python contracts. W1911 original E0432 fixed only gated Credentials import. Independent final static APPROVE. Linux2169d358ed9f SUCCESS original admission active. No local executable validation, native redispatch or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

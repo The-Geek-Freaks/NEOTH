@@ -56,6 +56,11 @@ jobs:
           sha256sum \
             SRC/neothd/src/main.rs \
             SRC/neothd/src/lib.rs \
+            SRC/neothd/src/shutdown.rs \
+            SRC/neothd/src/cli/serve.rs \
+            SRC/neothd/src/daemon/chat_runtime.rs \
+            SRC/neothd/src/daemon/gui_chat_runtime.rs \
+            SRC/neothd/src/channels/webhook_listener.rs \
             SRC/neothd/src/cli/channel.rs \
             SRC/neothd/src/cli/connect.rs \
             SRC/neothd/src/cli/channel/converted_relink.rs \

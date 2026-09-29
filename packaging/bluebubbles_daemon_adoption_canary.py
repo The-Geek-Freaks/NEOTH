@@ -26,6 +26,10 @@ except ImportError:  # The hosted canary is deliberately POSIX-only.
 
 
 LIMIT = 256 * 1024
+# Canary budget: 90s SelfMap shutdown drain plus traced 10s dispatch drain and
+# margin; it is not a universal daemon-shutdown bound.
+GRACEFUL_SHUTDOWN_TIMEOUT = 120
+FORCED_REAP_TIMEOUT = 5
 DAEMON_DIAGNOSTIC_HASH_DOMAIN = b"neoth-bluebubbles-daemon-diagnostic-v1\0"
 TARGET = "iMessage;-;+491701234567"
 WRONG_TARGET = "iMessage;-;+491700000000"
@@ -35,6 +39,8 @@ RELOAD = ".reload-requested"
 DESTINATION = {"channel_id": "imessage_bluebubbles", "account_id": "default"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
 FAILURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}")
+ANSI_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+SIGTERM_EVENT_LINE = re.compile(r"^.*\bneothd::shutdown:\s+SIGTERM\s*$")
 DAEMON_DIAGNOSTIC_MARKERS = (
     ("recover interrupted NEOTH installation before startup", "process", "interrupted_install_recovery"),
     ("build the tokio runtime", "process", "tokio_runtime"),
@@ -49,6 +55,14 @@ DAEMON_DIAGNOSTIC_MARKERS = (
     ("start daemon membership/audit RPC", "authority", "audit_rpc"),
     ("start mandatory daemon audit RPC", "authority", "audit_rpc"),
     ("load skill registry for daemon instance", "runtime", "skill_registry"),
+)
+SHUTDOWN_PROGRESS_MARKERS = (
+    ("serve_shutdown_entered", "shutdown signal received; aborting channels + draining WAL writer"),
+    ("webhook_drain_timeout", "webhook drain timed out — abandoning remaining connections"),
+    ("webhook_dispatch_drain_timeout", "COR-34: webhook dispatch drain timed out"),
+    ("self_map_draining", "SelfMap cron is still draining; retaining owner and suppressing replacement"),
+    ("self_map_timeout", "SelfMap did not quiesce during shutdown"),
+    ("wal_drained", "WAL writer task drained cleanly"),
 )
 
 
@@ -109,6 +123,23 @@ def daemon_failure_diagnostic(snapshot: dict) -> dict:
         if marker in rendered:
             return {"stage": stage, "reason": reason, "log_fingerprint_sha256": fingerprint}
     return {"stage": "unknown", "reason": "unknown", "log_fingerprint_sha256": fingerprint}
+
+
+def daemon_shutdown_progress(snapshot: dict) -> dict[str, str]:
+    """Retain fixed shutdown observations, never matched daemon log text."""
+    names = ("sigterm_event",) + tuple(name for name, _ in SHUTDOWN_PROGRESS_MARKERS)
+    if not snapshot["log_present"]:
+        return {"state": "unavailable", **{name: "unavailable" for name in names}}
+    if snapshot["log_exceeds_bound"]:
+        return {"state": "oversized", **{name: "oversized" for name in names}}
+    raw = snapshot["raw"]
+    assert raw is not None
+    rendered = raw.decode("utf-8", "replace")
+    progress = {
+        "sigterm_event": "observed" if any(SIGTERM_EVENT_LINE.fullmatch(ANSI_CSI.sub("", line)) for line in rendered.splitlines()) else "not_observed"
+    }
+    progress.update({name: "observed" if marker in rendered else "not_observed" for name, marker in SHUTDOWN_PROGRESS_MARKERS})
+    return {"state": "observed" if "observed" in progress.values() else "unknown", **progress}
 
 
 def contained(path: Path, root: Path) -> bool:
@@ -574,10 +605,13 @@ def stop_daemon(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is None:
         process.send_signal(signal.SIGTERM)
         try:
-            process.wait(timeout=15)
+            process.wait(timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5)
+            try:
+                process.wait(timeout=FORCED_REAP_TIMEOUT)
+            except subprocess.TimeoutExpired as error:
+                raise Failure("daemon_stop_timeout") from error
             raise Failure("daemon_stop_timeout")
     if process.returncode not in (0, -signal.SIGTERM):
         raise Failure("daemon_stop_failed")
@@ -586,10 +620,10 @@ def stop_daemon(process: subprocess.Popen[bytes]) -> None:
 def source_bindings(workflow: Path) -> dict[str, str]:
     relatives = (
         "packaging/bluebubbles_daemon_adoption_canary.py", "packaging/tests/test_bluebubbles_daemon_adoption_canary.py", "packaging/converted_channel_relink_product_canary.py", ".github/workflows/gchat-live-regressions.yml",
-        "SRC/neothd/src/main.rs", "SRC/neothd/src/lib.rs", "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
+        "SRC/neothd/src/main.rs", "SRC/neothd/src/lib.rs", "SRC/neothd/src/shutdown.rs", "SRC/neothd/src/cli/channel_relink.rs", "SRC/neothd/src/cli/channel.rs", "SRC/neothd/src/cli/channel/converted_relink.rs", "SRC/neothd/src/cli/mod.rs", "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/cli/init/types.rs", "SRC/neothd/src/cli/init/io.rs", "SRC/neothd/src/cli/init/first_install_identity.rs", "SRC/neothd/src/cli/init/steps_identity.rs", "SRC/neothd/src/cli/init/steps_provider.rs",
-        "SRC/neothd/src/channels/imessage_bluebubbles.rs", "SRC/neothd/src/channels/relink.rs", "SRC/neothd/src/channels/routing.rs", "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs", "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs",
-        "SRC/neothd/src/cluster/status_wire.rs", "SRC/neothd/src/cluster/membership.rs", "SRC/neothd/src/daemon/pidfile.rs", "SRC/neothd/src/daemon/audit_rpc/mod.rs", "SRC/neothd/src/daemon/audit_rpc/client.rs", "SRC/neothd/src/daemon/audit_rpc/server.rs", "SRC/neothd/src/daemon/audit_rpc/sidecar.rs", "SRC/neothd/src/daemon/audit_rpc/token.rs", "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs", "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs", "SRC/neothd/src/skills/store.rs",
+        "SRC/neothd/src/channels/imessage_bluebubbles.rs", "SRC/neothd/src/channels/relink.rs", "SRC/neothd/src/channels/routing.rs", "SRC/neothd/src/channels/webhook_listener.rs", "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs", "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs",
+        "SRC/neothd/src/cluster/status_wire.rs", "SRC/neothd/src/cluster/membership.rs", "SRC/neothd/src/daemon/pidfile.rs", "SRC/neothd/src/daemon/chat_runtime.rs", "SRC/neothd/src/daemon/gui_chat_runtime.rs", "SRC/neothd/src/daemon/channel_live_registry.rs", "SRC/neothd/src/daemon/audit_rpc/mod.rs", "SRC/neothd/src/daemon/audit_rpc/client.rs", "SRC/neothd/src/daemon/audit_rpc/server.rs", "SRC/neothd/src/daemon/audit_rpc/sidecar.rs", "SRC/neothd/src/daemon/audit_rpc/token.rs", "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs", "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs", "SRC/neothd/src/skills/store.rs",
         "SRC/neothd/src/providers/mod.rs", "SRC/neothd/src/providers/openai_api.rs", "SRC/neoth-openclaw-custody/src/lib.rs", "SRC/neoth-openclaw-custody/src/pinned_inventory.rs", "SRC/neoth-openclaw-custody/src/pinned_schema.rs", "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json", "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_migration_policy_v1.json", "SRC/neoth-openclaw-custody/Cargo.toml", "SRC/neothd/Cargo.toml", "SRC/Cargo.lock",
     )
     paths = {item: Path(item) for item in relatives}
@@ -613,6 +647,7 @@ def retain_daemon_diagnostics(evidence: Path, log: Path, process: subprocess.Pop
         "stop_failure": failure_code(stop_failure),
         "loopback_failure": failure_code(loopback_failure),
         "startup_cause": daemon_failure_diagnostic(log_snapshot),
+        "shutdown_progress": daemon_shutdown_progress(log_snapshot),
     }
     (evidence / "daemon-diagnostics.json").write_text(json.dumps(diagnostic, sort_keys=True), encoding="utf-8")
 

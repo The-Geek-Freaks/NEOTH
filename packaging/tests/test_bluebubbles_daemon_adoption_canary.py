@@ -21,6 +21,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.pid = pid
             self.returncode = returncode
             self.signals: list[int] = []
+            self.wait_timeouts: list[float] = []
 
         def poll(self) -> int | None:
             return self.returncode
@@ -29,6 +30,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.signals.append(value)
 
         def wait(self, timeout: float) -> int:
+            self.wait_timeouts.append(timeout)
             if self.returncode is None:
                 self.returncode = 0
             return self.returncode
@@ -213,6 +215,42 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.assertEqual(bounded["reason"], "log_exceeds_bound")
             self.assertRegex(bounded["log_fingerprint_sha256"], r"^[0-9a-f]{64}$")
 
+    def test_shutdown_progress_records_only_allowlisted_markers_and_rejects_idle_sigterm_banner(self):
+        secret = "https://secret.invalid/path Bearer value"
+        raw = (
+            "\x1b[2m2026-09-29T12:00:00Z \x1b[32mINFO\x1b[0m neothd::shutdown: SIGTERM\x1b[0m\n"
+            "shutdown signal received; aborting channels + draining WAL writer\n"
+            "webhook drain timed out — abandoning remaining connections\n"
+            "COR-34: webhook dispatch drain timed out — aborting remaining fan-out tasks\n"
+            "SelfMap cron is still draining; retaining owner and suppressing replacement\n"
+            "SelfMap did not quiesce during shutdown (phase: Persisting)\n"
+            "WAL writer task drained cleanly\n"
+            + secret
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "daemon.log"
+            log.write_text(raw, encoding="utf-8")
+            progress = canary.daemon_shutdown_progress(canary.daemon_log_snapshot(log))
+            self.assertEqual(set(progress.values()), {"observed"})
+            self.assertNotIn(secret, json.dumps(progress, sort_keys=True))
+            log.write_text(
+                "channels running; idling until shutdown signal (SIGTERM / Ctrl+C)\n"
+                "2026-09-29T12:00:01Z INFO neothd::worker: failure SIGTERM\n",
+                encoding="utf-8",
+            )
+            idle_progress = canary.daemon_shutdown_progress(canary.daemon_log_snapshot(log))
+            self.assertEqual(idle_progress["state"], "unknown")
+            self.assertEqual(idle_progress["sigterm_event"], "not_observed")
+
+    def test_shutdown_progress_marks_unavailable_and_oversized_logs_without_retaining_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "daemon.log"
+            unavailable = canary.daemon_shutdown_progress(canary.daemon_log_snapshot(log))
+            self.assertEqual(set(unavailable.values()), {"unavailable"})
+            log.write_bytes(b"secret" * ((canary.LIMIT // len(b"secret")) + 1))
+            oversized = canary.daemon_shutdown_progress(canary.daemon_log_snapshot(log))
+            self.assertEqual(set(oversized.values()), {"oversized"})
+
     def test_retain_daemon_diagnostics_bounds_oversized_log_without_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -305,6 +343,55 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             flags = canary.cleanup(root, home, source_path, log, process, evidence)
         self.assertTrue(flags["daemon_reaped"])
 
+    def test_daemon_stop_uses_the_120_second_graceful_shutdown_budget(self):
+        process = self._Process(4242)
+        canary.stop_daemon(process)
+        self.assertEqual(process.signals, [canary.signal.SIGTERM])
+        self.assertEqual(process.wait_timeouts, [120])
+
+    def test_daemon_stop_forced_reap_remains_fatal_after_the_child_is_reaped(self):
+        class ForcedReapProcess(self._Process):
+            def __init__(self) -> None:
+                super().__init__(4242)
+                self.killed = False
+
+            def wait(self, timeout: float) -> int:
+                self.wait_timeouts.append(timeout)
+                if not self.killed:
+                    raise subprocess.TimeoutExpired(["neoth"], timeout)
+                self.returncode = -canary.signal.SIGKILL
+                return self.returncode
+
+            def kill(self) -> None:
+                self.killed = True
+
+        process = ForcedReapProcess()
+        with self.assertRaisesRegex(canary.Failure, "daemon_stop_timeout"):
+            canary.stop_daemon(process)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_timeouts, [120, 5])
+        self.assertEqual(process.returncode, -canary.signal.SIGKILL)
+
+    def test_daemon_stop_unreaped_child_remains_fatal_after_forced_kill(self):
+        class UnreapedProcess(self._Process):
+            def __init__(self) -> None:
+                super().__init__(4242)
+                self.killed = False
+
+            def wait(self, timeout: float) -> int:
+                self.wait_timeouts.append(timeout)
+                raise subprocess.TimeoutExpired(["neoth"], timeout)
+
+            def kill(self) -> None:
+                self.killed = True
+
+        process = UnreapedProcess()
+        with self.assertRaisesRegex(canary.Failure, "daemon_stop_timeout"):
+            canary.stop_daemon(process)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_timeouts, [120, 5])
+        self.assertIsNone(process.returncode)
+
     def test_execute_preserves_primary_failure_over_all_teardown_failures(self):
         class Services:
             port = 43123
@@ -334,6 +421,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             self.assertEqual(diagnostic["stop_failure"], "daemon_stop_failed")
             self.assertEqual(diagnostic["loopback_failure"], "loopback_cleanup_failed")
             self.assertEqual(diagnostic["startup_cause"], {"stage": "unknown", "reason": "log_unavailable", "log_fingerprint_sha256": None})
+            self.assertEqual(set(diagnostic["shutdown_progress"].values()), {"unavailable"})
             self.assertIsNone(state["daemon"])
             flags = canary.cleanup(root, home, source_path, root / "daemon.log", state["daemon"], evidence)
             self.assertTrue(flags["daemon_reaped"])

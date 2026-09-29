@@ -6,7 +6,7 @@ use crate::channels::registry::{ChannelId, ChannelRef};
 use crate::channels::relink::{self, RelinkGate};
 use crate::cli::channel::{ChannelAddFields, ChannelTestResult};
 #[cfg(feature = "gchat-product-canary")]
-use crate::config::{Credentials, FreedomConfig};
+use crate::config::{FreedomConfig, credentials::Credentials};
 
 fn source_body(channel: ConvertedRelinkChannel) -> &'static str {
     match channel {

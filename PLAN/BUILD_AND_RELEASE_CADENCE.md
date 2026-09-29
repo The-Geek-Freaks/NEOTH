@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1909-W1911 daemon shutdown evidence and isolated GChat compiler repair (2026-09-29):**
+Product156 run36537978930 at5e345e08 failed after the45-Python,156-channel and
+public BlueBubbles CLI steps passed. Root verified original daemon artifact
+11020450528 (ZIP/API SHA256 fbb3698d43be8ebffb72d0cbe43e51219962f3d9df276898804cefb82c46fe3d),
+all3 entries and55 raw producer bindings. The authenticated empty-message query
+proves actual daemon adoption, but SIGTERM exceeded15s and required SIGKILL.
+Successful process reaping does not satisfy graceful shutdown; the product remains
+failed/unaccepted. The inner wait cause is unknown because raw logs were removed.
+W1910 gives the hosted canary120s for graceful shutdown, accommodating existing
+90s SelfMap and10s dispatch budgets plus margin, without claiming a universal bound.
+Forced kill, unreaped children and nonzero exits remain fatal. Bounded diagnostics
+now retain only fixed shutdown observations;5 regression cases raise Python
+contracts to50 (10 publicCLI,15 GChat,25 daemon). No production shutdown code changed.
+Separately, original guard artifact11020760630 proves E0432 before GChat discovery:
+the gated test imported Credentials from config rather than config::credentials.
+W1911 repairs that import only. GChat runtime/transport behavior remains unproven.
+Root records: wave1909-daemon-adoption-diagnosis/ROOT_DIAGNOSIS.json and
+wave1911-gchat-guards-diagnosis/ROOT_DIAGNOSIS.json under work/gold-20260906.
+Linux2169 run36538876474 atd358ed9f completed SUCCESS; its original admission is
+in progress. No new native run, local execution or roadmap closure is implied.
+
 **W1906-W1908 pinned native and custody admission (2026-09-29):**
 Root admitted Windows954 run36535391550 and macOS70 run36535396148 at
 71fef1ca787903076798722e8f9d728a2e3b364e. Exact selection, discovery and PASS
