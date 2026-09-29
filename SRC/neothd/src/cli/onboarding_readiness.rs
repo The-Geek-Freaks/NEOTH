@@ -297,9 +297,9 @@ mod tests {
                 ..SlackAccountConfig::default()
             },
         );
-        cfg.discord_allowed_user_id = Some("123456789012345678".to_string());
         let mut credentials = Credentials {
             discord_bot_token: Some(SecretString::from("discord-token")),
+            discord_allowed_user_id: Some("123456789012345678".to_string()),
             ..Credentials::default()
         };
         credentials.channel_accounts.telegram.insert(

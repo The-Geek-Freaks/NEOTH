@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1945/W1946 hosted test-fixture correction (2026-09-29):**
+Run36587832970 on87b34a55 passed the61 Python contracts, then failed Rust test
+compilation with E0609 before any selected case or product could execute.
+Root authenticated the original compiler-log ZIP/API digest: the new ordering
+fixture assigned discord_allowed_user_id to FreedomConfig instead of Credentials.
+The repair moves only that fixture field into its Credentials literal; production
+behavior and assertions are unchanged. The162-case successor remains pending;
+the earlier failed run supplies no W1943 runtime acceptance. Local BSOD hold and
+single coordinated dispatch policy remain unchanged.
+
 **W1943 named-account onboarding readiness (2026-09-29; hosted pending):**
 Shared onboarding readiness now consumes the same account-aware static channel
 statuses as channel list/connect. Valid named Telegram and Slack maps therefore
