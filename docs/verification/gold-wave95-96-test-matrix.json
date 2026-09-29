@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1904 line-bounded topology replacement reviewed; existing hosted regression remains, current validation pending",
+  "status": "W1905 exact hosted CLI reference imported; W1904 all45Python passed; native and real products not yet accepted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269837,
-    "sha256": "0F6342F7D44292BCC80B47E30DFB45B4AC85C6F0BCE6AD07BB20978242A20EE0"
+    "bytes": 269835,
+    "sha256": "91FD65E531858C613AD6418D905A2118AABF07F26FB157550436DB6EBC9DB561"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -60388,7 +60388,7 @@
     "daemonContractsFailed": 1,
     "fix": "Remove DOTALL and restrict inference-block line body to non-newline characters",
     "independentReview": "static APPROVE",
-    "runtime": "pending",
+    "runtime": "all45Python canary contracts passed in36537978930@5e345e08; Rust/product pending",
     "localExecutableValidationRan": false
   },
   "wave1904SourceBindings": {
@@ -60420,6 +60420,51 @@
       }
     ],
     "note": "Actual product36537312647 failure in20daemon contracts:19pass1fail. DOTALL topology regex swallowed top-level keys. One-line helper correction, no assertions weakened, all45Python contracts retained. Native2169/954/70 remain on71fef1ca; no product accepted or ROAD closed; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1905GeneratedCliReference": {
+    "failedNativeRun": 36535387242,
+    "producer": "71fef1ca787903076798722e8f9d728a2e3b364e",
+    "artifact": 11018917020,
+    "zipSha256": "b3fd7833bdad4ddd3bfeebc43e64e889099be3d43b7aa5afe5ffea93cc9d3a1b",
+    "beforeRawSha256": "0a7c6360a10132f59bab36b08a4714612dd5a8a90d694b3bce02b8b5732da417",
+    "generatedRawSha256": "5ea2581921d53f78a3d40238f4975690c95f35ac3e11e5b5018e29f69454f7dc",
+    "rootImport": "work/gold-20260906/wave1905-linux2169-docgen/ROOT_IMPORT.json",
+    "changedLines": 1,
+    "cause": "Connect named-account help generalized but generated CLI reference stale",
+    "localGeneratorRan": false,
+    "newNativeValidation": "pending"
+  },
+  "wave1905SourceBindings": {
+    "base": "5e345e08a59cfc899d3c5b68d292c03cd19c1307",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 258153,
+        "sha256": "5EA2581921D53F78A3D40238F4975690C95F35AC3E11E5B5018E29F69454F7DC",
+        "blob": "bc66f6875fb356e2a8141051258dddbae1d6287d"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 552885,
+        "sha256": "F0279B3DEEA9A153F9811FC4FF64DBB56A0AE61722E0474CAAC1CC6CF4CB74E7",
+        "blob": "5194d8df4917ab9f858a0454e785b44eaf98a0ae"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1589315,
+        "sha256": "2F7A64AAA07D2DB9B1006FC314344670BA33CE8A86062CEA82770EB82AD99931",
+        "blob": "da11e4f96cf25246a19b1c065c03e6af74de649b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2200325,
+        "sha256": "D4E0EFAA2F9249C40EE4AE17102F9BDC376EB1B12BCFB73B1C24AD7D506685FA",
+        "blob": "bf38d51e9a29f8d81155181071df4d6fe73c189f"
+      }
+    ],
+    "note": "One generated CLI help line restored from authenticated original Linux failure; both JSON-compatible assertion strings decoded, committed side rawproducer exact. No local generator/runtime. Product36537978930@5e345e08 continues, Windows/mac71fef1ca continue; Linux successor awaits current Preflight.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

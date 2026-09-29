@@ -3,7 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**W1904 daemon canary topology line boundary (2026-09-29; hosted pending):**
+**W1905 exact hosted CLI reference recovery (2026-09-29; Linux retry pending):**
+Linux2169 run36535387242 on71fef1ca failed the unchanged CLI-reference drift test.
+All4 original artifacts match API ZIP digests. The assertion's two full strings
+are valid JSON; decoded committed bytes match the raw producer Git blob exactly,
+and the generated side is imported byte-for-byte. Root also rehashed the original
+log ZIP/extracted log and independently decoded both sides. Only line1204 changes:
+Connect --account now describes a named account and mapped channels, matching
+W1899's published generalized selection instead of the old Telegram-only wording.
+Generated docs/cli-commands.md SHA256 is
+5ea2581921d53f78a3d40238f4975690c95f35ac3e11e5b5018e29f69454f7dc.
+Custody/import records: work/gold-20260906/wave1905-linux2169-docgen/ROOT_IMPORT.json.
+No local doc generator ran and no drift assertion was weakened. A single fresh
+Linux2169 run will follow green Preflight; Windows954/macOS70 continue on71fef1ca.
+Product156 run36537978930 on5e345e08 now passes all45 Python canary contracts,
+confirming W1904's topology regex correction, and is running the Rust channel gate.
+Preflight36537800160 andCodeQuality36537800152 on5e345e08 passed. No full native
+or product acceptance yet; ROAD and WS-LF counts unchanged. Local BSOD hold remains.
+
+**W1904 daemon canary topology line boundary (2026-09-29; Python regression passed):**
 Product156 run36537312647 at6591a1c4 ended FAILURE before Rust or product execution:
 publicCLI10 andGChat15 Python contracts passed; daemon19 passed/1 failed.
 The existing topology regression correctly detected removal of provider_endpoint

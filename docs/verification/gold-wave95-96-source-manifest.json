@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T07:35:58.0699459Z",
-  "validationStatus": "W1904 line-bounded topology replacement reviewed; existing hosted regression remains, current validation pending",
+  "capturedUtc": "2026-09-29T07:44:14.2152042Z",
+  "validationStatus": "W1905 exact hosted CLI reference imported; W1904 all45Python passed; native and real products not yet accepted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -223,8 +223,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 258157,
-      "sha256": "0A7C6360A10132F59BAB36B08A4714612DD5A8A90D694B3BCE02B8B5732DA417"
+      "bytes": 258153,
+      "sha256": "5EA2581921D53F78A3D40238F4975690C95F35AC3E11E5B5018E29F69454F7DC"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 551539,
-      "sha256": "9A4827D90CAE05CE5219693C9B890C3E94D0119D068F5FDA2131920BC42714B8"
+      "bytes": 552885,
+      "sha256": "F0279B3DEEA9A153F9811FC4FF64DBB56A0AE61722E0474CAAC1CC6CF4CB74E7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1587969,
-      "sha256": "76D881502FC46B16088AC6FF71E539C6576CACC6C20AFB39A38771F845F405C5"
+      "bytes": 1589315,
+      "sha256": "2F7A64AAA07D2DB9B1006FC314344670BA33CE8A86062CEA82770EB82AD99931"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2198979,
-      "sha256": "AE6BF37841C2F93D5F913A6DD21773D49EFA24943B7132CF78C262E2CB2A5070"
+      "bytes": 2200325,
+      "sha256": "D4E0EFAA2F9249C40EE4AE17102F9BDC376EB1B12BCFB73B1C24AD7D506685FA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
