@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1903 independent static review approved; exact hosted formatter imported; current hosted gates pending",
+  "status": "W1903 source producer6591a1c4 Preflight/Quality green; one product156 plus native2169/954/70 active, admissions pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269828,
-    "sha256": "05B8A95B0D9F7CB89FFF2E2495543960B5CD9ADB996D423C1B0ED10AC5F57F31"
+    "bytes": 269844,
+    "sha256": "A924CDC4F12064DF4705AE15065E274FCD4CB70401B7684FA100E12B5425C70B"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -60332,6 +60332,49 @@
       }
     ],
     "note": "Preflight36536896993@d5c5c9c9 formatting only. Original11019086587 ZIP/API SHA256a821b4448fe1118a13679314a4ad988518de8fcaf5d33d8936c9a5070a9974f7; all entry SHA and exact tests.rs pre/postimages verified. Two line layouts only; no behavior change. No local formatter or executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1903HostedRunLedger": {
+    "capturedUtc": "2026-09-29T07:32:58.487758Z",
+    "formattedProducer": "6591a1c42c1dc95f7f99744c18d28f1969ed5c11",
+    "preflight": 36537144167,
+    "preflightConclusion": "success",
+    "codeQuality": 36537143813,
+    "codeQualityConclusion": "success",
+    "product": 36537312647,
+    "productStatus": "in_progress",
+    "nativeProducer": "71fef1ca787903076798722e8f9d728a2e3b364e",
+    "linux2169": 36535387242,
+    "windows954": 36535391550,
+    "macos70": 36535396148,
+    "nativeStatus": "in_progress",
+    "productAndNativeAccepted": false,
+    "localExecutableValidationRan": false
+  },
+  "wave1903RunLedgerBindings": {
+    "base": "6591a1c42c1dc95f7f99744c18d28f1969ed5c11",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 550357,
+        "sha256": "8EE41661C577AAA8908BEA074397B102D16936D3AFD522740BA181C631090F1B",
+        "blob": "ea7a76f61cdbefc355b8acb1ed3eabb354a882fd"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1586787,
+        "sha256": "67417A6C18F4D6945D9F67A2A4EF924D88B36E96266C1DA525061A0021E593AA",
+        "blob": "22371083ca8a12f25ee3053e01c0da334e1c8ef5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2197797,
+        "sha256": "2C8A10ADAC6D3B54894B487B6B366A7CB1127AE443A6E92CF4CF9179FDC41584",
+        "blob": "5c9c0c5370e66014840031bdc696527741ea8795"
+      }
+    ],
+    "note": "Documentation/ledger only after reviewed source publication; exact active run IDs retained, no source/runtime acceptance inferred from in-progress status. No local executable validation or roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

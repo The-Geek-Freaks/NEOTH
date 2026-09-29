@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1903 current hosted validation (2026-09-29; product/native pending):**
+The reviewed diagnostic source is published asd5c5c9c9. Authentic formatter
+artifact11019086587 (ZIP/API SHA256a821b4448fe1118a13679314a4ad988518de8fcaf5d33d8936c9a5070a9974f7)
+changes two test layouts only; entry hashes and exact Git pre/postimages matched.
+Formatted producer6591a1c4 has green Preflight36537144167 andCodeQuality36537143813.
+A single product156 run36537312647 is now active on6591a1c4, selecting18 separate
+feature guards and45 Python canary contracts. It includes W1900's daemon
+OpenaiCompat topology/consent correction and W1903's complete bounded diagnosis.
+Linux2169 run36535387242, Windows954 run36535391550 andmacOS70 run36535396148
+remain active on their exact producer71fef1ca; the separate Linux custody job
+passed, but the complete native lanes are not yet admitted. No duplicate product
+or native dispatch. These live states are pending evidence, not completion claims.
+No source work remains unpublished. ROAD1324/1081done/241open/2partial and
+WS-LF43done/75open are unchanged. All executable validation remains hosted.
+
 **W1902/W1903 product evidence and complete GChat preparation diagnosis (2026-09-29):**
 Product147 run36531555972 on9195c911 is admitted only for147 exact selected,
 started, discovered and passing channel identities,15 feature guards and the
