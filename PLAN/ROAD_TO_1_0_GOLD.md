@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1936 original sender observation / W1937 hosted formatting (2026-09-29):**
+Root independently verified run36559843840 at2b7ea985, daemon artifact11029628550:
+API/ZIP SHA165ba4cf37699422f913e55ee20fe255e35d42ef01d0303d21df9f37d7069be5,
+3 entries and62 raw producer source hashes. Authenticated BlueBubbles adoption
+passes. Shutdown reaches the WAL join with other senders present; receiver
+closure and WAL drain are absent before daemon_stop_timeout/SIGKILL/-9/reap.
+The snapshot establishes an additional sender, not its owner or OMI causation.
+This run predates W1935 and is not evidence for that repair. Root record:
+work/gold-20260906/wave1936-wal-sender-diagnosis/ROOT_DIAGNOSIS.json
+SHA256 B9EF3559BC595A405624663442751663BC329444E2ABAA55AF23D36A48364D71.
+
+W1935 is published08020508. Its sole formatter hunk was imported from original
+11030352389 after API/ZIP, two entry hashes and exact Git pre/postimage checks.
+Formatted77dcf441 passed Preflight36562444788 andQuality36562443938. No local
+formatter or runtime ran. The only product run remains36559843840; Google Chat
+checks continue. A repair successor waits for that run to end. No roadmap
+checkbox, daemon acceptance or release gate is closed by these observations.
+
 **W1935 OMI supervisor ownership repair (2026-09-29):**
 The daemon previously aborted the outer OMI supervisor, skipping its child-drain
 path. Retention also runs while OMI is disabled and could remain detached with a

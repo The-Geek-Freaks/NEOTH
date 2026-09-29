@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1935 reviewed source plus authenticated W1937 hosted format; fresh preflight pending",
+  "status": "W1936 original other sender observed; W1935 repair hosted product pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270358,
-    "sha256": "163E89087E9B1C4DC9169A843D68E70A227ABAB25FBE17A3C0053D8BFCAC2ADB"
+    "bytes": 270346,
+    "sha256": "A3675C68E8D7E2E6CFEE5E35D2AB5295A63C4B74753647E7CDA075F86883E21B"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -61339,6 +61339,47 @@
       }
     ],
     "note": "Preflight36562117081 format-only failure; original11030352389 ZIP/API c622a9be and patch46561e29 authenticated. Single liveness closure layout hunk exact postblob8db1518b imported; no local formatter/runtime. Current product36559843840 predates OMI repair.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1936OtherWalSenderObserved": {
+    "run": 36559843840,
+    "producer": "2b7ea98515a94b2bb74f9786159ba4f0b97b51d4",
+    "artifact": 11029628550,
+    "zipSha256": "165ba4cf37699422f913e55ee20fe255e35d42ef01d0303d21df9f37d7069be5",
+    "rootRecord": "work/gold-20260906/wave1936-wal-sender-diagnosis/ROOT_DIAGNOSIS.json",
+    "rootRecordSha256": "b9ef3559bc595a405624663442751663bc329444e2abaa55af23d36a48364d71",
+    "entries": 3,
+    "rawSourceBindings": 62,
+    "senderPresentObserved": true,
+    "receiverClosedObserved": false,
+    "walDrainedObserved": false,
+    "daemonAccepted": false,
+    "omiCausationProven": false
+  },
+  "wave1936RootDiagnosisPublication": {
+    "base": "77dcf441671fc04190f97d1ca435ce3959d90242",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 571660,
+        "sha256": "0E39086A6466DDAA3E5F8BAA7360645D9EFA3E9DB4DE26E23C7EA16F6F2EFD6C",
+        "blob": "4d053928d7c7a5fc3a61b73ef70ef6e86b012d37"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1608090,
+        "sha256": "195B2E316D04110D11CCB510A3C2BB348D74109C4117A714102F04C4252A8DE1",
+        "blob": "20247d83ed11f4a6015a599bdc97ed3de45734e1"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2219100,
+        "sha256": "25F2263F43CC71794065E4A32572C17C5979AC214B3CCAC82665A42C2268330A",
+        "blob": "14d6fa8598fa7307259046d4b013e171aeb51c8e"
+      }
+    ],
+    "note": "RootAPI/ZIP3entries62rawsources at2b7ea985:other WAL sender present; receiver closed/drain absent. OMI owner not proven. 77dcf441 Preflight36562444788/Quality36562443938 SUCCESS. Single36559843840 still active; no local runtime/roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
