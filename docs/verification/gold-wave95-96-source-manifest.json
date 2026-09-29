@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T07:27:02.4978181Z",
-  "validationStatus": "W1902 authentic147cases/publicCLI/15guards accepted; W1903 reviewed fixed diagnostic boundaries, hosted pending",
+  "capturedUtc": "2026-09-29T07:29:26.1654076Z",
+  "validationStatus": "W1903 independent static review approved; exact hosted formatter imported; current hosted gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4758,8 +4758,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "bytes": 32793,
-      "sha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF"
+      "bytes": 32823,
+      "sha256": "96BC9A1471654DA691C419F3E06C4B7685539E69A7CC8216796320ED14998805"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",

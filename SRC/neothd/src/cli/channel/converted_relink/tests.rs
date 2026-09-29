@@ -733,7 +733,8 @@ async fn gchat_canary_real_candidate_constructor_failure_survives_redaction_as_f
     std::fs::write(&service_account, "{not-json").unwrap();
     let mut credentials = Credentials::default();
     credentials.gchat_service_account_json = Some(service_account.display().to_string());
-    credentials.gchat_subscription = Some("projects/neoth-test/subscriptions/converted-relink".into());
+    credentials.gchat_subscription =
+        Some("projects/neoth-test/subscriptions/converted-relink".into());
 
     let result = super::super::test_channel_candidate_for_id(
         ChannelId::GoogleChat,
@@ -793,7 +794,10 @@ async fn gchat_canary_begin_pending_conflict_is_fixed_without_rewriting_index_or
         format!("{error:#}"),
         "gchat canary exact target preparation diagnostic: begin-pending"
     );
-    assert_eq!(std::fs::read(home.join("channel_relinks.json")).unwrap(), index_before);
+    assert_eq!(
+        std::fs::read(home.join("channel_relinks.json")).unwrap(),
+        index_before
+    );
     assert_eq!(relink::pair_commitment_at(&home).unwrap(), pair_before);
     assert_no_publication(&home, ChannelId::GoogleChat);
 }
