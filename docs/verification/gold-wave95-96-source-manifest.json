@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T08:31:13.6747143Z",
-  "validationStatus": "pinned Linux2169 and prior156channel plus publicCLI admitted; new product36542284543 pending",
+  "capturedUtc": "2026-09-29T09:04:44.1300256Z",
+  "validationStatus": "W1915 local WAL ownership roots released; independent static review approved; hosted regression/product pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 53203,
-      "sha256": "EE0BAB3276726B59EB8EC6C2F8CF2FC2DA4F293B45FD647C76C2D108DE2FB9E3"
+      "bytes": 53715,
+      "sha256": "54409F6869D569C651D21F092F6F0DB3D79DE2F4E6DA15FCE622FDEDB804A565"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 13940,
-      "sha256": "3322DA2627CC6105E7167E6F50D0AEF5DBB2B2D42CB52E61533EC061D0A62A88"
+      "bytes": 14174,
+      "sha256": "9089648D2BDD1F6B1694C1E216D8B233098976CA12D3CBE80CE33AD2790D9BB9"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 30066,
-      "sha256": "0C3979F25DA3A0CC16B8CD413F3C56E09B667942894B9570B600B41D4775037E"
+      "bytes": 30114,
+      "sha256": "069B90A3271FF5E3C27AB5F7D7D862DE7BD383AFA3E1401A2676373D1DC291EA"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 161999,
-      "sha256": "F2D712330B317F01534C98F5BE92DAB88AE451FFE109AECA298853F9E74A7B6D"
+      "bytes": 162225,
+      "sha256": "88C8B66256BACDCF21351B44AF5F133711507FE77356D4BDD492080FBCEDC36F"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3663,8 +3663,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 43627,
-      "sha256": "A86F56E6D3D0B83FE6FB6CB248F4FC593FE1CBB97C98AD9CF2BF647CC804B1BE"
+      "bytes": 43711,
+      "sha256": "ABFCE7A645D5C1B2F3225E6C410077D0CDC946AAF4BBF8BD045525C51986AE6E"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 557362,
-      "sha256": "4FEE0DCF2FE67A62C410F334E74975E949FEBE733D0C3CE4BD9D629D6C44FEE0"
+      "bytes": 559001,
+      "sha256": "70290025608F286A484F27ED7C9C52E6923D646D7FB216938B9D10C2E9CCC7DA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1593792,
-      "sha256": "EC2405086017ADF842E375BE9A032BE4E38622D6A17010B67B49B64FEAC669DD"
+      "bytes": 1595431,
+      "sha256": "41A92EAFF7AC9765E95555BC03C590B733DA384B7CBDF3FC08704CA82E239A75"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2204802,
-      "sha256": "2FA4EDA33C7CD788113B223838CB573A7B239E12F51DB0B6BD37B8001F176141"
+      "bytes": 2206441,
+      "sha256": "A0D33F399BEE8D9FC2CE9F9AF0BC71918B6D89EA45DC8DE54E835A5CE7D430D5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5133,13 +5133,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
-      "bytes": 20848,
-      "sha256": "C7CC3D23C4256CD20F6C50494A25B3A3555453D147DD4419BA97DECAB07628E9"
+      "bytes": 24203,
+      "sha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399"
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 178916,
-      "sha256": "F27B1AC9C6960EEF9A1EBC7864811EEA5CC558156A80F5EC8B4A4A0C14B4DEB7"
+      "bytes": 180018,
+      "sha256": "343386687D9E1ED17B314CFC08AA9D64FF060E979E6AF084C58A5F1FEA1B8F72"
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",

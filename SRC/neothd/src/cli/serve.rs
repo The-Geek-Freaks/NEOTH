@@ -213,6 +213,25 @@ async fn run_wizard_bootstrap(neoth_home: PathBuf) -> Result<()> {
     listener_result
 }
 
+/// Release the `run_serve` root that reaches the WAL through the WebChat
+/// runtime graph. Listener tasks retain their own arcs until their ordered
+/// shutdown joins; this removes only the entrypoint's otherwise lexical root.
+fn release_run_serve_wal_sender_roots(webchat_state: Arc<crate::daemon::webchat::WebChatState>) {
+    drop(webchat_state);
+}
+
+/// Release the cluster-only entrypoint roots after their task-owned clones
+/// have been established. `MembershipController` owns the audit WAL sender,
+/// including through the outbound delegation controller.
+#[cfg(feature = "cluster")]
+fn release_run_serve_cluster_wal_sender_roots(
+    outbound_task_delegate: Arc<crate::cluster::runtime_supervisor::OutboundTaskDelegateController>,
+    membership_controller: Arc<crate::cluster::membership::MembershipController>,
+) {
+    drop(outbound_task_delegate);
+    drop(membership_controller);
+}
+
 pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Derive the instance home before every startup guard. A custom --config
     // owns its PID, clock floor, isolation boundary, WAL, DB, and sidecars;
@@ -2873,9 +2892,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     }
     restart_watcher.abort();
     let _ = restart_watcher.await;
-    // This root owns a global writer clone and may retain the published
-    // provider.  Drop it before `shutdown_background_tasks` reaches its sole
-    // writer close/drain boundary; the listener task is joined there.
+    // Release every entrypoint-owned graph that can retain a WAL sender before
+    // `shutdown_background_tasks` reaches its sole writer close/drain boundary.
+    // Listener and supervisor task clones remain alive until their ordered joins.
+    release_run_serve_wal_sender_roots(webchat_state);
+    #[cfg(feature = "cluster")]
+    release_run_serve_cluster_wal_sender_roots(outbound_task_delegate, membership_controller);
     drop(gui_chat_runtime);
     drop(chat_runtime);
     // Linearize generation-bound effect shutdown at the signal/fatal-boundary

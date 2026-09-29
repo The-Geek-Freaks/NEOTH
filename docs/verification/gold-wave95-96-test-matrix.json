@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "pinned Linux2169 and prior156channel plus publicCLI admitted; new product36542284543 pending",
+  "status": "W1915 local WAL ownership roots released; independent static review approved; hosted regression/product pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269817,
-    "sha256": "CD981FD94B63BD4D35DD2B80C823543D025068AF31F15756CFD496C2A65ED4C8"
+    "bytes": 269836,
+    "sha256": "20CC330AB3D631161DE72D783A63577F1BAB54B87ABC7C08553D2CB633FA3BEA"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -3900,7 +3900,7 @@
     {
       "test": "cli::serve::tests::ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "C7CC3D23C4256CD20F6C50494A25B3A3555453D147DD4419BA97DECAB07628E9",
+      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
       "junitClass": "neoth"
     },
     {
@@ -9540,7 +9540,7 @@
     {
       "test": "cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault",
       "sourcePath": "SRC/neothd/src/cli/serve.rs",
-      "sourceSha256": "F27B1AC9C6960EEF9A1EBC7864811EEA5CC558156A80F5EC8B4A4A0C14B4DEB7",
+      "sourceSha256": "343386687D9E1ED17B314CFC08AA9D64FF060E979E6AF084C58A5F1FEA1B8F72",
       "junitClass": "neoth"
     },
     {
@@ -14371,6 +14371,18 @@
       "test": "cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent",
       "sourceSha256": "6B0784EE3C00C3D1D172B885BE608370E7EEF0037BF8E6AEC8CCFA16FDC4E07D",
       "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve::tests::run_serve_roots_release_wal_senders_before_join",
+      "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
+      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown",
+      "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
+      "sourceSha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
       "junitClass": "neoth"
     }
   ],
@@ -60699,6 +60711,104 @@
       }
     ],
     "note": "W1912 Root verified3originalZIPs/12entries/2169exactcases/343rawpaths atd358ed9f. W1913 Root verified4ZIPs/320entries/156channel cases/publicCLI/88rawpaths at5e345e08;18GChatguards and daemon shutdown remain unaccepted. New12cc0005 Preflight/Quality SUCCESS and50Python contracts PASS; single product36542284543 active. No local runtime, duplicate dispatch or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1915ServeWalRootRelease": {
+    "note": "Release entrypoint WebChat and default-cluster WAL sender roots before ordered background writer join. Real root graph and production-order regression; no product/runtime acceptance yet.",
+    "status": "independent static review approved; hosted pending",
+    "requiredTests": [
+      "cli::serve::tests::run_serve_roots_release_wal_senders_before_join",
+      "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown"
+    ]
+  },
+  "wave1914DaemonShutdownDiagnosis": {
+    "producer": "12cc00055aff98c672ca1077d7967e3a9aaa74cf",
+    "run": 36542284543,
+    "artifact": 11021757326,
+    "zipSha256": "5880a65852a67465fbd0b1c3aebe773b616327dcdfc68cc42defeb33b3d44fb5",
+    "record": "work/gold-20260906/wave1914-daemon-shutdown-diagnosis/ROOT_DIAGNOSIS.json",
+    "recordSha256": "c29aa56504fc4d91d7b51f2c0927feb3e693728960f0e962470e944ccd0c8123",
+    "entries": 3,
+    "rawSourceBindings": 60,
+    "verdict": "SIGTERM and serve shutdown entry observed;120s timeout remains fatal. Inner wait stage unproven."
+  },
+  "wave1916GchatProductDiagnosis": {
+    "producer": "12cc00055aff98c672ca1077d7967e3a9aaa74cf",
+    "run": 36542284543,
+    "artifact": 11022741190,
+    "zipSha256": "684791cbabe2194c120c3e3bba4aaa95719c8a9c644ac0ac051b84265c43d208",
+    "record": "work/gold-20260906/wave1916-gchat-product-diagnosis/ROOT_DIAGNOSIS.json",
+    "recordSha256": "3809ebbd2ccd963e6116c19ec245e920a73dd9ad5ed08c505d55ac37f238c5f6",
+    "entries": 17,
+    "relevantProducerExports": 3,
+    "verdict": "Product rejected:wrong-target expected a probe; all network counters zero. Inner failure unknown; Pending index expected. Early failure has no receipt source-binding map."
+  },
+  "wave1915ServeWalSourceBindings": {
+    "base": "16a5591b290b880c158016fb07f95829bbdedf4e",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 53715,
+        "sha256": "54409F6869D569C651D21F092F6F0DB3D79DE2F4E6DA15FCE622FDEDB804A565",
+        "blob": "356eb53dbb1a2c46d77563fcba1c4f679f8fdda3"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 14174,
+        "sha256": "9089648D2BDD1F6B1694C1E216D8B233098976CA12D3CBE80CE33AD2790D9BB9",
+        "blob": "c490ca647679caf3ba3c5ac3885d4ccb5be4443c"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 30114,
+        "sha256": "069B90A3271FF5E3C27AB5F7D7D862DE7BD383AFA3E1401A2676373D1DC291EA",
+        "blob": "6d8d9ff88ed922b40385c9f93a5ce9f0d40618e0"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 162225,
+        "sha256": "88C8B66256BACDCF21351B44AF5F133711507FE77356D4BDD492080FBCEDC36F",
+        "blob": "227d9c44a216a297371706e57c0721d3b480d80a"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 43711,
+        "sha256": "ABFCE7A645D5C1B2F3225E6C410077D0CDC946AAF4BBF8BD045525C51986AE6E",
+        "blob": "62ac461595862a0931a3fc77bdec0bb5fa3b2462"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 559001,
+        "sha256": "70290025608F286A484F27ED7C9C52E6923D646D7FB216938B9D10C2E9CCC7DA",
+        "blob": "cd4c90f66acc2f6c070f382177bfc2cd1c790367"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1595431,
+        "sha256": "41A92EAFF7AC9765E95555BC03C590B733DA384B7CBDF3FC08704CA82E239A75",
+        "blob": "5dbf5920bc2e2164b81660d266437ede453c6c9c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2206441,
+        "sha256": "A0D33F399BEE8D9FC2CE9F9AF0BC71918B6D89EA45DC8DE54E835A5CE7D430D5",
+        "blob": "b6cf93b7b3f188118df75f89eb89eef43b366049"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tests.rs",
+        "bytes": 24203,
+        "sha256": "601B31635CF67BA7C7B0E5DCC82FBB5FBD9AA36B5460A86375AF98C7AA209399",
+        "blob": "bfc5bb3dae1fef528f02ac76f428d11dc7b01437"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 180018,
+        "sha256": "343386687D9E1ED17B314CFC08AA9D64FF060E979E6AF084C58A5F1FEA1B8F72",
+        "blob": "32c73d66a1db6b975b5d3b27c29becc7ba3b0e0d"
+      }
+    ],
+    "note": "Root alone stages source/workflows/PLAN. W1914 original daemon timeout remains rejected; W1916 GChat pre-network refusal remains rejected. Two new tests registered2396/2171/956/158/72. No local executable validation, no roadmap closure, no .slint.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

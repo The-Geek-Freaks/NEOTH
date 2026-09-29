@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
+**W1914-W1916 shutdown-root correction and current product boundary (2026-09-29):**
+Root verified daemon artifact11021757326 from product36542284543 at12cc0005:
+ZIP/API digest,3 extracted entries and60 raw source bindings. SIGTERM and serve
+shutdown entry are observed;120s stop timeout still ends in forced kill. The
+exact internal wait is not proven. Independent source review found retained
+entrypoint WebChat and default-cluster membership/delegation WAL senders.
+W1915 releases those local roots before the central writer join, preserving
+listener/supervisor task clones until ordered shutdown. Two regressions exercise
+the real WAL ownership graph and the production release ordering; static review
+approved, hosted execution pending. Current selection:1496 source inputs,
+2396 portable/2171 Linux/956 Windows/158 channel/72 macOS;18 separate GChat
+feature guards and50 Python contracts. Native selectors updated without dispatch.
+The prior product's50Python/156channel/publicCLI/18GChatguards/both CLI builds
+passed API steps, but the GChat product also failed: wrong-target refusal saw
+zero network requests. Original11022741190 ZIP/API and17entries match;3 relevant
+producer exports match, while the early failure receipt has no source-binding
+map. Pending-index creation is expected; unknown diagnostic is not a root cause.
+Root records: wave1914-daemon-shutdown-diagnosis/ROOT_DIAGNOSIS.json and
+wave1916-gchat-product-diagnosis/ROOT_DIAGNOSIS.json under work/gold-20260906.
+Product acceptance and Gold stay open. No roadmap checkbox changed. Claude is
+paused until next week; Root continues. Absolute local BSOD hold remains.
+
 **W1912/W1913 original lifecycle admissions (2026-09-29):**
 Root admitted Linux2169 run36538876474 atd358ed9f:2169 exact selected, listed,
 started and single-test PASS identities, zero failed/missing. All3 original

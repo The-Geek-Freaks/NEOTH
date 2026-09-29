@@ -58,8 +58,11 @@ jobs:
             SRC/neothd/src/lib.rs \
             SRC/neothd/src/shutdown.rs \
             SRC/neothd/src/cli/serve.rs \
+            SRC/neothd/src/cli/serve_tests.rs \
             SRC/neothd/src/daemon/chat_runtime.rs \
             SRC/neothd/src/daemon/gui_chat_runtime.rs \
+            SRC/neothd/src/daemon/webchat.rs \
+            SRC/neothd/src/cluster/runtime_supervisor.rs \
             SRC/neothd/src/channels/webhook_listener.rs \
             SRC/neothd/src/cli/channel.rs \
             SRC/neothd/src/cli/connect.rs \
@@ -351,9 +354,11 @@ jobs:
           run_case 154 lib cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial --lib
           run_case 155 lib cli::connect::tests::slack_error_without_children_is_generic_configuration_repair cli::connect::tests::slack_error_without_children_is_generic_configuration_repair --lib
           run_case 156 lib cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 156
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 156
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 156
+          run_case 157 lib cli::serve::tests::run_serve_roots_release_wal_senders_before_join cli::serve::tests::run_serve_roots_release_wal_senders_before_join --lib
+          run_case 158 lib cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 158
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 158
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 158
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

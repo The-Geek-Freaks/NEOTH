@@ -10,6 +10,88 @@ use std::io::Write;
 use tempfile::tempdir;
 use tokio::fs::read;
 
+#[tokio::test]
+async fn run_serve_roots_release_wal_senders_before_join() {
+    let home = tempdir().unwrap();
+    let config_path = home.path().join("freedom.yaml");
+    let segment_path = home.path().join("wal/000001.wal");
+    let (writer, writer_join) =
+        crate::wal::writer::spawn_for_home(segment_path.clone(), home.path().to_path_buf())
+            .expect("spawn home-bound WAL writer");
+    let reload_controller = Arc::new(crate::config::reload::ReloadController::new(
+        FreedomConfig::default(),
+        config_path.clone(),
+    ));
+    let chat_runtime = Arc::new(crate::daemon::chat_runtime::DaemonChatRuntime::new(
+        home.path().to_path_buf(),
+        config_path.clone(),
+        segment_path,
+        reload_controller,
+        writer.clone(),
+    ));
+    let gui_chat_runtime: Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime> = Arc::new(
+        crate::daemon::gui_chat_runtime::DaemonGuiChatRuntime::new(
+            Arc::clone(&chat_runtime),
+            home.path().to_path_buf(),
+            config_path,
+            "serve-webchat-root-test".to_owned(),
+        ),
+    );
+    let webchat_state = Arc::new(crate::daemon::webchat::WebChatState::new(
+        0,
+        home.path().to_path_buf(),
+        "serve-webchat-root-test".to_owned(),
+        Arc::clone(&gui_chat_runtime),
+    ));
+    #[cfg(feature = "cluster")]
+    let membership_controller = Arc::new(
+        crate::cluster::membership::MembershipController::with_audit_writer(
+            crate::cluster::membership::MembershipStore::open(home.path())
+                .expect("open membership authority"),
+            Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+            writer.clone(),
+        ),
+    );
+    #[cfg(feature = "cluster")]
+    let outbound_task_delegate = Arc::new(
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateController::new(
+            home.path(),
+            Arc::clone(&membership_controller),
+        )
+        .expect("construct outbound delegation root"),
+    );
+
+    release_run_serve_wal_sender_roots(webchat_state);
+    #[cfg(feature = "cluster")]
+    release_run_serve_cluster_wal_sender_roots(outbound_task_delegate, membership_controller);
+    drop(gui_chat_runtime);
+    drop(chat_runtime);
+    drop(writer);
+    tokio::time::timeout(std::time::Duration::from_secs(3), writer_join)
+        .await
+        .expect("run_serve roots must not retain the WAL sender")
+        .expect("WAL writer task panicked")
+        .expect("WAL writer runtime failed");
+}
+
+#[test]
+fn run_serve_releases_all_wal_roots_before_background_shutdown() {
+    let source = include_str!("serve.rs");
+    let webchat_release = source
+        .find("    release_run_serve_wal_sender_roots(webchat_state);")
+        .expect("run_serve must release its WebChat WAL root");
+    let cluster_release = source
+        .find("    release_run_serve_cluster_wal_sender_roots(outbound_task_delegate, membership_controller);")
+        .expect("run_serve must release its cluster WAL roots");
+    let shutdown = source
+        .find("crate::cli::serve_tasks::shutdown_background_tasks(")
+        .expect("ordered background shutdown boundary");
+    assert!(
+        webchat_release < shutdown && cluster_release < shutdown,
+        "every run_serve WAL root must be released before the writer drain"
+    );
+}
+
 #[cfg(feature = "cluster")]
 #[test]
 fn membership_outbox_replay_is_wired_before_any_carrier_supervisor_start() {
