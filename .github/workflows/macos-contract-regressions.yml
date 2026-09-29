@@ -113,9 +113,18 @@ jobs:
           cli::channel::tests::nostr_add_preflight_rejects_before_field_collection_or_persistence	SRC/neothd/src/cli/channel.rs
           cli::channel::tests::channel_add_preflight_keeps_non_nostr_channels_eligible	SRC/neothd/src/cli/channel.rs
           cli::channel::tests::nostr_add_refuses_when_runtime_is_not_compiled	SRC/neothd/src/cli/channel.rs
+          cli::connect::tests::mapped_slack_connect_guidance_uses_an_exact_named_account	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_rejects_a_foreign_child_channel_ref	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::mapped_connect_row_enumerates_exact_accounts_without_parent_test	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::mapped_connect_detail_requires_and_binds_exact_account	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_is_refused_for_scalar_parent	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::invalid_active_map_is_repair_only_and_never_emits_test_instruction	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::slack_error_without_children_is_generic_configuration_repair	SRC/neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent	SRC/neothd/src/cli/connect.rs
           EOF
-          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 61
-          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 61
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 70
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 70
           cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
             shasum -a 256 "$source"
           done > "$evidence/source-sha256.txt"
@@ -128,7 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p neoth --lib --locked -- --list > "$RUNNER_TEMP/macos-contract-regressions/discovery.txt" 2> "$RUNNER_TEMP/macos-contract-regressions/compile.log"
-      - name: Execute all 61 exact regressions without stopping at the first failure
+      - name: Execute all 70 exact regressions without stopping at the first failure
         timeout-minutes: 10
         working-directory: SRC
         shell: bash
@@ -151,8 +160,8 @@ jobs:
               failed=$((failed + 1))
             fi
           done < "$evidence/selection.tsv"
-          printf 'selected=61\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
-          test "$index" -eq 61 && test "$failed" -eq 0
+          printf 'selected=70\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq 70 && test "$failed" -eq 0
       - name: Preserve completed core compilation
         if: ${{ always() && steps.compile.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

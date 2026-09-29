@@ -113,18 +113,65 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
         }
         completed = subprocess.CompletedProcess([], 0, json.dumps(output).encode(), b"")
         with patch.object(canary, "command", return_value=completed) as invoked:
-            canary.grant_loopback_provider_consent(binary, env)
+            canary.grant_loopback_provider_consent(binary, env, 43123)
         invoked.assert_called_once_with([str(binary), "--output", "json", "consent", "grant", "openai_compat"], env)
 
     def test_loopback_provider_consent_rejects_cli_failure_or_unpersisted_authority(self):
         binary = Path("/tmp/neoth")
         with patch.object(canary, "command", return_value=subprocess.CompletedProcess([], 1, b"", b"")):
             with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_failed"):
-                canary.grant_loopback_provider_consent(binary, {})
+                canary.grant_loopback_provider_consent(binary, {}, 43123)
         incomplete = {"provider": "openai_compat", "status": "applied", "authority_persisted": False, "failure": None}
         with patch.object(canary, "command", return_value=subprocess.CompletedProcess([], 0, json.dumps(incomplete).encode(), b"")):
             with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_invalid"):
-                canary.grant_loopback_provider_consent(binary, {})
+                canary.grant_loopback_provider_consent(binary, {}, 43123)
+
+    def test_loopback_provider_consent_rejects_each_nonexact_endpoint_receipt(self):
+        origin, wrong_origin = "http://127.0.0.1:43123", "http://127.0.0.1:43124"
+        base = {
+            "provider": "openai_compat",
+            "status": "applied",
+            "authority_persisted": True,
+            "failure": None,
+            "configured_endpoint_origins": [origin],
+            "endpoint_origins": [origin],
+            "added_endpoint_origins": [origin],
+        }
+        variants = (("missing", []), ("wrong", [wrong_origin]), ("extra", [origin, wrong_origin]))
+        for field in ("configured_endpoint_origins", "endpoint_origins", "added_endpoint_origins"):
+            for label, value in variants:
+                with self.subTest(field=field, variant=label):
+                    receipt = dict(base)
+                    receipt[field] = value
+                    completed = subprocess.CompletedProcess([], 0, json.dumps(receipt).encode(), b"")
+                    with patch.object(canary, "command", return_value=completed):
+                        with self.assertRaisesRegex(canary.Failure, "provider_consent_grant_invalid"):
+                            canary.grant_loopback_provider_consent(Path("/tmp/neoth"), {}, 43123)
+
+    def test_loopback_provider_configuration_replaces_skip_topology_before_exact_consent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / "freedom.yaml"
+            config.write_text(
+                "provider_kind: skip\n"
+                "provider_model: null\n"
+                "inference:\n"
+                "  mode: single\n"
+                "  default_slot:\n"
+                "    provider: claude_cli\n"
+                "    model: null\n"
+                "    endpoint: null\n"
+                "unrelated_setting: preserve-me\n",
+                encoding="utf-8",
+            )
+            canary.configure_loopback_provider(home, 43123)
+            rendered = config.read_text(encoding="utf-8")
+            self.assertIn("provider_kind: openai_compat\n", rendered)
+            self.assertIn("provider_endpoint: http://127.0.0.1:43123/v1\n", rendered)
+            self.assertIn("provider_model: daemon-canary-model\n", rendered)
+            self.assertIn("inference:\n  mode: single\n  default_slot:\n    provider: openai_compat\n    model: daemon-canary-model\n    endpoint: http://127.0.0.1:43123/v1\n", rendered)
+            self.assertNotIn("provider: claude_cli", rendered)
+            self.assertIn("unrelated_setting: preserve-me\n", rendered)
 
     def test_daemon_diagnostic_classifies_real_startup_markers_without_retaining_sensitive_log(self):
         secret = "https://127.0.0.1:43123/v1 bot@neoth-canary.invalid Bearer secret-token BEGIN PRIVATE KEY"

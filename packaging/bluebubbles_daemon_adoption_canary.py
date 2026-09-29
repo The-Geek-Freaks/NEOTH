@@ -304,7 +304,7 @@ class LoopbackServices:
 
 
 def configure_loopback_provider(home: Path, port: int) -> None:
-    """Set only the accepted local OpenAI-compatible provider fields."""
+    """Align legacy and effective single-mode provider routes before consent."""
     config = home / "freedom.yaml"
     if not regular(config):
         raise Failure("provider_config_missing")
@@ -322,6 +322,21 @@ def configure_loopback_provider(home: Path, port: int) -> None:
         else:
             raw += "" if raw.endswith("\n") else "\n"
             raw += replacement + "\n"
+    endpoint = values["provider_endpoint"]
+    topology = (
+        "inference:\n"
+        "  mode: single\n"
+        "  default_slot:\n"
+        "    provider: openai_compat\n"
+        f"    model: {values['provider_model']}\n"
+        f"    endpoint: {endpoint}\n"
+    )
+    inference_block = re.compile(r"(?ms)^inference:\n(?:(?:^[ \t].*(?:\n|$))|^\n)*")
+    if inference_block.search(raw):
+        raw = inference_block.sub(topology, raw, count=1)
+    else:
+        raw += "" if raw.endswith("\n") else "\n"
+        raw += topology
     config.write_text(raw, encoding="utf-8")
 
 
@@ -356,13 +371,14 @@ def init_home(binary: Path, home: Path, env: dict[str, str], port: int) -> None:
     complete_daemon_test_onboarding(home)
 
 
-def grant_loopback_provider_consent(binary: Path, env: dict[str, str]) -> None:
+def grant_loopback_provider_consent(binary: Path, env: dict[str, str], port: int) -> None:
     """Record the real endpoint-bound OpenAI-compatible consent before serve."""
     granted = command([str(binary), "--output", "json", "consent", "grant", "openai_compat"], env)
     if granted.returncode:
         raise Failure("provider_consent_grant_failed")
     receipt = one_json(granted.stdout, "provider_consent_grant_output_invalid")
-    if receipt.get("provider") != "openai_compat" or receipt.get("status") != "applied" or receipt.get("authority_persisted") is not True or receipt.get("failure") is not None:
+    origin = f"http://127.0.0.1:{port}"
+    if receipt.get("provider") != "openai_compat" or receipt.get("status") != "applied" or receipt.get("authority_persisted") is not True or receipt.get("failure") is not None or receipt.get("configured_endpoint_origins") != [origin] or receipt.get("endpoint_origins") != [origin] or receipt.get("added_endpoint_origins") != [origin]:
         raise Failure("provider_consent_grant_invalid")
 
 
@@ -657,7 +673,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         # standalone WAL audit for `consent grant` must be acknowledged before
         # the daemon may start, and the writer correctly refuses that policy.
         phase = "consent"
-        grant_loopback_provider_consent(binary, env)
+        grant_loopback_provider_consent(binary, env, services.port)
         phase = "start"
         process = start_daemon(binary, home, env, log)
         state["daemon"] = process

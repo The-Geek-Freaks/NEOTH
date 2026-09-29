@@ -18,8 +18,8 @@ pub struct ConnectArgs {
     /// (e.g. `neoth connect telegram`). Omit to list every channel.
     pub channel: Option<String>,
 
-    /// Inspect one explicitly configured Telegram account. Map-mode Telegram
-    /// never treats an omitted account or the literal `default` as a fallback.
+    /// Inspect one explicitly configured named account. Map-mode channels
+    /// never treat an omitted account or the literal `default` as a fallback.
     #[arg(long)]
     pub account: Option<ChannelAccountId>,
 
@@ -67,11 +67,11 @@ pub struct ChannelRow {
     pub note: String,
     /// One-line on-ramp shown in the table.
     pub onramp: String,
-    /// Secret-free exact Telegram account projections. Empty is the compatible
+    /// Secret-free exact named-account projections. Empty is the compatible
     /// legacy/no-map shape, never an inferred default account.
     pub accounts: Vec<ConnectAccountRow>,
-    /// Canonical channel status reports an active Telegram map that failed
-    /// pair validation. Its empty account list is not legacy/no-map.
+    /// Canonical channel status requires configuration repair before testing.
+    /// Empty account rows do not imply a valid legacy singleton.
     repair_only: bool,
 }
 
@@ -111,15 +111,33 @@ fn connect_rows(statuses: &[crate::cli::channel::ChannelStatus]) -> Vec<ChannelR
                     runtime: account.runtime.clone(),
                 })
                 .collect::<Vec<_>>();
-            let repair_only = row.name == ChannelId::Telegram.as_str()
+            let telegram_map_repair = row.name == ChannelId::Telegram.as_str()
                 && row.configured
                 && row.status == ProbeStatus::Error
                 && accounts.is_empty();
+            // `ChannelStatus` does not expose a typed Slack map-active bit.
+            // An Error without projected children may be either a malformed
+            // Slack map or scalar Slack credentials needing repair. Treat both
+            // as configuration repair without claiming either account shape.
+            let slack_configuration_repair = row.name == ChannelId::Slack.as_str()
+                && row.configured
+                && row.status == ProbeStatus::Error
+                && accounts.is_empty();
+            let repair_only = telegram_map_repair || slack_configuration_repair;
             let onramp = if repair_only {
-                "repair the Telegram account map; no account can be tested until its matching policy and credential entries are complete".to_string()
-            } else if row.name == ChannelId::Telegram.as_str() && !accounts.is_empty() {
-                "run `neoth connect telegram --account <account-id>` for one exact account"
-                    .to_string()
+                if telegram_map_repair {
+                    "repair the Telegram account map; no account can be tested until its matching policy and credential entries are complete".to_string()
+                } else {
+                    format!(
+                        "repair the {} configuration shown in the status details before testing this channel",
+                        row.name
+                    )
+                }
+            } else if !accounts.is_empty() {
+                format!(
+                    "run `neoth connect {} --account <account-id>` for one exact account",
+                    row.name
+                )
             } else {
                 format!(
                     "run `neoth channel add {0}`, then `neoth channel test {0}`",
@@ -138,41 +156,56 @@ fn connect_rows(statuses: &[crate::cli::channel::ChannelStatus]) -> Vec<ChannelR
         .collect()
 }
 
-/// Resolve the only account-specific Connect detail. A parent map view may
+/// Resolve an exact named-account Connect detail. A parent map view may
 /// enumerate account rows, but has no implicit test command.
 fn connect_detail(row: &ChannelRow, account: Option<&ChannelAccountId>) -> Result<String> {
     if row.repair_only {
+        if row.name == ChannelId::Slack.as_str() {
+            return Ok(format!(
+                "Slack configuration needs repair: {}",
+                row.note
+            ));
+        }
         return Ok(
             "Telegram account map needs repair. No account is usable or testable until matching policy, nonzero sender, and credential entries are complete."
                 .to_string(),
         );
     }
     match account {
-        Some(_) if row.name != ChannelId::Telegram.as_str() => {
-            anyhow::bail!("--account is supported only for the canonical `telegram` channel")
-        }
         Some(account) => {
+            let parent = resolve_channel_id(row.name)
+                .ok_or_else(|| anyhow::anyhow!("unknown channel `{}`", row.name))?;
             let selected = row
                 .accounts
                 .iter()
-                .find(|candidate| candidate.channel_ref.account_id == *account)
-                .ok_or_else(|| anyhow::anyhow!("Telegram account `{account}` is not configured"))?;
+                .find(|candidate| {
+                    candidate.channel_ref.channel_id == parent
+                        && candidate.channel_ref.account_id == *account
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{} account `{account}` is not configured",
+                        row.name
+                    )
+                })?;
             Ok(format!(
-                "Telegram account {}/{} — {}\n\
+                "{} account {}/{} — {}\n\
                  Runtime: {}\n\
-                 Run `neoth channel test telegram --account {}` for the read-only live check.",
+                 Run `neoth channel test {} --account {}` for the read-only live check.",
+                row.name,
                 selected.channel_ref.channel_id.as_str(),
                 selected.channel_ref.account_id.as_str(),
                 selected.note,
                 selected.runtime.as_deref().unwrap_or("unknown"),
+                row.name,
                 selected.channel_ref.account_id.as_str(),
             ))
         }
-        None if row.name == ChannelId::Telegram.as_str() && !row.accounts.is_empty() => Ok(
-            "Telegram account map configured. Select one exact account with \
-             `neoth connect telegram --account <account-id>` before requesting a live test."
-                .to_string(),
-        ),
+        None if !row.accounts.is_empty() => Ok(format!(
+            "{} account map configured. Select one exact account with \
+             `neoth connect {} --account <account-id>` before requesting a live test.",
+            row.name, row.name
+        )),
         None => channel_details(row.name)
             .ok_or_else(|| anyhow::anyhow!("unknown channel `{}`", row.name)),
     }
@@ -224,7 +257,7 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
     let rows = connect_rows(&statuses);
 
     if args.account.is_some() && args.channel.is_none() {
-        anyhow::bail!("--account requires `neoth connect telegram --account <account-id>`")
+        anyhow::bail!("--account requires `neoth connect <channel> --account <account-id>`")
     }
 
     // Single-channel detail view.
@@ -400,10 +433,15 @@ mod tests {
         rows.iter().find(|r| r.name == name).expect("row present")
     }
 
-    fn account(name: &str, runtime: Option<&str>, dm_pairing: bool) -> ChannelAccountStatus {
+    fn account_for(
+        channel_id: ChannelId,
+        name: &str,
+        runtime: Option<&str>,
+        dm_pairing: bool,
+    ) -> ChannelAccountStatus {
         ChannelAccountStatus {
             channel_ref: ChannelRef::new(
-                ChannelId::Telegram,
+                channel_id,
                 ChannelAccountId::new(name).expect("fixture account id"),
             ),
             status: ProbeStatus::Ok,
@@ -411,6 +449,10 @@ mod tests {
             dm_pairing,
             runtime: runtime.map(str::to_owned),
         }
+    }
+
+    fn account(name: &str, runtime: Option<&str>, dm_pairing: bool) -> ChannelAccountStatus {
+        account_for(ChannelId::Telegram, name, runtime, dm_pairing)
     }
 
     fn mapped_telegram_row() -> ChannelRow {
@@ -428,6 +470,24 @@ mod tests {
         }])
         .pop()
         .expect("Telegram row")
+    }
+
+    fn mapped_slack_row() -> ChannelRow {
+        connect_rows(&[ChannelStatus {
+            name: "slack",
+            status: ProbeStatus::Ok,
+            configured: true,
+            detail: "Slack account map configured; per-account readiness is static only."
+                .to_string(),
+            accounts: vec![account_for(
+                ChannelId::Slack,
+                "work",
+                Some("running"),
+                false,
+            )],
+        }])
+        .pop()
+        .expect("Slack row")
     }
 
     #[test]
@@ -617,7 +677,105 @@ mod tests {
     }
 
     #[test]
-    fn account_selection_is_refused_for_non_telegram_parent() {
+    fn mapped_slack_connect_guidance_uses_an_exact_named_account() {
+        let row = mapped_slack_row();
+        assert_eq!(row.accounts.len(), 1);
+        assert_eq!(row.accounts[0].channel_ref.channel_id, ChannelId::Slack);
+        assert_eq!(row.accounts[0].channel_ref.account_id.as_str(), "work");
+        assert!(row.onramp.contains("connect slack --account <account-id>"));
+        assert!(!row.onramp.contains("channel add slack"));
+        assert!(!row.onramp.contains("channel test slack"));
+
+        let parent = connect_detail(&row, None).expect("Slack account map parent is readable");
+        assert!(parent.contains("connect slack --account <account-id>"));
+        assert!(!parent.contains("channel test slack"));
+
+        let selected = ChannelAccountId::new("work").unwrap();
+        let detail = connect_detail(&row, Some(&selected)).expect("Slack account resolves");
+        assert!(detail.contains("slack/work"));
+        assert!(detail.contains("channel test slack --account work"));
+        assert!(connect_detail(&row, Some(&ChannelAccountId::new("unknown").unwrap())).is_err());
+    }
+
+    #[test]
+    fn account_selection_rejects_a_foreign_child_channel_ref() {
+        let row = ChannelRow {
+            name: "slack",
+            status: ConnectStatus::Connected,
+            note: "configured".into(),
+            onramp: "account selection".into(),
+            accounts: vec![ConnectAccountRow {
+                channel_ref: ChannelRef::new(
+                    ChannelId::Telegram,
+                    ChannelAccountId::new("work").unwrap(),
+                ),
+                status: ConnectStatus::Connected,
+                note: "foreign child".into(),
+                runtime: Some("running".into()),
+            }],
+            repair_only: false,
+        };
+        let error = connect_detail(&row, Some(&ChannelAccountId::new("work").unwrap()))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("slack account `work` is not configured"));
+        assert!(!error.contains("foreign child"));
+    }
+
+    #[test]
+    fn slack_error_without_children_is_generic_configuration_repair() {
+        let invalid_map = connect_rows(&[ChannelStatus {
+            name: "slack",
+            status: ProbeStatus::Error,
+            configured: true,
+            detail: "Slack account map is invalid or partial; no account is usable.".into(),
+            accounts: Vec::new(),
+        }])
+        .pop()
+        .unwrap();
+        assert!(invalid_map.repair_only);
+        assert!(!invalid_map.onramp.contains("channel add slack"));
+        assert!(!invalid_map.onramp.contains("channel test slack"));
+        let invalid_detail = connect_detail(&invalid_map, None).unwrap();
+        assert!(invalid_detail.contains(&invalid_map.note));
+        assert!(invalid_detail.contains("Slack configuration needs repair"));
+        assert!(!invalid_detail.contains("account map configured"));
+
+        let scalar_error = connect_rows(&[ChannelStatus {
+            name: "slack",
+            status: ProbeStatus::Error,
+            configured: true,
+            detail: "slack_bot_token is set but slack_app_token is missing".into(),
+            accounts: Vec::new(),
+        }])
+        .pop()
+        .unwrap();
+        assert!(scalar_error.repair_only);
+        let scalar_detail = connect_detail(&scalar_error, None).unwrap();
+        assert!(scalar_detail.contains(&scalar_error.note));
+        assert!(scalar_detail.contains("Slack configuration needs repair"));
+        assert!(!scalar_detail.contains("account map"));
+        assert!(!scalar_detail.contains("channel test slack"));
+    }
+
+    #[test]
+    fn account_selection_returns_an_error_for_an_unknown_parent() {
+        let row = ChannelRow {
+            name: "unknown",
+            status: ConnectStatus::Connected,
+            note: "configured".into(),
+            onramp: "account selection".into(),
+            accounts: Vec::new(),
+            repair_only: false,
+        };
+        let error = connect_detail(&row, Some(&ChannelAccountId::new("work").unwrap()))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "unknown channel `unknown`");
+    }
+
+    #[test]
+    fn account_selection_is_refused_for_scalar_parent() {
         let row = ChannelRow {
             name: "slack",
             status: ConnectStatus::Connected,

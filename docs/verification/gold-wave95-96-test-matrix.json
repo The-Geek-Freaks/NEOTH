@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1896/97 authenticated hosted formatter imported; current Preflight pending",
+  "status": "W1899 exact account guidance and W1900 effective provider alignment reviewed; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269800,
-    "sha256": "B5217E35CE8E25E0EDE36E3CF0FB1A4BD0E1442D62ACD0A3C285ABD92E8353A0"
+    "bytes": 269817,
+    "sha256": "1B500EB324BBF5955156E453B24A34B3720CCC5BDEA3D3FB11FE3B34924DB384"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -14317,6 +14317,60 @@
       "test": "cli::channel::tests::nostr_add_refuses_when_runtime_is_not_compiled",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
       "sourceSha256": "558E8842C3A936EC94AF8BECE9F7485393C3C23CA1BE26E783AF6DFE696C8545",
+      "junitClass": "neoth"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::mapped_slack_connect_guidance_uses_an_exact_named_account"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::account_selection_rejects_a_foreign_child_channel_ref"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::mapped_connect_row_enumerates_exact_accounts_without_parent_test"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::mapped_connect_detail_requires_and_binds_exact_account"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::account_selection_is_refused_for_scalar_parent"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::invalid_active_map_is_repair_only_and_never_emits_test_instruction"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "test": "cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial"
+    },
+    {
+      "test": "cli::connect::tests::slack_error_without_children_is_generic_configuration_repair",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent",
+      "sourceSha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+      "sourcePath": "SRC/neothd/src/cli/connect.rs",
       "junitClass": "neoth"
     }
   ],
@@ -60068,6 +60122,100 @@
       }
     ],
     "note": "Run36530876413 artifact11015983714 API ZIP SHA25693b18392b19ed161ad5ff1c404ca2b8e1679e8d111c36667bb9adc8173d44df1. Both patch Git postimages verified. Formatting only, no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1899ConnectNamedAccounts": {
+    "note": "Canonical named-account connect onramp and exact parent/account selection; Slack map no longer receives rejected flat commands; Telegram repair-only and scalar refusal preserved.",
+    "status": "independent static review approved; hosted pending",
+    "requiredTests": [
+      "cli::connect::tests::mapped_slack_connect_guidance_uses_an_exact_named_account",
+      "cli::connect::tests::account_selection_rejects_a_foreign_child_channel_ref",
+      "cli::connect::tests::mapped_connect_row_enumerates_exact_accounts_without_parent_test",
+      "cli::connect::tests::mapped_connect_detail_requires_and_binds_exact_account",
+      "cli::connect::tests::account_selection_is_refused_for_scalar_parent",
+      "cli::connect::tests::invalid_active_map_is_repair_only_and_never_emits_test_instruction",
+      "cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial",
+      "cli::connect::tests::slack_error_without_children_is_generic_configuration_repair",
+      "cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent"
+    ]
+  },
+  "wave1900DaemonEffectiveProvider": {
+    "producerFailureRun": 36531555972,
+    "provenFailure": "readiness exit1 with consent/provider_consent",
+    "artifact": 11016902497,
+    "repair": "Align fresh canary legacy and effective single-mode OpenaiCompat loopback route before exact-origin CLI consent grant",
+    "zipSha256": "d8d7613597738cb71876e3c8e6dc4f55b54797611b3772a2ff2f798f39984512",
+    "producerFailureCommit": "9195c911db7f94ebda823b717f036045e755c648",
+    "status": "static review approved; hosted pending",
+    "sourceTracedCause": "Skip maps to ClaudeCli effective inference default_slot; canary changed only legacy primary fields",
+    "localExecutableValidationRan": false
+  },
+  "wave1899to1900SourceBindings": {
+    "base": "9195c911db7f94ebda823b717f036045e755c648",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 52722,
+        "sha256": "10F24E9B9C03A8AE318F42431BFE3E8E14B35F88E0A11B3BE5CB1A8B32B7D07C",
+        "blob": "ba17d15e55b3563b98d8336e34bced3b7a2d1c21"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 13940,
+        "sha256": "3322DA2627CC6105E7167E6F50D0AEF5DBB2B2D42CB52E61533EC061D0A62A88",
+        "blob": "8e12a1a8bad32e71f3f5f8027824780c62d1dd2a"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 30066,
+        "sha256": "0C3979F25DA3A0CC16B8CD413F3C56E09B667942894B9570B600B41D4775037E",
+        "blob": "01602e636b237899a7193282ab82bf4a3ebd3251"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 161999,
+        "sha256": "F2D712330B317F01534C98F5BE92DAB88AE451FFE109AECA298853F9E74A7B6D",
+        "blob": "194d3b81a2abfb2d955add4f57bbd0505f18dc5e"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 41344,
+        "sha256": "1597FDEB647A14E381259CA130C2558A64FED8F813126721BD095E45BEB0A9F1",
+        "blob": "db0795871823a40881f752c4dddbcc6f4c58fe3e"
+      },
+      {
+        "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+        "bytes": 22351,
+        "sha256": "E8828FCBFCB72ED3C9CA111E5524B42B9D17CF03D69914CDF8F3BC325E3C92A6",
+        "blob": "bc2710fff83051e6069fbfc220c8cd6b1d3a3440"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 546303,
+        "sha256": "FD434797565EA6A33913F42539FC078CE8389CBA590E3C311834AD83DC133552",
+        "blob": "de9e21682452396be7b2200b9299b3227b5de82a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1582733,
+        "sha256": "C29321A12838D82E11DBF1498EE7A6818962BA89A2CCE25FE7F6EBC523B7F418",
+        "blob": "0bb43e547a30ecccd7f66b2ec21b61b4781170c1"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2193743,
+        "sha256": "0378C34E9E58C44CEF0F709A9487903CEFACB05EC0464FE9D66E1CC7956E47DA",
+        "blob": "73a86a83be5d9061693db3fcc70e10d92c04cd13"
+      },
+      {
+        "path": "SRC/neothd/src/cli/connect.rs",
+        "bytes": 32487,
+        "sha256": "FDF7C5201C5A35942650628A515A8FFF4E3200CDC7386D2316AD5FF13162F3F0",
+        "blob": "92421810d37b00a02050268185eca97bd2bb780d"
+      }
+    ],
+    "note": "W1899 source9cases;2394portable/2169Linux/954Windows/156channel/70macOS. W1900 authentic product147 daemon consent failure traced to stale ClaudeCli inference slot; fresh canary aligns exact loopback topology before real consent. No guard bypass, local runtime or ROAD closure. Product147 remains pinned9195c911; no duplicate dispatch.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1015,6 +1015,15 @@ jobs:
           cli::channel::tests::nostr_add_preflight_rejects_before_field_collection_or_persistence	neothd/src/cli/channel.rs
           cli::channel::tests::channel_add_preflight_keeps_non_nostr_channels_eligible	neothd/src/cli/channel.rs
           cli::channel::tests::nostr_add_refuses_when_runtime_is_not_compiled	neothd/src/cli/channel.rs
+          cli::connect::tests::mapped_slack_connect_guidance_uses_an_exact_named_account	neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_rejects_a_foreign_child_channel_ref	neothd/src/cli/connect.rs
+          cli::connect::tests::mapped_connect_row_enumerates_exact_accounts_without_parent_test	neothd/src/cli/connect.rs
+          cli::connect::tests::mapped_connect_detail_requires_and_binds_exact_account	neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_is_refused_for_scalar_parent	neothd/src/cli/connect.rs
+          cli::connect::tests::invalid_active_map_is_repair_only_and_never_emits_test_instruction	neothd/src/cli/connect.rs
+          cli::connect::tests::slack_needs_tokens_and_sender_policy_else_partial	neothd/src/cli/connect.rs
+          cli::connect::tests::slack_error_without_children_is_generic_configuration_repair	neothd/src/cli/connect.rs
+          cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent	neothd/src/cli/connect.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -1039,7 +1048,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 945 ]]; then
+          if [[ "$expected" -ne 954 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/cli/channel/converted_relink.rs neothd/src/cli/doctor/checks/integrations.rs neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1125,7 +1134,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 945 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 954 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

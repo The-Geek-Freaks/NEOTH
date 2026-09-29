@@ -3,6 +3,43 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1900 daemon canary effective-provider alignment (2026-09-29; hosted pending):**
+Product147's authenticated daemon failure identifies the provider-consent gate.
+Source tracing finds the concrete fixture mismatch: init Skip is mirrored by
+steps_topology into a ClaudeCli inference.default_slot, while the canary previously
+updated only legacy provider_kind/endpoint/model and granted OpenaiCompat consent.
+The daemon inventories both legacy and effective topology routes, leaving the
+ClaudeCli route unconsented. Only the fresh isolated canary config now replaces
+inference with a single OpenaiCompat default slot using the same loopback /v1
+endpoint/model. The real CLI consent receipt must name exactly the expected
+loopback origin in configured, current and added lists. No consent guard/bypass
+is changed. The new topology regression and nine invalid-origin subcases cover
+this root cause;43Python canary contracts are selected by the existing workflow.
+Independent static reviews approve W1899 and W1900. Product147 continues on its
+older producer; no live daemon adoption or Google Chat success is claimed yet.
+No local executable validation or ROAD closure.
+
+**W1899 exact-account Connect guidance (2026-09-29; hosted pending):**
+`neoth connect` now projects named Slack account guidance from the canonical
+channel-list children, like Telegram: a parent asks for an explicit account, and
+`connect slack --account work` renders the exact read-only `channel test slack
+--account work` command. Selection binds both the child channel and account ID;
+foreign children, unknown parents and unconfigured accounts return errors.
+Configured Slack errors without children show generic configuration repair and
+the canonical detail, with no inferred map shape, account or test-readiness claim.
+Telegram's existing invalid-map handling and normal scalar/Warn guidance remain.
+Four new behavior cases plus five existing Slack/Telegram/scalar cases are selected:
+2394portable/2169Linux/954Windows/156channel/70macOS;1496source inputs unchanged.
+Preflight36531440802 andCodeQuality36531440012 on9195c911 passed after authentic
+formatter artifact11015983714 was imported with both Git postimages verified.
+Product14736531555972 remains pinned9195c911 and has passed41Python canary
+contracts and147channel cases; its daemon failed readiness. Original artifact11016902497
+matches API ZIP digest d8d7613597738cb71876e3c8e6dc4f55b54797611b3772a2ff2f798f39984512
+and identifies consent/provider_consent; its precise route mismatch is under investigation.
+GChat execution continues. This run does not include the later Connect
+source or the nine additional channel cases. No duplicate product dispatch.
+No local runtime, roadmap closure or final release claim; LF00105 remains open.
+
 **W1894-W1898 native acceptance and product diagnosis (2026-09-29):**
 The existing b19fa69f runs completed successfully and their original ZIPs match
 GitHub API digests: Linux2160 run36436136387 (324 raw source paths), Windows945
