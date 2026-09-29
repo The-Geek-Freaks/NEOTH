@@ -3,22 +3,34 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**W1948 Doctor named-account wiring (2026-09-29; hosted pending):**
-The separate Doctor channels-wiring consumer now uses canonical
-Telegram/Slack account validation. Valid named accounts receive exact-account
-live-probe guidance; partial account maps require repair without falling back
-to legacy scalar shadows. Existing malformed config remains a redacted warning.
-Legacy specialised lifecycle rows retain their existing behavior. The diagnostic
-loader preserves coherent raw/effective credentials and skips SSH migration.
+**W1948-W1950 Doctor named-account wiring accepted (2026-09-29):**
+Run 36620856538 on 4c315a50 completed SUCCESS. Root verified all 7 original
+ZIP/API digests, 368 extracted entries, 106 raw producer source bindings,
+168 exact workflow/discovery/start/executed/PASS identities and 20 distinct
+Google Chat guards. All 61 Python contracts and all four authenticated loopback
+CLI/daemon products pass. Independent review also accepted all four product
+originals and all 20 guard identities.
 
-Six focused regression identities are registered: Telegram and Slack named
-accounts, both directions of partial maps with legacy shadows for each channel,
-malformed existing configuration and unchanged legacy SSH/config bytes.
-Selections become 2406 portable,
-2181 Linux,966 Windows,168 channel and82 macOS;61 Python and20 GChat guards
-are unchanged. Source review and hosted execution remain pending. No roadmap
-checkbox is closed. Root owns Git/PLAN/CI/final acceptance; local BSOD hold and
-no-.slint remain. Claude polling was explicitly stopped and will not restart.
+The separate Doctor channels-wiring check now recognizes named Telegram/Slack
+accounts and emits an exact-account live-probe command for each valid account.
+Partial maps require repair without legacy-scalar fallback; malformed existing
+configuration produces a redacted warning. Six new regressions cover these
+boundaries and prove that diagnostic loading preserves configuration and
+credential bytes without an unrelated legacy SSH migration. Existing legacy
+lifecycle classifications remain unchanged. Exact hosted formatting was imported
+with verified original ZIP/API digest and matching Git preimage/postimage.
+
+Both daemon products prove adoption and clean exit 0, no remaining WAL sender,
+closed WAL receiver, drained WAL and complete cleanup. These proofs cover
+authenticated loopback operation; external-provider and release gates remain open.
+Root record: work/gold-20260906/wave1950-product168-admission/ROOT_CHECKS.json
+SHA256 CD623BF575A94C8B2497187D336872613B7D9C64F9A6F10C7933BDE822019CEA.
+Published report: docs/verification/gold-wave1950-doctor-named-accounts.json.
+Selections: 1501 source inputs / 2406 portable / 2181 Linux / 966 Windows /
+168 channel / 82 macOS. Wider native selections were not freshly executed;
+no roadmap checkbox is closed. Root retains Git/PLAN/CI/final acceptance.
+The absolute local BSOD hold and no-.slint boundary remain intact. Claude polling
+was explicitly stopped; its automation is deleted and will not restart automatically.
 
 **W1947 named-account onboarding accepted (2026-09-29):**
 Run36589118484 onf7c74825 completed SUCCESS. Root verified all7 original ZIP/API

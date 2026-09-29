@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1948 Doctor source reviewed; W1949 exact hosted formatting imported;168 channel cases await execution",
+  "status": "W1948-W1950 Doctor named-account wiring accepted:168 exact Rust cases,61 Python contracts,20 guards and four authenticated loopback products; wider native and release gates remain open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270574,
-    "sha256": "E50A08112CF1112C9665435B172D0273C0883346B234ED47BC73E344ACAAED4D"
+    "bytes": 270849,
+    "sha256": "08216727F869431C3CDD4C789C05DA2013C665B54DB724424BC2A67CEAFA8B5C"
   },
-  "sourceInputs": 1500,
+  "sourceInputs": 1501,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -61703,7 +61703,7 @@
       "cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed",
       "cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials"
     ],
-    "status": "Independent final source and staged-binding review APPROVE; six new Doctor regressions await hosted execution",
+    "status": "Accepted: all six exact Doctor regressions passed in completed hosted run 36620856538 at 4c315a50; original artifacts and raw producer source bindings verified.",
     "note": "Separate Doctor channels-wiring consumer: named Telegram/Slack accounts need exact live probes; partial maps reject legacy shadows; malformed config fails closed without secret diagnostics. Local executable validation forbidden. Diagnostic pair loading must not trigger unrelated legacy SSH migration; exact config/credential bytes are preserved."
   },
   "wave1948DoctorNamedAccountBindings": {
@@ -61771,7 +61771,7 @@
       }
     ],
     "note": "Six Doctor regressions; canonical pair-aware probes, exact named-account guidance, invalid-map repair, malformed-config redaction and no unrelated SSH migration. No local executable validation.",
-    "hosted": "pending",
+    "hosted": "SUCCESS run36620856538 at4c315a50 after authenticated W1949 formatting; 168 exact channel cases and all four loopback products admitted.",
     "localExecutableValidationRan": false
   },
   "wave1949HostedDoctorFormat": {
@@ -61797,6 +61797,51 @@
       }
     ],
     "note": "Authenticated Preflight36620212188 artifact11057757999 original ZIP/API digest and exact patch/preimage/postimage matched. No local formatter or executable validation.",
+    "hosted": "Preflight36620588728 and CodeQuality36620587608 SUCCESS at4c315a50; product36620856538 SUCCESS.",
+    "localExecutableValidationRan": false
+  },
+  "wave1950DoctorNamedAccountsAccepted": {
+    "run": 36620856538,
+    "producer": "4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+    "report": "docs/verification/gold-wave1950-doctor-named-accounts.json",
+    "rootRecordSha256": "CD623BF575A94C8B2497187D336872613B7D9C64F9A6F10C7933BDE822019CEA",
+    "exactChannelCases": 168,
+    "distinctGuards": 20,
+    "pythonContracts": 61,
+    "products": 4,
+    "localExecutableValidationRan": false,
+    "freshBroaderNativeRuns": false,
+    "releaseReady": false
+  },
+  "wave1950RootDoctorAdmissionPublication": {
+    "base": "4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1950-doctor-named-accounts.json",
+        "bytes": 6073,
+        "sha256": "E22CACE8031A602C9F2FD45AE4966430FB02A449F2B4DE5FD9DD8DEC70BA055F",
+        "blob": "e6d68aac02208a53dc35f5c36081d2b1205bc249"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 580610,
+        "sha256": "7743E0254FAFC3092777F73A7D54238529E3F1888BABA114CC54E942ED280F7A",
+        "blob": "44428514d978b5e7406dbc39ca64e7fb9dbefd5d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1617040,
+        "sha256": "8CDB4CB2DD82DB1A1797269C196D7B9877CFF13E94472F687DDA8A35B35EDC5D",
+        "blob": "2aa33edbdec2c944f0f9f0eca565a8e35668be61"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2228050,
+        "sha256": "660EB628EA6EFA8BBF579949C7A248FF20535F6F2B63D89D34DF2A11B73D2912",
+        "blob": "dcae6aaefc2a599fe5f7deea8a692e1c9be49af8"
+      }
+    ],
+    "note": "Root verified seven original ZIP/API digests,368 entries,106 raw producer source bindings and exact168 discovery/start/executed/PASS identities. Both daemons adopted,exit0,other WAL senders absent,receiver closed,WAL drained,cleanup complete. Independent four-product and20guard original review PASS. No local executable validation or broader release claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

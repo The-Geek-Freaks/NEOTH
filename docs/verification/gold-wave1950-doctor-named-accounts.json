@@ -1,0 +1,141 @@
+{
+  "schema": "neoth.gold.w1950.doctor-named-account-admission.v1",
+  "producer": "4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+  "run": {
+    "id": 36620856538,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36620856538",
+    "conclusion": "success"
+  },
+  "behavior": "The separate Doctor channels-wiring check recognizes valid named Telegram and Slack accounts, provides an exact-account live-probe command for each account, rejects partial account maps without legacy-scalar fallback, and redacts malformed-config diagnostics. Diagnostic loading preserves raw/effective credentials without triggering unrelated legacy SSH migration.",
+  "rootRecord": {
+    "path": "work/gold-20260906/wave1950-product168-admission/ROOT_CHECKS.json",
+    "sha256": "CD623BF575A94C8B2497187D336872613B7D9C64F9A6F10C7933BDE822019CEA"
+  },
+  "originalArchives": [
+    {
+      "id": 11059847004,
+      "name": "bluebubbles-daemon-adoption-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "3fe463a2a497d0a2fd568cb1507d0bd850547a8518cc1df804ce93a19a9140d0"
+    },
+    {
+      "id": 11059674362,
+      "name": "w548-gchat-live-regressions-receipt-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "a91030ee1b780d6a802ae1d4e2975867e61336c60ff6857118d4d2eadcff311f"
+    },
+    {
+      "id": 11059629674,
+      "name": "gchat-relink-public-cli-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "ba7c24a43a5db008fe5a2035b3e48396f0ce2bcc05ca71ef694a3a9143e03afa"
+    },
+    {
+      "id": 11059617454,
+      "name": "converted-relink-public-cli-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "ad270bb79993c26518b8c5023efd4821c8025247568d6af100728f5a4ba58956"
+    },
+    {
+      "id": 11059514736,
+      "name": "gchat-daemon-adoption-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "f1482dbe0d15b11f39e92fb9178b5b9464f15ed5fb92194e4416167d5a4b46f8"
+    },
+    {
+      "id": 11059239727,
+      "name": "w548-gchat-live-regressions-log-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "230796ebc44c42cdb9d260159c4923b711dfc11e5c5676bbae58814df6e42a65"
+    },
+    {
+      "id": 11059124978,
+      "name": "w548-gchat-live-regressions-source-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "sha256": "d2dd391ef901f8380bd52dc42478d5f9a6c1704b779e1a71f0b44a82541364c5"
+    }
+  ],
+  "extractedEntries": 368,
+  "rawProducerSourceBindings": 106,
+  "exactChannelCases": 168,
+  "newDoctorCases": [
+    "cli::doctor::tests::channels_wiring_named_telegram_accounts_need_exact_live_probes",
+    "cli::doctor::tests::channels_wiring_named_slack_accounts_need_exact_live_probes",
+    "cli::doctor::tests::channels_wiring_partial_named_telegram_maps_need_repair_without_legacy_shadow",
+    "cli::doctor::tests::channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow",
+    "cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed",
+    "cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials"
+  ],
+  "distinctGoogleChatGuards": 20,
+  "pythonContracts": 61.0,
+  "pythonRunLog": {
+    "path": "work/gold-20260906/wave1950-product168-admission/run-log.txt",
+    "sha256": "C4AF15ACAED1BA50D62B444855D10FE9D02B0485B85FD864CDC9367D13DFF365",
+    "observedCounts": [
+      10,
+      18,
+      8,
+      25
+    ],
+    "sum": 61.0
+  },
+  "loopbackProducts": [
+    "BlueBubbles public CLI",
+    "BlueBubbles running daemon adoption",
+    "Google Chat public CLI",
+    "Google Chat running daemon adoption"
+  ],
+  "daemonEvidence": [
+    {
+      "artifact": "bluebubbles-daemon-adoption-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "adoptionWitness": "authenticated_empty_message_query",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSendersAbsent": "observed",
+      "otherWalSendersPresent": "not_observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    },
+    {
+      "artifact": "gchat-daemon-adoption-4c315a50ac9288f303ee82ed3f5b9bb193c4ec5b",
+      "adoptionWitness": "authenticated_empty_pubsub_pull",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSendersAbsent": "observed",
+      "otherWalSendersPresent": "not_observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    }
+  ],
+  "sourceSelections": {
+    "portable": 2406,
+    "linux": 2181,
+    "windows": 966,
+    "channel": 168,
+    "macos": 82
+  },
+  "hostedFormat": {
+    "run": 36620212188,
+    "producer": "f7e033e1367bd0de7a8b6c7df11a5bfda01d2cf2",
+    "artifact": 11057757999,
+    "zipSha256": "a49d5a5bc62ef99d3bc76b77c6f72c95817f7ca6f18071d420283ed519fb5cd8",
+    "patchSha256": "98564FC256DA96178C454991CED8712B278A23093D68CB36E2DA177C5DB920BE",
+    "path": "SRC/neothd/src/cli/doctor.rs",
+    "preimage": "3bd6e93ad3d413e856bfa85ef2048136aeb89573",
+    "postimage": "7be815c1ef834af54b8e9f3c717d0cf94a69cc98",
+    "localFormatterRan": false,
+    "status": "Exact hosted formatting imported; no assertion or production change"
+  },
+  "staticReview": "Independent final APPROVE of production behavior, diagnostic-loader SSH preservation, six regressions, and exact staged workflow/matrix/source bindings.",
+  "independentArtifactReview": "PASS: all four product originals and all 20 exact Google Chat guards independently rechecked by /root/w1943_review; original ZIP/API digests and producer match Root records.",
+  "independentArtifactRecords": [
+    {
+      "path": "work/gold-20260906/wave1950-product168-admission/independent-bb/download-verification.json",
+      "sha256": "67AB0D6CC341C93F65E90C006B947BBC5DBBC181EC62034D3183953BD4A962D4"
+    },
+    {
+      "path": "work/gold-20260906/wave1950-product168-admission/independent-gchat/download-verification.json",
+      "sha256": "1B445A87193BBC8AFFB021B89FC3CA6F7C2095DDA01134372C8F0FAE0CF41333"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "broaderNativeSelectionsFreshlyExecuted": false,
+  "externalServiceQualification": false,
+  "roadmapCheckboxesClosed": 0,
+  "releaseReady": false
+}
