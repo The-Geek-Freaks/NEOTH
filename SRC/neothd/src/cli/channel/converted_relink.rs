@@ -117,7 +117,7 @@ fn gchat_canary_probe_diagnostic_code(detail: &str) -> &'static str {
         .unwrap_or("unknown")
 }
 
-/// Collapse failures after durable GChat reservation into a fixed canary code.
+/// Collapse Google Chat preparation failures into a fixed canary code.
 /// The public CLI must not expose the underlying error chain because it can
 /// contain the home path, a private endpoint, or credential-adjacent details.
 /// Non-canary and non-GChat callers preserve their original errors verbatim.
@@ -207,22 +207,33 @@ async fn prepare_converted_relink_with_probe_at<P>(
 where
     P: for<'a> FnOnce(&'a PreparedChannelAdd, &'a str) -> ProbeFuture<'a>,
 {
-    validate_request(&request)?;
+    gchat_canary_stage(
+        request.destination.channel_id,
+        "validate-request",
+        validate_request(&request),
+    )?;
     let source_channel = request.source.channel();
     let source_label = request.source.source_account_label().to_owned();
     let source_binding = request.source.source_set().clone();
-    recheck_source(
-        &request.source_config,
-        source_channel,
-        &source_label,
-        &source_binding,
+    gchat_canary_stage(
+        request.destination.channel_id,
+        "recheck-source",
+        recheck_source(
+            &request.source_config,
+            source_channel,
+            &source_label,
+            &source_binding,
+        ),
     )?;
-    let pending_id =
-        match relink::begin_pending_at(home, &request.source, request.destination.clone())? {
-            BeginPendingOutcome::Created(id) | BeginPendingOutcome::AlreadyPending(id) => {
-                id.as_str().to_owned()
-            }
-        };
+    let pending_id = match gchat_canary_stage(
+        request.destination.channel_id,
+        "begin-pending",
+        relink::begin_pending_at(home, &request.source, request.destination.clone()),
+    )? {
+        BeginPendingOutcome::Created(id) | BeginPendingOutcome::AlreadyPending(id) => {
+            id.as_str().to_owned()
+        }
+    };
     let (prepared, probed_pair_sha256) = gchat_canary_stage(
         request.destination.channel_id,
         "prepare-candidate",
@@ -308,7 +319,11 @@ where
         source_binding,
         probe_started,
     };
-    recheck_candidate(&candidate)?;
+    gchat_canary_stage(
+        candidate.destination.channel_id,
+        "recheck-candidate",
+        recheck_candidate(&candidate),
+    )?;
     Ok(candidate)
 }
 

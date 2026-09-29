@@ -16,9 +16,12 @@ class GChatRelinkCanaryTests(unittest.TestCase):
     def test_refusal_failure_evidence_is_fixed_numeric_and_redacted(self):
         counts = {name: offset for offset, name in enumerate(canary.REFUSAL_COUNTERS)}
         process = subprocess.CompletedProcess(["neoth"], 1, b"", b"gchat canary key must use synthetic identity and canonical loopback token URI")
-        evidence = canary.refusal_probe_evidence("wrong_target", counts, process)
+        evidence = canary.refusal_probe_evidence(
+            "wrong_target", counts, process, {"before": False, "after": True}
+        )
         self.assertEqual(evidence["stage"], "wrong_target")
         self.assertEqual(evidence["counters"], counts)
+        self.assertEqual(evidence["index_presence"], {"before": False, "after": True})
         self.assertEqual(evidence["failure"]["stage"], "gchat_constructor")
         self.assertEqual(evidence["failure"]["reason"], "canary_synthetic_key_or_token_uri")
         self.assertEqual(evidence["failure"]["returncode"], 1)
@@ -40,9 +43,22 @@ class GChatRelinkCanaryTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
-                    canary.refusal_probe_evidence("wrong_target", invalid, process)
+                    canary.refusal_probe_evidence(
+                        "wrong_target", invalid, process, {"before": False, "after": True}
+                    )
         with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
-            canary.refusal_probe_evidence("untrusted-stage", counts, process)
+            canary.refusal_probe_evidence(
+                "untrusted-stage", counts, process, {"before": False, "after": True}
+            )
+        for index_presence in (
+            {"before": False},
+            {"before": False, "after": True, "extra": False},
+        ):
+            with self.subTest(index_presence=index_presence):
+                with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
+                    canary.refusal_probe_evidence(
+                        "wrong_target", counts, process, index_presence
+                    )
 
     def test_refusal_diagnostic_maps_independent_current_rust_error_chains(self):
         secret = "https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
@@ -131,6 +147,21 @@ class GChatRelinkCanaryTests(unittest.TestCase):
         self.assertNotIn(canary.EMAIL, rendered)
         self.assertNotIn("https://", rendered)
 
+    def test_recognized_probe_unknown_is_distinct_from_absent_or_future_marker(self):
+        recognized = subprocess.CompletedProcess(
+            ["neoth"], 1, b"", b"gchat canary exact target probe diagnostic: unknown"
+        )
+        diagnostic = canary.refusal_failure_diagnostic(recognized)
+        self.assertEqual(diagnostic["stage"], "gchat_probe")
+        self.assertEqual(diagnostic["reason"], "probe_unclassified")
+        for stderr in (b"", b"gchat canary exact target probe diagnostic: future-code"):
+            with self.subTest(stderr=stderr):
+                diagnostic = canary.refusal_failure_diagnostic(
+                    subprocess.CompletedProcess(["neoth"], 1, b"", stderr)
+                )
+                self.assertEqual(diagnostic["stage"], "unknown")
+                self.assertEqual(diagnostic["reason"], "unknown")
+
     def test_refusal_diagnostic_redacts_unknown_sensitive_output(self):
         secret = b"https://127.0.0.1:12345/token bot@neoth-canary.invalid Bearer abc.def.ghi BEGIN PRIVATE KEY"
         process = subprocess.CompletedProcess(["neoth"], 1, secret, b"unrecognized failure")
@@ -151,15 +182,38 @@ class GChatRelinkCanaryTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
+            early = subprocess.CompletedProcess(["neoth"], 1, b"", b"gchat canary exact target preparation diagnostic: validate-request")
+            with self.assertRaisesRegex(canary.Failure, "pending_index_invalid") as missing:
+                canary.require_pending_unchanged(home, {}, False, "wrong_target", 1, "wrong_space", NoCalls(), early)
+            self.assertEqual(missing.exception.refusal_probe["failure"]["reason"], "validate_request")
+            self.assertEqual(missing.exception.refusal_probe["index_presence"], {"before": False, "after": False})
             pending = {"destination": canary.DESTINATION, "state": "pending", "id": "a" * 64, "source_set_sha256": "b" * 64}
             (home / "channel_relinks.json").write_text(json.dumps({"schema_version": 1, "pending": [pending]}), encoding="utf-8")
             process = subprocess.CompletedProcess(["neoth"], 1, b"", b"Google Chat space target probe returned a different space")
             with self.assertRaisesRegex(canary.Failure, "refusal_probe_contract_invalid") as caught:
-                canary.require_pending_unchanged(home, {}, "wrong_returned_space", 2, "space", NoCalls(), process)
+                canary.require_pending_unchanged(home, {}, True, "wrong_returned_space", 2, "space", NoCalls(), process)
             evidence = caught.exception.refusal_probe
             self.assertEqual(evidence["stage"], "wrong_returned_space")
             self.assertEqual(evidence["failure"]["stage"], "gchat_probe")
             self.assertEqual(evidence["failure"]["reason"], "space_identity_mismatch")
+            self.assertEqual(evidence["index_presence"], {"before": True, "after": True})
+
+            class ExpectedCalls:
+                def counts(self):
+                    return {**NoCalls().counts(), "token": 2, "subscription": 2, "space": 1}
+
+            proof = canary.require_pending_unchanged(home, {}, False, "wrong_returned_space", 2, "space", ExpectedCalls(), process)
+            self.assertEqual(proof["index_presence"], {"before": False, "after": True})
+            self.assertEqual(proof["pending_id"], pending["id"])
+            self.assertEqual(proof["source_set_sha256"], pending["source_set_sha256"])
+
+    def test_refusal_evidence_rejects_non_boolean_index_presence(self):
+        process = subprocess.CompletedProcess(["neoth"], 1, b"", b"gchat canary exact target probe diagnostic: unknown")
+        counts = {name: 0 for name in canary.REFUSAL_COUNTERS}
+        with self.assertRaisesRegex(canary.Failure, "refusal_evidence_invalid"):
+            canary.refusal_probe_evidence(
+                "wrong_target", counts, process, {"before": False, "after": 1}
+            )
 
     def test_strict_google_chat_envelope_and_public_argv(self):
         with tempfile.TemporaryDirectory() as directory:

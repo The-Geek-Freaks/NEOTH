@@ -5,6 +5,8 @@ use std::path::Path;
 use crate::channels::registry::{ChannelId, ChannelRef};
 use crate::channels::relink::{self, RelinkGate};
 use crate::cli::channel::{ChannelAddFields, ChannelTestResult};
+#[cfg(feature = "gchat-product-canary")]
+use crate::config::{Credentials, FreedomConfig};
 
 fn source_body(channel: ConvertedRelinkChannel) -> &'static str {
     match channel {
@@ -643,10 +645,14 @@ fn gchat_canary_diagnostic_codes_are_fixed_and_complete() {
 #[test]
 fn gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain() {
     for code in [
+        "validate-request",
+        "recheck-source",
+        "begin-pending",
         "prepare-candidate",
         "prepare-material",
         "prepare-routing",
         "probe-execution",
+        "recheck-candidate",
     ] {
         let error = gchat_canary_stage(
             ChannelId::GoogleChat,
@@ -662,6 +668,134 @@ fn gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain() {
         );
         assert!(!rendered.contains("private.invalid"));
     }
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[tokio::test]
+async fn gchat_canary_pre_reservation_failures_are_fixed_and_do_not_create_pending() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    write_encrypted_first_use_home(&home);
+    let source = temp.path().join("openclaw.json");
+    std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    let service_account = temp.path().join("service-account.json");
+    std::fs::write(&service_account, "{}").unwrap();
+
+    let mut invalid = request(
+        &source,
+        ConvertedRelinkChannel::GoogleChat,
+        Some(&service_account),
+        "spaces/AAAA-converted-relink",
+    );
+    invalid.target = "\u{0007}".into();
+    let validation = prepare_converted_relink_with_probe_at(&home, invalid, |_, _| {
+        Box::pin(async { panic!("invalid request must fail before the probe") })
+    })
+    .await
+    .err()
+    .expect("invalid request must fail");
+    assert_eq!(
+        format!("{validation:#}"),
+        "gchat canary exact target preparation diagnostic: validate-request"
+    );
+    assert!(!home.join("channel_relinks.json").exists());
+
+    let stale = request(
+        &source,
+        ConvertedRelinkChannel::GoogleChat,
+        Some(&service_account),
+        "spaces/AAAA-converted-relink",
+    );
+    std::fs::write(
+        &source,
+        source_body(ConvertedRelinkChannel::GoogleChat).replace("id: 'test'", "id: 'changed'"),
+    )
+    .unwrap();
+    let source_error = prepare_converted_relink_with_probe_at(&home, stale, |_, _| {
+        Box::pin(async { panic!("changed source must fail before the probe") })
+    })
+    .await
+    .err()
+    .expect("changed source must fail");
+    assert_eq!(
+        format!("{source_error:#}"),
+        "gchat canary exact target preparation diagnostic: recheck-source"
+    );
+    assert!(!home.join("channel_relinks.json").exists());
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[tokio::test]
+async fn gchat_canary_real_candidate_constructor_failure_survives_redaction_as_fixed_code() {
+    let temp = tempfile::tempdir().unwrap();
+    let service_account = temp.path().join("private-service-account.json");
+    std::fs::write(&service_account, "{not-json").unwrap();
+    let mut credentials = Credentials::default();
+    credentials.gchat_service_account_json = Some(service_account.display().to_string());
+    credentials.gchat_subscription = Some("projects/neoth-test/subscriptions/converted-relink".into());
+
+    let result = super::super::test_channel_candidate_for_id(
+        ChannelId::GoogleChat,
+        &FreedomConfig::default(),
+        &credentials,
+        Some("spaces/AAAA-converted-relink"),
+    )
+    .await
+    .expect("a configured candidate returns a typed failed probe");
+    assert_eq!(result.status, "fail");
+    assert_eq!(
+        gchat_canary_probe_diagnostic_code(&result.detail),
+        "constructor-key-json"
+    );
+    assert!(!result.detail.contains("private-service-account.json"));
+}
+
+#[cfg(feature = "gchat-product-canary")]
+#[tokio::test]
+async fn gchat_canary_begin_pending_conflict_is_fixed_without_rewriting_index_or_pair() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    write_encrypted_first_use_home(&home);
+    let source = temp.path().join("openclaw.json");
+    std::fs::write(&source, source_body(ConvertedRelinkChannel::GoogleChat)).unwrap();
+    let service_account = temp.path().join("service-account.json");
+    std::fs::write(&service_account, "{}").unwrap();
+    let selected = select_source(&source, ConvertedRelinkChannel::GoogleChat);
+    relink::begin_pending_at(
+        &home,
+        &selected,
+        ChannelRef::default_account(ChannelId::GoogleChat),
+    )
+    .unwrap();
+    let index_before = std::fs::read(home.join("channel_relinks.json")).unwrap();
+    let pair_before = relink::pair_commitment_at(&home).unwrap();
+    std::fs::write(
+        &source,
+        source_body(ConvertedRelinkChannel::GoogleChat).replace("id: 'test'", "id: 'changed'"),
+    )
+    .unwrap();
+    let error = prepare_converted_relink_with_probe_at(
+        &home,
+        request(
+            &source,
+            ConvertedRelinkChannel::GoogleChat,
+            Some(&service_account),
+            "spaces/AAAA-converted-relink",
+        ),
+        |_, _| Box::pin(async { panic!("conflicting pending must fail before the probe") }),
+    )
+    .await
+    .err()
+    .expect("conflicting pending must fail");
+    assert_eq!(
+        format!("{error:#}"),
+        "gchat canary exact target preparation diagnostic: begin-pending"
+    );
+    assert_eq!(std::fs::read(home.join("channel_relinks.json")).unwrap(), index_before);
+    assert_eq!(relink::pair_commitment_at(&home).unwrap(), pair_before);
+    assert_no_publication(&home, ChannelId::GoogleChat);
 }
 
 #[cfg(feature = "gchat-product-canary")]

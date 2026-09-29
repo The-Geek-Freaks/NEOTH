@@ -3,6 +3,45 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1902/W1903 product evidence and complete GChat preparation diagnosis (2026-09-29):**
+Product147 run36531555972 on9195c911 is admitted only for147 exact selected,
+started, discovered and passing channel identities,15 feature guards and the
+public BlueBubbles CLI lifecycle. Root rechecked all6 original ZIP/API digests,
+315 extracted entries and87 unique raw producer source bindings (77 workflow
+manifest paths plus10 additional public-CLI receipt paths). The first CLI call
+reaches Ready and the retry is byte-idempotent; wrong-target refusal, zero sends
+and complete cleanup are proven. Daemon andGChat remain FAILED_UNACCEPTED.
+The failed GChat receipt has source_head but no per-product source_bindings;
+no stronger product provenance or success is inferred. Admission is retained at
+work/gold-20260906/wave1902-product147-admission/ROOT_ACCEPTANCE.json.
+W1903 adds feature-only fixed codes around validate-request, recheck-source,
+begin-pending and recheck-candidate. A visible Pending index can coexist with
+a post-publication durability error; its presence alone does not prove success.
+The receipt now separates an explicitly unclassified probe from an absent or
+unrecognized marker, and records before/after index presence for both accepted
+refusals and HTTP-contract failures. The fresh wrong-target home must start
+without a relink index. No provider/transport failure is claimed repaired.
+Three exact additional feature cases cover early refusal, pending conflict
+without rewriting the pair/index, and a real constructor/fail/redactor path.
+The lane now selects156 normal channel cases,18 separate feature guards and
+45 Python canary contracts. Default/nonGChat error behavior remains unchanged.
+Preflight36535246038 andCodeQuality36535245497 at71fef1ca are green; native
+Linux2169/Windows954/macOS70 remain pinned71fef1ca. No ROAD closure or local runtime.
+
+**W1901 hosted formatter and native validation (2026-09-29):**
+Preflight36534561869 at165687c4 failed only Rust formatting. Original artifact
+11016879128 matches its GitHub ZIP digest93d0c73a24cc4bc57da095f4586644dc5b122868e3a72ba141556081c02d37dd;
+patchb412f949f746ab6dbe41cb6784c29116aef5e46169343d57abb2dacc951a17c5 and
+both exact Git pre/postimages were verified before import. Only two expression
+layouts in connect.rs changed; published71fef1ca has green Preflight36535246038.
+One native run each is now pinned71fef1ca: Linux2169 run36535387242,
+Windows954 run36535391550, macOS70 run36535396148. They remain pending acceptance.
+Product147 run36531555972 on9195c911 ended FAILURE. Its147channel/publicCLI and
+15feature-guard steps passed; daemon andGChat remain unaccepted. GChat still has
+all8HTTP counters zero and an ambiguous unknown diagnostic; no proxy cause or
+transport fix is inferred. W1902 authentic partial admission is complete (see above).
+No product successor dispatched yet. No local executable validation or ROAD closure.
+
 **W1900 daemon canary effective-provider alignment (2026-09-29; hosted pending):**
 Product147's authenticated daemon failure identifies the provider-consent gate.
 Source tracing finds the concrete fixture mismatch: init Skip is mirrored by
@@ -15,8 +54,8 @@ endpoint/model. The real CLI consent receipt must name exactly the expected
 loopback origin in configured, current and added lists. No consent guard/bypass
 is changed. The new topology regression and nine invalid-origin subcases cover
 this root cause;43Python canary contracts are selected by the existing workflow.
-Independent static reviews approve W1899 and W1900. Product147 continues on its
-older producer; no live daemon adoption or Google Chat success is claimed yet.
+Independent static reviews approve W1899 and W1900. Product147 failed on its older producer; no live daemon adoption or Google Chat
+success is claimed yet.
 No local executable validation or ROAD closure.
 
 **W1899 exact-account Connect guidance (2026-09-29; hosted pending):**
@@ -35,8 +74,8 @@ formatter artifact11015983714 was imported with both Git postimages verified.
 Product14736531555972 remains pinned9195c911 and has passed41Python canary
 contracts and147channel cases; its daemon failed readiness. Original artifact11016902497
 matches API ZIP digest d8d7613597738cb71876e3c8e6dc4f55b54797611b3772a2ff2f798f39984512
-and identifies consent/provider_consent; its precise route mismatch is under investigation.
-GChat execution continues. This run does not include the later Connect
+and identifies consent/provider_consent; W1900 corrects the stale effective route.
+GChat also failed with all8HTTP counters zero. This run does not include the later Connect
 source or the nine additional channel cases. No duplicate product dispatch.
 No local runtime, roadmap closure or final release claim; LF00105 remains open.
 

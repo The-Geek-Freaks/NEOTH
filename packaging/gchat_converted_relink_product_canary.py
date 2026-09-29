@@ -71,15 +71,24 @@ REFUSAL_DIAGNOSTIC_REASONS = frozenset((
     "prepare_material",
     "prepare_routing",
     "probe_execution",
+    "validate_request",
+    "recheck_source",
+    "begin_pending",
+    "recheck_candidate",
+    "probe_unclassified",
     "unknown",
 ))
 # Fixed codes emitted only by the gchat-product-canary feature. They never
 # contain provider detail, endpoint text, key data, token material, or stderr.
 GCHAT_CANARY_DIAGNOSTIC_CODES = {
+    "validate-request": ("gchat_prepare", "validate_request"),
+    "recheck-source": ("gchat_prepare", "recheck_source"),
+    "begin-pending": ("gchat_prepare", "begin_pending"),
     "prepare-candidate": ("gchat_prepare", "prepare_candidate"),
     "prepare-material": ("gchat_prepare", "prepare_material"),
     "prepare-routing": ("gchat_prepare", "prepare_routing"),
     "probe-execution": ("gchat_prepare", "probe_execution"),
+    "recheck-candidate": ("gchat_prepare", "recheck_candidate"),
     "constructor-origin-not-unicode": ("gchat_constructor", "canary_origin_not_unicode"),
     "constructor-origin-invalid": ("gchat_constructor", "canary_origin_invalid"),
     "constructor-feature": ("gchat_constructor", "constructor_feature_disabled"),
@@ -110,7 +119,7 @@ GCHAT_CANARY_DIAGNOSTIC_CODES = {
     "space-status": ("gchat_space", "space_http_status"),
     "space-json": ("gchat_space", "space_malformed_json"),
     "space-identity": ("gchat_space", "space_identity_mismatch"),
-    "unknown": ("unknown", "unknown"),
+    "unknown": ("gchat_probe", "probe_unclassified"),
 }
 REFUSAL_OUTPUT_HASH_DOMAIN = b"neoth-gchat-refusal-output-v1\0"
 REFUSAL_ERROR_MARKERS = (
@@ -190,11 +199,11 @@ def refusal_failure_diagnostic(process: subprocess.CompletedProcess[bytes]) -> d
     }
 
 
-def refusal_probe_evidence(stage: str, counts: dict[str, int], process: subprocess.CompletedProcess[bytes]) -> dict:
+def refusal_probe_evidence(stage: str, counts: dict[str, int], process: subprocess.CompletedProcess[bytes], index_presence: dict[str, bool]) -> dict:
     """A fixed, redacted receipt fragment; it can never carry request data."""
     if stage not in REFUSAL_STAGES or set(counts) != set(REFUSAL_COUNTERS):
         raise Failure("refusal_evidence_invalid")
-    if any(type(counts[name]) is not int or counts[name] < 0 for name in REFUSAL_COUNTERS):
+    if any(type(counts[name]) is not int or counts[name] < 0 for name in REFUSAL_COUNTERS) or set(index_presence) != {"before", "after"} or any(type(value) is not bool for value in index_presence.values()):
         raise Failure("refusal_evidence_invalid")
     diagnostic = refusal_failure_diagnostic(process)
     if diagnostic["stage"] not in REFUSAL_DIAGNOSTIC_STAGES or diagnostic["reason"] not in REFUSAL_DIAGNOSTIC_REASONS:
@@ -202,6 +211,7 @@ def refusal_probe_evidence(stage: str, counts: dict[str, int], process: subproce
     return {
         "stage": stage,
         "counters": {name: counts[name] for name in REFUSAL_COUNTERS},
+        "index_presence": index_presence,
         "failure": diagnostic,
     }
 
@@ -482,20 +492,26 @@ def expected_after(before: ExpectedReceipt, home: Path) -> ExpectedReceipt:
     return ExpectedReceipt(before.material_sha256, before.pair_before_sha256, before.routing_before_sha256, pair_commitment(home), sha256_bytes((home / "channel_routing.json").read_bytes()), before.source_sha256)
 
 
-def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], stage: str, required_calls: int, expected_space_event: str, server: FakeGoogle, refusal_result: subprocess.CompletedProcess[bytes]) -> dict:
+def require_pending_unchanged(home: Path, before: dict[str, tuple[bool, bytes]], index_present_before: bool, stage: str, required_calls: int, expected_space_event: str, server: FakeGoogle, refusal_result: subprocess.CompletedProcess[bytes]) -> dict:
+    index_path = home / "channel_relinks.json"
+    counts = server.counts()
+    index_presence = {"before": index_present_before, "after": index_path.exists()}
+    evidence = refusal_probe_evidence(stage, counts, refusal_result, index_presence)
     if any(snapshot(home / name) != value for name, value in before.items()):
-        raise Failure("refusal_mutated_existing_state")
+        raise Failure("refusal_mutated_existing_state", evidence)
     if (home / RELOAD).exists() or (home / ".channel-relink-google-chat.transaction.json").exists():
-        raise Failure("refusal_published_state")
-    index = read_json(home / "channel_relinks.json", "pending_index_invalid")
+        raise Failure("refusal_published_state", evidence)
+    try:
+        index = read_json(index_path, "pending_index_invalid")
+    except Failure:
+        raise Failure("pending_index_invalid", evidence) from None
     pending = index.get("pending")
     matches = [item for item in pending if isinstance(item, dict) and item.get("destination") == DESTINATION] if isinstance(pending, list) else []
     if len(matches) != 1 or matches[0].get("state") != "pending":
-        raise Failure("pending_identity_invalid")
-    counts = server.counts()
+        raise Failure("pending_identity_invalid", evidence)
     if counts["token"] < required_calls or counts["subscription"] < required_calls or counts[expected_space_event] < 1:
-        raise Failure("refusal_probe_contract_invalid", refusal_probe_evidence(stage, counts, refusal_result))
-    return {"pending_id": matches[0].get("id"), "source_set_sha256": matches[0].get("source_set_sha256")}
+        raise Failure("refusal_probe_contract_invalid", evidence)
+    return {"pending_id": matches[0].get("id"), "source_set_sha256": matches[0].get("source_set_sha256"), "index_presence": index_presence}
 
 
 def ready_files(home: Path, identity: str, expected: ExpectedReceipt) -> dict[str, bytes]:
@@ -611,11 +627,15 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
         wrong_env["NEOTH_HOME"] = str(wrong)
         initialize(binary, wrong, wrong_env)
         enable_encryption(wrong)
+        wrong_index_present_before = (wrong / "channel_relinks.json").exists()
+        if wrong_index_present_before:
+            raise Failure("wrong_home_relink_index_not_fresh")
         wrong_before = {name: snapshot(wrong / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
         wrong_result = command(argv(binary, source_path, WRONG_SPACE), wrong_env, envelope(root / "service-account.json"))
         if wrong_result.returncode == 0:
             raise Failure("wrong_target_accepted")
-        wrong_pending = require_pending_unchanged(wrong, wrong_before, "wrong_target", 1, "wrong_space", server, wrong_result)
+        wrong_pending = require_pending_unchanged(wrong, wrong_before, wrong_index_present_before, "wrong_target", 1, "wrong_space", server, wrong_result)
+        returned_index_present_before = (home / "channel_relinks.json").exists()
         returned_before = {name: snapshot(home / name) for name in ("freedom.yaml", "wal/master.key", "credentials.yaml", "channel_routing.json")}
         server.wrong_return = True
         try:
@@ -624,7 +644,7 @@ def execute(binary: Path, root: Path, home: Path, source_path: Path, evidence: P
             server.wrong_return = False
         if returned.returncode == 0:
             raise Failure("wrong_returned_space_accepted")
-        returned_pending = require_pending_unchanged(home, returned_before, "wrong_returned_space", 2, "space", server, returned)
+        returned_pending = require_pending_unchanged(home, returned_before, returned_index_present_before, "wrong_returned_space", 2, "space", server, returned)
         before = expected_before(home, root / "service-account.json", source_path)
         first = command(argv(binary, source_path, SPACE), env, envelope(root / "service-account.json"))
         if first.returncode:

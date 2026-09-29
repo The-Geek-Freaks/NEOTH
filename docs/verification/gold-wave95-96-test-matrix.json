@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1899/W1900 source reviewed; W1901 authentic hosted formatter imported; current hosted validation pending",
+  "status": "W1902 authentic147cases/publicCLI/15guards accepted; W1903 reviewed fixed diagnostic boundaries, hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269830,
-    "sha256": "5E8401008CB8B72FD951FBB38EA32695E8C97507A99AC4477033E6F045C78C72"
+    "bytes": 269836,
+    "sha256": "1B2B6B77FD767D86A6C5DE52E20A6E7FC29B59DDD5D2FD6C9C764114F6200D57"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -13506,43 +13506,43 @@
     {
       "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
@@ -14298,7 +14298,7 @@
     {
       "test": "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+      "sourceSha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
       "junitClass": "neoth"
     },
     {
@@ -60230,6 +60230,94 @@
       }
     ],
     "note": "Preflight36534561869 at165687c4 format-only failure; artifact11016879128 ZIP/API SHA25693d0c73a24cc4bc57da095f4586644dc5b122868e3a72ba141556081c02d37dd. Patch b412f949f746ab6dbe41cb6784c29116aef5e46169343d57abb2dacc951a17c5 and exact Git pre/postimages verified. Only two connect expression layouts changed. CodeQuality165687c4 succeeded. Product147 terminal failure, both products unaccepted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1902Product147Admission": {
+    "producer": "9195c911db7f94ebda823b717f036045e755c648",
+    "run": 36531555972,
+    "record": "work/gold-20260906/wave1902-product147-admission/ROOT_ACCEPTANCE.json",
+    "recordSha256": "160AB634B8727456C5F34FDEEE5C9EE0A056A03A0C54EA6E9E4B4DBC1CC39793",
+    "admissionSha256": "98367e0fec40a911333bf9657e1d9f04e1b52063536d7e15197883543a0bdbf0",
+    "originalArtifacts": 6,
+    "extractedEntries": 315,
+    "rawProducerBindings": 87,
+    "exactChannelCases": 147,
+    "separateCanaryGuards": 15,
+    "publicBlueBubblesCLI": "admitted",
+    "daemon": "failed_unaccepted",
+    "gchat": "failed_unaccepted",
+    "roadmapBoxesClosed": 0,
+    "localExecutableValidationRan": false
+  },
+  "wave1903GchatPreparationBoundaryDiagnostics": {
+    "status": "independent static review approved including missing-index evidence retention; hosted pending",
+    "sourcePath": "SRC/neothd/src/cli/channel/converted_relink.rs",
+    "testPath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+    "feature": "gchat-product-canary",
+    "additionalFeatureTests": [
+      "cli::channel::converted_relink::tests::gchat_canary_pre_reservation_failures_are_fixed_and_do_not_create_pending",
+      "cli::channel::converted_relink::tests::gchat_canary_real_candidate_constructor_failure_survives_redaction_as_fixed_code",
+      "cli::channel::converted_relink::tests::gchat_canary_begin_pending_conflict_is_fixed_without_rewriting_index_or_pair"
+    ],
+    "normalChannelCases": 156,
+    "separateFeatureGuards": 18,
+    "pythonCanaryContracts": 45,
+    "scope": "Fixed preparation-stage diagnosis and explicit unknown-probe/pending presence evidence. No transport/provider fix, no local executable validation or product acceptance."
+  },
+  "wave1901to1903SourceBindings": {
+    "base": "71fef1ca787903076798722e8f9d728a2e3b364e",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 52954,
+        "sha256": "5967ECA32EE1A61F35D0FAB8A373C839D8B9A56C7FC344B01F507542DD0CFD84",
+        "blob": "4583e8c198ca2d9143246a415b6d2debe95d1028"
+      },
+      {
+        "path": "packaging/gchat_converted_relink_product_canary.py",
+        "bytes": 36411,
+        "sha256": "04A65BD6B922AF99D1B7ADCD379959D3A7D7C87B3CB68B4FE16E738AAC3403A9",
+        "blob": "4b6840be8b7708e8bd703ddecd623c9b0e7ce97d"
+      },
+      {
+        "path": "packaging/tests/test_gchat_converted_relink_product_canary.py",
+        "bytes": 19320,
+        "sha256": "19FBE8F60BC756E58F5D4B2C938E67F15A9A75D02D1660384D73B72E6AF589C1",
+        "blob": "fc2b1c44601d5a2704adff751a41dcec5c33ad40"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 549231,
+        "sha256": "447D807144C4558CF6DB5D7E39E8264C7EEE16B8202390B47CA5A13A06323C0A",
+        "blob": "54c15f1d62547a88a3d89357e730c4a9c74b5105"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1585661,
+        "sha256": "AC07B4A80DFF54FC11E8AC105E9A380DE4D733F17639CD0FBE801C14A48B0EB1",
+        "blob": "edd4f3fbcec960dc4d8f72a83c0ffd6d72223994"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2196671,
+        "sha256": "A41C17D2296BC3FDF964EEF45B425609DF4ECBE2BE1CA45CE0F4EBE3D14B34EC",
+        "blob": "b272b2352de51ea10cce014db0c5a7fd62e821b7"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "bytes": 20264,
+        "sha256": "ACB97D01FD8665E2602931FE97530BF22C4FBA822F25393D131E58C536B98F14",
+        "blob": "624a23b8dac85e46573b05f67121797a7323866d"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "bytes": 32793,
+        "sha256": "DE18C336F00CA433FDB0B014270513DB11F5CFB3E7AE7E68B0DF498AB58C3AFF",
+        "blob": "98f124922afffbd22db3304fb303e04250526453"
+      }
+    ],
+    "note": "W1903 adds feature-only preparation boundary codes; distinguishes emitted unknown probe from absent/future markers; preserves fixed evidence even when Pending is absent or invalid.7CLI diagnostic feature guards+11adapter guards separate from156channel cases;45Python contracts. No inferred GChat transport fix. Native2169/954/70 remain pinned71fef1ca and active. No local runtime or roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

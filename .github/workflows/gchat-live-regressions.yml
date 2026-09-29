@@ -422,7 +422,7 @@ jobs:
           cargo test -p neoth --locked --lib --features gchat-product-canary,irc-channel,nostr-channel \
             channels::gchat::tests:: -- --test-threads=1 2>&1 | tee "$W548_ROOT/gchat-guards/tests.log"
 
-          for name in gchat_canary_diagnostic_codes_are_fixed_and_complete failed_gchat_probe_emits_only_fixed_canary_code failed_gchat_candidate_preparation_emits_only_fixed_canary_code_after_reservation gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain; do
+          for name in gchat_canary_diagnostic_codes_are_fixed_and_complete failed_gchat_probe_emits_only_fixed_canary_code failed_gchat_candidate_preparation_emits_only_fixed_canary_code_after_reservation gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain gchat_canary_pre_reservation_failures_are_fixed_and_do_not_create_pending gchat_canary_real_candidate_constructor_failure_survives_redaction_as_fixed_code gchat_canary_begin_pending_conflict_is_fixed_without_rewriting_index_or_pair; do
             identity="cli::channel::converted_relink::tests::$name"
             discovery="$W548_ROOT/gchat-guards/${name}-discovery.log"
             actual="$W548_ROOT/gchat-guards/${name}-actual.log"
