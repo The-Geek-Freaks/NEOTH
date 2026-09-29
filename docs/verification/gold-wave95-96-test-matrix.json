@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1903 source producer6591a1c4 Preflight/Quality green; one product156 plus native2169/954/70 active, admissions pending",
+  "status": "W1904 line-bounded topology replacement reviewed; existing hosted regression remains, current validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269844,
-    "sha256": "A924CDC4F12064DF4705AE15065E274FCD4CB70401B7684FA100E12B5425C70B"
+    "bytes": 269837,
+    "sha256": "0F6342F7D44292BCC80B47E30DFB45B4AC85C6F0BCE6AD07BB20978242A20EE0"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -60343,7 +60343,7 @@
     "codeQuality": 36537143813,
     "codeQualityConclusion": "success",
     "product": 36537312647,
-    "productStatus": "in_progress",
+    "productStatus": "completed_failure_python_contract_before_rust_or_product",
     "nativeProducer": "71fef1ca787903076798722e8f9d728a2e3b364e",
     "linux2169": 36535387242,
     "windows954": 36535391550,
@@ -60375,6 +60375,51 @@
       }
     ],
     "note": "Documentation/ledger only after reviewed source publication; exact active run IDs retained, no source/runtime acceptance inferred from in-progress status. No local executable validation or roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1904DaemonTopologyLineBoundary": {
+    "failedRun": 36537312647,
+    "producer": "6591a1c42c1dc95f7f99744c18d28f1969ed5c11",
+    "failedTest": "test_loopback_provider_configuration_replaces_skip_topology_before_exact_consent",
+    "publicCLIContractsPassed": 10,
+    "gchatContractsPassed": 15,
+    "daemonContractsPassed": 19,
+    "daemonContractsFailed": 1,
+    "fix": "Remove DOTALL and restrict inference-block line body to non-newline characters",
+    "independentReview": "static APPROVE",
+    "runtime": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1904SourceBindings": {
+    "base": "042d395ff274714be7d13b0c26c6596d182eed6f",
+    "sources": [
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 41347,
+        "sha256": "F9A8B5FF8815D34813106B286AE033F231CA8C15293C443FC4295A3A9202C81D",
+        "blob": "d4ddb10168c8b233284a8285ca46680bed32f659"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 551539,
+        "sha256": "9A4827D90CAE05CE5219693C9B890C3E94D0119D068F5FDA2131920BC42714B8",
+        "blob": "47076f3dd91f5c674d4b4f7834076f3fdf427bef"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1587969,
+        "sha256": "76D881502FC46B16088AC6FF71E539C6576CACC6C20AFB39A38771F845F405C5",
+        "blob": "ae24f8003e5ff31275f746f5850572c3935336c9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2198979,
+        "sha256": "AE6BF37841C2F93D5F913A6DD21773D49EFA24943B7132CF78C262E2CB2A5070",
+        "blob": "f4d78ee604f1cc136091a5d10056520a2bab7923"
+      }
+    ],
+    "note": "Actual product36537312647 failure in20daemon contracts:19pass1fail. DOTALL topology regex swallowed top-level keys. One-line helper correction, no assertions weakened, all45Python contracts retained. Native2169/954/70 remain on71fef1ca; no product accepted or ROAD closed; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

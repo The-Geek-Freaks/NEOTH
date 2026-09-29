@@ -331,7 +331,7 @@ def configure_loopback_provider(home: Path, port: int) -> None:
         f"    model: {values['provider_model']}\n"
         f"    endpoint: {endpoint}\n"
     )
-    inference_block = re.compile(r"(?ms)^inference:\n(?:(?:^[ \t].*(?:\n|$))|^\n)*")
+    inference_block = re.compile(r"(?m)^inference:\n(?:(?:^[ \t][^\n]*(?:\n|$))|^\n)*")
     if inference_block.search(raw):
         raw = inference_block.sub(topology, raw, count=1)
     else:

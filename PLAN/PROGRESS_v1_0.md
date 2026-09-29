@@ -2,12 +2,29 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
-**W1903 current hosted validation (2026-09-29; product/native pending):**
+**W1904 daemon canary topology line boundary (2026-09-29; hosted pending):**
+Product156 run36537312647 at6591a1c4 ended FAILURE before Rust or product execution:
+publicCLI10 andGChat15 Python contracts passed; daemon19 passed/1 failed.
+The existing topology regression correctly detected removal of provider_endpoint
+and unrelated_setting. Source cause is the inference-block regex DOTALL flag:
+its indented `.*` consumed subsequent top-level YAML lines. The one-line helper
+repair removes DOTALL and forbids newline consumption inside the indented body.
+The existing endpoint/topology/unrelated-setting assertions remain unchanged.
+Independent Python review approves this exact fix; no production consent gate
+or runtime guard changed. Original GitHub run log ZIP is retained under
+work/gold-20260906/wave1904-daemon-topology-line-boundary with SHA256
+173a2386c5a15d2cec81d1e0047628c682de18223e6f613845e6ffac24bea3f1
+(the run-log API provides no separate artifact digest). A successor product
+run will follow this publication and green Preflight; no parallel dispatch.
+Native2169/954/70 remain on71fef1ca. No local runtime or roadmap closure.
+
+**W1903 hosted validation (2026-09-29; product contract failed, native pending):**
 The reviewed diagnostic source is published asd5c5c9c9. Authentic formatter
 artifact11019086587 (ZIP/API SHA256a821b4448fe1118a13679314a4ad988518de8fcaf5d33d8936c9a5070a9974f7)
 changes two test layouts only; entry hashes and exact Git pre/postimages matched.
 Formatted producer6591a1c4 has green Preflight36537144167 andCodeQuality36537143813.
-A single product156 run36537312647 is now active on6591a1c4, selecting18 separate
+The single product156 run36537312647 failed its Python gate on6591a1c4 (W1904),
+before its planned18 separate
 feature guards and45 Python canary contracts. It includes W1900's daemon
 OpenaiCompat topology/consent correction and W1903's complete bounded diagnosis.
 Linux2169 run36535387242, Windows954 run36535391550 andmacOS70 run36535396148

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T07:32:59.6405967Z",
-  "validationStatus": "W1903 source producer6591a1c4 Preflight/Quality green; one product156 plus native2169/954/70 active, admissions pending",
+  "capturedUtc": "2026-09-29T07:35:58.0699459Z",
+  "validationStatus": "W1904 line-bounded topology replacement reviewed; existing hosted regression remains, current validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3663,8 +3663,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 41344,
-      "sha256": "1597FDEB647A14E381259CA130C2558A64FED8F813126721BD095E45BEB0A9F1"
+      "bytes": 41347,
+      "sha256": "F9A8B5FF8815D34813106B286AE033F231CA8C15293C443FC4295A3A9202C81D"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -3888,18 +3888,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 550357,
-      "sha256": "8EE41661C577AAA8908BEA074397B102D16936D3AFD522740BA181C631090F1B"
+      "bytes": 551539,
+      "sha256": "9A4827D90CAE05CE5219693C9B890C3E94D0119D068F5FDA2131920BC42714B8"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1586787,
-      "sha256": "67417A6C18F4D6945D9F67A2A4EF924D88B36E96266C1DA525061A0021E593AA"
+      "bytes": 1587969,
+      "sha256": "76D881502FC46B16088AC6FF71E539C6576CACC6C20AFB39A38771F845F405C5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2197797,
-      "sha256": "2C8A10ADAC6D3B54894B487B6B366A7CB1127AE443A6E92CF4CF9179FDC41584"
+      "bytes": 2198979,
+      "sha256": "AE6BF37841C2F93D5F913A6DD21773D49EFA24943B7132CF78C262E2CB2A5070"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
