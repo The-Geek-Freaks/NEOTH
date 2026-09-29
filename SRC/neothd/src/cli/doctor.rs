@@ -1751,6 +1751,244 @@ mod tests {
     }
 
     #[test]
+    fn channels_wiring_named_telegram_accounts_need_exact_live_probes() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "channel_accounts:\n  telegram:\n    family: { allowed_user_id: 42 }\n    work: { allowed_user_id: 7 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "channel_accounts:\n  telegram:\n    family: { token: telegram-family-secret }\n    work: { token: telegram-work-secret }\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert_eq!(
+            outcome
+                .detail
+                .matches("telegram: CONFIGURED-NEEDS-LIVE-PROBE")
+                .count(),
+            2,
+            "{}",
+            outcome.detail
+        );
+        for command in [
+            "neoth channel test telegram --account family",
+            "neoth channel test telegram --account work",
+        ] {
+            assert!(outcome.detail.contains(command), "{}", outcome.detail);
+        }
+        for secret in ["telegram-family-secret", "telegram-work-secret"] {
+            assert!(!outcome.detail.contains(secret), "{}", outcome.detail);
+        }
+    }
+
+    #[test]
+    fn channels_wiring_named_slack_accounts_need_exact_live_probes() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    ops: { allowed_user_id: U0123456789 }\n    personal: { allowed_user_id: U9876543210 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    ops: { bot_token: xoxb-ops-secret, app_token: xapp-ops-secret }\n    personal: { bot_token: xoxb-personal-secret, app_token: xapp-personal-secret }\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert_eq!(
+            outcome
+                .detail
+                .matches("slack: CONFIGURED-NEEDS-LIVE-PROBE")
+                .count(),
+            2,
+            "{}",
+            outcome.detail
+        );
+        for command in [
+            "neoth channel test slack --account ops",
+            "neoth channel test slack --account personal",
+        ] {
+            assert!(outcome.detail.contains(command), "{}", outcome.detail);
+        }
+        for secret in [
+            "xoxb-ops-secret",
+            "xapp-ops-secret",
+            "xoxb-personal-secret",
+            "xapp-personal-secret",
+        ] {
+            assert!(!outcome.detail.contains(secret), "{}", outcome.detail);
+        }
+    }
+
+    #[test]
+    fn channels_wiring_partial_named_telegram_maps_need_repair_without_legacy_shadow() {
+        let policy_only = tempdir().unwrap();
+        std::fs::write(
+            policy_only.path().join("freedom.yaml"),
+            "channel_accounts:\n  telegram:\n    family: { allowed_user_id: 42 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            policy_only.path().join("credentials.yaml"),
+            "telegram_token: legacy-telegram-shadow\n",
+        )
+        .unwrap();
+        let policy_outcome = check_channels_wiring(policy_only.path());
+
+        let credentials_only = tempdir().unwrap();
+        std::fs::write(
+            credentials_only.path().join("freedom.yaml"),
+            "telegram_user_id: 42\n",
+        )
+        .unwrap();
+        std::fs::write(
+            credentials_only.path().join("credentials.yaml"),
+            "telegram_token: legacy-telegram-shadow\nchannel_accounts:\n  telegram:\n    family: { token: named-telegram-secret }\n",
+        )
+        .unwrap();
+        let credentials_outcome = check_channels_wiring(credentials_only.path());
+
+        for outcome in [&policy_outcome, &credentials_outcome] {
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(
+                outcome
+                    .detail
+                    .contains("telegram: CONFIGURED-NEEDS-REPAIR"),
+                "{}",
+                outcome.detail
+            );
+            assert!(!outcome.detail.contains("telegram: LIVE"), "{}", outcome.detail);
+            assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
+            assert!(
+                !outcome
+                    .detail
+                    .contains("neoth channel test telegram --account"),
+                "{}",
+                outcome.detail
+            );
+            assert!(!outcome.detail.contains("telegram-shadow"), "{}", outcome.detail);
+            assert!(!outcome.detail.contains("named-telegram-secret"), "{}", outcome.detail);
+        }
+    }
+
+    #[test]
+    fn channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow() {
+        let policy_only = tempdir().unwrap();
+        std::fs::write(
+            policy_only.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    ops: { allowed_user_id: U0123456789 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            policy_only.path().join("credentials.yaml"),
+            "slack_bot_token: xoxb-legacy-shadow\nslack_app_token: xapp-legacy-shadow\nslack_allowed_user_id: U0123456789\n",
+        )
+        .unwrap();
+        let policy_outcome = check_channels_wiring(policy_only.path());
+
+        let credentials_only = tempdir().unwrap();
+        std::fs::write(
+            credentials_only.path().join("credentials.yaml"),
+            "slack_bot_token: xoxb-legacy-shadow\nslack_app_token: xapp-legacy-shadow\nslack_allowed_user_id: U0123456789\nchannel_accounts:\n  slack:\n    ops: { bot_token: xoxb-named-secret }\n",
+        )
+        .unwrap();
+        let credentials_outcome = check_channels_wiring(credentials_only.path());
+
+        for outcome in [&policy_outcome, &credentials_outcome] {
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(
+                outcome
+                    .detail
+                    .contains("slack: CONFIGURED-NEEDS-REPAIR"),
+                "{}",
+                outcome.detail
+            );
+            assert!(!outcome.detail.contains("slack: LIVE"), "{}", outcome.detail);
+            assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
+            assert!(
+                !outcome
+                    .detail
+                    .contains("neoth channel test slack --account"),
+                "{}",
+                outcome.detail
+            );
+            assert!(!outcome.detail.contains("legacy-shadow"), "{}", outcome.detail);
+            assert!(!outcome.detail.contains("xoxb-named-secret"), "{}", outcome.detail);
+        }
+    }
+
+    #[test]
+    fn channels_wiring_existing_malformed_config_is_fail_closed() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "channel_accounts: [broken\n").unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "telegram_token: malformed-config-secret\n",
+        )
+        .unwrap();
+
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("pair unreadable"), "{}", outcome.detail);
+        assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
+        assert!(!outcome.detail.contains("LIVE"), "{}", outcome.detail);
+        assert!(
+            !outcome.detail.contains("malformed-config-secret"),
+            "{}",
+            outcome.detail
+        );
+    }
+
+    #[test]
+    fn channels_wiring_preserves_legacy_ssh_config_and_credentials() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            "ssh_tunnels: []\nchannel_accounts:\n  telegram:\n    family: { allowed_user_id: 42 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &credentials_path,
+            "channel_accounts:\n  telegram:\n    family: { token: diagnostic-telegram-secret }\n",
+        )
+        .unwrap();
+        let freedom_before = std::fs::read(&freedom_path).unwrap();
+        let credentials_before = std::fs::read(&credentials_path).unwrap();
+
+        for _ in 0..2 {
+            let outcome = check_channels_wiring(dir.path());
+            assert_eq!(outcome.status, CheckStatus::Warn);
+            assert!(
+                outcome
+                    .detail
+                    .contains("telegram: CONFIGURED-NEEDS-LIVE-PROBE"),
+                "{}",
+                outcome.detail
+            );
+            assert!(
+                !outcome.detail.contains("diagnostic-telegram-secret"),
+                "{}",
+                outcome.detail
+            );
+        }
+
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+    }
+
+    #[test]
     fn channels_wiring_gchat_only_is_visible_without_a_cli_only_claim() {
         let dir = tempdir().unwrap();
         std::fs::write(

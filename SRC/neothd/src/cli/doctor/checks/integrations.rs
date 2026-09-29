@@ -936,7 +936,8 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
 /// WhatsApp tokens, saw "ok" in their setup, and never realised
 /// inbound was deferred.
 ///
-/// Post-fix: each channel gets one of four classifications:
+/// Post-fix: Doctor projects static configuration into the classifications
+/// below. It does not persist a transition after a channel test.
 ///
 /// - **LIVE**: tokens configured + adapter has live inbound + serve
 ///   spawns it. Telegram today.
@@ -946,49 +947,104 @@ pub(crate) fn check_mcp_servers(home: &Path) -> CheckOutcome {
 ///   inbound code BUT serve does not bootstrap it. Discord (gateway
 ///   loop ships) is the current example.
 /// - **NOT-CONFIGURED**: no credentials present. Silent.
+///
+/// Named Telegram and Slack accounts are configuration-only projections. Each
+/// admitted account remains `CONFIGURED-NEEDS-LIVE-PROBE` and gives its exact
+/// `neoth channel test <channel> --account <id>` command; invalid maps are
+/// `CONFIGURED-NEEDS-REPAIR` and never fall back to legacy scalar credentials.
 pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
-    let creds = match crate::config::credentials::Credentials::load_or_default(
-        &home.join("credentials.yaml"),
+    let runtime = match crate::config::load_runtime_config_pair_from_path_or_default_for_diagnostic(
+        &home.join("freedom.yaml"),
     ) {
-        Ok(c) => c,
+        Ok(pair) => pair,
         Err(_) => {
             return CheckOutcome {
                 name: "channels wiring",
                 status: CheckStatus::Warn,
-                detail: "credentials.yaml unreadable; per-channel status unavailable".to_string(),
+                detail: "config/credential pair unreadable; per-channel status unavailable"
+                    .to_string(),
             };
         }
     };
+    let creds = &runtime.credentials;
 
     // Tuple shape: (channel name, classification, note). Only configured
     // channels show up — silent on NOT-CONFIGURED to keep doctor output
     // focused on what the operator actually set up.
     let mut rows: Vec<(&'static str, &'static str, String)> = Vec::new();
 
-    if creds.telegram_token.is_some() {
+    let telegram_map_active = runtime.config.telegram_account_map_active()
+        || creds.telegram_account_map_active()
+        || runtime.raw_credentials.telegram_account_map_active();
+    if telegram_map_active {
+        match crate::channels::probe::telegram_account_probes(&runtime) {
+            Ok(accounts) if !accounts.is_empty() => {
+                for account in accounts {
+                    let account_id = account.channel_ref.account_id.as_str();
+                    rows.push((
+                        "telegram",
+                        "CONFIGURED-NEEDS-LIVE-PROBE",
+                        format!(
+                            "named account `{account_id}` is configured statically; run `neoth channel test telegram --account {account_id}`"
+                        ),
+                    ));
+                }
+            }
+            Ok(_) | Err(_) => rows.push((
+                "telegram",
+                "CONFIGURED-NEEDS-REPAIR",
+                "named account map is invalid or partial; no account is usable until matching policy and credentials are configured".to_string(),
+            )),
+        }
+    } else if creds.telegram_token.is_some() {
         rows.push((
             "telegram",
             "LIVE",
             "polling loop spawned by serve; send + receive both real".to_string(),
         ));
     }
-    match (
-        creds.slack_bot_token.is_some(),
-        creds.slack_app_token.is_some(),
-    ) {
-        (true, true) => rows.push((
-            "slack",
-            "LIVE",
-            "socket-mode WS loop spawned by serve; send + receive both real".to_string(),
-        )),
-        (true, false) | (false, true) => rows.push((
-            "slack",
-            "CONFIGURED-NOT-STARTED",
-            "socket mode needs BOTH bot_token (xoxb-) and app_token (xapp-); \
-             only one supplied — send_text still works"
-                .to_string(),
-        )),
-        (false, false) => {}
+    let slack_map_active = !runtime.config.channel_accounts.slack.is_empty()
+        || creds.slack_account_map_active()
+        || runtime.raw_credentials.slack_account_map_active();
+    if slack_map_active {
+        match crate::channels::probe::slack_account_probes(&runtime) {
+            Ok(accounts) if !accounts.is_empty() => {
+                for account in accounts {
+                    let account_id = account.channel_ref.account_id.as_str();
+                    rows.push((
+                        "slack",
+                        "CONFIGURED-NEEDS-LIVE-PROBE",
+                        format!(
+                            "named account `{account_id}` is configured statically; run `neoth channel test slack --account {account_id}`"
+                        ),
+                    ));
+                }
+            }
+            Ok(_) | Err(_) => rows.push((
+                "slack",
+                "CONFIGURED-NEEDS-REPAIR",
+                "named account map is invalid or partial; no account is usable until matching policy and credentials are configured".to_string(),
+            )),
+        }
+    } else {
+        match (
+            creds.slack_bot_token.is_some(),
+            creds.slack_app_token.is_some(),
+        ) {
+            (true, true) => rows.push((
+                "slack",
+                "LIVE",
+                "socket-mode WS loop spawned by serve; send + receive both real".to_string(),
+            )),
+            (true, false) | (false, true) => rows.push((
+                "slack",
+                "CONFIGURED-NOT-STARTED",
+                "socket mode needs BOTH bot_token (xoxb-) and app_token (xapp-); \
+                 only one supplied — send_text still works"
+                    .to_string(),
+            )),
+            (false, false) => {}
+        }
     }
     if creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some() {
         let inbound_ready = creds.whatsapp_verify_token.is_some()
@@ -1010,7 +1066,7 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
             ));
         }
     }
-    let view = crate::channels::probe::ChannelCredsView::from_config(None, &creds);
+    let view = crate::channels::probe::ChannelCredsView::from_config(None, creds);
     let keet_any = view.keet_bridge_url
         || view.keet_topic
         || view.keet_allowed_senders

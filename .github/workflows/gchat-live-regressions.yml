@@ -365,9 +365,15 @@ jobs:
           run_case 160 lib cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields --lib
           run_case 161 lib cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates --lib
           run_case 162 lib cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 162
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 162
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 162
+          run_case 163 lib cli::doctor::tests::channels_wiring_named_telegram_accounts_need_exact_live_probes cli::doctor::tests::channels_wiring_named_telegram_accounts_need_exact_live_probes --lib
+          run_case 164 lib cli::doctor::tests::channels_wiring_named_slack_accounts_need_exact_live_probes cli::doctor::tests::channels_wiring_named_slack_accounts_need_exact_live_probes --lib
+          run_case 165 lib cli::doctor::tests::channels_wiring_partial_named_telegram_maps_need_repair_without_legacy_shadow cli::doctor::tests::channels_wiring_partial_named_telegram_maps_need_repair_without_legacy_shadow --lib
+          run_case 166 lib cli::doctor::tests::channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow cli::doctor::tests::channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow --lib
+          run_case 167 lib cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed --lib
+          run_case 168 lib cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 168
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 168
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 168
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

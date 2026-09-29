@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
+**W1948 Doctor named-account wiring (2026-09-29; hosted pending):**
+The separate Doctor channels-wiring consumer now uses canonical
+Telegram/Slack account validation. Valid named accounts receive exact-account
+live-probe guidance; partial account maps require repair without falling back
+to legacy scalar shadows. Existing malformed config remains a redacted warning.
+Legacy specialised lifecycle rows retain their existing behavior. The diagnostic
+loader preserves coherent raw/effective credentials and skips SSH migration.
+
+Six focused regression identities are registered: Telegram and Slack named
+accounts, both directions of partial maps with legacy shadows for each channel,
+malformed existing configuration and unchanged legacy SSH/config bytes.
+Selections become 2406 portable,
+2181 Linux,966 Windows,168 channel and82 macOS;61 Python and20 GChat guards
+are unchanged. Source review and hosted execution remain pending. No roadmap
+checkbox is closed. Root owns Git/PLAN/CI/final acceptance; local BSOD hold and
+no-.slint remain. Claude polling was explicitly stopped and will not restart.
+
 **W1947 named-account onboarding accepted (2026-09-29):**
 Run36589118484 onf7c74825 completed SUCCESS. Root verified all7 original ZIP/API
 digests,356 extracted entries,106 raw producer source bindings,162 exact

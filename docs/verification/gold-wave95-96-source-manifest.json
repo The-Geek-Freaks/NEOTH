@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T15:54:45.7695578Z",
-  "validationStatus": "Named-account onboarding accepted:162Rust61Python20guards and4loopback products passed f7c74825",
+  "capturedUtc": "2026-09-29T19:30:24.8979553Z",
+  "validationStatus": "W1948 Doctor named-account source frozen;168 channel cases selected; hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 56359,
-      "sha256": "7BF09173EDEE6F2D55A9F704E3FC02141BA9943314A337F58F60DDE4137EDDCF"
+      "bytes": 57583,
+      "sha256": "9FB5411E14CFBCF930347C63BA9BCF15B6B4557BFD9585CED4C9CA48D8AB43FE"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 14778,
-      "sha256": "8B7AE2A098C012E09EDFEDA08B5B53E588181EF43AC209CEBA807ECF903B6142"
+      "bytes": 15525,
+      "sha256": "F6679CCAA0C5CABF10108299D8237BB6EB67F85E004200EEF2B66A421FA1A3DA"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 30211,
-      "sha256": "9E4F1091A3B725D8D15FE0701C2218CF2FBD4282AC7DF646043C448F67B6A96A"
+      "bytes": 30259,
+      "sha256": "49C31A63132579540F0C5403FDBA10B3BC7BED4AE56ACD8ED14A6DD121C2AA01"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -188,8 +188,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 162813,
-      "sha256": "0F3CD0E6EF38E69AA9C42DF5A5E935DD94A4FA66AEE5A2BB588294A2DBA145FB"
+      "bytes": 163536,
+      "sha256": "8FD0BFD0C19EF9B1C0C406E7DC00E37E61CAC2EBF69DED828DDBD0D643257570"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3908,18 +3908,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 578644,
-      "sha256": "A520734D5AE6585F0AE0FBCF0A0F30C280092EEC77DCC56B9C8BDC8E5C65C694"
+      "bytes": 579743,
+      "sha256": "F0FAEF648F0AC66C36B5A0E15B9B700A08CF52DBD42628463F42F2F27ABAD0FB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1615074,
-      "sha256": "BA80FE820418B809357B2280FEE9169A8D876248FE7CB3EBA6976F18645946BC"
+      "bytes": 1616173,
+      "sha256": "896CB09860402E4831B99C7B397737A837852973E862EAB2E0B84642000EEC77"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2226084,
-      "sha256": "D218C26F46395809101ADFBD373161056681D52A0703AA8A7F2DF9CF1D6D8BD4"
+      "bytes": 2227183,
+      "sha256": "1303CBE85D17219424805B9DA546AED2C00F55C47E7DC82F010923B081BF6B0A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4898,8 +4898,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
-      "bytes": 96299,
-      "sha256": "E948DCE7B1D1247389B3C21FF65DA0D5AE288259EBFF15D426034E10E628A397"
+      "bytes": 105492,
+      "sha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
@@ -4913,8 +4913,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "bytes": 90207,
-      "sha256": "32D51570F6EA37BC6815F9E57A3594C2F113382DBDC5D5E09CADDCB1BE0978C5"
+      "bytes": 93034,
+      "sha256": "2CC1B3B06D1E6F3A7E567C045BF7619B7EB7217A8D31F138F1F46C25E538D4FF"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/onboarding.rs",
@@ -5548,8 +5548,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 185409,
-      "sha256": "31D14A5C5764C72AE03CFD9C6CC58C308667694F95C17DD4048B6AD859191072"
+      "bytes": 186189,
+      "sha256": "B22C7922C2EF1F8FB1A0D4D6F543A5CD59485A7BB18E972A2DF260B9CEF0070E"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",

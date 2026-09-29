@@ -1327,13 +1327,32 @@ pub(crate) fn load_runtime_config_pair_from_path(path: &Path) -> Result<RuntimeC
 pub(crate) fn load_runtime_config_pair_from_path_or_default(
     path: &Path,
 ) -> Result<RuntimeConfigPair> {
+    load_runtime_config_pair_from_path_or_default_with_legacy_ssh_migration(path, true)
+}
+
+/// Read-only diagnostic counterpart to
+/// [`load_runtime_config_pair_from_path_or_default`]. It retains the coherent
+/// lock, validation, raw/effective credentials split, and keychain
+/// supplementation while deliberately skipping the legacy SSH migration.
+pub(crate) fn load_runtime_config_pair_from_path_or_default_for_diagnostic(
+    path: &Path,
+) -> Result<RuntimeConfigPair> {
+    load_runtime_config_pair_from_path_or_default_with_legacy_ssh_migration(path, false)
+}
+
+fn load_runtime_config_pair_from_path_or_default_with_legacy_ssh_migration(
+    path: &Path,
+    migrate_legacy_ssh: bool,
+) -> Result<RuntimeConfigPair> {
     credentials::with_coherent_pair_transaction_lock(path, || {
         if path
             .try_exists()
             .with_context(|| format!("check freedom.yaml path {}", path.display()))?
         {
             let credentials_path = credentials::sibling_credentials_path(path);
-            credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
+            if migrate_legacy_ssh {
+                credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
+            }
             let (config, raw_credentials, credentials) =
                 FreedomConfig::load_runtime_pair_unlocked(path, || {})?;
             Ok(RuntimeConfigPair {
