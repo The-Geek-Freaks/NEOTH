@@ -891,12 +891,9 @@ mod tests {
             r#"{"client_email":"bot@example.invalid","private_key":"x","token_uri":"https://oauth2.googleapis.com/token"}"#,
         )
         .unwrap();
-        let production = GChatChannel::new_with_origin(
-            &production_key,
-            "projects/p/subscriptions/s",
-            None,
-        )
-        .unwrap();
+        let production =
+            GChatChannel::new_with_origin(&production_key, "projects/p/subscriptions/s", None)
+                .unwrap();
         assert_eq!(
             production.pull_endpoint().as_str(),
             "https://pubsub.googleapis.com/v1/projects/p/subscriptions/s:pull"
@@ -940,12 +937,14 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        assert!(channel
-            .pull()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("refuses nonempty pull response"));
+        assert!(
+            channel
+                .pull()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("refuses nonempty pull response")
+        );
     }
 
     #[test]

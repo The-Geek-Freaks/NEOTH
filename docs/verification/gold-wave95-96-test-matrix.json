@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1929 live GChat daemon proof and W1931 WAL diagnostics source reviewed; hosted pending",
+  "status": "W1934 exact hosted formatter imported; W1929/W1931 execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270360,
-    "sha256": "A2241CA96908127FF76E320E2D0459F3AD68B5A4A52C1FB2E660E9398BB5B878"
+    "bytes": 270341,
+    "sha256": "C0494BF48F465ADA8187016790F3C1B4473E9DFB595DFFDA6F1D7FE52EDA188D"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -61182,6 +61182,20 @@
       }
     ],
     "note": "Static independent APPROVE W1929 Rust/workflow/Python after exact8custody fix and W1931 observation-only WAL markers.1499sources;61Python;20distinctfeatureguards with6discoverysubset; native counts unchanged. W1930 authentic3entries/62producerbindings confirms WALjoin then timeout/-9; no causal source attribution. BothpublicCLI products passed9744f6c0; W1932 exact admission separate. No local execution or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1934HostedFormat": {
+    "base": "3fe2c4a0dd9a39320971374a9d151d703e29e5a4",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/channels/gchat.rs",
+        "bytes": 45688,
+        "sha256": "6E53526620D86B62B5AC22A4FDEE88096F432BB8937538103403033E80933438",
+        "blob": "3d93afab5f94441fed2db4df5e7fdd1fb2cb5633"
+      }
+    ],
+    "note": "Authentic11029522887 from36559371635 at3fe2c4a0; ZIPf19e24f3b9f90a3d7352be10dedd1ec14221cf93ea62b1a8a77a05a22b00b498;2entry hashes and gchat.rs pre2b4a5cfd/post3d93afab checked. Two formatting-only hunks. No local formatter or runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

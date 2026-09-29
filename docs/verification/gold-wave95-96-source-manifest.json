@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T11:01:03.7191233Z",
-  "validationStatus": "W1929 live GChat daemon proof and W1931 WAL diagnostics source reviewed; hosted pending",
+  "capturedUtc": "2026-09-29T11:04:20.5069833Z",
+  "validationStatus": "W1934 exact hosted formatter imported; W1929/W1931 execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4623,8 +4623,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/gchat.rs",
-      "bytes": 45673,
-      "sha256": "B9BA8F7B068ADE001E053246151DDC74A78D3AC08FFE77B4726034653F4780B3"
+      "bytes": 45688,
+      "sha256": "6E53526620D86B62B5AC22A4FDEE88096F432BB8937538103403033E80933438"
     },
     {
       "path": "SRC/neothd/src/channels/identity.rs",
