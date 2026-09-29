@@ -1,0 +1,85 @@
+name: Google Chat crypto lock reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main commit to reconcile
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+
+      - name: Require exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Prepare the exact crypto feature candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("SRC/neothd/Cargo.toml")
+          before = 'jsonwebtoken = { version = "10.4", optional = true }'
+          after = '# jsonwebtoken 10 defaults to PEM parsing only; signing needs an explicit backend.\njsonwebtoken = { version = "10.4", features = ["rust_crypto"], optional = true }'
+          source = path.read_text(encoding="utf-8")
+          if source.count(before) != 1:
+              raise SystemExit("Expected jsonwebtoken 10.4 preimage is absent or ambiguous")
+          path.write_text(source.replace(before, after), encoding="utf-8", newline="\n")
+          PY
+
+      - name: Resolve the existing lock and verify it with locked metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --format-version 1 --features gchat-product-canary,irc-channel,nostr-channel > /dev/null
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features gchat-product-canary,irc-channel,nostr-channel > /dev/null
+          test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nSRC/neothd/Cargo.toml'
+
+      - name: Seal exact candidate patch and postimages
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/gchat-crypto-lock"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml > "$evidence/candidate.patch"
+          cp SRC/Cargo.lock "$evidence/Cargo.lock"
+          cp SRC/neothd/Cargo.toml "$evidence/neothd-Cargo.toml"
+          printf '%s\n' 'cargo metadata succeeded; repeated --locked metadata succeeded; no compilation or tests ran' > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml validation.txt > SHA256SUMS)
+
+      - name: Upload exact candidate for Root review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gchat-crypto-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/gchat-crypto-lock
+          if-no-files-found: error
+          retention-days: 14

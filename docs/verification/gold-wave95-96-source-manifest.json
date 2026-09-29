@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T09:23:32.7228536Z",
-  "validationStatus": "W1920 test return type corrected; W1917 producer156/18guards/publicCLI accepted only; hosted successor pending",
+  "capturedUtc": "2026-09-29T09:43:25.4766880Z",
+  "validationStatus": "W1922 missing JWT backend diagnosed; exact hosted lock reconciliation prepared; source candidate unpublished",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -40,6 +40,11 @@
       "path": ".github/workflows/cli-reference.yml",
       "bytes": 5255,
       "sha256": "0B971561DCB33D02FC5943F1AD3F37CFE22FFA0BCC8229704D9D7E395695403B"
+    },
+    {
+      "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
+      "bytes": 3511,
+      "sha256": "53B6ACFAB41FC755DF4DBF35DFABAA4D3F22FED02A06CF0F209474912ABFAC53"
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
@@ -3888,18 +3893,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 560726,
-      "sha256": "F10DC6DD03493FE065758FC522B78B846A4AB0F80B46F9D06646E47076EAC2A5"
+      "bytes": 561902,
+      "sha256": "4386BD23A33FC1227B43DCECE9633405C6E03AA26F70FB800B58C5594EAA5CAE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1597156,
-      "sha256": "71054EC8917D7ED126F32E179B0BD113078CC8E8C5E905D49786765EB5B977A3"
+      "bytes": 1598332,
+      "sha256": "9B6C4077FD17F37BD6DCDF632C4E81772A279C193B8471F065EFCAB3D835A610"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2208166,
-      "sha256": "79127A2D0D6BB61D958FEA87A304BD331AA39E83FDEFD713703AC70517C44177"
+      "bytes": 2209342,
+      "sha256": "80713C54B1BC9F1E77EFF7AB81150C7A215F50282B9568906395956E1EB07703"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

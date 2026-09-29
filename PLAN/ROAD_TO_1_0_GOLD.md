@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1922 Google Chat JWT backend diagnosis (2026-09-29; candidate only):**
+Pinned jsonwebtoken10.4.0 defaults to use_pem without a crypto backend. NEOTH
+activates neither rust_crypto/aws_lc_rs nor a custom CryptoProvider. Its RS256
+encode path therefore reaches the crate's explicit no-provider signer panic
+before OAuth POST. This is a proven source defect consistent with the earlier
+zero-request failure; the older redacted receipt alone did not prove a panic.
+Candidate enables rust_crypto while retaining PEM defaults. Required p256/p384
+0.13 andrsa0.9 graphs are absent from the current lock and need hosted Cargo
+reconciliation. The new exact-main workflow creates a literal manifest overlay,
+resolves metadata, repeats with --locked and seals the complete two-file diff.
+Root reviews/imports that artifact before publishing the source pair. Only this
+workflow is published now; the production manifest/lock remain unchanged.
+Existing product36549337426 atcf38a6b2 continues; no parallel recovery dispatch.
+W1921 confirms LF00112 still needs actual running-daemon GChat reload adoption
+with an authenticated empty Pub/Sub pull even after CLI canaries pass. No closure.
+
 **W1917/W1920 pinned partial admission and narrow test repair (2026-09-29):**
 Root verified all6 original ZIP/API digests,340 extracted entries,156 exact
 workflow/discovery/PASS identities,18 exact GChat guard identities and97 raw
