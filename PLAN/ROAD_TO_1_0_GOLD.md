@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1906-W1908 pinned native and custody admission (2026-09-29):**
+Root admitted Windows954 run36535391550 and macOS70 run36535396148 at
+71fef1ca787903076798722e8f9d728a2e3b364e. Exact selection, discovery and PASS
+identities match for all954 and70 cases; zero failures or missing cases.
+Original ZIP/API digests and all966 Windows /77 macOS extracted entries match.
+Root rechecked139 Windows raw producer paths plus18 input-source checks and
+25 macOS raw producer bindings. Records: work/gold-20260906/
+wave1907-windows954-admission/ROOT_ACCEPTANCE.json and
+wave1906-macos70-admission/ROOT_ACCEPTANCE.json.
+Separately, custody job109309269340 of Linux run36538876474 atd358ed9f is
+admitted:56 exact crate discovery/PASS identities, all4 required cases,6 original
+entries and11 raw producer bindings. Record: wave1908-custody56-admission/
+ROOT_ACCEPTANCE.json under the same evidence root. Parent Linux2169 remains active.
+The CLI-reference repair is published d358ed9f; Preflight36538623359 and
+CodeQuality36538624357 passed. Product15636537978930 at5e345e08 passed its
+45 Python contracts,156-channel step and public BlueBubbles CLI step, but the
+real daemon-adoption step failed; original diagnosis W1909 is active. GChat
+validation continues in that same run. These API step states are not original
+product admission. Later source, real daemon/GChat adoption and Gold remain open.
+No local executable validation, duplicate dispatch or roadmap closure occurred.
+
 **W1905 exact hosted CLI reference recovery (2026-09-29; Linux retry pending):**
 Linux2169 run36535387242 on71fef1ca failed the unchanged CLI-reference drift test.
 All4 original artifacts match API ZIP digests. The assertion's two full strings

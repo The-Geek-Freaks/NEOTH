@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1905 exact hosted CLI reference imported; W1904 all45Python passed; native and real products not yet accepted",
+  "status": "pinned Windows954/macOS70 and custody56 admitted; Linux2169 active; daemon product failed and unaccepted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269835,
-    "sha256": "91FD65E531858C613AD6418D905A2118AABF07F26FB157550436DB6EBC9DB561"
+    "bytes": 269829,
+    "sha256": "E6130054D98F512F8A85F8A60FF51733D34E94C707C8557521F832DF16B0A27B"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -60465,6 +60465,88 @@
       }
     ],
     "note": "One generated CLI help line restored from authenticated original Linux failure; both JSON-compatible assertion strings decoded, committed side rawproducer exact. No local generator/runtime. Product36537978930@5e345e08 continues, Windows/mac71fef1ca continue; Linux successor awaits current Preflight.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1906to1908HostedAdmission": {
+    "status": "root_admitted_pinned_windows954_macos70_and_custody56_only",
+    "macos": {
+      "run": "36535396148",
+      "producer": "71fef1ca787903076798722e8f9d728a2e3b364e",
+      "record": "work/gold-20260906/wave1906-macos70-admission/ROOT_ACCEPTANCE.json",
+      "recordSha256": "301b880d493a611f0146b2c13bee2dc5bedd5df7309ff8d5973f8a745de8cc8e",
+      "admissionSha256": "b63ba27187778b07b6066d056ec69f7bee75375a316e9949c572d75f0ef1c70f",
+      "artifact": 11019770498,
+      "zipSha256": "e37d171a2fe5c0861611eac596139a9631ea95d35331c534db6d75909fd46314",
+      "passed": 70,
+      "rawProducerBindings": 25,
+      "scope": "pinned producer native cases only; later sources/products excluded"
+    },
+    "windows": {
+      "run": 36535391550,
+      "producer": "71fef1ca787903076798722e8f9d728a2e3b364e",
+      "record": "work/gold-20260906/wave1907-windows954-admission/ROOT_ACCEPTANCE.json",
+      "recordSha256": "9cb40dd51894fb57c93403d853814bcb7ff9c4b02c73a760f35afd06ad76a48c",
+      "admissionSha256": "fd2df616027b94859951d0f02ee97e4af8ba64a4041a159f43d9c27f86977a21",
+      "artifact": 11019387308,
+      "zipSha256": "bad4ab230b7d8ad1876fb4170650665a62260142bd7a68629b13bfb7331ea550",
+      "passed": 954,
+      "rawProducerBindings": 139,
+      "scope": "pinned producer native cases only; later sources/products excluded"
+    },
+    "custody": {
+      "run": "36538876474",
+      "producer": "d358ed9f28a92af7ae0dfd4d5e83ab7c597df756",
+      "record": "work/gold-20260906/wave1908-custody56-admission/ROOT_ACCEPTANCE.json",
+      "recordSha256": "8842ede112c1bccb7a250621911af8a314e9faf01a8fbff5730f4baab6841b0e",
+      "admissionSha256": "4f6f744278af421cd4ab3a2ed649741cd1099e430e51ac24a3d291c72e884d10",
+      "artifact": 11019168935,
+      "zipSha256": "0019b3340454716a337ef470649eb3e35e77e47fbf22446f4746053f43b3999e",
+      "passed": 56,
+      "rawProducerBindings": 11,
+      "scope": "custody subjob only; parent Linux2169 excluded"
+    },
+    "linux2169": {
+      "run": 36538876474,
+      "producer": "d358ed9f28a92af7ae0dfd4d5e83ab7c597df756",
+      "status": "in_progress"
+    },
+    "product156": {
+      "run": 36537978930,
+      "producer": "5e345e08a59cfc899d3c5b68d292c03cd19c1307",
+      "python45": "step_success",
+      "channel156": "step_success",
+      "publicCLI": "step_success_not_yet_original_admitted",
+      "daemon": "step_failed_original_diagnosis_W1909",
+      "gchat": "in_progress",
+      "scope": "API step state only; original product admission pending"
+    },
+    "localExecutableValidationRan": false,
+    "roadmapBoxesClosed": 0
+  },
+  "wave1906to1908EvidenceBindings": {
+    "base": "d358ed9f28a92af7ae0dfd4d5e83ab7c597df756",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 554350,
+        "sha256": "DABA3610F5A1AA04CD75A9CE99C5A0FCDD7DB1FEC211E3C9A36B4C9811246C86",
+        "blob": "7f68cb64168bc1511b6502935419d66be2335f1c"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1590780,
+        "sha256": "9F37263094E32180D8A0212E85156F71F54E6515EB59005895E39DCE74B95068",
+        "blob": "bc7b4eed1f003b2d13211c7ccbc18454f4933687"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2201790,
+        "sha256": "CA72CFC434699023556E58BC1EDF2157C6791755DA7EB20AE15D5DEDCA0C9ADF",
+        "blob": "fd89e344d7c3003ff48206561290e8ea916eadfb"
+      }
+    ],
+    "note": "Root verified original ZIPs, exact native/custody terminals and raw producer bindings. Windows/macOS producer71fef1ca; custody producerd358ed9f. Product36537978930 Python/channel/publicCLI steps pass, daemon step fails, GChat active. API step state is not original product admission. No source change, local runtime or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
