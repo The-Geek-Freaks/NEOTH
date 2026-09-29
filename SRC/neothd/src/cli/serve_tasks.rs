@@ -2662,7 +2662,10 @@ pub(crate) struct OmiSupervisorHandle {
 impl OmiSupervisorHandle {
     pub(crate) fn liveness(&self) -> impl Fn() -> bool + Send + Sync + 'static {
         let join = self.join.as_ref().map(JoinHandle::abort_handle);
-        move || join.as_ref().is_none_or(tokio::task::AbortHandle::is_finished)
+        move || {
+            join.as_ref()
+                .is_none_or(tokio::task::AbortHandle::is_finished)
+        }
     }
 
     pub(crate) async fn shutdown(mut self) {
