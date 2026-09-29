@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1938/W1939 original live adoption and partial product admission (2026-09-29):**
+Root verified all7 originals from36559843840 at2b7ea985:348 extracted entries,
+104 raw producer sources,158 exact channel identities and20 distinct GChat
+feature guards (13 adapter plus7 CLI). Both public-CLI products pass; the pinned
+regression/public-CLI portion is admitted. Expected authenticated loopback
+probes are nonzero, while disallowed message/ack/request counters stay zero.
+Root acceptance: work/gold-20260906/wave1939-product158-guards20-admission/ROOT_ACCEPTANCE.json
+SHA256 D2F3DBD8646E37DB254852E2E4B567542C9A4539BD56C2792EE001E1161CEB91.
+
+The first real Google Chat daemon canary proves live adoption with one
+`authenticated_empty_pubsub_pull` after relink. Root authenticated its original
+11030718095/API ZIPe5d34fd6d3dfb4eb4790c91c5e7bfc4f2fc77fe9313e1a36b28db644932dab3f,
+3 entries and65 raw source bindings. All9 forbidden traffic counters are zero.
+Both daemon products nevertheless fail clean shutdown: another WAL sender is
+observed, receiver closure/drain are absent, and timeout forces SIGKILL/-9.
+The receipt does not identify the sender owner. No daemon or release admission.
+W1938 root record ADD293412C7476D976AD62C5473F76EC344D6978481014B2ED694C34312ABE4C.
+
+After this older run ended and39afd7df Preflight36562854489/Quality36562854330
+passed, exactly one successor36563622981 was dispatched at39afd7df. It includes
+the OMI ownership repair and159 selected Rust cases;61 Python contracts pass,
+Rust execution continues. No local runtime, second product loop or ROAD closure.
+
 **W1936 original sender observation / W1937 hosted formatting (2026-09-29):**
 Root independently verified run36559843840 at2b7ea985, daemon artifact11029628550:
 API/ZIP SHA165ba4cf37699422f913e55ee20fe255e35d42ef01d0303d21df9f37d7069be5,

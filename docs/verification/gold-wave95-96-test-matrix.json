@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1936 original other sender observed; W1935 repair hosted product pending",
+  "status": "Pinned158/20/bothpublicCLI admitted; bothliveadoption witnesses prove adoption but stop failed",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270346,
-    "sha256": "A3675C68E8D7E2E6CFEE5E35D2AB5295A63C4B74753647E7CDA075F86883E21B"
+    "bytes": 270367,
+    "sha256": "02870B7F4737711ECE43F6EB4C9ECE1F7601ADF55831BBFDD318F07B991EC6E2"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -61380,6 +61380,54 @@
       }
     ],
     "note": "RootAPI/ZIP3entries62rawsources at2b7ea985:other WAL sender present; receiver closed/drain absent. OMI owner not proven. 77dcf441 Preflight36562444788/Quality36562443938 SUCCESS. Single36559843840 still active; no local runtime/roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1939Pinned158Guards20PublicCliAdmission": {
+    "producer": "2b7ea98515a94b2bb74f9786159ba4f0b97b51d4",
+    "run": 36559843840,
+    "rootRecord": "work/gold-20260906/wave1939-product158-guards20-admission/ROOT_ACCEPTANCE.json",
+    "rootRecordSha256": "d2f3dbd8646e37db254852e2e4b567542c9a4539bd56c2792ee001e1161ceb91",
+    "originalArchives": 7,
+    "extractedEntries": 348,
+    "rootVerifiedSourceUnion": 104,
+    "exactChannelCases": 158,
+    "distinctFeatureGuards": 20,
+    "publicCliPassed": [
+      "bluebubbles",
+      "gchat"
+    ],
+    "daemonAdoptionWitnesses": [
+      "authenticated_empty_message_query",
+      "authenticated_empty_pubsub_pull"
+    ],
+    "cleanDaemonAdmission": false,
+    "releaseAdmission": false,
+    "note": "Bothdaemon stop timeout/-9 with other sender observed. W1935repair absent from producer; sole successor36563622981@39afd7df pending."
+  },
+  "wave1938to1939RootAdmissionPublication": {
+    "base": "39afd7df3137fd89e422d280c8f8a866500436fe",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 573252,
+        "sha256": "0A1169CCF017796C5A38E300F50E46D993AE7566E08CB4EEA9AB7931A889E9A8",
+        "blob": "bf8a1f723b0b25c729c592b6f5a4b9340a3c3548"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1609682,
+        "sha256": "CCE55672C70FC18A3D286A5BC9DBBA09B158E98A4D3B69E54DEE3EE2EF9AFBED",
+        "blob": "656667fcd1dcbc3254eef2d933043b5cb9761e26"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2220692,
+        "sha256": "E312E8AF48049F08206B445A9DB9E932C72FA39764785FC14175925DA3FC24B7",
+        "blob": "575e8835a35d60b6457ae14261f0b274a41aa6ef"
+      }
+    ],
+    "note": "Root7ZIP348entries104rawsources exact158+20 at2b7ea985. First actual GChatdaemon authenticatedemptyPubSubpull proven, cleanstop remains rejected asBB. New OMIrepair sole36563622981@39afd7df active after61PythonPASS. No local runtime or roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
