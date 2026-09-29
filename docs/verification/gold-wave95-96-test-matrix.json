@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Native2160/945/61 and priorChannel145/publicCLI admitted; W1896/97 diagnostics reviewed, hosted pending",
+  "status": "W1896/97 authenticated hosted formatter imported; current Preflight pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269828,
-    "sha256": "A232E618775091F6A4227C37D76F114176414B6FB180AF6CC44A0588B631C5E9"
+    "bytes": 269800,
+    "sha256": "B5217E35CE8E25E0EDE36E3CF0FB1A4BD0E1442D62ACD0A3C285ABD92E8353A0"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -13506,43 +13506,43 @@
     {
       "test": "cli::channel::converted_relink::tests::every_durable_checkpoint_recovers_the_same_encrypted_first_use_request",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::ready_retry_is_idempotent_but_changed_request_material_is_refused",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::drift_while_probe_runs_or_a_failed_or_expired_probe_never_publishes",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::sequential_imessage_and_gchat_relinks_remain_independently_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::guidless_imessage_relink_is_valid_but_a_later_guid_filter_invalidates_ready",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::gchat_key_replaced_during_successful_probe_is_rejected_before_publication",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::converted_relink::tests::reserved_ambiguous_request_rejects_changed_password_but_recovers_exactly",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
@@ -14298,7 +14298,7 @@
     {
       "test": "cli::channel::converted_relink::tests::failed_gchat_probe_keeps_generic_error_outside_canary",
       "sourcePath": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "sourceSha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50",
+      "sourceSha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
       "junitClass": "neoth"
     },
     {
@@ -60048,6 +60048,26 @@
       }
     ],
     "note": "W1894/95/98 original artifacts and raw source bindings accepted for pinned scopes only. W1896 adds four canary-only preparation stage codes and two feature tests; W1897 bounded daemon failure classifier with default cluster context. Prior daemon/GChat fail; inner runtime cause remains unproven. No local executable validation, ROAD closure or duplicate dispatch.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1896HostedFormatter": {
+    "base": "3c365398e619ccb536b1cb986a93d0c0882923c4",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
+        "bytes": 19866,
+        "sha256": "78C6914ED3B4DB256E9C3A5A8331179241E1125B54B08BAF025385D5AAADE941",
+        "blob": "64613e068f4d9ff71f3dd14e06f5d37d6714cb0b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
+        "bytes": 27680,
+        "sha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9",
+        "blob": "7af39c8e2de70fbb24c153c0f6911d9c003241db"
+      }
+    ],
+    "note": "Run36530876413 artifact11015983714 API ZIP SHA25693b18392b19ed161ad5ff1c404ca2b8e1679e8d111c36667bb9adc8173d44df1. Both patch Git postimages verified. Formatting only, no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

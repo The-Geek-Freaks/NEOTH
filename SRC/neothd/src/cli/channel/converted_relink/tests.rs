@@ -651,9 +651,7 @@ fn gchat_canary_preparation_codes_are_fixed_and_discard_the_error_chain() {
         let error = gchat_canary_stage(
             ChannelId::GoogleChat,
             code,
-            Err::<(), anyhow::Error>(anyhow::anyhow!(
-                "https://private.invalid/secret-adjacent"
-            )),
+            Err::<(), anyhow::Error>(anyhow::anyhow!("https://private.invalid/secret-adjacent")),
         )
         .err()
         .expect("failed canary preparation must produce a fixed diagnostic");

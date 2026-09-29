@@ -254,17 +254,16 @@ where
         "prepare-routing",
         crate::channels::routing::load_for_converted_relink_at(home),
     )?;
-    let route_set: Result<()> =
-        if routing_after.destinations.set_for_channel(
-            request.destination.channel_id.as_str(),
-            request.target.clone(),
-        ) {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "converted relink destination cannot have an outbound route"
-            ))
-        };
+    let route_set: Result<()> = if routing_after.destinations.set_for_channel(
+        request.destination.channel_id.as_str(),
+        request.target.clone(),
+    ) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "converted relink destination cannot have an outbound route"
+        ))
+    };
     gchat_canary_stage(request.destination.channel_id, "prepare-routing", route_set)?;
     let expected_routing_after_sha256 = gchat_canary_stage(
         request.destination.channel_id,

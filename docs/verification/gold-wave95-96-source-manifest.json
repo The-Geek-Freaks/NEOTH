@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T06:22:07.2553297Z",
-  "validationStatus": "Native2160/945/61 and priorChannel145/publicCLI admitted; W1896/97 diagnostics reviewed, hosted pending",
+  "capturedUtc": "2026-09-29T06:28:37.2353651Z",
+  "validationStatus": "W1896/97 authenticated hosted formatter imported; current Preflight pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4753,13 +4753,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink.rs",
-      "bytes": 19910,
-      "sha256": "0FEE9B0556ED4B89E118BED19E93FC50724A9FCBE0845201FCD025A7C78AA3D9"
+      "bytes": 19866,
+      "sha256": "78C6914ED3B4DB256E9C3A5A8331179241E1125B54B08BAF025385D5AAADE941"
     },
     {
       "path": "SRC/neothd/src/cli/channel/converted_relink/tests.rs",
-      "bytes": 27710,
-      "sha256": "9C60DA5A3086EA7BCC8C844E02428E8C99D1691D6A1FC019B4C05E25F7CEAE50"
+      "bytes": 27680,
+      "sha256": "F43921721014724F9FDF35EB230BBAEC074C1966C2193C842D0F1D545CB7E9C9"
     },
     {
       "path": "SRC/neothd/src/cli/channel/openclaw_migration.rs",
