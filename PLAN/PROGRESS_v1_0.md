@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
+**W1917/W1920 pinned partial admission and narrow test repair (2026-09-29):**
+Root verified all6 original ZIP/API digests,340 extracted entries,156 exact
+workflow/discovery/PASS identities,18 exact GChat guard identities and97 raw
+producer sources from run36542284543 at12cc0005. Only channel/guard and separate
+public BlueBubbles CLI evidence is accepted. Both products remain rejected.
+Record: work/gold-20260906/wave1917-product156-guards18-admission/ROOT_ACCEPTANCE.json.
+The W1915/W1918 successor36547971923 atf3df184d passed53 Python contracts but
+Rust test compilation stopped at E0599: the new WAL test called expect on unit
+output after its timeout and task-join checks. Original11022974730 is ZIP/API
+bound. W1920 removes only that invalid third expect; both meaningful assertions
+remain. Independent static review APPROVE; executable proof remains pending.
+No product stage ran on that successor. No native redispatch or roadmap closure.
+
 **W1918/W1919 diagnostic and hosted-format follow-up (2026-09-29):**
 The GChat canary now recognizes the installed panic-hook line and exact worker
 panic marker as two fixed observations. Payloads/paths remain hash-only, existing

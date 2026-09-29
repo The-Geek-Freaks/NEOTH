@@ -69,8 +69,7 @@ async fn run_serve_roots_release_wal_senders_before_join() {
     tokio::time::timeout(std::time::Duration::from_secs(3), writer_join)
         .await
         .expect("run_serve roots must not retain the WAL sender")
-        .expect("WAL writer task panicked")
-        .expect("WAL writer runtime failed");
+        .expect("WAL writer task panicked");
 }
 
 #[test]

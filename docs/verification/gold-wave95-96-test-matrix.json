@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1915 shutdown roots + W1918 redacted panic observations; static approved; hosted pending",
+  "status": "W1920 test return type corrected; W1917 producer156/18guards/publicCLI accepted only; hosted successor pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 269814,
-    "sha256": "E96D2A4A4E0D183E9166EDAF7B94624D20DEFD7EDD8E866022A0D945555BD641"
+    "bytes": 269835,
+    "sha256": "7C4184972EEE852639270B0B42DDD43C33B00BCEA86793945B98760F79D74C49"
   },
   "sourceInputs": 1496,
   "requiredNativeTests": [
@@ -3900,7 +3900,7 @@
     {
       "test": "cli::serve::tests::ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
+      "sourceSha256": "F3BDD1177E75E595F2D8E9C62CE983F3B398963E03414E95556FE5A9AE812EDB",
       "junitClass": "neoth"
     },
     {
@@ -14376,13 +14376,13 @@
     {
       "test": "cli::serve::tests::run_serve_roots_release_wal_senders_before_join",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
+      "sourceSha256": "F3BDD1177E75E595F2D8E9C62CE983F3B398963E03414E95556FE5A9AE812EDB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "20A8601530E48DB41553352305380DFA43E8B91D0595DB7A4211EC2B1546B1F7",
+      "sourceSha256": "F3BDD1177E75E595F2D8E9C62CE983F3B398963E03414E95556FE5A9AE812EDB",
       "junitClass": "neoth"
     }
   ],
@@ -60869,6 +60869,64 @@
       }
     ],
     "note": "53Python contracts registered, no local runtime. Exact original11022982090 rustfmt pre/postimage imported only for serve_tests.rs. Original products remain rejected. No roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1917Product156Guards18Admission": {
+    "producer": "12cc00055aff98c672ca1077d7967e3a9aaa74cf",
+    "run": 36542284543,
+    "record": "work/gold-20260906/wave1917-product156-guards18-admission/ROOT_ACCEPTANCE.json",
+    "recordSha256": "942b943f0be4f09e4b3546198bf6ddf01cc52f34e325bdfb2f7eb6e3387de9ba",
+    "artifacts": 6,
+    "entries": 340,
+    "exactChannelCases": 156,
+    "exactGchatGuards": 18,
+    "rawSourceUnion": 97,
+    "publicBlueBubblesCli": "accepted at producer",
+    "daemonProduct": "rejected",
+    "gchatProduct": "rejected",
+    "release": "not accepted"
+  },
+  "wave1920WalTestCompileRepair": {
+    "producer": "f3df184d47ca0983e77133223ce60a43325923b0",
+    "run": 36547971923,
+    "artifact": 11022974730,
+    "zipSha256": "99bbf45409f3964d9b02cb8a2017208bdad0ee4e2f2133386fea2173938e06f2",
+    "pythonContracts": "53 passed hosted step",
+    "compilerError": "E0599: third expect on unit output of JoinHandle<()> in serve_tests.rs",
+    "fix": "Remove only invalid terminal expect; timeout and JoinError checks retained",
+    "review": "static APPROVE",
+    "runtime": "pending; prior successor ran no native tests/products"
+  },
+  "wave1917and1920SourceBindings": {
+    "base": "f3df184d47ca0983e77133223ce60a43325923b0",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 560726,
+        "sha256": "F10DC6DD03493FE065758FC522B78B846A4AB0F80B46F9D06646E47076EAC2A5",
+        "blob": "d18952a37084e27fcd66ed2122e85e19f90bdd92"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1597156,
+        "sha256": "71054EC8917D7ED126F32E179B0BD113078CC8E8C5E905D49786765EB5B977A3",
+        "blob": "443456f0ca2cdb58ca9e9fb699dad571d8626737"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2208166,
+        "sha256": "79127A2D0D6BB61D958FEA87A304BD331AA39E83FDEFD713703AC70517C44177",
+        "blob": "e5fd11743902b41b5dfba5db47c8dbadea5ce9e2"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tests.rs",
+        "bytes": 24151,
+        "sha256": "F3BDD1177E75E595F2D8E9C62CE983F3B398963E03414E95556FE5A9AE812EDB",
+        "blob": "a27bcaa6735aeb2867d728d9f81094d0880b352c"
+      }
+    ],
+    "note": "Exact JoinHandle<()> test correction reviewed;53Python already pass atf3df184d; no Rust/product stage ran there. Prior12cc0005 daemon/GChat remain rejected. Absolute local BSOD hold; no .slint or roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
