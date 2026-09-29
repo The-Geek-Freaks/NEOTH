@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1932 original Google Chat and BlueBubbles public CLI admission (2026-09-29):**
+Root admitted both public relink CLI products on9744f6c0 from36554877043.
+All6 original ZIP/API digests,345 extracted entry hashes,101 raw producer source
+bindings,158 exact workflow/discovery/started/executed/PASS identities and18
+separate GChat guards were verified. GChat now passes after the explicit crypto
+backend fix: wrong target and wrong returned space remain Pending; first Ready
+and byte-idempotent retry complete; cleanup passes and message/pull/ack traffic
+is zero. Authenticated loopback OAuth, subscription and space probes are expected
+and nonzero. BlueBubbles public CLI also passes its Ready/retry/refusal contract.
+The daemon product still fails shutdown, and the CLI GChat receipt explicitly
+states it never starts the daemon. No daemon, release or current-source success
+is inferred. LF00112 stays open.
+Root record: work/gold-20260906/wave1932-product158-gchat-cli-admission/ROOT_ACCEPTANCE.json
+SHA256 703dac44b93d3591dcdfd506d361f32cd844242c0f33a4e130c058674279b398.
+
+W1934 authentic formatter11029522887 from3fe2c4a0 imported only two test-layout
+hunks after ZIP/API, entry hashes and exact pre/postimage checks. Published
+2b7ea985 passed Preflight36559684551 andQuality36559683674. Sole successor
+36559843840 at2b7ea985 now runs W1929 live-GChat adoption plus W1931 WAL
+observations; its61 Python contracts passed and focused Rust execution continues.
+No local executable validation, duplicate dispatch or roadmap closure.
+
 **W1929-W1931 live Google Chat adoption and WAL diagnosis (2026-09-29):**
 The new hosted canary starts the real daemon before relink, proves the Pending
 window has no pulls, then requires a durable Ready generation, an authenticated

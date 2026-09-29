@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1934 exact hosted formatter imported; W1929/W1931 execution pending",
+  "status": "W1932 pinned158/18 and bothpublicCLI admitted; new live-daemon run pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270341,
-    "sha256": "C0494BF48F465ADA8187016790F3C1B4473E9DFB595DFFDA6F1D7FE52EDA188D"
+    "bytes": 270347,
+    "sha256": "BE482540837DD7AD69E88C5814B527410F946DB429042043D7F1E650D427C20F"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -61196,6 +61196,48 @@
       }
     ],
     "note": "Authentic11029522887 from36559371635 at3fe2c4a0; ZIPf19e24f3b9f90a3d7352be10dedd1ec14221cf93ea62b1a8a77a05a22b00b498;2entry hashes and gchat.rs pre2b4a5cfd/post3d93afab checked. Two formatting-only hunks. No local formatter or runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1932PublicCliAdmission": {
+    "record": "work/gold-20260906/wave1932-product158-gchat-cli-admission/ROOT_ACCEPTANCE.json",
+    "recordSha256": "703dac44b93d3591dcdfd506d361f32cd844242c0f33a4e130c058674279b398",
+    "run": 36554877043,
+    "producer": "9744f6c07108a1f84da5e3c0acf48c1b950ff5c3",
+    "originalArchives": 6,
+    "rehashedEntries": 345,
+    "rawSources": 101,
+    "exactChannelCases": 158,
+    "distinctGuards": 18,
+    "bluebubblesPublicCliAccepted": true,
+    "gchatPublicCliAccepted": true,
+    "daemonProductsAccepted": false,
+    "releaseAccepted": false,
+    "note": "Pinned9744f6c0 only; W1929/W1931 new source not covered. Expected authenticated loopback probes are nonzero. BlueBubbles daemon failed stop/-9; GChat daemon not started by publicCLI proof."
+  },
+  "wave1932PublicCliEvidenceBindings": {
+    "base": "2b7ea98515a94b2bb74f9786159ba4f0b97b51d4",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 568951,
+        "sha256": "776F6C57D79A170793A4ABA81D2700ABCCDFC43B980483EDACA1F4F0FD2D1216",
+        "blob": "225f63268c77ad941234e57c887c8738349fb873"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1605381,
+        "sha256": "03B1D2397CB9901162A43B1C778A16EA24070A0E3852CCBAA9427295EE2F8834",
+        "blob": "60860e8831fcb51e1301113e4c3400827175626e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2216391,
+        "sha256": "72D4BC15E96F7B3A1B0D392B06522C0A083FF2E1FBBE8438F1D1C9C9E566C8FF",
+        "blob": "d245718abc98e8faa046ffb60f9aece511c9d010"
+      }
+    ],
+    "note": "Root6originals345entries101rawsources158exact18guards; GoogleChat andBlueBubbles publicCLI passed9744f6c0; daemon/release notaccepted. Current36559843840@2b7ea985 passed61Python and executing Rust. LocalBSODhold; no ROADclosure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
