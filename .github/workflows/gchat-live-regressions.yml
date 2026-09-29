@@ -120,6 +120,8 @@ jobs:
             SRC/neothd/src/cli/consent.rs \
             SRC/neothd/src/cli/consent_outbox.rs \
             SRC/neothd/src/wal/writer.rs \
+            SRC/neothd/src/daemon/omi_ingest_task.rs \
+            SRC/neothd/src/memory/omi.rs \
             SRC/neothd/src/consent.rs \
             SRC/neothd/src/config/mod.rs \
             SRC/neothd/src/cli/cluster.rs \
@@ -359,9 +361,10 @@ jobs:
           run_case 156 lib cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent cli::connect::tests::account_selection_returns_an_error_for_an_unknown_parent --lib
           run_case 157 lib cli::serve::tests::run_serve_roots_release_wal_senders_before_join cli::serve::tests::run_serve_roots_release_wal_senders_before_join --lib
           run_case 158 lib cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 158
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 158
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 158
+          run_case 159 lib cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 159
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 159
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 159
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

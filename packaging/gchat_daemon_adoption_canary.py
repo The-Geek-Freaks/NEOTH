@@ -311,7 +311,7 @@ def source_bindings(workflow: Path) -> dict[str, str]:
         "SRC/neothd/src/cli/serve.rs", "SRC/neothd/src/cli/serve_tasks.rs", "SRC/neothd/src/cli/cluster.rs", "SRC/neothd/src/cli/consent.rs", "SRC/neothd/src/cli/consent_outbox.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/cli/init/io.rs", "SRC/neothd/src/cli/init/steps_identity.rs", "SRC/neothd/src/cli/init/steps_provider.rs",
         "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/reload.rs", "SRC/neothd/src/config/wal.rs",
-        "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs", "SRC/neothd/src/util/locked_file.rs",
+        "SRC/neothd/src/consent.rs", "SRC/neothd/src/wal/master_key.rs", "SRC/neothd/src/wal/writer.rs", "SRC/neothd/src/daemon/omi_ingest_task.rs", "SRC/neothd/src/memory/omi.rs", "SRC/neothd/src/util/locked_file.rs",
         "SRC/neothd/src/daemon/pidfile.rs", "SRC/neothd/src/daemon/channel_live_registry.rs", "SRC/neothd/src/daemon/chat_runtime.rs", "SRC/neothd/src/daemon/gui_chat_runtime.rs", "SRC/neothd/src/daemon/webchat.rs",
         "SRC/neothd/src/cluster/status_wire.rs", "SRC/neothd/src/cluster/membership.rs", "SRC/neothd/src/cluster/runtime_supervisor.rs",
         "SRC/neothd/src/daemon/audit_rpc/mod.rs", "SRC/neothd/src/daemon/audit_rpc/client.rs", "SRC/neothd/src/daemon/audit_rpc/server.rs", "SRC/neothd/src/daemon/audit_rpc/sidecar.rs", "SRC/neothd/src/daemon/audit_rpc/token.rs", "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs", "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs", "SRC/neothd/src/skills/store.rs",

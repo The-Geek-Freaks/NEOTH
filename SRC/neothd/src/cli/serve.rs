@@ -2424,18 +2424,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let snapshot_refresh_handle =
         crate::cli::serve_tasks::spawn_snapshot_refresh(&config, &neoth_home);
 
-    // ── OMI-MULTIMODAL-01 full runtime supervisor ──────────────────────────
-    // Owns official Developer API sync, authenticated native audio/caption/
-    // frame ingestion, retention, credential rotation, and config reload.
-    // The supervisor itself stays alive while disabled so reload can enable it.
-    let omi_handle = crate::cli::serve_tasks::spawn_omi_ingest(
-        &reload_controller,
-        credentials_path.clone(),
-        neoth_home.clone(),
-        writer.clone(),
-        provider_meter.clone(),
-    );
-
     // ProfileAdapt, EcologyCron, PatternCron, BgMonitor, ContradictionResolve,
     // GuidanceCron are now fleet-managed (ZF-06).
 
@@ -2597,9 +2585,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         writer.clone(),
     );
 
+    // ── OMI-MULTIMODAL-01 full runtime supervisor ──────────────────────────
+    // Owns official Developer API sync, authenticated native audio/caption/
+    // frame ingestion, retention, credential rotation, and config reload.
+    // Spawn after every fallible startup constructor, then signal and join it
+    // during shutdown so its WAL-owning children cannot outlive the daemon.
+    let omi_handle = crate::cli::serve_tasks::spawn_omi_ingest(
+        &reload_controller,
+        credentials_path.clone(),
+        neoth_home.clone(),
+        writer.clone(),
+        provider_meter.clone(),
+    );
+
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
-    // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
+    // lightweight liveness source for each + poll `is_finished()`, emitting
     // `0x4D WORKER_DIED` (naming the task) the moment one panics/exits.
     let worker_watch_handle: Option<tokio::task::JoinHandle<()>> = if config.monitor.enabled {
         use crate::daemon::worker_watch::WatchedWorker;
@@ -2613,7 +2614,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             })),
             omi_handle
                 .as_ref()
-                .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
+                .map(|h| WatchedWorker::liveness("omi_ingest", h.liveness())),
             snapshot_refresh_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),

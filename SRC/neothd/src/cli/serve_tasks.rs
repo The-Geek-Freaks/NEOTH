@@ -2651,6 +2651,41 @@ struct OmiRuntimeHandles {
     native: Option<(tokio::sync::oneshot::Sender<()>, JoinHandle<()>)>,
 }
 
+/// The daemon-owned OMI supervisor. Normal shutdown signals the supervisor and
+/// joins it, so the supervisor can drain every runtime child before the WAL
+/// writer is released.
+pub(crate) struct OmiSupervisorHandle {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl OmiSupervisorHandle {
+    pub(crate) fn liveness(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let join = self.join.as_ref().map(JoinHandle::abort_handle);
+        move || join.as_ref().is_none_or(tokio::task::AbortHandle::is_finished)
+    }
+
+    pub(crate) async fn shutdown(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.await;
+        }
+    }
+}
+
+impl Drop for OmiSupervisorHandle {
+    fn drop(&mut self) {
+        // A startup error can drop the owner before the ordered daemon teardown
+        // is installed. Signal the self-contained supervisor so it takes the
+        // same child-drain path; normal daemon shutdown always awaits `join`.
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+}
+
 struct OmiSummaryProviderAdapter {
     provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
     reload_controller: Arc<ReloadController>,
@@ -2903,18 +2938,17 @@ async fn start_omi_runtime(
         .validate_with_credentials(credentials)
         .map_err(anyhow::Error::msg)?;
     let db_path = neoth_home.join("views.db");
-    // Retention is a data-lifecycle guarantee, not an ingest feature. Keep it
-    // running after the operator disables OMI so previously accepted records
-    // still expire on schedule.
-    let retention = Some(crate::daemon::omi_ingest_task::spawn_omi_retention_task(
-        config.omi.retention_days,
-        db_path.clone(),
-        writer.clone(),
-    ));
     if !config.omi.enabled {
+        // Retention is a data-lifecycle guarantee, not an ingest feature. Keep
+        // it running after the operator disables OMI so previously accepted
+        // records still expire on schedule.
         return Ok(OmiRuntimeHandles {
             poller: None,
-            retention,
+            retention: Some(crate::daemon::omi_ingest_task::spawn_omi_retention_task(
+                config.omi.retention_days,
+                db_path,
+                writer.clone(),
+            )),
             native: None,
         });
     }
@@ -3009,6 +3043,14 @@ async fn start_omi_runtime(
         None
     };
 
+    // Spawn children only after every fallible runtime constructor above has
+    // succeeded. That way an early error cannot detach a retention task that
+    // owns a WAL sender before it reaches `OmiRuntimeHandles::shutdown`.
+    let retention = Some(crate::daemon::omi_ingest_task::spawn_omi_retention_task(
+        config.omi.retention_days,
+        db_path.clone(),
+        writer.clone(),
+    ));
     let poller = config.omi.mode.polls().then(|| {
         crate::daemon::omi_ingest_task::spawn_omi_ingest_task(
             config.omi.clone(),
@@ -3089,9 +3131,10 @@ pub(crate) fn spawn_omi_ingest(
     neoth_home: std::path::PathBuf,
     writer: WalWriterHandle,
     meter: crate::providers::meter::Meter,
-) -> Option<JoinHandle<()>> {
+) -> Option<OmiSupervisorHandle> {
     let controller = Arc::clone(reload_controller);
-    Some(tokio::spawn(async move {
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let join = tokio::spawn(async move {
         let mut generation = controller.subscribe_generation();
         let mut credential_poll = tokio::time::interval(std::time::Duration::from_secs(30));
         credential_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -3368,6 +3411,7 @@ pub(crate) fn spawn_omi_ingest(
             }
 
             tokio::select! {
+                _ = &mut shutdown_rx => break,
                 changed = generation.changed() => {
                     if changed.is_err() {
                         break;
@@ -3376,14 +3420,18 @@ pub(crate) fn spawn_omi_ingest(
                 _ = credential_poll.tick() => {}
             }
         }
+        runtime.shutdown().await;
         crate::daemon::omi_ingest_task::record_runtime_health(
             &runtime_db_path,
             "stopped",
             "OMI supervisor stopped",
         )
         .await;
-        runtime.shutdown().await;
-    }))
+    });
+    Some(OmiSupervisorHandle {
+        shutdown: Some(shutdown_tx),
+        join: Some(join),
+    })
 }
 
 /// SPEC-05 — passive user-adaptation cron (queues self-dev PROPOSALS, never auto-applies).
@@ -8762,7 +8810,7 @@ pub(crate) struct BackgroundHandles {
     /// fleet handle.
     pub reload_controller: Arc<ReloadController>,
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
-    pub omi_handle: Option<JoinHandle<()>>,
+    pub omi_handle: Option<OmiSupervisorHandle>,
     pub updater_supervisor: crate::daemon::updater_cron::UpdaterSupervisorHandle,
     /// Finite deadline outcome returned by the supervisor.  These handles
     /// still own their controls and WAL roots and must late-join before close.
@@ -9125,7 +9173,9 @@ pub(crate) async fn shutdown_background_tasks(
     // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
     // the writer drain is irrelevant — but abort it cleanly like the others.
     crate::cli::serve_tasks::abort_optional(snapshot_refresh_handle).await;
-    crate::cli::serve_tasks::abort_optional(omi_handle).await;
+    if let Some(omi_handle) = omi_handle {
+        omi_handle.shutdown().await;
+    }
 
     // Abort the catalog refresh task. May be in the middle of an HTTPS
     // round-trip; aborting drops the connection, which is fine — the
@@ -10171,6 +10221,46 @@ mod tests {
         assert!(!OmiRuntimeHandles::default().is_healthy_for(&config));
     }
 
+    #[tokio::test]
+    async fn omi_supervisor_shutdown_drains_disabled_retention_before_writer_join() {
+        let home = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let credentials_path = home.path().join("credentials.yaml");
+        std::fs::write(
+            &credentials_path,
+            serde_yaml::to_string(&crate::config::credentials::Credentials::default()).unwrap(),
+        )
+        .unwrap();
+        let controller = Arc::new(ReloadController::new(config, config_path));
+        let (writer, writer_task) =
+            crate::wal::spawn(home.path().join("omi-disabled-000001.wal")).unwrap();
+        let supervisor = spawn_omi_ingest(
+            &controller,
+            credentials_path,
+            home.path().to_path_buf(),
+            writer.clone(),
+            crate::providers::meter::Meter::with_default_window(),
+        )
+        .expect("OMI supervisor must always be present");
+
+        let db_path = home.path().join("views.db");
+        wait_for_omi_status(&db_path, |status| {
+            status.runtime_state.as_deref() == Some("disabled")
+        })
+        .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), supervisor.shutdown())
+            .await
+            .expect("disabled OMI supervisor did not drain its runtime children");
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(2), writer_task)
+            .await
+            .expect("disabled OMI retention leaked a WAL sender")
+            .expect("WAL writer task panicked");
+    }
+
     async fn wait_for_omi_status(
         db_path: &std::path::Path,
         predicate: impl Fn(&crate::memory::omi::OmiStatus) -> bool,
@@ -10437,8 +10527,7 @@ mod tests {
             .await
             .expect("last known-good listener was not restored");
 
-        supervisor.abort();
-        let _ = supervisor.await;
+        supervisor.shutdown().await;
         drop(writer);
         writer_task.abort();
         let _ = writer_task.await;
@@ -10606,8 +10695,7 @@ mod tests {
                 port_collision,
                 "OMI runtime failed to boot for a non-port reason (attempt {attempt}): {status:?}"
             );
-            supervisor.abort();
-            let _ = supervisor.await;
+            supervisor.shutdown().await;
             drop(writer);
             writer_task.abort();
             let _ = writer_task.await;
@@ -10744,8 +10832,7 @@ mod tests {
             "a later candidate retry restored the permanently revoked weaker runtime"
         );
 
-        supervisor.abort();
-        let _ = supervisor.await;
+        supervisor.shutdown().await;
         drop(writer);
         writer_task.abort();
         let _ = writer_task.await;
@@ -10830,8 +10917,7 @@ mod tests {
         .await;
         assert!(tokio::net::TcpStream::connect(initial_addr).await.is_err());
 
-        supervisor.abort();
-        let _ = supervisor.await;
+        supervisor.shutdown().await;
         drop(writer);
         writer_task.abort();
         let _ = writer_task.await;

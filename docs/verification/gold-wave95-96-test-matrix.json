@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1932 pinned158/18 and bothpublicCLI admitted; new live-daemon run pending",
+  "status": "W1935 source static approved; exact hosted repair validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270347,
-    "sha256": "BE482540837DD7AD69E88C5814B527410F946DB429042043D7F1E650D427C20F"
+    "bytes": 270341,
+    "sha256": "B2C73F8DB2FAA12FFD8D25E27227474FCA6B4346073E47F9C30A530BB67BEE4C"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -7818,13 +7818,13 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_startup_factory_keeps_two_named_accounts_and_reload_is_account_scoped",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_framed_tokens_disambiguate_health_and_reload_fingerprints",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -8148,7 +8148,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_workspace_change_retires_only_matching_runtime_health_and_reload_generation",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -9528,19 +9528,19 @@
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::document_ingest_is_absent_by_default_and_reload_disable_stops_it",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::disabled_document_ingest_returns_before_worker_construction",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault",
       "sourcePath": "SRC/neothd/src/cli/serve.rs",
-      "sourceSha256": "343386687D9E1ED17B314CFC08AA9D64FF060E979E6AF084C58A5F1FEA1B8F72",
+      "sourceSha256": "4F81FCF691C7A5F30F8ABE7F9D69872E21715FAE7808D7234E4BDE194E3FF2CC",
       "junitClass": "neoth"
     },
     {
@@ -13548,19 +13548,19 @@
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "093ED60B821A95E6EE95D677C4642057BD0210CF3B30FB0DF75564EB915324AE",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     },
     {
@@ -14383,6 +14383,12 @@
       "test": "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
       "sourceSha256": "F3BDD1177E75E595F2D8E9C62CE983F3B398963E03414E95556FE5A9AE812EDB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
       "junitClass": "neoth"
     }
   ],
@@ -61238,6 +61244,87 @@
       }
     ],
     "note": "Root6originals345entries101rawsources158exact18guards; GoogleChat andBlueBubbles publicCLI passed9744f6c0; daemon/release notaccepted. Current36559843840@2b7ea985 passed61Python and executing Rust. LocalBSODhold; no ROADclosure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1935OmiOwnedShutdown": {
+    "note": "OMI supervisor owns stop and join; normal daemon shutdown reaps retention and native children before WAL drain. Real disabled-supervisor/WAL regression. No product/runtime acceptance yet.",
+    "status": "independent static review approved after Root test type correction; hosted pending",
+    "requiredTests": [
+      "cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join"
+    ]
+  },
+  "wave1935OmiOwnedShutdownSourceBindings": {
+    "base": "82092af869b2f6e30706ef696ff1cf97730e76cb",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 55646,
+        "sha256": "3E999DA4D5B99A56694885EF645CF57CF7B115EE0A569FF9CAFEF8577791096A",
+        "blob": "3a97799807cc79c17c9cecafc04fd8fff66f5314"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 14312,
+        "sha256": "EE6B6A65FE677AC75D820311EAED1A855FF6F6253B89F4095E9D074E9C691197",
+        "blob": "751b5aa8023c324512af7fed6dfdb22cd173df07"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 30159,
+        "sha256": "850FF8212961A9E82A791BEA657376A44C3FCFA1E6E61207BE46B928ACF19D28",
+        "blob": "78720253aad98493f8b58f9c4b621dd7b0d7e99f"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 162359,
+        "sha256": "3DF72B71E5B9E847D499CE52B1D4353190F1BB76D9324579928554B88143D250",
+        "blob": "68a26bed9efe9d66cabd2dde06b03c0a8fff41d3"
+      },
+      {
+        "path": "packaging/bluebubbles_daemon_adoption_canary.py",
+        "bytes": 45153,
+        "sha256": "A3BE87ADED851FB956C79A8E0D63596D6876B3D17A798153DDDD32EF0E948404",
+        "blob": "959bca9e57959d16e5e97c2ec47da9281cdeea9a"
+      },
+      {
+        "path": "packaging/gchat_daemon_adoption_canary.py",
+        "bytes": 26220,
+        "sha256": "8599FF62047126FBA00782EF17EE28BB618FDFC4266E16919251ABEB0569F84E",
+        "blob": "55d884436d5589a2dd826d3cbbe6030388818a05"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 570427,
+        "sha256": "E6DDDE3DBB9A3853B23FBDD49DE30EF5E5308042DCE080053AB0B9AD89444479",
+        "blob": "82309df7d09fdc41c491ab4ff3dc217ba3c4bcae"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1606857,
+        "sha256": "45CFA6026AC0439EFDB9E99C96A7FF8DEB921DEF39C975D009C530F73417F024",
+        "blob": "558b35a7b389d88a47aa2a71022b5180328791e4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2217867,
+        "sha256": "08824639643E6A294C7267117A982FF887B723F2FE29CADCCDA1C33261498714",
+        "blob": "bfaaed1b01def078bd60e01ee449ca42b8817b67"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 572935,
+        "sha256": "E2A23B5F8D08F3784CC7E304841562ED2A61F448BA472E129D48F4D1EFE19CA9",
+        "blob": "df38571e8b22439dce6b80b6e9bb8aac6fb6265d"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 180097,
+        "sha256": "4F81FCF691C7A5F30F8ABE7F9D69872E21715FAE7808D7234E4BDE194E3FF2CC",
+        "blob": "72183c3e94a43a5cdcf56ddf3dbec70f03eafc9c"
+      }
+    ],
+    "note": "One owned OMI supervisor stop+join fixes detached retention WAL ownership; late startup and fallible constructor order preserved. Root corrected JoinHandle unit-result assertion. 2397portable/2172Linux/957Windows/159channel/73macOS,61Python20guards. No product admission or roadmap closure; local BSOD hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

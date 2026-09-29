@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1935 OMI supervisor ownership repair (2026-09-29):**
+The daemon previously aborted the outer OMI supervisor, skipping its child-drain
+path. Retention also runs while OMI is disabled and could remain detached with a
+WAL sender. The supervisor now owns a stop signal and join; normal shutdown
+signals it and awaits all runtime children before the final WAL drain. The
+worker monitor receives observation-only liveness. OMI starts after fallible
+cluster setup, and enabled retention starts after fallible OMI construction.
+
+One real disabled-OMI/WAL regression waits for runtime readiness, bounds the
+cooperative supervisor shutdown and requires the writer task to terminate after
+root drop. This is task-termination evidence only; production WAL finalization
+still requires the actual daemon receipt. Root corrected the test's extra expect
+on JoinHandle<()> before publication. Selections become 2397 portable, 2172 Linux,
+957 Windows, 159 channel and 73 macOS; 61 Python and 20 feature guards stay fixed.
+Both daemon canaries now bind the OMI retention and memory source files.
+
+The current single product run36559843840 at2b7ea985 predates this repair; its
+61 Python contracts and158 focused Rust cases passed, with product checks still
+in progress. No causal runtime confirmation of the OMI repair, daemon acceptance
+or roadmap closure is claimed. Local absolute BSOD hold and no-.slint boundary
+remain. Root alone owns publication, hosted dispatch and final acceptance.
+
 **W1932 original Google Chat and BlueBubbles public CLI admission (2026-09-29):**
 Root admitted both public relink CLI products on9744f6c0 from36554877043.
 All6 original ZIP/API digests,345 extracted entry hashes,101 raw producer source
