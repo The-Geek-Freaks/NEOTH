@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T19:30:24.8979553Z",
-  "validationStatus": "W1948 Doctor named-account source frozen;168 channel cases selected; hosted execution pending",
+  "capturedUtc": "2026-09-29T19:35:38.7218330Z",
+  "validationStatus": "W1948 Doctor source reviewed; W1949 exact hosted formatting imported;168 channel cases await execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4898,8 +4898,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
-      "bytes": 105492,
-      "sha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E"
+      "bytes": 105870,
+      "sha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",

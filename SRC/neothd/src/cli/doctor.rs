@@ -1858,13 +1858,15 @@ mod tests {
         for outcome in [&policy_outcome, &credentials_outcome] {
             assert_eq!(outcome.status, CheckStatus::Warn);
             assert!(
-                outcome
-                    .detail
-                    .contains("telegram: CONFIGURED-NEEDS-REPAIR"),
+                outcome.detail.contains("telegram: CONFIGURED-NEEDS-REPAIR"),
                 "{}",
                 outcome.detail
             );
-            assert!(!outcome.detail.contains("telegram: LIVE"), "{}", outcome.detail);
+            assert!(
+                !outcome.detail.contains("telegram: LIVE"),
+                "{}",
+                outcome.detail
+            );
             assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
             assert!(
                 !outcome
@@ -1873,8 +1875,16 @@ mod tests {
                 "{}",
                 outcome.detail
             );
-            assert!(!outcome.detail.contains("telegram-shadow"), "{}", outcome.detail);
-            assert!(!outcome.detail.contains("named-telegram-secret"), "{}", outcome.detail);
+            assert!(
+                !outcome.detail.contains("telegram-shadow"),
+                "{}",
+                outcome.detail
+            );
+            assert!(
+                !outcome.detail.contains("named-telegram-secret"),
+                "{}",
+                outcome.detail
+            );
         }
     }
 
@@ -1904,13 +1914,15 @@ mod tests {
         for outcome in [&policy_outcome, &credentials_outcome] {
             assert_eq!(outcome.status, CheckStatus::Warn);
             assert!(
-                outcome
-                    .detail
-                    .contains("slack: CONFIGURED-NEEDS-REPAIR"),
+                outcome.detail.contains("slack: CONFIGURED-NEEDS-REPAIR"),
                 "{}",
                 outcome.detail
             );
-            assert!(!outcome.detail.contains("slack: LIVE"), "{}", outcome.detail);
+            assert!(
+                !outcome.detail.contains("slack: LIVE"),
+                "{}",
+                outcome.detail
+            );
             assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
             assert!(
                 !outcome
@@ -1919,15 +1931,27 @@ mod tests {
                 "{}",
                 outcome.detail
             );
-            assert!(!outcome.detail.contains("legacy-shadow"), "{}", outcome.detail);
-            assert!(!outcome.detail.contains("xoxb-named-secret"), "{}", outcome.detail);
+            assert!(
+                !outcome.detail.contains("legacy-shadow"),
+                "{}",
+                outcome.detail
+            );
+            assert!(
+                !outcome.detail.contains("xoxb-named-secret"),
+                "{}",
+                outcome.detail
+            );
         }
     }
 
     #[test]
     fn channels_wiring_existing_malformed_config_is_fail_closed() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("freedom.yaml"), "channel_accounts: [broken\n").unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "channel_accounts: [broken\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("credentials.yaml"),
             "telegram_token: malformed-config-secret\n",
@@ -1936,7 +1960,11 @@ mod tests {
 
         let outcome = check_channels_wiring(dir.path());
         assert_eq!(outcome.status, CheckStatus::Warn);
-        assert!(outcome.detail.contains("pair unreadable"), "{}", outcome.detail);
+        assert!(
+            outcome.detail.contains("pair unreadable"),
+            "{}",
+            outcome.detail
+        );
         assert!(!outcome.detail.contains("CLI-only"), "{}", outcome.detail);
         assert!(!outcome.detail.contains("LIVE"), "{}", outcome.detail);
         assert!(

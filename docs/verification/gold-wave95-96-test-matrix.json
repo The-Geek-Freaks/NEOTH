@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1948 Doctor named-account source frozen;168 channel cases selected; hosted execution pending",
+  "status": "W1948 Doctor source reviewed; W1949 exact hosted formatting imported;168 channel cases await execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270565,
-    "sha256": "247D27CD06F703AEF06EDCCD95CCFC430FD358C37AFCB43AF57B21AF9A7312FE"
+    "bytes": 270574,
+    "sha256": "E50A08112CF1112C9665435B172D0273C0883346B234ED47BC73E344ACAAED4D"
   },
   "sourceInputs": 1500,
   "requiredNativeTests": [
@@ -3282,13 +3282,13 @@
     {
       "test": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
@@ -14202,67 +14202,67 @@
     {
       "test": "cli::doctor::tests::channels_wiring_gchat_only_is_visible_without_a_cli_only_claim",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_discord_only_uses_descriptor_fallback",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_partial_descriptor_config_needs_repair",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_keeps_specialised_rows_without_descriptor_duplicates",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_pass_when_no_credentials",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_live_when_only_telegram_configured",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_slack_partial",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::slack_inbound_live_when_both_tokens_present",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_warn_when_whatsapp_outbound_only",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::whatsapp_inbound_live_when_full_meta_secrets_present",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::r2_p0_2_channels_wiring_mixed_aggregates_to_warn",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
@@ -14412,37 +14412,37 @@
     {
       "test": "cli::doctor::tests::channels_wiring_named_telegram_accounts_need_exact_live_probes",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_named_slack_accounts_need_exact_live_probes",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_partial_named_telegram_maps_need_repair_without_legacy_shadow",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "E4A3A6576B950E36D06FDF475D55F77CDA575E8E53D87F01E0555438FD250D4E",
+      "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
       "junitClass": "neoth"
     }
   ],
@@ -61771,6 +61771,32 @@
       }
     ],
     "note": "Six Doctor regressions; canonical pair-aware probes, exact named-account guidance, invalid-map repair, malformed-config redaction and no unrelated SSH migration. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1949HostedDoctorFormat": {
+    "run": 36620212188,
+    "producer": "f7e033e1367bd0de7a8b6c7df11a5bfda01d2cf2",
+    "artifact": 11057757999,
+    "zipSha256": "a49d5a5bc62ef99d3bc76b77c6f72c95817f7ca6f18071d420283ed519fb5cd8",
+    "patchSha256": "98564FC256DA96178C454991CED8712B278A23093D68CB36E2DA177C5DB920BE",
+    "path": "SRC/neothd/src/cli/doctor.rs",
+    "preimage": "3bd6e93ad3d413e856bfa85ef2048136aeb89573",
+    "postimage": "7be815c1ef834af54b8e9f3c717d0cf94a69cc98",
+    "localFormatterRan": false,
+    "status": "Exact hosted formatting imported; no assertion or production change"
+  },
+  "wave1949HostedDoctorFormatBindings": {
+    "base": "f7e033e1367bd0de7a8b6c7df11a5bfda01d2cf2",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/doctor.rs",
+        "bytes": 105870,
+        "sha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
+        "blob": "7be815c1ef834af54b8e9f3c717d0cf94a69cc98"
+      }
+    ],
+    "note": "Authenticated Preflight36620212188 artifact11057757999 original ZIP/API digest and exact patch/preimage/postimage matched. No local formatter or executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
