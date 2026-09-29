@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1943 fixture E0609 corrected after original hosted failure; no successful Rust execution yet",
+  "status": "Named-account onboarding accepted:162Rust61Python20guards and4loopback products passed f7c74825",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270367,
-    "sha256": "7F493FA676A151123FA77867FDD208150ED4CDE036CC21F9BC8D01EC5A05C999"
+    "bytes": 270566,
+    "sha256": "A8317377E603A666B4D98B8D42F9F84EA6AB0FB6EF4A8DE03D0783CA86F84BD0"
   },
-  "sourceInputs": 1499,
+  "sourceInputs": 1500,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -61504,7 +61504,7 @@
   },
   "wave1943OnboardingNamedAccounts": {
     "note": "Shared onboarding readiness uses canonical account-aware channel status; valid named maps count once in descriptor order and invalid/partial maps cannot fall back to legacy scalars.",
-    "status": "Source static APPROVE; first hosted run36587832970 failed test fixture E0609; fixture corrected; new hosted execution pending",
+    "status": "Accepted W1947:162 exact Rust cases including all3 new onboarding regressions,61Python,20guards and all4loopback products passed36589118484 atf7c74825;7originalZIP356entries106rawsources Root verified",
     "requiredTests": [
       "cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields",
       "cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates",
@@ -61610,6 +61610,51 @@
       }
     ],
     "note": "Only discord_allowed_user_id test data moves from FreedomConfig to Credentials. Original36587832970 failed compilation,61Python passed. Source and assertions unchanged otherwise; successor162 pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1947OnboardingAccountsAccepted": {
+    "run": 36589118484,
+    "producer": "f7c74825c7be3bc2316e0d3441e607be907d1702",
+    "report": "docs/verification/gold-wave1947-onboarding-named-accounts.json",
+    "rootRecordSha256": "411235F38D396CE66801FA73018F33C81D78BE04EE56B86F573FD07AF00B663A",
+    "exactChannelCases": 162,
+    "distinctGuards": 20,
+    "pythonContracts": 61,
+    "products": 4,
+    "localExecutableValidationRan": false,
+    "freshBroaderNativeRuns": false,
+    "releaseReady": false
+  },
+  "wave1947RootOnboardingAdmissionPublication": {
+    "base": "f7c74825c7be3bc2316e0d3441e607be907d1702",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1947-onboarding-named-accounts.json",
+        "bytes": 4733,
+        "sha256": "E04FF49193F3B832D1AE03075EEED41FB749DF75B30B01647CD1028F43F9CEFC",
+        "blob": "8699defcac3b580022b42727ed73a10942dbd438"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 578644,
+        "sha256": "A520734D5AE6585F0AE0FBCF0A0F30C280092EEC77DCC56B9C8BDC8E5C65C694",
+        "blob": "c1ee64e112b736292eabebd273bced77e03fa36d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1615074,
+        "sha256": "BA80FE820418B809357B2280FEE9169A8D876248FE7CB3EBA6976F18645946BC",
+        "blob": "17fabed504ad16c43bdca9d746a5667137693db6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2226084,
+        "sha256": "D218C26F46395809101ADFBD373161056681D52A0703AA8A7F2DF9CF1D6D8BD4",
+        "blob": "6cfa77072a4486432e87a8ffe3a55382b29e5d20"
+      }
+    ],
+    "note": "Root verified7ZIP356entries106rawsources162exactidentities20guards; both daemons adopted/exit0/WALabsentcloseddrained/cleanupcomplete. Independent4product originals verified. No ROAD/external/release claim or fresh wider native lanes. LocalBSODhold intact.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

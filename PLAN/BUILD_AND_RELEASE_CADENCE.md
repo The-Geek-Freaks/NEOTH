@@ -3,6 +3,31 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1947 named-account onboarding accepted (2026-09-29):**
+Run36589118484 onf7c74825 completed SUCCESS. Root verified all7 original ZIP/API
+digests,356 extracted entries,106 raw producer source bindings,162 exact
+workflow/discovery/start/executed/PASS identities and20 distinct Google Chat
+guards. All61 Python contracts and all four loopback products pass. The three
+new regressions prove named Telegram/Slack maps without legacy singleton fields,
+multiple accounts displayed once in descriptor order, and partial maps excluded
+both without and with legacy credential shadows. The W1945 fixture compilation
+failure was corrected before this successful run and is not acceptance evidence.
+
+Shared Doctor/onboarding-status/post-init readiness now uses canonical static
+account readiness. Both BlueBubbles and Google Chat also retain real daemon
+adoption witnesses, exit0, no stop failure, no remaining WAL sender, closed WAL
+receiver, drained WAL and complete cleanup. These are authenticated loopback
+proofs, not external-provider or general release qualification.
+
+Root record: work/gold-20260906/wave1947-product162-admission/ROOT_CHECKS.json
+SHA256 411235F38D396CE66801FA73018F33C81D78BE04EE56B86F573FD07AF00B663A.
+Published report: docs/verification/gold-wave1947-onboarding-named-accounts.json.
+Source selections:1500inputs/2400portable/2175Linux/960Windows/162channel/76macOS.
+Wider native selections were not freshly executed; no ROAD checkbox is closed.
+No product run remains pending. Root retains Git/PLAN/CI/final acceptance;
+Claude is paused, the local absolute BSOD hold/no-.slint boundary is intact,
+and the unrelated .gitignore remains untouched.
+
 **W1945/W1946 hosted test-fixture correction (2026-09-29):**
 Run36587832970 on87b34a55 passed the61 Python contracts, then failed Rust test
 compilation with E0609 before any selected case or product could execute.

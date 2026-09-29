@@ -1,0 +1,120 @@
+{
+  "schema": "neoth.gold.w1947.named-account-onboarding-admission.v1",
+  "producer": "f7c74825c7be3bc2316e0d3441e607be907d1702",
+  "run": {
+    "id": 36589118484,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36589118484",
+    "conclusion": "success"
+  },
+  "behavior": "Shared onboarding/Doctor/post-init readiness recognizes canonical named Telegram and Slack accounts, displays each channel once in descriptor order, and excludes partial or invalid maps without legacy-scalar fallback.",
+  "rootRecord": {
+    "path": "work/gold-20260906/wave1947-product162-admission/ROOT_CHECKS.json",
+    "sha256": "411235F38D396CE66801FA73018F33C81D78BE04EE56B86F573FD07AF00B663A"
+  },
+  "originalArchives": [
+    {
+      "id": 11045195778,
+      "name": "w548-gchat-live-regressions-receipt-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "66df1f28403f8b397b4d553212c18e3f5f3c24142a65313f91bacfe2f1c7296e"
+    },
+    {
+      "id": 11045180830,
+      "name": "gchat-daemon-adoption-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "5f4a64fa74db76fdc1a65e74eb83c20ea63545378f4ab6ce2072332db4a845b8"
+    },
+    {
+      "id": 11044273673,
+      "name": "w548-gchat-live-regressions-log-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "38f32e38a23f674cc4d5c77ed39c7af3fc4c1722e36fe058ba04f2607c0422c6"
+    },
+    {
+      "id": 11044064025,
+      "name": "w548-gchat-live-regressions-source-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "558fc5236a5af04691310b4b174a0683af0c820d71fc46eda3e80b2828be675d"
+    },
+    {
+      "id": 11044059007,
+      "name": "gchat-relink-public-cli-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "b55a4b5c07d1364c823d2c8f325d323634f27240787467d55b0d4e5808c79b0a"
+    },
+    {
+      "id": 11043693660,
+      "name": "converted-relink-public-cli-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "84ca6adee51524bd1b1d940aad3c4962e4edc5434c1257f7b0be4d0ee4b7296b"
+    },
+    {
+      "id": 11043578784,
+      "name": "bluebubbles-daemon-adoption-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "sha256": "f8b11be528322bebc97a618a0a9cd69f33641f2f7a1c0a546c9e6f0b8a51b971"
+    }
+  ],
+  "extractedEntries": 356,
+  "rawProducerSourceBindings": 106,
+  "exactChannelCases": 162,
+  "newOnboardingCases": [
+    "cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields",
+    "cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates",
+    "cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials"
+  ],
+  "distinctGoogleChatGuards": 20,
+  "pythonContracts": 61,
+  "loopbackProducts": [
+    "BlueBubbles public CLI",
+    "BlueBubbles running daemon adoption",
+    "Google Chat public CLI",
+    "Google Chat running daemon adoption"
+  ],
+  "daemonEvidence": [
+    {
+      "artifact": "bluebubbles-daemon-adoption-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "adoptionWitness": "authenticated_empty_message_query",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSenders": "observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    },
+    {
+      "artifact": "gchat-daemon-adoption-f7c74825c7be3bc2316e0d3441e607be907d1702",
+      "adoptionWitness": "authenticated_empty_pubsub_pull",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSenders": "observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    }
+  ],
+  "sourceSelections": {
+    "portable": 2400,
+    "linux": 2175,
+    "windows": 960,
+    "channel": 162,
+    "macos": 76
+  },
+  "priorFailedAttempt": {
+    "run": 36587832970,
+    "producer": "87b34a55fcbe4bf7c9f28e6b9849c1733fda722a",
+    "error": "E0609 in new fixture, corrected byf7c74825",
+    "acceptedAsRuntimeEvidence": false
+  },
+  "staticReview": "Independent APPROVE of production projection, account-map boundaries, test coverage, workflow/matrix bindings and the later fixture correction.",
+  "localExecutableValidationRan": false,
+  "broaderNativeSelectionsFreshlyExecuted": false,
+  "externalServiceQualification": false,
+  "roadmapCheckboxesClosed": 0,
+  "releaseReady": false,
+  "independentArtifactReview": "PASS: all4 product originals and20GChat guards independently rechecked by /root/w1943_review; exact ZIP/API digests and producer match Root records.",
+  "pythonRunLog": {
+    "path": "work/gold-20260906/wave1947-product162-admission/run-log.txt",
+    "sha256": "B5145E43F78CE3B6D81B27F34FE1780A697CD7C7A12FAF5A2D5B8930CE2831D2",
+    "observedCounts": [
+      10,
+      18,
+      8,
+      25
+    ],
+    "sum": 61
+  }
+}

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T15:14:20.4421838Z",
-  "validationStatus": "W1943 fixture E0609 corrected after original hosted failure; no successful Rust execution yet",
+  "capturedUtc": "2026-09-29T15:54:45.7695578Z",
+  "validationStatus": "Named-account onboarding accepted:162Rust61Python20guards and4loopback products passed f7c74825",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2842,6 +2842,11 @@
       "sha256": "B4F48372C352BD5C7BC9DC10C764B5DDD02C3E28F413BD59191D562CF8E40576"
     },
     {
+      "path": "docs/verification/gold-wave1947-onboarding-named-accounts.json",
+      "bytes": 4733,
+      "sha256": "E04FF49193F3B832D1AE03075EEED41FB749DF75B30B01647CD1028F43F9CEFC"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3903,18 +3908,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 576982,
-      "sha256": "A45C7E452B137E54C05C3696EF57245377A77F56F01484E9566D135AA4CF4724"
+      "bytes": 578644,
+      "sha256": "A520734D5AE6585F0AE0FBCF0A0F30C280092EEC77DCC56B9C8BDC8E5C65C694"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1613412,
-      "sha256": "1BFE2A854CD037FFC0F8AF4567900F694810111B37C83914B6CCEA52CA4B5114"
+      "bytes": 1615074,
+      "sha256": "BA80FE820418B809357B2280FEE9169A8D876248FE7CB3EBA6976F18645946BC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2224422,
-      "sha256": "319A7283ED6CE2B0D944B5963E6377EDEC5AB5A6DC825FF8F6DF2C3D9E561136"
+      "bytes": 2226084,
+      "sha256": "D218C26F46395809101ADFBD373161056681D52A0703AA8A7F2DF9CF1D6D8BD4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
