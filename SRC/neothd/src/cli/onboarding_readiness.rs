@@ -166,8 +166,8 @@ fn configured_channels(cfg: &FreedomConfig, credentials: &Credentials) -> Vec<&'
 mod tests {
     use super::*;
     use crate::channels::registry::ChannelAccountId;
-    use crate::config::{SlackAccountConfig, TelegramAccountConfig};
     use crate::config::credentials::{SlackAccountCredentials, TelegramAccountCredentials};
+    use crate::config::{SlackAccountConfig, TelegramAccountConfig};
     use crate::secret::SecretString;
 
     fn cfg(kind: ProviderKind) -> FreedomConfig {
@@ -348,10 +348,10 @@ mod tests {
             },
         );
         let mut credentials = Credentials::default();
-        credentials.channel_accounts.telegram.insert(
-            telegram,
-            TelegramAccountCredentials { token: None },
-        );
+        credentials
+            .channel_accounts
+            .telegram
+            .insert(telegram, TelegramAccountCredentials { token: None });
         credentials.channel_accounts.slack.insert(
             slack,
             SlackAccountCredentials {

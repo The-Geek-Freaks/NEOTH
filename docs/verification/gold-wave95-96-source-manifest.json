@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-29T14:59:58.7132938Z",
-  "validationStatus": "W1943 named-account onboarding source prepared; static review; hosted162case validation pending",
+  "capturedUtc": "2026-09-29T15:04:02.3892286Z",
+  "validationStatus": "W1943 source reviewed; authenticated hosted formatter imported; runtime162 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5058,8 +5058,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "bytes": 15956,
-      "sha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4"
+      "bytes": 15960,
+      "sha256": "14812521AC68E9B56AC34B22132723CBD460A3234625029701CECD08FFB2C73D"
     },
     {
       "path": "SRC/neothd/src/cli/onboarding_status.rs",
