@@ -125,9 +125,12 @@ jobs:
           cli::serve::tests::run_serve_roots_release_wal_senders_before_join	SRC/neothd/src/cli/serve_tests.rs
           cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown	SRC/neothd/src/cli/serve_tests.rs
           cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join	SRC/neothd/src/cli/serve_tasks.rs
+          cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields	SRC/neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates	SRC/neothd/src/cli/onboarding_readiness.rs
+          cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials	SRC/neothd/src/cli/onboarding_readiness.rs
           EOF
-          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 73
-          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 73
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 76
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 76
           cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
             shasum -a 256 "$source"
           done > "$evidence/source-sha256.txt"
@@ -163,8 +166,8 @@ jobs:
               failed=$((failed + 1))
             fi
           done < "$evidence/selection.tsv"
-          printf 'selected=73\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
-          test "$index" -eq 73 && test "$failed" -eq 0
+          printf 'selected=76\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq 76 && test "$failed" -eq 0
       - name: Preserve completed core compilation
         if: ${{ always() && steps.compile.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

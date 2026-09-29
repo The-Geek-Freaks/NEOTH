@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1943 named-account onboarding readiness (2026-09-29; hosted pending):**
+Shared onboarding readiness now consumes the same account-aware static channel
+statuses as channel list/connect. Valid named Telegram and Slack maps therefore
+count as configured messaging channels without requiring legacy singleton
+fields. Invalid or partial maps remain excluded and cannot fall back to shadow
+legacy credentials. Display names stay in descriptor order, once per channel.
+This changes the shared Doctor/onboarding-status/post-init readiness result;
+static configuration readiness does not prove live transport health.
+
+Three focused regressions cover named-only maps, multiple-account ordering and
+invalid/partial maps with and without legacy shadows. Source selections become
+2400 portable,2175 Linux,960 Windows,162 channel and76 macOS;1499 source inputs,
+61 Python contracts and20 separate GChat guards are unchanged. Source review
+and hosted execution are tracked separately; no fresh runtime pass is claimed.
+The next coordinated channel run will execute the three new cases and existing
+loopback products. Wider native selections are registered, not freshly run.
+No ROAD checkbox is closed. Root owns publication/CI; Claude remains paused,
+and the absolute local BSOD hold/no-.slint boundary stays in effect.
+
 **W1940-W1942 OMI repair and both daemon products accepted (2026-09-29):**
 Run36563622981 at39afd7df completed SUCCESS. Root independently authenticated
 all7 original ZIP/API digests,350 extracted entry hashes and106 raw producer

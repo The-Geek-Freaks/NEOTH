@@ -362,9 +362,12 @@ jobs:
           run_case 157 lib cli::serve::tests::run_serve_roots_release_wal_senders_before_join cli::serve::tests::run_serve_roots_release_wal_senders_before_join --lib
           run_case 158 lib cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown --lib
           run_case 159 lib cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 159
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 159
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 159
+          run_case 160 lib cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields --lib
+          run_case 161 lib cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates --lib
+          run_case 162 lib cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 162
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 162
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 162
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

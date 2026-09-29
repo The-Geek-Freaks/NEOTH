@@ -11,8 +11,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
+use crate::channels::probe::ProbeStatus;
 use crate::channels::registry::channel_descriptors;
+use crate::cli::channel::channel_statuses;
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
@@ -144,13 +145,19 @@ fn provider_gap(cfg: &FreedomConfig) -> Option<String> {
 }
 
 fn configured_channels(cfg: &FreedomConfig, credentials: &Credentials) -> Vec<&'static str> {
-    let view = ChannelCredsView::from_config(Some(cfg), credentials);
+    // Account-map readiness and legacy-shadow rules belong to the canonical
+    // channel status projection; retain this registry's display-name order.
+    let statuses = channel_statuses(cfg, credentials);
     channel_descriptors()
         .iter()
-        .zip(probe_all(&view))
-        .filter_map(|(descriptor, health)| {
-            matches!(health.status, ProbeStatus::Ok | ProbeStatus::Warn)
-                .then_some(descriptor.display_name)
+        .filter_map(|descriptor| {
+            statuses
+                .iter()
+                .find(|status| status.name == descriptor.id.as_str())
+                .and_then(|status| {
+                    matches!(status.status, ProbeStatus::Ok | ProbeStatus::Warn)
+                        .then_some(descriptor.display_name)
+                })
         })
         .collect()
 }
@@ -158,6 +165,9 @@ fn configured_channels(cfg: &FreedomConfig, credentials: &Credentials) -> Vec<&'
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::registry::ChannelAccountId;
+    use crate::config::{SlackAccountConfig, TelegramAccountConfig};
+    use crate::config::credentials::{SlackAccountCredentials, TelegramAccountCredentials};
     use crate::secret::SecretString;
 
     fn cfg(kind: ProviderKind) -> FreedomConfig {
@@ -214,6 +224,149 @@ mod tests {
         let mut cfg = FreedomConfig::default();
         cfg.telegram_user_id = Some(42);
         assert!(configured_channels(&cfg, &credentials).contains(&"Telegram"));
+    }
+
+    #[test]
+    fn named_telegram_and_slack_maps_are_ready_without_legacy_fields() {
+        let telegram = ChannelAccountId::new("family".to_string()).unwrap();
+        let slack = ChannelAccountId::new("ops".to_string()).unwrap();
+        let mut cfg = FreedomConfig::default();
+        cfg.channel_accounts.telegram.insert(
+            telegram.clone(),
+            TelegramAccountConfig {
+                allowed_user_id: 42,
+                ..TelegramAccountConfig::default()
+            },
+        );
+        cfg.channel_accounts.slack.insert(
+            slack.clone(),
+            SlackAccountConfig {
+                allowed_user_id: "U0123456789".to_string(),
+                ..SlackAccountConfig::default()
+            },
+        );
+        let mut credentials = Credentials::default();
+        credentials.channel_accounts.telegram.insert(
+            telegram,
+            TelegramAccountCredentials {
+                token: Some(SecretString::from("123:telegram-token")),
+            },
+        );
+        credentials.channel_accounts.slack.insert(
+            slack,
+            SlackAccountCredentials {
+                bot_token: Some(SecretString::from("xoxb-slack-token")),
+                app_token: Some(SecretString::from("xapp-slack-token")),
+            },
+        );
+
+        assert_eq!(cfg.telegram_user_id, None);
+        assert!(credentials.telegram_token.is_none());
+        assert!(credentials.slack_bot_token.is_none());
+        assert!(credentials.slack_app_token.is_none());
+        assert_eq!(
+            configured_channels(&cfg, &credentials),
+            vec!["Telegram", "Slack"]
+        );
+    }
+
+    #[test]
+    fn configured_channel_names_follow_descriptor_order_without_duplicates() {
+        let telegram = ChannelAccountId::new("family".to_string()).unwrap();
+        let telegram_secondary = ChannelAccountId::new("work".to_string()).unwrap();
+        let slack = ChannelAccountId::new("ops".to_string()).unwrap();
+        let mut cfg = FreedomConfig::default();
+        cfg.channel_accounts.telegram.insert(
+            telegram.clone(),
+            TelegramAccountConfig {
+                allowed_user_id: 42,
+                ..TelegramAccountConfig::default()
+            },
+        );
+        cfg.channel_accounts.telegram.insert(
+            telegram_secondary.clone(),
+            TelegramAccountConfig {
+                allowed_user_id: 7,
+                ..TelegramAccountConfig::default()
+            },
+        );
+        cfg.channel_accounts.slack.insert(
+            slack.clone(),
+            SlackAccountConfig {
+                allowed_user_id: "U0123456789".to_string(),
+                ..SlackAccountConfig::default()
+            },
+        );
+        cfg.discord_allowed_user_id = Some("123456789012345678".to_string());
+        let mut credentials = Credentials {
+            discord_bot_token: Some(SecretString::from("discord-token")),
+            ..Credentials::default()
+        };
+        credentials.channel_accounts.telegram.insert(
+            telegram,
+            TelegramAccountCredentials {
+                token: Some(SecretString::from("123:telegram-token")),
+            },
+        );
+        credentials.channel_accounts.telegram.insert(
+            telegram_secondary,
+            TelegramAccountCredentials {
+                token: Some(SecretString::from("456:secondary-telegram-token")),
+            },
+        );
+        credentials.channel_accounts.slack.insert(
+            slack,
+            SlackAccountCredentials {
+                bot_token: Some(SecretString::from("xoxb-slack-token")),
+                app_token: Some(SecretString::from("xapp-slack-token")),
+            },
+        );
+
+        let names = configured_channels(&cfg, &credentials);
+        assert_eq!(names, vec!["Telegram", "Slack", "Discord"]);
+        let unique = names.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), names.len());
+    }
+
+    #[test]
+    fn invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials() {
+        let telegram = ChannelAccountId::new("family".to_string()).unwrap();
+        let slack = ChannelAccountId::new("ops".to_string()).unwrap();
+        let mut cfg = FreedomConfig::default();
+        cfg.channel_accounts.telegram.insert(
+            telegram.clone(),
+            TelegramAccountConfig {
+                allowed_user_id: 42,
+                ..TelegramAccountConfig::default()
+            },
+        );
+        cfg.channel_accounts.slack.insert(
+            slack.clone(),
+            SlackAccountConfig {
+                allowed_user_id: "U0123456789".to_string(),
+                ..SlackAccountConfig::default()
+            },
+        );
+        let mut credentials = Credentials::default();
+        credentials.channel_accounts.telegram.insert(
+            telegram,
+            TelegramAccountCredentials { token: None },
+        );
+        credentials.channel_accounts.slack.insert(
+            slack,
+            SlackAccountCredentials {
+                bot_token: Some(SecretString::from("xoxb-named-slack-token")),
+                app_token: None,
+            },
+        );
+
+        assert!(configured_channels(&cfg, &credentials).is_empty());
+
+        cfg.telegram_user_id = Some(42);
+        credentials.telegram_token = Some(SecretString::from("123:legacy-telegram-token"));
+        credentials.slack_bot_token = Some(SecretString::from("xoxb-legacy-slack-token"));
+        credentials.slack_app_token = Some(SecretString::from("xapp-legacy-slack-token"));
+        assert!(configured_channels(&cfg, &credentials).is_empty());
     }
 
     #[test]

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "OMI repair hosted proven:159cases20guards61Python and bothCLI/bothdaemon products passed39afd7df",
+  "status": "W1943 named-account onboarding source prepared; static review; hosted162case validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 270369,
-    "sha256": "C0EA922329F68F737B0751CA25B4CC7F4145EFCE2C35CD4283C13D55E3C43B58"
+    "sha256": "A6BD7BCF15C15D62588902C136A7B8C3F0B60BB1F1E895D3B715245A3A8FE054"
   },
   "sourceInputs": 1499,
   "requiredNativeTests": [
@@ -13998,43 +13998,43 @@
     {
       "test": "cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::token_only_telegram_is_not_ready",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "B569AEAD5E6B4214E5C1E4791D9F7BF23A4F488CB2721A36A62CE632F7122A40",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     },
     {
@@ -14389,6 +14389,24 @@
       "test": "cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
       "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials",
+      "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
+      "sourceSha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
       "junitClass": "neoth"
     }
   ],
@@ -61481,6 +61499,71 @@
       }
     ],
     "note": "Root7originalZIP350entries106rawsources,159exactcase identities,20distinctguards. Both realdaemonadoptions exit0 with otherWALsendersabsent receiverclosed WALdrained and completecleanup. Rootrecord115d8737. No local runtime/.slint/ROAD closure or release qualification. Runtime106inputs identical on documentationheadc709b01b.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1943OnboardingNamedAccounts": {
+    "note": "Shared onboarding readiness uses canonical account-aware channel status; valid named maps count once in descriptor order and invalid/partial maps cannot fall back to legacy scalars.",
+    "status": "source work and independent review active; hosted execution pending",
+    "requiredTests": [
+      "cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields",
+      "cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates",
+      "cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials"
+    ]
+  },
+  "wave1943OnboardingNamedAccountBindings": {
+    "base": "6aee3fe387268fd7cfc7bf8c6ccd2383afcec2d8",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 56359,
+        "sha256": "7BF09173EDEE6F2D55A9F704E3FC02141BA9943314A337F58F60DDE4137EDDCF",
+        "blob": "3316e959148c48fb309f9f124553cd00a5f1dec2"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 14778,
+        "sha256": "8B7AE2A098C012E09EDFEDA08B5B53E588181EF43AC209CEBA807ECF903B6142",
+        "blob": "80eeb4ce5e7af1e73e88f080e3eb3e7db8519d50"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 30211,
+        "sha256": "9E4F1091A3B725D8D15FE0701C2218CF2FBD4282AC7DF646043C448F67B6A96A",
+        "blob": "e91fe1ae87035190e3e742df8538bbee9bd632a7"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 162813,
+        "sha256": "0F3CD0E6EF38E69AA9C42DF5A5E935DD94A4FA66AEE5A2BB588294A2DBA145FB",
+        "blob": "93b84e9317424569bf6fcb39d34b90c544fa153d"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 576313,
+        "sha256": "3B9976CDC2CA85EE3F38E88C31F325D947895E776ECEF11B5AA3368852BD801D",
+        "blob": "8a031758b26fb40d8c65bca1b492029c0b51b185"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1612743,
+        "sha256": "3995170DB848E407A584075FEB6E164F4A7A6FCBCF1E9F3664E627D61266DBB1",
+        "blob": "12f0acf3283aadd5a885bc3220c1cbc730a5eb71"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2223753,
+        "sha256": "65E0416141D59A54B4621CEA65FBFC4FEF7FF3DDF22FF8D6229A4B14BEDDA309",
+        "blob": "aabeafa4cdb8372956501c64956f9f7c2cb21017"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
+        "bytes": 15956,
+        "sha256": "830E0F526FE5F80C70B1E840DEDD0D8840AC302CA7B24AF8C22484DC29FA0CA4",
+        "blob": "8be8be44c8129f1057be8c019ee3ebfe8f27b910"
+      }
+    ],
+    "note": "Canonical account-aware onboarding projection;3 new cases registered2400portable2175Linux960Windows162channel76macOS. Prior159/all4loopback products accepted separately; current runtime pending. Absolute local BSOD hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
