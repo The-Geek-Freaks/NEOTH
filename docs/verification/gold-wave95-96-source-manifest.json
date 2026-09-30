@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T11:18:19.8424525Z",
-  "validationStatus": "W1982_SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-30T11:20:55.0045612Z",
+  "validationStatus": "W1982_HOSTED_FORMAT_IMPORTED_FAST_CHECKS_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2873,8 +2873,8 @@
     },
     {
       "path": "docs/verification/gold-wave1982-egress-and-windows-upgrade.json",
-      "bytes": 7336,
-      "sha256": "97A7F24316686BECBD4BEE0123A9380B1F772DE20D69ADF15035C8280E0D7963"
+      "bytes": 7859,
+      "sha256": "74210DD6879CB43D4F66347B0F18D7572EBCA1B3A1B610CC6510F3F9EEEB78CC"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -7518,8 +7518,8 @@
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "bytes": 64233,
-      "sha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17"
+      "bytes": 64237,
+      "sha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124"
     },
     {
       "path": "SRC/neothd/tests/provider_response_bounds_source_gate.rs",

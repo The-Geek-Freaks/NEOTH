@@ -148,5 +148,15 @@
       "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1979-windows-predecessor\\candidate\\.github\\workflows\\release.yml",
       "afterSha256": "F4D5AEC684C66F04A2E3924507567A31AB68CCE5D2DEDAB7A46856E84376CCF7"
     }
-  ]
+  ],
+  "hostedFormatReceipt": {
+    "run": "36707990279",
+    "producer": "08bb0ffe8c312093858167ebe6b35eb7f894d3ca",
+    "artifact": "11092837364",
+    "zipSha256": "E05BB2E37EAA68CB9F79B741062459B7A91DA79E5554A797A61AC92901FD5F88",
+    "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+    "beforeBlob": "89f1980a3c724b9d0f7d5d44ba574e8a9e32ee60",
+    "afterBlob": "e844541092625591ab83e1c3196a62cd6ecda778",
+    "scope": "One rustfmt let-else line wrap; hosted receipt imported without local runtime"
+  }
 }

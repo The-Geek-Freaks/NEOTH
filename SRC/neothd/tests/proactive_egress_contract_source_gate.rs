@@ -350,7 +350,8 @@ fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
 /// relink binding, reject drift, and forward exactly once; `deliver_live_route`
 /// separately proves that this adapter is itself consumed by execute!.
 fn is_validated_relink_forwarder(source: &str) -> bool {
-    let Some(start) = source.find("impl crate::channels::Channel for RelinkCheckedChannel {") else {
+    let Some(start) = source.find("impl crate::channels::Channel for RelinkCheckedChannel {")
+    else {
         return false;
     };
     let Some(end_relative) = source[start..].find("/// Construct one configured adapter") else {

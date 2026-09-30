@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1982_SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "status": "W1982_HOSTED_FORMAT_IMPORTED_FAST_CHECKS_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 272362,
-    "sha256": "3D70880B6DEE9B267E7097019F37A55BA9ED64914DCA23F8FB9C59E16F3D9D1E"
+    "bytes": 272355,
+    "sha256": "F7BC3C0DD5620E57DC584545F4135124A55382C6742CBBFD68347681A640F527"
   },
   "sourceInputs": 1510,
   "requiredNativeTests": [
@@ -1338,13 +1338,13 @@
     {
       "test": "every_live_route_uses_the_choke_point_and_keet_binds_raw_capability",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
       "test": "exactly_one_production_proactive_transport_seam_exists",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
@@ -14754,25 +14754,25 @@
     {
       "test": "durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
       "test": "bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
       "test": "armed_claim_lease_and_registration_cover_admission_transport_and_terminalization",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
       "test": "validated_relink_forwarder_recognizer_requires_revalidation_and_one_forward",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17",
+      "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     }
   ],
@@ -63072,6 +63072,26 @@
       }
     ],
     "note": "W1978-W1982 reviewed source repairs and pinned Windows predecessor support; portable2461 focused231; prior230 run had228 PASS and2 FAILED; fresh focused/native acceptance pending; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1982HostedFormat": {
+    "base": "08bb0ffe8c312093858167ebe6b35eb7f894d3ca",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1982-egress-and-windows-upgrade.json",
+        "bytes": 7859,
+        "sha256": "74210DD6879CB43D4F66347B0F18D7572EBCA1B3A1B610CC6510F3F9EEEB78CC",
+        "blob": "0efcf030257b2e66d79afd1b98216f5fb0e0f2eb"
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "bytes": 64237,
+        "sha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
+        "blob": "e844541092625591ab83e1c3196a62cd6ecda778"
+      }
+    ],
+    "note": "Exact run36707990279 original artifact11092837364 digest and inner source/patch checks verified; one let-else wrap; no local formatter/tests.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
