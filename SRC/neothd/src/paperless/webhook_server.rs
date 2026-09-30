@@ -462,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_post_quarantine_returns_422_no_vault_write() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
         let server = spawn(vault.path(), "secret-token").await;
         let url = format!("http://{}/paperless/ingest", server.bind_addr);
         let client = Client::new();
@@ -521,9 +521,9 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_request_cannot_choose_a_different_findings_home() {
-        let vault = tempfile::tempdir().unwrap();
-        let configured_home = tempfile::tempdir().unwrap();
-        let request_supplied_home = tempfile::tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
+        let configured_home = crate::test_env::canonical_tempdir().unwrap();
+        let request_supplied_home = crate::test_env::canonical_tempdir().unwrap();
         let server = spawn_at(vault.path(), configured_home.path(), "secret-token").await;
         let response = Client::new()
             .post(format!("http://{}/paperless/ingest", server.bind_addr))

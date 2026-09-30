@@ -956,8 +956,8 @@ mod tests {
 
     #[tokio::test]
     async fn retiring_worker_fences_late_blocking_state_publication() {
-        let home = tempfile::tempdir().unwrap();
-        let root = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let root = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(root.path().join("review.md"), "# Read after approval\n").unwrap();
         let control = Arc::new(ScanControl::default());
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
@@ -1000,8 +1000,8 @@ mod tests {
 
     #[test]
     fn cancellation_before_commit_preserves_existing_state_bytes() {
-        let home = tempfile::tempdir().unwrap();
-        let root = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let root = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(root.path().join("guide.txt"), "retained source").unwrap();
         scan_once(home.path(), &config(root.path(), 3), None, 100).unwrap();
         let before = std::fs::read(home.path().join(STATE_FILE)).unwrap();
@@ -1030,8 +1030,8 @@ mod tests {
 
     #[test]
     fn valid_hex_digest_tampering_refuses_state_mutation() {
-        let home = tempfile::tempdir().unwrap();
-        let root = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let root = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(root.path().join("guide.txt"), "retained source").unwrap();
         scan_once(home.path(), &config(root.path(), 3), None, 100).unwrap();
         let pending = list_pending(home.path()).unwrap();
@@ -1056,8 +1056,8 @@ mod tests {
 
     #[test]
     fn real_file_scan_reopens_state_and_deduplicates_revision() {
-        let home = tempfile::tempdir().expect("home");
-        let root = tempfile::tempdir().expect("root");
+        let home = crate::test_env::canonical_tempdir().expect("home");
+        let root = crate::test_env::canonical_tempdir().expect("root");
         std::fs::write(root.path().join("guide.rtf"), b"{\\rtf1 test}").expect("document");
         let first = scan_once(home.path(), &config(root.path(), 3), None, 100).expect("first scan");
         let second =
@@ -1069,7 +1069,7 @@ mod tests {
 
     #[test]
     fn listing_a_missing_home_is_read_only() {
-        let parent = tempfile::tempdir().expect("parent");
+        let parent = crate::test_env::canonical_tempdir().expect("parent");
         let absent = parent.path().join("missing-home");
         assert!(list_pending(&absent).expect("empty list").is_empty());
         assert!(
@@ -1080,8 +1080,8 @@ mod tests {
 
     #[test]
     fn real_change_supersedes_pending_and_quota_defers_next_revision() {
-        let home = tempfile::tempdir().expect("home");
-        let root = tempfile::tempdir().expect("root");
+        let home = crate::test_env::canonical_tempdir().expect("home");
+        let root = crate::test_env::canonical_tempdir().expect("root");
         let path = root.path().join("guide.txt");
         std::fs::write(&path, b"first").expect("first document");
         scan_once(home.path(), &config(root.path(), 1), None, 100).expect("first scan");
@@ -1099,9 +1099,9 @@ mod tests {
 
     #[test]
     fn deferred_revision_requires_current_root_snapshot_before_promotion() {
-        let home = tempfile::tempdir().unwrap();
-        let original_root = tempfile::tempdir().unwrap();
-        let replacement_root = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let original_root = crate::test_env::canonical_tempdir().unwrap();
+        let replacement_root = crate::test_env::canonical_tempdir().unwrap();
         let source = original_root.path().join("guide.txt");
         std::fs::write(&source, "first").unwrap();
         scan_once(home.path(), &config(original_root.path(), 1), None, 100).unwrap();
@@ -1129,8 +1129,8 @@ mod tests {
 
     #[test]
     fn bounded_inventory_rotates_after_reopen_and_revisits_a_changed_later_file() {
-        let home = tempfile::tempdir().expect("home");
-        let root = tempfile::tempdir().expect("root");
+        let home = crate::test_env::canonical_tempdir().expect("home");
+        let root = crate::test_env::canonical_tempdir().expect("root");
         for number in 0..65 {
             std::fs::write(
                 root.path().join(format!("{number:03}.txt")),
@@ -1165,7 +1165,7 @@ mod tests {
 
     #[test]
     fn byte_budget_defers_the_next_item_and_rotates_a_full_64_file_inventory() {
-        let root = tempfile::tempdir().expect("root");
+        let root = crate::test_env::canonical_tempdir().expect("root");
         for number in 0..MAX_CANDIDATES_PER_SCAN {
             std::fs::write(root.path().join(format!("{number:03}.txt")), b"aa").expect("document");
         }
@@ -1200,8 +1200,8 @@ mod tests {
 
     #[test]
     fn overlapping_roots_attribute_the_shared_file_to_the_longest_root_once() {
-        let home = tempfile::tempdir().expect("home");
-        let parent = tempfile::tempdir().expect("parent root");
+        let home = crate::test_env::canonical_tempdir().expect("home");
+        let parent = crate::test_env::canonical_tempdir().expect("parent root");
         let child = parent.path().join("nested");
         std::fs::create_dir(&child).expect("nested root");
         std::fs::write(child.join("guide.txt"), b"one shared physical file").expect("document");
@@ -1283,9 +1283,9 @@ mod tests {
     #[test]
     fn symlinked_leaf_is_never_discovered() {
         use std::os::unix::fs::symlink;
-        let home = tempfile::tempdir().expect("home");
-        let root = tempfile::tempdir().expect("root");
-        let outside = tempfile::tempdir().expect("outside");
+        let home = crate::test_env::canonical_tempdir().expect("home");
+        let root = crate::test_env::canonical_tempdir().expect("root");
+        let outside = crate::test_env::canonical_tempdir().expect("outside");
         let outside_file = outside.path().join("outside.txt");
         std::fs::write(&outside_file, b"outside").expect("outside file");
         symlink(&outside_file, root.path().join("linked.txt")).expect("link");

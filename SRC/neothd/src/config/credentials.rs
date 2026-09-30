@@ -4637,7 +4637,17 @@ impl Credentials {
                                 format!("validate raw target for {}", freedom_path.display())
                             })?;
                         let _ = candidate.public_yaml()?;
-                        Some(candidate.wal.encryption == super::WalEncryption::Aes256GcmSiv)
+                        let candidate_value: serde_yaml::Value = serde_yaml::from_str(target)
+                            .with_context(|| {
+                                format!("parse WAL target for {}", freedom_path.display())
+                            })?;
+                        let candidate_wal = match candidate_value.get("wal").cloned() {
+                            None | Some(serde_yaml::Value::Null) => super::WalConfig::default(),
+                            Some(wal) => serde_yaml::from_value(wal).with_context(|| {
+                                format!("validate WAL target for {}", freedom_path.display())
+                            })?,
+                        };
+                        Some(candidate_wal.encryption == super::wal::WalEncryption::Aes256GcmSiv)
                     } else {
                         None
                     };

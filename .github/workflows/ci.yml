@@ -421,6 +421,10 @@ jobs:
             sleeper_pid=""
           done
           wait "$cargo_pid"
+          # Native P118 fixtures launch the real CLI; nextest --no-run does not
+          # produce that ordinary executable. Non-macOS returned above.
+          cargo build -p neoth --bin neoth --locked
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
 
       - name: Upload macOS compile observability
         if: always() && runner.os == 'macOS'

@@ -1379,10 +1379,10 @@ mod tests {
                 .any(|window| window == b"prior-secret"),
             "recovery must not downgrade existing encrypted credentials to plaintext"
         );
-        let recovered = crate::config::FreedomConfig::load_from_path(&path).unwrap();
+        let recovered = crate::config::load_wal_config_strict(&path).unwrap();
         assert_eq!(
-            recovered.wal.encryption,
-            crate::config::WalEncryption::Aes256GcmSiv,
+            recovered.encryption,
+            crate::config::wal::WalEncryption::Aes256GcmSiv,
             "recovery must publish a config that keeps existing credentials encrypted"
         );
 

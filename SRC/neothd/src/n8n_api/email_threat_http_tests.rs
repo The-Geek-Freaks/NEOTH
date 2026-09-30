@@ -185,7 +185,7 @@ async fn strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400(
 
 #[tokio::test]
 async fn quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_over_http() {
-    let home = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
     let token = scoped_token(
         home.path(),
         vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()],

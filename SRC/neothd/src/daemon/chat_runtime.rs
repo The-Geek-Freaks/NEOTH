@@ -764,6 +764,7 @@ mod tests {
 
     struct RuntimeProvider {
         calls: AtomicUsize,
+        called: Notify,
         reply: String,
     }
 
@@ -771,6 +772,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 calls: AtomicUsize::new(0),
+                called: Notify::new(),
                 reply: "daemon runtime reply".into(),
             }
         }
@@ -788,6 +790,7 @@ mod tests {
 
         async fn complete(&self, _request: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.called.notify_waiters();
             Ok(Completion {
                 termination: Default::default(),
                 text: self.reply.clone(),
@@ -871,6 +874,7 @@ mod tests {
         ));
         let provider = Arc::new(RuntimeProvider {
             calls: AtomicUsize::new(0),
+            called: Notify::new(),
             reply,
         });
         runtime
@@ -1477,13 +1481,14 @@ mod tests {
     }
 
     async fn wait_for_provider_call(provider: &RuntimeProvider) {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while provider.calls.load(Ordering::SeqCst) == 0 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("authenticated fixture turn reaches the provider");
+        let notified = provider.called.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if provider.calls.load(Ordering::SeqCst) == 0 {
+            tokio::time::timeout(Duration::from_secs(10), notified)
+                .await
+                .expect("authenticated fixture turn reaches the provider");
+        }
     }
 
     #[tokio::test]

@@ -204,6 +204,10 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/providers/openai_api.rs",
     "src/updater/self_update.rs",
     "src/installers/n8n.rs",
+    // Fixed Docker Hub token/manifest reader for the managed n8n target. It
+    // uses only the fixed HTTPS origins, disables proxies and redirects, caps
+    // streamed responses at 512 KiB, and has 5 s connect / 10 s total limits.
+    "src/integrations/n8n/managed_update_target.rs",
     // The n8n adoption probe is restricted to a parsed loopback origin. Its
     // dedicated client disables ambient proxies and redirects before an API
     // key is attached, and bounds the request and response body.
@@ -211,6 +215,18 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/installers/ollama.rs",
     "src/installers/omi.rs",
     "src/installers/paperless.rs",
+    // Paperless bootstrap obtains a token only from a canonical IPv4-loopback
+    // origin; its proxy-free, redirect-disabled request has a 5 s deadline and
+    // caps the JSON body at 32 KiB.
+    "src/installers/paperless_bootstrap.rs",
+    // Paperless readiness probes the configured LoopbackHttpEndpoint only with
+    // a proxy-free, redirect-disabled 5 s client and bounded response checks.
+    "src/installers/paperless_readiness.rs",
+    // yt-dlp accepts its exact versioned GitHub release URL and one fixed
+    // release-assets.githubusercontent.com HTTPS redirect. Its proxy-free
+    // client has bounded connect/total timeouts and body; SHA, atomic private
+    // install, and direct version reprobe remain mandatory.
+    "src/installers/yt_dlp.rs",
     "src/memory/infra_scan.rs",
     "src/daemon/healthz.rs",
     "src/channels/webhook_listener.rs",
@@ -2851,7 +2867,6 @@ fn forbidden_constructor(path: &[String]) -> Option<&'static str> {
         ["reqwest", "Client", "default"] => Some("reqwest::Client::default"),
         ["reqwest", "ClientBuilder", "new"] => Some("reqwest::ClientBuilder::new"),
         ["reqwest", "get"] => Some("reqwest::get"),
-        ["reqwest", "Url", "parse"] => Some("reqwest::Url::parse"),
         ["reqwest", "blocking", "Client", "new"] => Some("reqwest::blocking::Client::new"),
         ["reqwest", "blocking", "Client", "builder"] => Some("reqwest::blocking::Client::builder"),
         ["reqwest", "blocking", "get"] => Some("reqwest::blocking::get"),
@@ -4129,7 +4144,7 @@ fn locals() {
 #[test]
 fn ast_network_gate_detects_renamed_and_whitespace_obscured_constructors() {
     let source = r#"
-use reqwest::{Client as HttpClient, Url as HttpUrl};
+use reqwest::Client as HttpClient;
 use tokio::net::TcpStream as Socket;
 use tokio_tungstenite::connect_async as websocket_connect;
 type ClientAlias = reqwest::Client;
@@ -4137,7 +4152,6 @@ type ClientAlias = reqwest::Client;
 fn production() {
     let _ = HttpClient /* comment */ :: builder /* spacing */ ();
     let _ = ClientAlias::new();
-    let _ = HttpUrl::parse("https://example.invalid");
     let _ = Socket::connect(("example.invalid", 443));
     let _ = websocket_connect("wss://example.invalid");
     let _constructor = reqwest::Client::new;
@@ -4151,20 +4165,37 @@ fn test_only() {
 "#;
 
     let violations = forbidden_network_constructions_in_production(source);
-    assert_eq!(violations.len(), 7);
+    assert_eq!(violations.len(), 6);
     assert!(
         violations
             .iter()
             .any(|(_, p)| *p == "reqwest::Client::builder")
     );
     assert!(violations.iter().any(|(_, p)| *p == "reqwest::Client::new"));
-    assert!(violations.iter().any(|(_, p)| *p == "reqwest::Url::parse"));
     assert!(violations.iter().any(|(_, p)| *p == "TcpStream::connect"));
     assert!(
         violations
             .iter()
             .any(|(_, p)| *p == "tokio_tungstenite::connect_async")
     );
+}
+
+#[test]
+fn ast_network_gate_allows_url_parsing_but_keeps_neighboring_dialers_forbidden() {
+    let source = r#"
+fn production() {
+    let _ = reqwest::Url::parse("https://example.invalid");
+    let _ = ::url::Url::parse("https://example.invalid");
+    let _ = reqwest::Client::builder();
+    let _ = std::net::TcpStream::connect(("example.invalid", 443));
+}
+"#;
+
+    let violations = forbidden_network_constructions_in_production(source);
+    assert_eq!(violations.len(), 2);
+    assert!(violations.iter().any(|(_, p)| *p == "reqwest::Client::builder"));
+    assert!(violations.iter().any(|(_, p)| *p == "TcpStream::connect"));
+    assert!(violations.iter().all(|(_, p)| *p != "reqwest::Url::parse"));
 }
 
 #[test]

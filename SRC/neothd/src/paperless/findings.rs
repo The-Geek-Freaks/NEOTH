@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn durable_bytes_and_response_are_redacted() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let marker_pattern = "RAW-OCR-SECRET-MUST-NOT-PERSIST";
         record_quarantine_at(
             home.path(),
@@ -361,8 +361,8 @@ mod tests {
 
     #[test]
     fn records_are_isolated_by_explicit_home() {
-        let first = tempfile::tempdir().unwrap();
-        let second = tempfile::tempdir().unwrap();
+        let first = crate::test_env::canonical_tempdir().unwrap();
+        let second = crate::test_env::canonical_tempdir().unwrap();
         record_quarantine_at(
             first.path(),
             OcrSource::PaperlessNgx,
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn concurrent_writers_do_not_lose_records() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let home_path = home.path().to_owned();
         let writers = 16;
         let barrier = Arc::new(Barrier::new(writers));
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn enforces_cap_and_query_limits_without_eviction() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let records: Vec<FindingRecord> = (0..MAX_RECORDS)
             .map(|index| FindingRecord {
                 occurred_unix: index as u64,
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn recent_filter_is_inclusive_and_newest_first_with_a_stable_tie_breaker() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         for (document_id, hash, occurred_unix) in [
             ("z-tie", "0000000000000001", 10),
             ("a-tie", "0000000000000002", 10),

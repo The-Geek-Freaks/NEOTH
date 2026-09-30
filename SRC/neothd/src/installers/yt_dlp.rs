@@ -18,6 +18,10 @@ use tokio::process::Command;
 
 pub const YT_DLP_VERSION: &str = "2026.08.19";
 const MAX_INSTALL_BYTES: usize = 64 * 1024 * 1024;
+const YT_DLP_RELEASE_HOST: &str = "github.com";
+const YT_DLP_RELEASE_REDIRECT_HOST: &str = "release-assets.githubusercontent.com";
+const YT_DLP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const YT_DLP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAsset {
@@ -82,6 +86,41 @@ pub fn download_url() -> Result<String> {
         "https://github.com/yt-dlp/yt-dlp/releases/download/{YT_DLP_VERSION}/{}",
         platform_asset()?.remote_name(),
     ))
+}
+
+fn pinned_release_url(platform: PlatformAsset) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(&download_url()?).context("parse pinned yt-dlp release URL")?;
+    anyhow::ensure!(
+        is_pinned_release_url(&url, platform),
+        "constructed yt-dlp release URL escapes pinned GitHub release boundary"
+    );
+    Ok(url)
+}
+
+fn is_pinned_release_url(url: &reqwest::Url, platform: PlatformAsset) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some(YT_DLP_RELEASE_HOST)
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path()
+            == format!(
+                "/yt-dlp/yt-dlp/releases/download/{YT_DLP_VERSION}/{}",
+                platform.remote_name()
+            )
+}
+
+fn is_pinned_release_redirect(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some(YT_DLP_RELEASE_REDIRECT_HOST)
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && !url.path().is_empty()
+        && url.path() != "/"
+        && url.fragment().is_none()
 }
 
 pub fn managed_path(home: &Path) -> PathBuf {
@@ -162,9 +201,21 @@ async fn direct_version_probe(binary: &Path) -> Option<String> {
 pub async fn install_pinned(home: &Path) -> Result<PathBuf> {
     let platform = platform_asset()?;
     let response = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() == 1
+                && is_pinned_release_url(&attempt.previous()[0], platform)
+                && is_pinned_release_redirect(attempt.url())
+            {
+                attempt.follow()
+            } else {
+                attempt.error("yt-dlp redirect leaves pinned GitHub release asset boundary")
+            }
+        }))
+        .connect_timeout(YT_DLP_CONNECT_TIMEOUT)
+        .timeout(YT_DLP_REQUEST_TIMEOUT)
         .build()?
-        .get(download_url()?)
+        .get(pinned_release_url(platform)?)
         .send()
         .await?
         .error_for_status()?;
@@ -228,6 +279,11 @@ mod tests {
                 .unwrap()
                 .starts_with("https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/")
         );
+        let platform = platform_asset().unwrap();
+        assert!(is_pinned_release_url(
+            &reqwest::Url::parse(&download_url().unwrap()).unwrap(),
+            platform
+        ));
         assert_eq!(expected_sha256().unwrap().len(), 64);
         assert!(
             expected_sha256()
@@ -299,5 +355,29 @@ mod tests {
         let mut bytes = vec![0; MAX_INSTALL_BYTES];
         assert!(append_install_chunk(&mut bytes, &[1]).is_err());
         assert_eq!(bytes.len(), MAX_INSTALL_BYTES);
+    }
+
+    #[test]
+    fn release_redirect_accepts_only_the_fixed_https_asset_origin() {
+        assert!(is_pinned_release_redirect(
+            &reqwest::Url::parse(
+                "https://release-assets.githubusercontent.com/github-production-release-asset/123?sig=opaque"
+            )
+            .unwrap()
+        ));
+        for rejected in [
+            "http://release-assets.githubusercontent.com/object?sig=x",
+            "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+            "https://objects.githubusercontent.com/object?sig=x",
+            "https://release-assets.githubusercontent.com.evil.invalid/object?sig=x",
+            "https://user@release-assets.githubusercontent.com/object?sig=x",
+            "https://release-assets.githubusercontent.com:444/object?sig=x",
+            "https://release-assets.githubusercontent.com/",
+        ] {
+            assert!(
+                !is_pinned_release_redirect(&reqwest::Url::parse(rejected).unwrap()),
+                "accepted hostile yt-dlp release redirect URL {rejected}"
+            );
+        }
     }
 }

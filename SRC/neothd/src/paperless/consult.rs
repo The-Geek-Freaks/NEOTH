@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn bounded_consult_matches_and_ranks_without_following_legacy_paths() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
         let dir = vault.path().join("NEOTH").join("Paperless");
         write_md(&dir, "one.md", "invoice invoice invoice");
         write_md(&dir, "two.md", "invoice from acme");
@@ -743,18 +743,18 @@ mod tests {
 
     #[test]
     fn bounded_consult_distinguishes_missing_directory_from_file_and_corrupt_document() {
-        let missing = tempfile::tempdir().unwrap();
+        let missing = crate::test_env::canonical_tempdir().unwrap();
         let result = consult_bounded(missing.path(), "NEOTH", "invoice", 5).unwrap();
         assert!(result.matches.is_empty());
         assert_eq!(result.scanned, 0);
 
-        let file_instead = tempfile::tempdir().unwrap();
+        let file_instead = crate::test_env::canonical_tempdir().unwrap();
         let paperless = file_instead.path().join("NEOTH").join("Paperless");
         std::fs::create_dir_all(paperless.parent().unwrap()).unwrap();
         std::fs::write(&paperless, b"not-a-directory").unwrap();
         assert!(consult_bounded(file_instead.path(), "NEOTH", "invoice", 5).is_err());
 
-        let corrupt = tempfile::tempdir().unwrap();
+        let corrupt = crate::test_env::canonical_tempdir().unwrap();
         let corrupt_dir = corrupt.path().join("NEOTH").join("Paperless");
         std::fs::create_dir_all(&corrupt_dir).unwrap();
         std::fs::write(corrupt_dir.join("bad.md"), [0xff_u8, 0xfe]).unwrap();
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn unicode_lowercase_expansion_keeps_excerpt_on_a_valid_utf8_boundary() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
         let dir = vault.path().join("NEOTH").join("Paperless");
         write_md(&dir, "unicode.md", "İéclair invoice");
 
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn unicode_greek_final_sigma_keeps_legacy_whole_string_scoring() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
         let dir = vault.path().join("NEOTH").join("Paperless");
         write_md(&dir, "greek.md", "ΛΟΓΟΣ invoice");
 

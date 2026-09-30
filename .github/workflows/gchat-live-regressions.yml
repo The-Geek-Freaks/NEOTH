@@ -54,6 +54,10 @@ jobs:
           mkdir -p "$W548_ROOT"/{source,log,receipt}
           git -C SRC rev-parse HEAD > "$W548_ROOT/source/head.txt"
           sha256sum \
+            SRC/neothd/src/installers/yt_dlp.rs \
+            SRC/neothd/src/integrations/n8n/managed_update_target.rs \
+            SRC/neothd/tests/no_outbound_network.rs \
+            SRC/neothd/tests/mcp_catalogue_hotpath_source_gate.rs \
             SRC/neothd/src/main.rs \
             SRC/neothd/src/lib.rs \
             SRC/neothd/src/shutdown.rs \
@@ -435,9 +439,18 @@ jobs:
           run_case 219 lib cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing --lib
           run_case 220 lib cli::init::tests::force_recovery_preserves_existing_encrypted_credentials cli::init::tests::force_recovery_preserves_existing_encrypted_credentials --lib
           run_case 221 lib cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 221
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 221
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 221
+          run_case 222 lib installers::yt_dlp::tests::pinned_release_identity_is_exact_and_https installers::yt_dlp::tests::pinned_release_identity_is_exact_and_https --lib
+          run_case 223 lib installers::yt_dlp::tests::release_redirect_accepts_only_the_fixed_https_asset_origin installers::yt_dlp::tests::release_redirect_accepts_only_the_fixed_https_asset_origin --lib
+          run_case 224 integration no_outbound_network::no_direct_pre_expansion_network_construction_outside_reviewed_boundaries no_direct_pre_expansion_network_construction_outside_reviewed_boundaries --test no_outbound_network
+          run_case 225 integration no_outbound_network::ast_network_gate_allows_url_parsing_but_keeps_neighboring_dialers_forbidden ast_network_gate_allows_url_parsing_but_keeps_neighboring_dialers_forbidden --test no_outbound_network
+          run_case 226 integration mcp_catalogue_hotpath_source_gate::catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route --test mcp_catalogue_hotpath_source_gate
+          run_case 227 integration proactive_egress_contract_source_gate::exactly_one_production_proactive_transport_seam_exists exactly_one_production_proactive_transport_seam_exists --test proactive_egress_contract_source_gate
+          run_case 228 integration proactive_egress_contract_source_gate::durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization --test proactive_egress_contract_source_gate
+          run_case 229 integration proactive_egress_contract_source_gate::bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account --test proactive_egress_contract_source_gate
+          run_case 230 integration proactive_egress_contract_source_gate::armed_claim_lease_and_registration_cover_admission_transport_and_terminalization armed_claim_lease_and_registration_cover_admission_transport_and_terminalization --test proactive_egress_contract_source_gate
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 230
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 230
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 230
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

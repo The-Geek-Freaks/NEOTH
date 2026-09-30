@@ -1162,7 +1162,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &ExternalHttpAuthorizer::test_allow(),
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert_eq!(
@@ -1338,7 +1338,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &ExternalHttpAuthorizer::test_allow(),
-            first.uri(),
+            format!("{}/", first.uri()),
         )
         .await;
         assert!(matches!(
@@ -1365,14 +1365,14 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &auth,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         let second = lookup_live_against(
             &query(CitationProvider::Crossref),
             "claim",
             &auth,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert!(matches!(
@@ -1486,7 +1486,7 @@ mod tests {
                     &query(CitationProvider::Crossref),
                     "claim",
                     &auth,
-                    server.uri(),
+                    format!("{}/", server.uri()),
                 )
                 .await;
                 assert!(matches!(
@@ -1517,14 +1517,14 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &auth,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         let _ = lookup_live_against(
             &query(CitationProvider::OpenAlex),
             "claim",
             &auth,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert_eq!(server.received_requests().await.unwrap().len(), 2);
@@ -1545,7 +1545,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &authorizer,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert!(matches!(

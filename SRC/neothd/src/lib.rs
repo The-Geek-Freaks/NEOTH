@@ -189,6 +189,20 @@ pub(crate) mod test_env {
         Ok(directory)
     }
 
+    /// Create a short private fixture root for AF_UNIX socket tests.
+    ///
+    /// `/tmp` is a trusted OS-owned short alias; canonicalizing it keeps the
+    /// fixture free of the macOS `/var` alias while preserving the production
+    /// socket-path cap exercised by explicit long-path tests.
+    #[cfg(unix)]
+    pub(crate) fn short_canonical_tempdir() -> std::io::Result<CanonicalTempDir> {
+        let root = std::fs::canonicalize("/tmp")?;
+        let directory = tempfile::Builder::new().prefix("n-").tempdir_in(root)?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(directory)
+    }
+
     #[cfg(windows)]
     pub(crate) fn canonical_tempdir() -> std::io::Result<CanonicalTempDir> {
         const ATTEMPTS: usize = 32;

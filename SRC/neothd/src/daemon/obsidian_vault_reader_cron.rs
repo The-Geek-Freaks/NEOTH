@@ -926,8 +926,8 @@ mod tests {
 
     #[test]
     fn archive_bridge_precommit_failure_rolls_back_ledger_and_groundtruth_together() {
-        let vault = tempdir().unwrap();
-        let home = tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let sessions = vault.path().join("NEOTH-sessions");
         std::fs::create_dir(&sessions).unwrap();
         std::fs::write(
@@ -980,8 +980,8 @@ mod tests {
 
     #[test]
     fn archive_bridge_selected_revision_inserts_once_and_stale_revision_changes_nothing() {
-        let vault = tempdir().unwrap();
-        let home = tempdir().unwrap();
+        let vault = crate::test_env::canonical_tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let sessions = vault.path().join("NEOTH-sessions");
         std::fs::create_dir(&sessions).unwrap();
         std::fs::write(

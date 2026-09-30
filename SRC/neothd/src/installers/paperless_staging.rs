@@ -984,9 +984,10 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let base = tempfile::tempdir().unwrap();
-        let parent = base.path().join("bound-parent");
-        let moved_parent = base.path().join("moved-parent");
-        let replacement = base.path().join("replacement");
+        let base_root = fs::canonicalize(base.path()).unwrap();
+        let parent = base_root.join("bound-parent");
+        let moved_parent = base_root.join("moved-parent");
+        let replacement = base_root.join("replacement");
         fs::create_dir(&parent).unwrap();
         fs::create_dir(&replacement).unwrap();
         let root = parent.join("paperless");

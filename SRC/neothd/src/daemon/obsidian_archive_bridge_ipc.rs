@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn socket_replaced_during_stale_probe_is_never_removed() {
-        let home = crate::test_env::canonical_tempdir().unwrap();
+        let home = crate::test_env::short_canonical_tempdir().unwrap();
         let _pid = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
         let socket = home.path().join("replaced-obsidian-bridge.sock");
         let stale = std::os::unix::net::UnixListener::bind(&socket).unwrap();

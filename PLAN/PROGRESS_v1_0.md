@@ -1,5 +1,33 @@
 # PROGRESS — v1.0 working backlog
 
+**W1969-W1977 / W1976 integration repair (2026-09-30; hosted pending):**
+The frozen 221-case run36701587742 on66ff762c failed before Rust test execution:
+four compiler errors exposed an invalid FreedomConfig.wal assumption. The
+reviewed correction validates the separate WAL stanza with the existing strict
+semantics; the regression reads the actual published WAL configuration. Prior
+preflight/code-quality passes remain static evidence only.
+
+The next reviewed batch addresses all163 retained macOS failures by category:
+142 canonical test roots,8 strict URL fixture origins,5 current source gates,
+1 reviewed outbound-boundary gate,2 missing ordinary CLI prerequisites,
+2 bounded Unix socket fixtures,1 readiness wait and2 init recovery cases.
+Production no-follow checks and intentional rejection fixtures are preserved.
+Four n8n HTTP test companions now have explicit test-only module declarations.
+The pinned yt-dlp downloader restricts its one HTTPS asset redirect, proxy use,
+timeouts and body size; existing digest and private install checks remain.
+
+Two new tests and four existing source guards bring the portable inventory to
+2460. Focused acceptance now selects230 exact cases, including all five changed
+source guards and four downloader/network checks. Other dedicated selections
+remain2229 Linux /1020 Windows /134 macOS /126 universal GUI /159 Linux GUI;
+61 Python product contracts and20 Google Chat guards remain. Full cross-OS CI
+will exercise the unchanged identities of the repaired native fixtures.
+These are reviewed source corrections; fresh hosted execution is pending.
+Report: docs/verification/gold-wave1976-macos-integration-repair.json.
+Root retains Git/PLAN/CI/final acceptance. No local executable validation,
+Slint changes or Claude polling. Raw open backlog is retained verbatim.
+
+
 **Created:** 2026-05-24  **Last updated:** 2026-09-30
 
 **W1960-W1966 / W1968 recovery, named Slack and integration repair (2026-09-30; hosted pending):**

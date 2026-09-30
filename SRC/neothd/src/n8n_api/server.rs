@@ -548,15 +548,19 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
     Ok(token)
 }
 
+#[cfg(test)]
 #[path = "email_threat_http_tests.rs"]
 mod email_threat_http_tests;
 
+#[cfg(test)]
 #[path = "paperless_consult_http_tests.rs"]
 mod paperless_consult_http_tests;
 
+#[cfg(test)]
 #[path = "dream_obsidian_http_tests.rs"]
 mod dream_obsidian_http_tests;
 
+#[cfg(test)]
 #[path = "reflection_weekly_obsidian_http_tests.rs"]
 mod reflection_weekly_obsidian_http_tests;
 
@@ -778,8 +782,8 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_paperless_findings_requires_scope_and_returns_redacted_instance_records() {
-        let home = tempfile::tempdir().unwrap();
-        let other = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let other = crate::test_env::canonical_tempdir().unwrap();
         let (record, token) = api_tokens::create_token(
             "findings-reader",
             vec![api_tokens::SCOPE_PAPERLESS_FINDINGS_READ.to_owned()],
@@ -841,7 +845,7 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_paperless_findings_distinguishes_absence_from_corrupt_evidence() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let (record, token) = api_tokens::create_token(
             "findings-reader",
             vec![api_tokens::SCOPE_PAPERLESS_FINDINGS_READ.to_owned()],

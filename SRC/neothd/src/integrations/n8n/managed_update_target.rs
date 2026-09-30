@@ -476,6 +476,7 @@ pub(crate) struct DockerHubRegistryTargetReader {
 impl DockerHubRegistryTargetReader {
     pub(crate) fn new() -> Result<Self> {
         let client = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))

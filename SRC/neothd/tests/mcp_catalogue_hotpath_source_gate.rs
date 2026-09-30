@@ -94,9 +94,22 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
         .get(chat_route..chat_assemble)
         .expect("CLI typed route must precede catalogue assembly");
     assert!(
-        chat_route_region.contains("route: chat_route")
+        chat_route_region.contains("route: resolved_chat_route")
             && chat_route_region.contains("= resolve_chat_turn_route("),
-        "CLI must bind the exact typed route before catalogue assembly"
+        "CLI must destructure the resolver's exact typed route before catalogue assembly"
+    );
+    let resolved_route = chat_route_region
+        .find("route: resolved_chat_route")
+        .expect("resolved typed route binding");
+    let final_route = chat_route_region
+        .find("let chat_route =")
+        .expect("final CLI route derivation");
+    let route_guard = chat_route_region
+        .find("chat_route.uses_mcp_catalogue()")
+        .expect("final CLI MCP route guard");
+    assert!(
+        resolved_route < final_route && final_route < route_guard,
+        "the resolver output must become the final route before MCP catalogue admission"
     );
     let chat_finalize = CHAT_TURN_PIPELINE[chat_assemble..]
         .find("finalize_provider_request(")

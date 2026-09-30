@@ -647,7 +647,7 @@ mod tests {
             .mount(&mock)
             .await;
         let hits = tavily_search_against(
-            &mock.uri(),
+            &format!("{}/", mock.uri()),
             &SecretString::from("tavily-key"),
             "tokio tutorial",
             3,
@@ -668,7 +668,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
             .mount(&mock)
             .await;
-        let err = tavily_search_against(&mock.uri(), &SecretString::from("k"), "x", 3)
+        let err = tavily_search_against(&format!("{}/", mock.uri()), &SecretString::from("k"), "x", 3)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("401"));

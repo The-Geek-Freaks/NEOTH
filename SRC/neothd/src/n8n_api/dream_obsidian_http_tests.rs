@@ -207,8 +207,8 @@ async fn dream_sync_rejects_invalid_unknown_and_private_request_fields_with_fixe
 
 #[tokio::test]
 async fn dream_sync_archived_day_writes_only_configured_vault_and_redacts_paths() {
-    let home = tempfile::tempdir().unwrap();
-    let vault = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
+    let vault = crate::test_env::canonical_tempdir().unwrap();
     let ambient = home.path().join("NEOTH-sessions").join("Dreams");
     std::fs::create_dir_all(&ambient).unwrap();
     std::fs::write(ambient.join(format!("{DAY}.md")), "ambient private dream").unwrap();
@@ -252,8 +252,8 @@ async fn dream_sync_archived_day_writes_only_configured_vault_and_redacts_paths(
 
 #[tokio::test]
 async fn dream_sync_quiet_day_leaves_configured_vault_uncreated() {
-    let home = tempfile::tempdir().unwrap();
-    let workspace = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
+    let workspace = crate::test_env::canonical_tempdir().unwrap();
     let vault = workspace.path().join("uncreated-vault");
     let (_, token) = scoped_token(
         home.path(),
@@ -342,8 +342,8 @@ async fn dream_sync_corrupt_input_returns_fixed_503_without_output() {
 
 #[tokio::test]
 async fn dream_sync_wal_receipt_records_verified_scoped_token_id_without_secrets() {
-    let home = tempfile::tempdir().unwrap();
-    let vault = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
+    let vault = crate::test_env::canonical_tempdir().unwrap();
     crate::daemon::dreaming::append_dream(home.path(), &archived_dream(DAY)).unwrap();
     let (token_id, token) = scoped_token(
         home.path(),

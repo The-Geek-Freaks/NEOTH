@@ -728,7 +728,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn resident_pair_listener_unpair_replay_denial_and_repair_generation() {
-        let home = crate::test_env::canonical_tempdir().unwrap();
+        let home = crate::test_env::short_canonical_tempdir().unwrap();
         let vault = crate::test_env::canonical_tempdir().unwrap();
         let owner = owner(home.path(), vault.path());
         assert!(!owner.status().paired, "resident owner starts unpaired");

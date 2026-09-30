@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn create_then_identical_replay_reconciles_the_same_note() {
-        let vault = tempfile::tempdir().expect("vault");
+        let vault = crate::test_env::canonical_tempdir().expect("vault");
 
         let created = apply_document_note(
             vault.path(),
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn operator_edited_note_refuses_a_replacement() {
-        let vault = tempfile::tempdir().expect("vault");
+        let vault = crate::test_env::canonical_tempdir().expect("vault");
         let created = apply_document_note(
             vault.path(),
             "NEOTH",
@@ -599,7 +599,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn concurrent_identical_creators_preserve_one_exact_note() {
-        let vault = tempfile::tempdir().expect("vault");
+        let vault = crate::test_env::canonical_tempdir().expect("vault");
         let root = vault.path().to_path_buf();
         let left = std::thread::spawn({
             let root = root.clone();

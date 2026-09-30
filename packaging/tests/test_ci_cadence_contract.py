@@ -775,6 +775,10 @@ class CiCadenceContractTests(unittest.TestCase):
                     '  sleeper_pid=""',
                     "done",
                     'wait "$cargo_pid"',
+                    "# Native P118 fixtures launch the real CLI; nextest --no-run does not",
+                    "# produce that ordinary executable. Non-macOS returned above.",
+                    "cargo build -p neoth --bin neoth --locked",
+                    'echo "$PWD/target/debug" >> "$GITHUB_PATH"',
                 ]
             ),
         )
@@ -851,6 +855,11 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertLess(compile_step, junit_cleanup)
         self.assertLess(junit_cleanup, compile_command)
         self.assertLess(compile_command, discovery_step)
+        cli_build = platform_tests.index("cargo build -p neoth --bin neoth --locked")
+        cli_path = platform_tests.index('echo "$PWD/target/debug" >> "$GITHUB_PATH"')
+        self.assertLess(compile_command, cli_build)
+        self.assertLess(cli_build, cli_path)
+        self.assertLess(cli_path, discovery_step)
         self.assertLess(discovery_step, runtime_step)
         self.assertLess(runtime_step, runtime_command)
 

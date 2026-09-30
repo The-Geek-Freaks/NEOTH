@@ -178,8 +178,8 @@ async fn consult_rejects_strict_invalid_requests_before_configured_vault_read() 
 
 #[tokio::test]
 async fn consult_reads_only_configured_vault_and_redacts_paths_from_real_match_response() {
-    let home = tempfile::tempdir().unwrap();
-    let vault = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
+    let vault = crate::test_env::canonical_tempdir().unwrap();
     let ambient = home.path().join("NEOTH").join("Paperless");
     let configured_note = vault
         .path()
@@ -252,8 +252,8 @@ async fn consult_missing_configuration_returns_fixed_503() {
 
 #[tokio::test]
 async fn consult_distinguishes_missing_directory_from_file_corrupt_and_oversized_store_failures() {
-    let home = tempfile::tempdir().unwrap();
-    let vault = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
+    let vault = crate::test_env::canonical_tempdir().unwrap();
     let token = consult_token(
         home.path(),
         vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()],
