@@ -8,23 +8,36 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**W1951 daemon-start named-account readiness (2026-09-30; hosted pending):**
-The normal daemon-start secondary onboarding gate now shares canonical channel
-readiness with onboarding and Doctor. Valid named Telegram/Slack maps can pass
-when onboarding_complete is false and legacy scalar credentials are absent.
-Partial policy/credential maps remain rejected, including maps with legacy scalar
-shadows. The gate checks channel state only, without provider credential resolution.
-The explicit-completion fast path and unrelated startup order are retained.
+**W1951-W1953 daemon-start named-account readiness accepted (2026-09-30):**
+Run 36678205153 on bf046409 completed SUCCESS. Root verified all 7 original
+ZIP/API digests, 380 extracted entries,
+106 raw producer source bindings, 174 exact
+workflow/discovery/start/executed/PASS identities and 20 distinct Google Chat
+checks. All 61 Python contracts and all four authenticated loopback CLI/daemon
+products pass. Independent review accepted all four product originals and all
+20 exact Google Chat guard identities.
 
-Three new regression tests cover valid Telegram and Slack maps and both channels'
-policy-only/credential-only failures with and without scalar shadows. Three
-existing flag/no-channel/legacy-Telegram tests are also newly selected to protect
-the prior gate behavior. Registrations become 2412 portable, 2187 Linux,
-972 Windows, 174 channel and 88 macOS; 61 Python contracts and 20 Google Chat
-guards are unchanged. Independent source review approved; hosted execution remains pending.
-No wider native, external-service, release or roadmap acceptance is claimed.
-Root retains Git/PLAN/CI/final acceptance. Absolute local BSOD hold/no-.slint
-remain; Claude polling stays stopped and its automation remains deleted.
+The secondary daemon-start onboarding gate now recognizes valid named Telegram
+and Slack accounts with onboarding_complete=false and absent legacy scalar
+credentials. A channel-only helper shares the canonical map validation while
+avoiding unrelated provider credential lookup. Three new regression tests cover
+both valid account families and eight policy-only/credential-only cases, with
+and without legacy scalar shadows. Three existing explicit-flag/no-channel/
+legacy-Telegram tests also pass. Startup ordering and the explicit-completion
+fast path are preserved. Exact hosted formatting was imported with verified
+original ZIP/API digest and matching Git preimage/postimage.
+
+Both daemon products prove adoption, clean exit 0, no remaining WAL sender,
+closed WAL receiver, drained WAL and complete cleanup. Proofs cover authenticated
+loopback operation; broader native, external-provider and release gates stay open.
+Root record: work/gold-20260906/wave1953-product174-admission/ROOT_CHECKS.json
+SHA256 4FE2E4898D8A97193F1BF7A9331B6120AA08041AEF7208BB9EF9668B8CCDF6B5.
+Published report: docs/verification/gold-wave1953-serve-named-accounts.json.
+Selections: 1502 source inputs / 2412 portable / 2187 Linux / 972 Windows /
+174 channel / 88 macOS. Wider native selections were not freshly executed;
+no roadmap checkbox is closed. Root retains Git/PLAN/CI/final acceptance.
+The absolute local BSOD hold and no-.slint boundary remain intact. Claude
+polling stays stopped and its automation will not restart automatically.
 
 **W1948-W1950 Doctor named-account wiring accepted (2026-09-29):**
 Run 36620856538 on 4c315a50 completed SUCCESS. Root verified all 7 original

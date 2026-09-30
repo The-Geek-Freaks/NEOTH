@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T06:22:03.5156635Z",
-  "validationStatus": "W1951 serve source reviewed; W1952 exact hosted formatting imported;174 channel cases await execution",
+  "capturedUtc": "2026-09-30T07:04:35.2466893Z",
+  "validationStatus": "W1951-W1953 named-account serve gate accepted:174 exact Rust cases,61 Python contracts,20 guards and four authenticated loopback products; wider native and release gates remain open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2852,6 +2852,11 @@
       "sha256": "E22CACE8031A602C9F2FD45AE4966430FB02A449F2B4DE5FD9DD8DEC70BA055F"
     },
     {
+      "path": "docs/verification/gold-wave1953-serve-named-accounts.json",
+      "bytes": 6495,
+      "sha256": "245252F5A47381D0F37A08C6481CDB196EC8E29B3FFFDBA803204C46FE2380CC"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3913,18 +3918,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 581877,
-      "sha256": "92CC6B3458523A3E94E96DED101E2F5CF127B0BD945D3B6F2CBDBF05F32BA89C"
+      "bytes": 582645,
+      "sha256": "5D836F5352EA06C5260DD601CA6D4E2FFD3F00D0A66B543C1D4FAAC788E761BC"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1618307,
-      "sha256": "086C39AFFE27EE0227637102BD18DD136A511AB1F23BA7E9E87221107EF42F98"
+      "bytes": 1619075,
+      "sha256": "55BD231F7AD4D397485D6BEEAD1A095716914DD70953B7B449EB82FD2A657F51"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2229317,
-      "sha256": "27584961BE381D4A43B6CAF9DE30D309A8C26D5986338BB15628400516F20257"
+      "bytes": 2230085,
+      "sha256": "029194BE910AF88B2BB98CA2736EA2C79E78B9D08DFF6D38E531B6ECD7C52DB1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

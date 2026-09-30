@@ -1,0 +1,146 @@
+{
+  "schema": "neoth.gold.w1953.serve-named-account-admission.v1",
+  "producer": "bf0464093787c94937d11330bcd76629d4a32e61",
+  "run": {
+    "id": 36678205153,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36678205153",
+    "conclusion": "success"
+  },
+  "behavior": "The secondary daemon-start onboarding gate recognizes valid named Telegram and Slack accounts without legacy scalar credentials, while rejecting partial named maps even with scalar shadows. The shared channel-only projection avoids unrelated provider credential lookup. The explicit completion flag and prior legacy/no-channel gate behavior remain covered.",
+  "rootRecord": {
+    "path": "work/gold-20260906/wave1953-product174-admission/ROOT_CHECKS.json",
+    "sha256": "4FE2E4898D8A97193F1BF7A9331B6120AA08041AEF7208BB9EF9668B8CCDF6B5"
+  },
+  "originalArchives": [
+    {
+      "id": 11081738042,
+      "name": "gchat-relink-public-cli-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "85e1f8531d9ac3ad8dae768326c22d973ffdbc0c684bdb937923064fe115cd08"
+    },
+    {
+      "id": 11081696426,
+      "name": "bluebubbles-daemon-adoption-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "a82b6a35a8046fcabb68b50a162de4186af992dfcfc9cb9abf9b90a2ff893b9d"
+    },
+    {
+      "id": 11081673104,
+      "name": "w548-gchat-live-regressions-log-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "d6e9deefb08f0a5c77b29c928b1e50b2af6b24833b63142253e7d5ab3291065f"
+    },
+    {
+      "id": 11081493390,
+      "name": "gchat-daemon-adoption-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "a6506e1c8c1ec21411d91c24ef0fbb8b491bdb53930736c8e28737fb7730980e"
+    },
+    {
+      "id": 11081488274,
+      "name": "w548-gchat-live-regressions-source-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "ddef7f0f334ff9ddb4d15f00f691036cdf414ad89b2ddf3750349cb38e532d01"
+    },
+    {
+      "id": 11081117101,
+      "name": "converted-relink-public-cli-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "c96d324fcb4367ed97f657000f7e3cfd0c51fd268026b95d9ae11d518a424dcb"
+    },
+    {
+      "id": 11080839983,
+      "name": "w548-gchat-live-regressions-receipt-bf0464093787c94937d11330bcd76629d4a32e61",
+      "sha256": "ca240e39d013dd8c23a1f45b3747f1df187dfb21c6bdb4822ffccf2cfd0c6318"
+    }
+  ],
+  "extractedEntries": 380,
+  "rawProducerSourceBindings": 106,
+  "exactChannelCases": 174,
+  "selectedGateCases": [
+    "cli::serve_tasks::tests::oh03_gate_passes_when_flag_set",
+    "cli::serve_tasks::tests::oh03_gate_rejects_when_no_channel_configured",
+    "cli::serve_tasks::tests::oh03_secondary_probe_passes_when_telegram_in_config",
+    "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields",
+    "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields",
+    "cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows"
+  ],
+  "newServeCases": [
+    "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields",
+    "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields",
+    "cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows"
+  ],
+  "distinctGoogleChatGuards": 20,
+  "pythonContracts": 61.0,
+  "pythonRunLog": {
+    "path": "work/gold-20260906/wave1953-product174-admission/run-log.txt",
+    "sha256": "D937A2BE157D09C3EA4A7DD29D4556A9CB4D9C5865F2FEAAE45E50DE39F7E490",
+    "observedCounts": [
+      10,
+      18,
+      8,
+      25
+    ],
+    "sum": 61.0
+  },
+  "loopbackProducts": [
+    "BlueBubbles public CLI",
+    "BlueBubbles running daemon adoption",
+    "Google Chat public CLI",
+    "Google Chat running daemon adoption"
+  ],
+  "daemonEvidence": [
+    {
+      "artifact": "gchat-daemon-adoption-bf0464093787c94937d11330bcd76629d4a32e61",
+      "adoptionWitness": "authenticated_empty_pubsub_pull",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSendersAbsent": "observed",
+      "otherWalSendersPresent": "not_observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    },
+    {
+      "artifact": "bluebubbles-daemon-adoption-bf0464093787c94937d11330bcd76629d4a32e61",
+      "adoptionWitness": "authenticated_empty_message_query",
+      "returncode": 0,
+      "stopFailure": null,
+      "otherWalSendersAbsent": "observed",
+      "otherWalSendersPresent": "not_observed",
+      "walReceiverClosed": "observed",
+      "walDrained": "observed",
+      "cleanupComplete": true
+    }
+  ],
+  "sourceSelections": {
+    "portable": 2412,
+    "linux": 2187,
+    "windows": 972,
+    "channel": 174,
+    "macos": 88
+  },
+  "hostedFormat": {
+    "run": 36677739419,
+    "producer": "7e9608bc40a3b659d5fe38a0c1ba5c03e2e9af93",
+    "artifact": 11080028438,
+    "zipSha256": "d7cf6d1913c4e4239eb3625e4ae93dde4301fca0c75c8edbe979a62a24f6c0da",
+    "patchSha256": "0135009F0AAAFFA30823ABDBB66496DCFE57C4BFCD7CAADDFA8A52FC3BE70024",
+    "path": "SRC/neothd/src/cli/serve_tasks.rs",
+    "preimage": "8ae5dd0775ee7b1123193be74c0ecd22b61ba5ca",
+    "postimage": "03789244b37a9773f6d1452f743dd1d4691f0694",
+    "localFormatterRan": false,
+    "status": "Exact hosted formatting imported; four line wraps only, no assertion or production change"
+  },
+  "staticReview": "Independent final APPROVE of the channel-only secondary serve gate, exclusion of unrelated provider credential resolution, three new regressions with eight negative cases, three existing gate identities, and workflow/matrix integration.",
+  "independentArtifactReview": "PASS: all four product originals and all 20 exact Google Chat guards independently rechecked by /root/w1943_review; original ZIP/API digests and producer match Root records.",
+  "independentArtifactRecords": [
+    {
+      "path": "work/gold-20260906/wave1953-product174-admission/independent-bb/download-verification.json",
+      "sha256": "0EC5F7F9A2E51E3EA536F09ED1BBC1A3158A45D75DBFF68FAA3C3AFA414C5C5B"
+    },
+    {
+      "path": "work/gold-20260906/wave1953-product174-admission/independent-gchat/download-verification.json",
+      "sha256": "C3D3FB11E6F5F2728C784BE911552897E09BF38D7401B33492398D7A951772A3"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "broaderNativeSelectionsFreshlyExecuted": false,
+  "externalServiceQualification": false,
+  "roadmapCheckboxesClosed": 0,
+  "releaseReady": false
+}
