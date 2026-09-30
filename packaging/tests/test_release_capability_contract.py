@@ -363,6 +363,107 @@ foreach ($invalid in @('01.0.0', '1.01.0', '1.0.01', '1.0.0-alpha.01')) {
         self.assertIn("installed predecessor uninstall registration does not report its pinned version", smoke)
         self.assertIn("-ExpectedVersion $PreviousVersion", smoke)
 
+    def test_macos_predecessor_upgrade_lane_is_pinned_and_signed(self) -> None:
+        job = re.search(
+            r"(?ms)^  smoke-macos-native:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            self.workflow,
+        )
+
+        self.assertIsNotNone(job)
+        macos_smoke = job.group("body")
+        for architecture in ("X86_64", "ARM64"):
+            with self.subTest(architecture=architecture):
+                self.assertIn(
+                    f"NEOTH_MACOS_PREDECESSOR_{architecture}_RELEASE_TAG",
+                    macos_smoke,
+                )
+                self.assertIn(
+                    f"NEOTH_MACOS_PREDECESSOR_{architecture}_VERSION",
+                    macos_smoke,
+                )
+                self.assertIn(
+                    f"NEOTH_MACOS_PREDECESSOR_{architecture}_SHA256",
+                    macos_smoke,
+                )
+        self.assertIn(
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/",
+            macos_smoke,
+        )
+        self.assertIn("--connect-timeout 30 --max-time 300", macos_smoke)
+        self.assertIn("shasum -a 256", macos_smoke)
+        self.assertIn("tr '[:upper:]' '[:lower:]'", macos_smoke)
+        self.assertIn("macos_bundle_version()", macos_smoke)
+        self.assertIn("macos_version_is_older()", macos_smoke)
+        self.assertIn("macos_version_is_older \"$PREVIOUS_VERSION\" \"$VERSION\"", macos_smoke)
+        self.assertIn('[[ "$core" =~ ^(0|[1-9][0-9]?)', macos_smoke)
+        self.assertIn("alpha|beta|rc", macos_smoke)
+        self.assertIn("major <= 99 && minor <= 99 && patch <= 99", macos_smoke)
+        self.assertIn("PREVIOUS_BUNDLE_VERSION=$(macos_bundle_version", macos_smoke)
+        self.assertIn("CANDIDATE_BUNDLE_VERSION=$(macos_bundle_version", macos_smoke)
+        self.assertIn("macOS predecessor version is not older", macos_smoke)
+        self.assertIn("pkgutil --check-signature \"$PREVIOUS_PKG\"", macos_smoke)
+        self.assertIn("xcrun stapler validate \"$PREVIOUS_PKG\"", macos_smoke)
+        self.assertIn("CFBundleVersion", macos_smoke)
+        self.assertIn("pkg-version raw", macos_smoke)
+        self.assertIn("release_version raw", macos_smoke)
+        self.assertIn("historical upgrade requires a signed candidate PKG", macos_smoke)
+        self.assertLess(
+            macos_smoke.index("trap cleanup EXIT"),
+            macos_smoke.index("sudo installer -pkg \"$PREVIOUS_PKG\" -target /"),
+        )
+        for architecture in ("X86_64", "ARM64"):
+            with self.subTest(env_assignment=architecture):
+                self.assertIn(
+                    f"NEOTH_MACOS_PREDECESSOR_{architecture}_RELEASE_TAG: ${{{{ vars.NEOTH_MACOS_PREDECESSOR_{architecture}_RELEASE_TAG }}}}",
+                    macos_smoke,
+                )
+        self.assertLess(
+            macos_smoke.index('pkgutil --check-signature "$PKG"'),
+            macos_smoke.index('sudo installer -pkg "$PREVIOUS_PKG" -target /'),
+        )
+        self.assertLess(
+            macos_smoke.index('xcrun stapler validate "$PKG"'),
+            macos_smoke.index('sudo installer -pkg "$PREVIOUS_PKG" -target /'),
+        )
+        self.assertNotIn("/releases/latest", macos_smoke)
+
+    def test_macos_native_version_mapping_contract(self) -> None:
+        match = re.search(
+            r"(?ms)^          # BEGIN PURE MACOS VERSION CONTRACT\n(?P<pure>.*?)^          # END PURE MACOS VERSION CONTRACT$",
+            self.workflow,
+        )
+
+        self.assertIsNotNone(match)
+        script = "set -euo pipefail\n" + match.group("pure") + r'''
+test "$(macos_bundle_version 1.0.0)" = 100.0.99
+test "$(macos_bundle_version 1.0.0-alpha.0)" = 100.0.0
+test "$(macos_bundle_version 1.0.0-beta.0)" = 100.0.32
+test "$(macos_bundle_version 1.0.0-rc.31)" = 100.0.95
+macos_version_is_older 1.0.0-alpha.31 1.0.0-beta.0
+macos_version_is_older 1.0.0-beta.31 1.0.0-rc.0
+macos_version_is_older 1.0.0-rc.31 1.0.0
+! macos_version_is_older 1.0.0 1.0.0
+! macos_version_is_older 1.0.0-beta.0 1.0.0-alpha.31
+! macos_version_is_older 1.0.0 1.0.0-rc.31
+! macos_bundle_version 1.0.0-preview.1
+! macos_bundle_version 100.0.0
+! macos_bundle_version 0.0.1
+! macos_bundle_version 18446744073709551617.0.0
+! macos_bundle_version 1.0.0.1
+! macos_bundle_version $'1.0.0\n1.0.1'
+'''
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            contract = Path(temporary_directory) / "macos-version-contract.sh"
+            contract.write_text(script, encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(contract)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

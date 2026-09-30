@@ -1,5 +1,25 @@
 # NEOTH 1.0 build and release cadence
 
+**W1983 macOS historical upgrade source (2026-09-30; hosted pending):**
+The macOS release smoke now supports an explicitly pinned signed predecessor
+PKG for x86_64 and arm64. A complete per-architecture tag/version/SHA256 set
+selects the historical lane; empty configuration retains same-PKG smoke.
+Candidate and predecessor signatures and notarization precede installation.
+The previous installed Bundle and PackageKit versions use the existing native
+SemVer mapping, while the ownership receipt retains the raw release version.
+The same pure mapping/comparison helper rejects equal/newer predecessors,
+unsupported prereleases and oversized core components before arithmetic.
+State-marker and cleanup custody cover both installations. Hosted contracts
+exercise the pure helper and assert the workflow bindings and ordering.
+
+Independent static review approved the final source. Preflight36708201443 and
+CodeQuality36708200540 passed the preceding24441bbf producer; new focused and
+full integration runs are still required. No signing/predecessor values were
+configured and no native historical upgrade ran. No local executable checks,
+Slint change, roadmap closure or release acceptance. Claude polling stays off.
+Report: docs/verification/gold-wave1983-macos-predecessor.json.
+
+
 **W1978-W1982 egress proof repair and Windows upgrade input (2026-09-30; hosted pending):**
 Run 36703834678 on 895d9f8e compiled and executed all 230 selected cases:
 228 passed and two proactive-egress source guards failed. Root verified the

@@ -1,0 +1,31 @@
+{
+  "schema": "neoth-gold-wave1983-macos-predecessor/v1",
+  "base": "24441bbf5f602892c7b0470fc17f2fe869ac8f2b",
+  "status": "SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "priorFastChecks": {
+    "quality": "36708200540",
+    "preflight": "36708201443",
+    "producer": "24441bbf5f602892c7b0470fc17f2fe869ac8f2b",
+    "conclusion": "success"
+  },
+  "architectures": [
+    "X86_64",
+    "ARM64"
+  ],
+  "inputs": "Per-architecture complete RELEASE_TAG, VERSION, SHA256 repository variables; all empty retains same-package smoke",
+  "pinning": "Exact same-repository tagged canonical PKG asset; SHA256 before installation; bounded curl retry and timeouts",
+  "authority": "Both candidate and predecessor package signatures and notarization checked before first installer; installed predecessor app signature and staple checked",
+  "versions": "Restricted native SemVer mapped to Apple bundle/PackageKit version; bounded core before arithmetic; actual previous bundle and PackageKit plus raw ownership release version verified; shared pure helper requires strictly older version",
+  "state": "Existing marker and cleanup trap precede predecessor installation; candidate install and existing receipt/payload/runtime/reinstall/removal checks retained",
+  "contract": "Hosted-only pure Bash mapping/ordering, oversized/malformed values, prerelease boundaries, workflow env/tag/asset/auth ordering",
+  "sources": {
+    ".github/workflows/release.yml": "08EBB311DE44BE29244ED290419E0DEE33A4312237A6C96C0D70635F22FCC37E",
+    "packaging/tests/test_release_capability_contract.py": "18AD2FE476292D8F3275286331E8A274650879CB4CF5DB2FC3CCE42970833A33",
+    "docs/install.md": "1A1F9388E4931041AB3C3A583E1A943A35F22210543805CE0A94156663CD04FB"
+  },
+  "localExecutableValidationRan": false,
+  "historicalUpgradeExecuted": false,
+  "signingOrPredecessorInputsConfigured": false,
+  "releaseAccepted": false,
+  "remaining": "Actual signed predecessor and candidate native run; fresh focused and full CI; no claim of native or release acceptance"
+}

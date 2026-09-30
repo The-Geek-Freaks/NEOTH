@@ -210,6 +210,22 @@ verified self-knowledge bytes as the portable archive. Package uninstall removes
 only package-owned files. It never removes `~/.neoth`, the materialized NEOTH
 Wiki, or `User Overlays`.
 
+The release workflow retains its same-PKG macOS smoke unless all predecessor
+values for an architecture are supplied. To run the historical PKG upgrade
+lane, set `NEOTH_MACOS_PREDECESSOR_X86_64_RELEASE_TAG`,
+`NEOTH_MACOS_PREDECESSOR_X86_64_VERSION`, and
+`NEOTH_MACOS_PREDECESSOR_X86_64_SHA256`, or the corresponding three `ARM64`
+values. The tag must be exactly `v<version>` and the digest must identify the
+same-repository `NEOTH-<version>-<target>.pkg`. The lane downloads only that
+asset, verifies its SHA-256, Developer ID signature and notarization, verifies
+the installed bundle, PackageKit and ownership-receipt versions, then installs
+the signed/notarized candidate. A partial configuration fails before install.
+Native PKG versions use the release builder's restricted `major.minor.patch`
+domain (`0..99` per component, nonzero major or minor), with optional
+`alpha.N`, `beta.N`, or `rc.N` prereleases for `N` in `0..31`; this maps the
+SemVer ordering into Apple’s numeric `CFBundleVersion` and PackageKit receipt
+version before the historical transition is accepted.
+
 ## Path F: build from source
 
 This full desktop command set selects the Matrix-enabled `release-desktop`

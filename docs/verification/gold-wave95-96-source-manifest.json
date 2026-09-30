@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T11:20:55.0045612Z",
-  "validationStatus": "W1982_HOSTED_FORMAT_IMPORTED_FAST_CHECKS_PENDING",
+  "capturedUtc": "2026-09-30T11:29:19.4398856Z",
+  "validationStatus": "W1983_MACOS_UPGRADE_SOURCE_STATIC_APPROVED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "bytes": 143359,
-      "sha256": "F4D5AEC684C66F04A2E3924507567A31AB68CCE5D2DEDAB7A46856E84376CCF7"
+      "bytes": 149408,
+      "sha256": "08EBB311DE44BE29244ED290419E0DEE33A4312237A6C96C0D70635F22FCC37E"
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
@@ -1303,8 +1303,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 14457,
-      "sha256": "3D4EB6D46F0B486107E2E346A5E4DAB0981B4FD550F00D416007887809154EA0"
+      "bytes": 15537,
+      "sha256": "1A1F9388E4931041AB3C3A583E1A943A35F22210543805CE0A94156663CD04FB"
     },
     {
       "path": "docs/local-models.md",
@@ -2877,6 +2877,11 @@
       "sha256": "74210DD6879CB43D4F66347B0F18D7572EBCA1B3A1B610CC6510F3F9EEEB78CC"
     },
     {
+      "path": "docs/verification/gold-wave1983-macos-predecessor.json",
+      "bytes": 2037,
+      "sha256": "3382197761404DD2C13EF7D3703DCD8BB922F681E3008DE9FD102CDA7899CE16"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3898,8 +3903,8 @@
     },
     {
       "path": "packaging/tests/test_release_capability_contract.py",
-      "bytes": 16852,
-      "sha256": "BF66542408AF75F08C86F06C3C347DCCF4377C2E0CD31DA195FFF070C7384A00"
+      "bytes": 21604,
+      "sha256": "18AD2FE476292D8F3275286331E8A274650879CB4CF5DB2FC3CCE42970833A33"
     },
     {
       "path": "packaging/tests/test_workflow_replay_gate.py",
@@ -3938,18 +3943,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 590895,
-      "sha256": "19079B2A5247C8B6AE7EF75AC4D2A77F43746C226B78D25E4A3AC6978B0B16F0"
+      "bytes": 592176,
+      "sha256": "F779BEFA096BD582CA962DD2FB8D4DCCF8D8F1A5F8B52A76FF5F062818F70D74"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1627325,
-      "sha256": "9AD07C05E78CF1BE94BBD617CD44BF84C94BB76D58B95A94856E0A8C51FE79B0"
+      "bytes": 1628606,
+      "sha256": "EE435BD204CF9FD9D18C383A65DF474DB80B8EE5077F6CF43E57FA3079EA3374"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2238335,
-      "sha256": "3B5A1BF6D47F7C8D9CE078F29EB312BF083A27645F764B3A9E8CCBAA60185D14"
+      "bytes": 2239616,
+      "sha256": "FD34A31CE1FAFFFC1C27E5723A2C21FA073E95C8E1B141D9A7C373CBBA385D59"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

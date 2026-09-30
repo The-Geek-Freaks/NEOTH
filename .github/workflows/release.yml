@@ -2118,6 +2118,13 @@ jobs:
           - architecture: arm64
             target: aarch64-apple-darwin
             runner: macos-15
+    env:
+      NEOTH_MACOS_PREDECESSOR_X86_64_RELEASE_TAG: ${{ vars.NEOTH_MACOS_PREDECESSOR_X86_64_RELEASE_TAG }}
+      NEOTH_MACOS_PREDECESSOR_X86_64_VERSION: ${{ vars.NEOTH_MACOS_PREDECESSOR_X86_64_VERSION }}
+      NEOTH_MACOS_PREDECESSOR_X86_64_SHA256: ${{ vars.NEOTH_MACOS_PREDECESSOR_X86_64_SHA256 }}
+      NEOTH_MACOS_PREDECESSOR_ARM64_RELEASE_TAG: ${{ vars.NEOTH_MACOS_PREDECESSOR_ARM64_RELEASE_TAG }}
+      NEOTH_MACOS_PREDECESSOR_ARM64_VERSION: ${{ vars.NEOTH_MACOS_PREDECESSOR_ARM64_VERSION }}
+      NEOTH_MACOS_PREDECESSOR_ARM64_SHA256: ${{ vars.NEOTH_MACOS_PREDECESSOR_ARM64_SHA256 }}
     steps:
       - name: Download signed macOS packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -2134,6 +2141,87 @@ jobs:
           PKG_METADATA="$PKG.json"
           DMG="$PWD/dist/packages/NEOTH-${VERSION}-${TARGET}.dmg"
           PKG_EXPANDED="$RUNNER_TEMP/neoth-pkg-expanded-${GITHUB_RUN_ID}-${{ matrix.architecture }}"
+          PREVIOUS_TAG=''
+          PREVIOUS_VERSION=''
+          PREVIOUS_SHA256=''
+          case "${{ matrix.architecture }}" in
+            x86_64)
+              PREVIOUS_TAG="$NEOTH_MACOS_PREDECESSOR_X86_64_RELEASE_TAG"
+              PREVIOUS_VERSION="$NEOTH_MACOS_PREDECESSOR_X86_64_VERSION"
+              PREVIOUS_SHA256="$NEOTH_MACOS_PREDECESSOR_X86_64_SHA256"
+              ;;
+            arm64)
+              PREVIOUS_TAG="$NEOTH_MACOS_PREDECESSOR_ARM64_RELEASE_TAG"
+              PREVIOUS_VERSION="$NEOTH_MACOS_PREDECESSOR_ARM64_VERSION"
+              PREVIOUS_SHA256="$NEOTH_MACOS_PREDECESSOR_ARM64_SHA256"
+              ;;
+            *) echo "unsupported macOS architecture '${{ matrix.architecture }}'" >&2; exit 1 ;;
+          esac
+          UPGRADE_LANE=false
+          PREVIOUS_PKG=''
+          # BEGIN PURE MACOS VERSION CONTRACT
+          macos_bundle_version() {
+            local semver=$1 core prerelease major minor patch stage sequence slot
+            core=${semver%%-*}
+            [[ "$core" =~ ^(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$ ]] || return 1
+            IFS=. read -r major minor patch <<<"$core"
+            (( major <= 99 && minor <= 99 && patch <= 99 && (major > 0 || minor > 0) )) || return 1
+            if [[ "$semver" == "$core" ]]; then
+              slot=99
+            else
+              prerelease=${semver#*-}
+              [[ "$prerelease" =~ ^(alpha|beta|rc)\.(0|[1-9]|[12][0-9]|3[01])$ ]] || return 1
+              stage=${BASH_REMATCH[1]}
+              sequence=${BASH_REMATCH[2]}
+              case "$stage" in
+                alpha) slot=$sequence ;;
+                beta) slot=$((32 + sequence)) ;;
+                rc) slot=$((64 + sequence)) ;;
+              esac
+            fi
+            printf '%d.%d.%d\n' "$((major * 100 + minor))" "$patch" "$slot"
+          }
+          macos_version_is_older() {
+            local previous=$1 candidate=$2 previous_first previous_second previous_third candidate_first candidate_second candidate_third
+            previous=$(macos_bundle_version "$previous") || return 1
+            candidate=$(macos_bundle_version "$candidate") || return 1
+            IFS=. read -r previous_first previous_second previous_third <<<"$previous"
+            IFS=. read -r candidate_first candidate_second candidate_third <<<"$candidate"
+            (( previous_first < candidate_first ||
+               (previous_first == candidate_first && previous_second < candidate_second) ||
+               (previous_first == candidate_first && previous_second == candidate_second && previous_third < candidate_third) ))
+          }
+          # END PURE MACOS VERSION CONTRACT
+          if [[ -n "$PREVIOUS_TAG$PREVIOUS_VERSION$PREVIOUS_SHA256" ]]; then
+            [[ -n "$PREVIOUS_TAG" && -n "$PREVIOUS_VERSION" && -n "$PREVIOUS_SHA256" ]] || {
+              echo 'macOS predecessor release tag, version, and SHA-256 must be supplied together' >&2
+              exit 1
+            }
+            [[ "$PREVIOUS_TAG" == "v$PREVIOUS_VERSION" &&
+               "$PREVIOUS_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+              echo 'macOS predecessor configuration is not an exact tagged release with a SHA-256 digest' >&2
+              exit 1
+            }
+            PREVIOUS_BUNDLE_VERSION=$(macos_bundle_version "$PREVIOUS_VERSION") || {
+              echo 'macOS predecessor version is outside the supported native package SemVer domain' >&2
+              exit 1
+            }
+            CANDIDATE_BUNDLE_VERSION=$(macos_bundle_version "$VERSION") || {
+              echo 'macOS candidate version is outside the supported native package SemVer domain' >&2
+              exit 1
+            }
+            macos_version_is_older "$PREVIOUS_VERSION" "$VERSION" || {
+              echo 'macOS predecessor version is not older than the candidate version' >&2
+              exit 1
+            }
+            PREVIOUS_ASSET="NEOTH-${PREVIOUS_VERSION}-${TARGET}.pkg"
+            PREVIOUS_PKG="$RUNNER_TEMP/$PREVIOUS_ASSET"
+            curl --fail --location --retry 3 --connect-timeout 30 --max-time 300 \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${PREVIOUS_TAG}/${PREVIOUS_ASSET}" \
+              --output "$PREVIOUS_PKG"
+            test "$(shasum -a 256 "$PREVIOUS_PKG" | awk '{print tolower($1)}')" = "$(printf '%s' "$PREVIOUS_SHA256" | tr '[:upper:]' '[:lower:]')"
+            UPGRADE_LANE=true
+          fi
           test -s "$PKG_METADATA"
           SIGNED=$(python3 - "$PKG_METADATA" <<'PY'
           import json
@@ -2154,6 +2242,19 @@ jobs:
             rm -rf "$PKG_EXPANDED"
           }
           trap cleanup EXIT
+          if [[ "$UPGRADE_LANE" == true ]]; then
+            [[ "$SIGNED" == true ]] || { echo 'historical upgrade requires a signed candidate PKG' >&2; exit 1; }
+            pkgutil --check-signature "$PKG"
+            xcrun stapler validate "$PKG"
+            pkgutil --check-signature "$PREVIOUS_PKG"
+            xcrun stapler validate "$PREVIOUS_PKG"
+            sudo installer -pkg "$PREVIOUS_PKG" -target /
+            test "$(plutil -extract CFBundleVersion raw -o - /Applications/NEOTH.app/Contents/Info.plist)" = "$PREVIOUS_BUNDLE_VERSION"
+            test "$(pkgutil --pkg-info-plist io.github.the-geek-freaks.neoth | plutil -extract pkg-version raw -o - -)" = "$PREVIOUS_BUNDLE_VERSION"
+            test "$(plutil -extract release_version raw -o - /Applications/NEOTH.app/Contents/Resources/neoth-package-ownership.plist)" = "$PREVIOUS_VERSION"
+            codesign --verify --deep --strict --verbose=2 /Applications/NEOTH.app
+            xcrun stapler validate /Applications/NEOTH.app
+          fi
           normalize_pkg_files() {
             sed 's#^\./##; s#^/##; /^$/d; /^\.$/d' | LC_ALL=C sort -u
           }
@@ -2251,7 +2352,7 @@ jobs:
           NEOTH_HOME="$PROBE_HOME" /Applications/NEOTH.app/Contents/MacOS/neothd-gui --runtime-probe
           test ! -e "$PROBE_HOME"
           open -W -n /Applications/NEOTH.app --args --runtime-probe
-          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+          if [[ "$GITHUB_REF_NAME" != *-* || "$UPGRADE_LANE" == true ]]; then
             codesign --verify --deep --strict --verbose=2 /Applications/NEOTH.app
             pkgutil --check-signature "$PKG"
             xcrun stapler validate /Applications/NEOTH.app
