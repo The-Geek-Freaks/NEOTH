@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T07:40:58.9215596Z",
-  "validationStatus": "W1957 exact hosted formatting imported; behavioral validation pending",
+  "capturedUtc": "2026-09-30T07:42:21.0453383Z",
+  "validationStatus": "W1958 missing-host fixture corrected; hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5183,8 +5183,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/slack.rs",
-      "bytes": 30400,
-      "sha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74"
+      "bytes": 30387,
+      "sha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",

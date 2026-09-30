@@ -560,7 +560,7 @@ mod tests {
         assert!(!socket_url_is_usable(Some(
             "https://wss-primary.slack.com/link"
         )));
-        assert!(!socket_url_is_usable(Some("wss:///missing-host")));
+        assert!(!socket_url_is_usable(Some("wss://")));
         let error = ensure_preflight_success(&result).unwrap_err().to_string();
         assert_eq!(
             error,

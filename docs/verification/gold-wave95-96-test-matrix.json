@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1957 exact hosted formatting imported; behavioral validation pending",
+  "status": "W1958 missing-host fixture corrected; hosted execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 271449,
-    "sha256": "9515FD3B91448E7E04A862ADFD123DB0EF657CA8E7089D97B3A07FB6AEB4E98A"
+    "bytes": 271442,
+    "sha256": "FBF7E4E136E0F73F1C01D4B0487F90114AE4865894BCC2BC21EA08659E5FEF8D"
   },
   "sourceInputs": 1505,
   "requiredNativeTests": [
@@ -14538,73 +14538,73 @@
     {
       "test": "cli::slack::tests::mapped_slack_preflight_requires_an_explicit_account",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::mapped_slack_preflight_selects_exact_account_and_calls_both_probes",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::mapped_slack_preflight_accepts_an_explicit_named_default_account",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::mapped_slack_preflight_marks_stored_team_mismatch_unready_and_redacts_urls",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::slack_preflight_requires_a_usable_socket_url_and_returns_a_payload_free_failure",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::slack_preflight_rejects_failed_auth_even_when_socket_endpoint_is_usable",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::mapped_slack_preflight_redacts_provider_failure_detail",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::legacy_slack_preflight_keeps_scalar_selection_without_account",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::mapped_slack_preflight_rejects_unknown_or_partial_accounts_without_scalar_fallback",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::credentials_only_slack_map_refuses_scalar_shadow_fallback",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::public_cli_parses_slack_test_account_selector",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::slack::tests::slack_test_errors_when_credentials_missing",
       "sourcePath": "SRC/neothd/src/cli/slack.rs",
-      "sourceSha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74",
+      "sourceSha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
       "junitClass": "neoth"
     },
     {
@@ -62397,6 +62397,20 @@
       }
     ],
     "note": "Original11082982721 from36684953722/42c83fc7 matched API ZIP SHA and3receipt entries;4 full-index source pre/postimages verified. No local formatter/runtime. Behavior unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1958SlackMissingHostFixture": {
+    "base": "93ac163c7e421522d031e7cb584cbb7ab936fbc3",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/slack.rs",
+        "bytes": 30387,
+        "sha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A",
+        "blob": "47db47a8812f98c0c17c708ec1483a12727f71f1"
+      }
+    ],
+    "note": "Only invalid-URL test data changed from normalized triple-slash URL to actual missing host wss://. Production unchanged; all selection counts retained. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
