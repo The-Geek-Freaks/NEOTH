@@ -3231,7 +3231,9 @@ mod tests {
     }
     pub(super) fn staged_home() -> (tempfile::TempDir, Credentials) {
         let home = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(home.path()).unwrap().join("paperless");
+        let root = std::fs::canonicalize(home.path())
+            .unwrap()
+            .join("paperless");
         prepare_staging_or_panic(&root);
         std::fs::write(root.join("paperless.env"), b"PAPERLESS_SECRET_KEY=secret-key\nPAPERLESS_DB_NAME=paperless\nPAPERLESS_DB_USER=paperless\nPAPERLESS_DB_PASSWORD=secret\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\nPAPERLESS_BIND_PORT=18000\n").unwrap();
         std::fs::create_dir(root.join("state")).unwrap();

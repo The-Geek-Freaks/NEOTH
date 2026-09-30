@@ -4193,7 +4193,11 @@ fn production() {
 
     let violations = forbidden_network_constructions_in_production(source);
     assert_eq!(violations.len(), 2);
-    assert!(violations.iter().any(|(_, p)| *p == "reqwest::Client::builder"));
+    assert!(
+        violations
+            .iter()
+            .any(|(_, p)| *p == "reqwest::Client::builder")
+    );
     assert!(violations.iter().any(|(_, p)| *p == "TcpStream::connect"));
     assert!(violations.iter().all(|(_, p)| *p != "reqwest::Url::parse"));
 }

@@ -487,7 +487,11 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
     ];
     let admission_positions: Vec<_> = admission
         .iter()
-        .map(|needle| execute.find(needle).unwrap_or_else(|| panic!("missing stage: {needle}")))
+        .map(|needle| {
+            execute
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing stage: {needle}"))
+        })
         .collect();
     assert!(
         admission_positions.windows(2).all(|pair| pair[0] < pair[1]),
@@ -536,7 +540,10 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
             && terminal_release < terminal_projection,
         "terminalization must re-lock, acknowledge Result, release transport ownership, then project"
     );
-    assert!(start < terminal, "a transport attempt must resolve before terminal WAL evidence is built");
+    assert!(
+        start < terminal,
+        "a transport attempt must resolve before terminal WAL evidence is built"
+    );
     let expired_pre_spawn = execute
         .find("if tokio::time::Instant::now() >= transport_deadline {")
         .expect("strict pre-spawn deadline guard");
@@ -546,7 +553,8 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
         "transport admission must reject its deadline at equality before task creation"
     );
     assert!(
-        execute.contains("let transport_deadline = original_monotonic_deadline.min(wall_deadline);"),
+        execute
+            .contains("let transport_deadline = original_monotonic_deadline.min(wall_deadline);"),
         "live transport must be bounded by both monotonic and durable-wall deadlines"
     );
     assert!(execute.contains("let completed_at_unix = chrono::Utc::now().timestamp();"));
@@ -556,12 +564,30 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
 
 #[test]
 fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account() {
-    let compatibility = between(EGRESS, "pub(crate) async fn execute_claimed_once(", "/// Live-instance-owned egress");
-    assert_eq!(compatibility.matches("execute_claimed_once_inner(").count(), 1);
-    assert!(compatibility.contains("Some(transport_recipient.to_string()),") && compatibility.contains("Some(channel),\n        None,\n        None,\n        None,"));
+    let compatibility = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once(",
+        "/// Live-instance-owned egress",
+    );
+    assert_eq!(
+        compatibility.matches("execute_claimed_once_inner(").count(),
+        1
+    );
+    assert!(
+        compatibility.contains("Some(transport_recipient.to_string()),")
+            && compatibility
+                .contains("Some(channel),\n        None,\n        None,\n        None,")
+    );
 
-    let telegram_v5 = between(EGRESS, "pub(crate) async fn execute_claimed_once_account_bound<", "/// Execute one exact incarnated Slack account.");
-    assert_eq!(telegram_v5.matches("execute_claimed_once_inner(").count(), 1);
+    let telegram_v5 = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once_account_bound<",
+        "/// Execute one exact incarnated Slack account.",
+    );
+    assert_eq!(
+        telegram_v5.matches("execute_claimed_once_inner(").count(),
+        1
+    );
     for required in [
         "account_binding.channel_ref().channel_id != ChannelId::Telegram",
         "target_channel != \"telegram\"",
@@ -569,10 +595,17 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
         "Some(account_binding),",
         "Some(config_source_path),",
     ] {
-        assert!(telegram_v5.contains(required), "Telegram v5 wrapper lost {required}");
+        assert!(
+            telegram_v5.contains(required),
+            "Telegram v5 wrapper lost {required}"
+        );
     }
 
-    let slack_v5 = between(EGRESS, "pub(crate) async fn execute_claimed_once_slack_account_bound<", "/// Compatibility executor for an authenticated v4 record.");
+    let slack_v5 = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once_slack_account_bound<",
+        "/// Compatibility executor for an authenticated v4 record.",
+    );
     assert_eq!(slack_v5.matches("execute_claimed_once_inner(").count(), 1);
     for required in [
         "account_binding.channel_ref().channel_id != ChannelId::Slack",
@@ -581,23 +614,59 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
         "Some(account_binding),",
         "Some(config_source_path),",
     ] {
-        assert!(slack_v5.contains(required), "Slack v5 wrapper lost {required}");
+        assert!(
+            slack_v5.contains(required),
+            "Slack v5 wrapper lost {required}"
+        );
     }
 
-    let v4_compatibility = between(EGRESS, "pub(crate) async fn execute_claimed_once_account_bound_v4<", "// The two public compatibility wrappers deliberately converge");
-    assert_eq!(v4_compatibility.matches("execute_claimed_once_inner(").count(), 1);
-    assert!(v4_compatibility.contains("Some(channel_ref),\n        None,\n        Some(config_source_path),"));
+    let v4_compatibility = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once_account_bound_v4<",
+        "// The two public compatibility wrappers deliberately converge",
+    );
+    assert_eq!(
+        v4_compatibility
+            .matches("execute_claimed_once_inner(")
+            .count(),
+        1
+    );
+    assert!(
+        v4_compatibility
+            .contains("Some(channel_ref),\n        None,\n        Some(config_source_path),")
+    );
 
-    let inner = between(EGRESS, "async fn execute_claimed_once_inner<", "/// Settle a configured-but-unavailable route");
-    let checked_ref = inner.find("validate_account_bound_channel_ref(channel_ref, target_channel)").expect("typed account-ref validation before admission");
-    let fresh_pair = inner.find("fresh_bound_account(").expect("fresh coherent account lookup");
-    let prepared = inner.find("persist_prepared_claim(&delivery_lock, home, &claim)").expect("Prepared persistence");
+    let inner = between(
+        EGRESS,
+        "async fn execute_claimed_once_inner<",
+        "/// Settle a configured-but-unavailable route",
+    );
+    let checked_ref = inner
+        .find("validate_account_bound_channel_ref(channel_ref, target_channel)")
+        .expect("typed account-ref validation before admission");
+    let fresh_pair = inner
+        .find("fresh_bound_account(")
+        .expect("fresh coherent account lookup");
+    let prepared = inner
+        .find("persist_prepared_claim(&delivery_lock, home, &claim)")
+        .expect("Prepared persistence");
     assert!(checked_ref < fresh_pair && fresh_pair < prepared);
-    let bound_claim = between(inner, "let mut claim = new_claim_with_deadline_and_account_binding(", "let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)");
-    assert!(bound_claim.contains("channel_ref.clone(),") && bound_claim.contains("account_binding.clone(),"));
+    let bound_claim = between(
+        inner,
+        "let mut claim = new_claim_with_deadline_and_account_binding(",
+        "let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)",
+    );
+    assert!(
+        bound_claim.contains("channel_ref.clone(),")
+            && bound_claim.contains("account_binding.clone(),")
+    );
     assert!(inner.contains("item.account_id.as_ref() != Some(&channel_ref.account_id)"));
 
-    let fresh_v5_account = between(EGRESS, "fn fresh_bound_account(", "fn fresh_historic_bound_telegram_account(");
+    let fresh_v5_account = between(
+        EGRESS,
+        "fn fresh_bound_account(",
+        "fn fresh_historic_bound_telegram_account(",
+    );
     for required in [
         "crate::config::load_runtime_config_pair_from_path(config_source_path)",
         "accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels",
@@ -607,9 +676,16 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
         "runtime\n                .authenticated_slack_accounts()",
         "!account.is_legacy_singleton()\n                        && account.account_binding().as_ref() == Some(binding)",
     ] {
-        assert!(fresh_v5_account.contains(required), "fresh v5 account resolver lost {required}");
+        assert!(
+            fresh_v5_account.contains(required),
+            "fresh v5 account resolver lost {required}"
+        );
     }
-    let fresh_v4_account = between(EGRESS, "fn fresh_historic_bound_telegram_account(", "/// Sole production transport seam for proactive messages.");
+    let fresh_v4_account = between(
+        EGRESS,
+        "fn fresh_historic_bound_telegram_account(",
+        "/// Sole production transport seam for proactive messages.",
+    );
     assert!(fresh_v4_account.contains("crate::config::load_runtime_config_pair_from_path(config_source_path)") && fresh_v4_account.contains("accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels") && fresh_v4_account.contains("runtime\n        .authenticated_telegram_accounts()") && fresh_v4_account.contains("!account.is_legacy_singleton()\n                && account.channel_ref() == channel_ref") && fresh_v4_account.contains("binding.incarnation().is_none()"));
 }
 
@@ -733,42 +809,109 @@ fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalizat
         .find("let mut transport = match connection_permit {")
         .expect("owned provider start");
     let admission = &execute[..provider_start];
-    let admission_lock = admission.find("let delivery_lock = acquire_delivery_lock(home)").expect("admission DeliveryLock");
-    let persist_armed = admission.find("persist_armed_claim(&delivery_lock, &claim_file, &claim)").expect("Armed claim persistence");
-    let lease = admission.find("let armed_claim_lease = match ArmedClaimLease::try_acquire(&claim_file, &claim)").expect("exact Armed claim lease acquisition");
-    let registration = admission.find("let registration = TransportIntentRegistration::acquire(&claim.intent_id);").expect("local intent registration");
-    let armed_ack = admission.find("append_armed(&delivery_lock, writer, &claim)").expect("Armed WAL acknowledgement");
-    assert!(admission_lock < persist_armed && persist_armed < lease && lease < registration && registration < armed_ack);
-    assert!(admission.contains("ArmedClaimLeaseProbe::Busy =>") && admission.contains("exact claim lease is already busy"));
+    let admission_lock = admission
+        .find("let delivery_lock = acquire_delivery_lock(home)")
+        .expect("admission DeliveryLock");
+    let persist_armed = admission
+        .find("persist_armed_claim(&delivery_lock, &claim_file, &claim)")
+        .expect("Armed claim persistence");
+    let lease = admission
+        .find("let armed_claim_lease = match ArmedClaimLease::try_acquire(&claim_file, &claim)")
+        .expect("exact Armed claim lease acquisition");
+    let registration = admission
+        .find("let registration = TransportIntentRegistration::acquire(&claim.intent_id);")
+        .expect("local intent registration");
+    let armed_ack = admission
+        .find("append_armed(&delivery_lock, writer, &claim)")
+        .expect("Armed WAL acknowledgement");
+    assert!(
+        admission_lock < persist_armed
+            && persist_armed < lease
+            && lease < registration
+            && registration < armed_ack
+    );
+    assert!(
+        admission.contains("ArmedClaimLeaseProbe::Busy =>")
+            && admission.contains("exact claim lease is already busy")
+    );
     let post_admission = &execute[provider_start..];
-    let connection_start = post_admission.find("Some(permit) => OwnedTransportAttempt::start_connection_bound(").expect("connection-bound attempt");
-    let unbound_start = post_admission.find("OwnedTransportAttempt::start(").expect("unbound attempt");
-    assert!(connection_start < unbound_start, "both transport forms must follow one Armed admission boundary");
-    for required in ["registration,", "armed_claim_lease,", "generation_effect_lease,"] {
+    let connection_start = post_admission
+        .find("Some(permit) => OwnedTransportAttempt::start_connection_bound(")
+        .expect("connection-bound attempt");
+    let unbound_start = post_admission
+        .find("OwnedTransportAttempt::start(")
+        .expect("unbound attempt");
+    assert!(
+        connection_start < unbound_start,
+        "both transport forms must follow one Armed admission boundary"
+    );
+    for required in [
+        "registration,",
+        "armed_claim_lease,",
+        "generation_effect_lease,",
+    ] {
         assert!(
             post_admission[connection_start..].contains(required)
                 && post_admission[unbound_start..].contains(required),
             "both admitted transport paths must own {required}"
         );
     }
-    let owned = between(EGRESS, "impl OwnedTransportAttempt {", "impl Drop for OwnedTransportAttempt");
-    let task_lease_clone = owned.find("let task_lease = Arc::clone(&armed_claim_lease);").expect("provider lease Arc clone");
-    let provider_send = owned.find("let result = channel.send_proactive(&recipient, &body).await;").expect("sole provider send");
-    let task_lease_drop = owned[provider_send..].find("drop(task_lease);").expect("provider lease Arc release");
+    let owned = between(
+        EGRESS,
+        "impl OwnedTransportAttempt {",
+        "impl Drop for OwnedTransportAttempt",
+    );
+    let task_lease_clone = owned
+        .find("let task_lease = Arc::clone(&armed_claim_lease);")
+        .expect("provider lease Arc clone");
+    let provider_send = owned
+        .find("let result = channel.send_proactive(&recipient, &body).await;")
+        .expect("sole provider send");
+    let task_lease_drop = owned[provider_send..]
+        .find("drop(task_lease);")
+        .expect("provider lease Arc release");
     assert!(task_lease_clone < provider_send && task_lease_drop > 0);
-    let dedup = between(EGRESS, "async fn has_unexpired_inflight_dedup(", "fn deadline_after(");
+    let dedup = between(
+        EGRESS,
+        "async fn has_unexpired_inflight_dedup(",
+        "fn deadline_after(",
+    );
     assert!(dedup.contains("ArmedClaimLeaseProbe::Busy => return Ok(true)"));
-    let recovery = between(EGRESS, "async fn recover_pending_claims_locked(", "/// Reconcile every durable claim");
+    let recovery = between(
+        EGRESS,
+        "async fn recover_pending_claims_locked(",
+        "/// Reconcile every durable claim",
+    );
     assert!(recovery.contains("ArmedClaimLeaseProbe::Busy => continue"));
-    let terminal = execute.find("let result = terminal_result(&claim, outcome, receipt, error, completed_at_unix);").expect("terminal result construction");
+    let terminal = execute
+        .find("let result = terminal_result(&claim, outcome, receipt, error, completed_at_unix);")
+        .expect("terminal result construction");
     let terminalization = &execute[terminal..];
-    let result_ack = terminalization.find("append_result(&delivery_lock, writer, &result)").expect("Result WAL acknowledgement");
-    let owner_release = result_ack + terminalization[result_ack..].find("transport.release_after_terminal_result();").expect("owner lease release");
-    let projections = terminalization.find("apply_projections_blocking(").expect("terminal projections");
+    let result_ack = terminalization
+        .find("append_result(&delivery_lock, writer, &result)")
+        .expect("Result WAL acknowledgement");
+    let owner_release = result_ack
+        + terminalization[result_ack..]
+            .find("transport.release_after_terminal_result();")
+            .expect("owner lease release");
+    let projections = terminalization
+        .find("apply_projections_blocking(")
+        .expect("terminal projections");
     assert!(result_ack < owner_release && owner_release < projections);
-    let owner_release_impl = between(EGRESS, "fn release_after_terminal_result(&mut self)", "fn validate_claim_lease(&self, claim: &ProactiveEgressClaim)");
-    assert!(owner_release_impl.contains("drop(self.armed_claim_lease.take());") && owner_release_impl.contains("drop(self.registration.take());"));
-    let projection_impl = between(EGRESS, "fn apply_projections(", "async fn apply_projections_blocking(");
+    let owner_release_impl = between(
+        EGRESS,
+        "fn release_after_terminal_result(&mut self)",
+        "fn validate_claim_lease(&self, claim: &ProactiveEgressClaim)",
+    );
+    assert!(
+        owner_release_impl.contains("drop(self.armed_claim_lease.take());")
+            && owner_release_impl.contains("drop(self.registration.take());")
+    );
+    let projection_impl = between(
+        EGRESS,
+        "fn apply_projections(",
+        "async fn apply_projections_blocking(",
+    );
     assert!(projection_impl.contains("claim_file\n        .remove()"));
 }
 

@@ -668,9 +668,14 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
             .mount(&mock)
             .await;
-        let err = tavily_search_against(&format!("{}/", mock.uri()), &SecretString::from("k"), "x", 3)
-            .await
-            .unwrap_err();
+        let err = tavily_search_against(
+            &format!("{}/", mock.uri()),
+            &SecretString::from("k"),
+            "x",
+            3,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("401"));
     }
 

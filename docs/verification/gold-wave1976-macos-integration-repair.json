@@ -273,5 +273,36 @@
       "afterWorkingSha256": "D0B69B8642A61CA6A37DBC59C36EF086EE2BBB0BD07F5EB05942B55F407E8F62",
       "batch": "wave1977-recovery-config-type"
     }
-  ]
+  ],
+  "hostedFormatting": {
+    "artifact": 11091295609,
+    "zipSha256": "0E21F663B8F0039D90C10C43D0F22674E65EFE8CB1C8B00444CDD66AB0A9410F",
+    "freshPreflight": "pending",
+    "run": 36703392026,
+    "verifiedPrePostBlobs": [
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "before": "eff7a40649b4781e7aef807ae23d6ff814fb37d8",
+        "after": "bb01914ea7527fe4eb037218fddbc786ba1de86a"
+      },
+      {
+        "path": "SRC/neothd/src/tools/web_search.rs",
+        "before": "e3d73b4a2cfb61416623ffdaf9ba9ca704af5519",
+        "after": "6c36a02e0233a2b34698a4969f6286f92516585d"
+      },
+      {
+        "path": "SRC/neothd/tests/no_outbound_network.rs",
+        "before": "bc1e2a19ac68bb40c50f1e3d450afb606d5cbd5a",
+        "after": "89117b4c44f5036680b617e8f7a301deb34e54ef"
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "before": "90396290a9b1cc09f15d6132fa6d3f64e090d000",
+        "after": "2252a6cf3149420c8ba4d8fd5853e75d4f77df5d"
+      }
+    ],
+    "localRustfmtRan": false,
+    "patchSha256": "9E080D0022C7A4BD25BF760F78C60FF95413046AF16533E776B16286847EDD64",
+    "producer": "00a371129659d11933a5fbd12ea541cabd2d739f"
+  }
 }
