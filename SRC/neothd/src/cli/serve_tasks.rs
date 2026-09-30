@@ -11511,7 +11511,8 @@ mod tests {
         };
         let mut errors = Vec::new();
 
-        let telegram_policy = crate::channels::registry::ChannelAccountId::new("tg-policy").unwrap();
+        let telegram_policy =
+            crate::channels::registry::ChannelAccountId::new("tg-policy").unwrap();
         let mut telegram_policy_only = FreedomConfig {
             onboarding_complete: false,
             ..Default::default()
@@ -11537,7 +11538,8 @@ mod tests {
             },
         ));
 
-        let telegram_credentials = crate::channels::registry::ChannelAccountId::new("tg-credentials").unwrap();
+        let telegram_credentials =
+            crate::channels::registry::ChannelAccountId::new("tg-credentials").unwrap();
         let mut telegram_credentials_only = crate::config::credentials::Credentials::default();
         telegram_credentials_only.channel_accounts.telegram.insert(
             telegram_credentials.clone(),
@@ -11568,7 +11570,8 @@ mod tests {
             },
         ));
 
-        let slack_policy = crate::channels::registry::ChannelAccountId::new("slack-policy").unwrap();
+        let slack_policy =
+            crate::channels::registry::ChannelAccountId::new("slack-policy").unwrap();
         let mut slack_policy_only = FreedomConfig {
             onboarding_complete: false,
             ..Default::default()
@@ -11594,7 +11597,8 @@ mod tests {
             },
         ));
 
-        let slack_credentials = crate::channels::registry::ChannelAccountId::new("slack-credentials").unwrap();
+        let slack_credentials =
+            crate::channels::registry::ChannelAccountId::new("slack-credentials").unwrap();
         let mut slack_credentials_only = crate::config::credentials::Credentials::default();
         slack_credentials_only.channel_accounts.slack.insert(
             slack_credentials,

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T06:18:07.0236366Z",
-  "validationStatus": "W1951 secondary serve gate source reviewed;174 exact channel cases await hosted execution",
+  "capturedUtc": "2026-09-30T06:22:03.5156635Z",
+  "validationStatus": "W1951 serve source reviewed; W1952 exact hosted formatting imported;174 channel cases await execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5153,8 +5153,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 580207,
-      "sha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E"
+      "bytes": 580255,
+      "sha256": "C7E9E269BD8AFA90D927933C29C5710D1732C44915976F9D5CA2B46AED264AE7"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
