@@ -9,11 +9,11 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde_json::json;
 
-use crate::channels::slack_api;
 use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef};
+use crate::channels::slack_api;
 use crate::cli::OutputFormat;
-use crate::config::{FreedomConfig, RuntimeConfigPair};
 use crate::config::credentials::Credentials;
+use crate::config::{FreedomConfig, RuntimeConfigPair};
 use crate::secret::SecretString;
 
 #[derive(Args, Debug, Clone)]
@@ -147,9 +147,8 @@ fn resolve_slack_test_selection(
     requested_account: Option<&ChannelAccountId>,
 ) -> Result<SlackTestSelection> {
     if slack_account_map_active(pair) {
-        let requested_account = requested_account.context(
-            "Slack account map is active; pass `neoth slack test --account <id>`",
-        )?;
+        let requested_account = requested_account
+            .context("Slack account map is active; pass `neoth slack test --account <id>`")?;
         let accounts = pair.authenticated_slack_accounts().map_err(|_| {
             anyhow::anyhow!(
                 "Slack account map is invalid; repair matching policy and credential entries before pre-flight"
@@ -162,7 +161,9 @@ fn resolve_slack_test_selection(
                     && account.channel_ref()
                         == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
             })
-            .ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Slack account `{requested_account}` is not configured")
+            })?;
         return Ok(SlackTestSelection {
             account: Some(requested_account.clone()),
             bot_token: account.bot_token().clone(),
@@ -289,10 +290,14 @@ async fn run_test(account: Option<ChannelAccountId>, output: &OutputFormat) -> R
                 println!("  apps.connections.open: FAIL — Slack rejected apps.connections.open");
             }
             if result.socket.ok && !socket_url_is_usable(result.socket.url.as_deref()) {
-                println!("  socket endpoint:      FAIL — Slack did not return a usable Socket Mode endpoint");
+                println!(
+                    "  socket endpoint:      FAIL — Slack did not return a usable Socket Mode endpoint"
+                );
             }
             if result.team_id_matches == Some(false) {
-                println!("  team binding:         FAIL — auth.test workspace does not match this account");
+                println!(
+                    "  team binding:         FAIL — auth.test workspace does not match this account"
+                );
             }
             println!();
             if result.socket_mode_ready() {
@@ -315,16 +320,15 @@ async fn run_test(account: Option<ChannelAccountId>, output: &OutputFormat) -> R
 mod tests {
     use super::*;
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
-        Mutex,
     };
 
     use crate::{
         channels::registry::ChannelAccountId,
         cli::{Cli, Commands},
-        config::{FreedomConfig, RuntimeConfigPair, SlackAccountConfig},
         config::credentials::{Credentials, SlackAccountCredentials},
+        config::{FreedomConfig, RuntimeConfigPair, SlackAccountConfig},
         secret::SecretString,
     };
     use clap::Parser;
@@ -366,7 +370,10 @@ mod tests {
             .channel_accounts
             .slack
             .insert(account.clone(), secrets.clone());
-        pair.credentials.channel_accounts.slack.insert(account, secrets);
+        pair.credentials
+            .channel_accounts
+            .slack
+            .insert(account, secrets);
         pair
     }
 
@@ -388,7 +395,10 @@ mod tests {
             .channel_accounts
             .slack
             .insert(account.clone(), secrets.clone());
-        pair.credentials.channel_accounts.slack.insert(account, secrets);
+        pair.credentials
+            .channel_accounts
+            .slack
+            .insert(account, secrets);
     }
 
     fn auth_ok(team_id: Option<&str>) -> slack_api::AuthTestResult {
@@ -454,8 +464,14 @@ mod tests {
         assert_eq!(result.account.as_ref(), Some(&account));
         assert_eq!(auth_calls.load(Ordering::SeqCst), 1);
         assert_eq!(socket_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(auth_token.lock().unwrap().as_deref(), Some("xoxb-work-secret"));
-        assert_eq!(socket_token.lock().unwrap().as_deref(), Some("xapp-work-secret"));
+        assert_eq!(
+            auth_token.lock().unwrap().as_deref(),
+            Some("xoxb-work-secret")
+        );
+        assert_eq!(
+            socket_token.lock().unwrap().as_deref(),
+            Some("xapp-work-secret")
+        );
         assert_eq!(result.team_id_matches, Some(true));
         assert!(result.socket_mode_ready());
     }
@@ -483,12 +499,18 @@ mod tests {
             .slack
             .remove(&work)
             .expect("work effective secrets");
-        pair.config.channel_accounts.slack.insert(default.clone(), policy);
+        pair.config
+            .channel_accounts
+            .slack
+            .insert(default.clone(), policy);
         pair.raw_credentials
             .channel_accounts
             .slack
             .insert(default.clone(), raw_secrets);
-        pair.credentials.channel_accounts.slack.insert(default.clone(), secrets);
+        pair.credentials
+            .channel_accounts
+            .slack
+            .insert(default.clone(), secrets);
 
         let selection = resolve_slack_test_selection(&pair, Some(&default)).unwrap();
         assert_eq!(selection.account.as_ref(), Some(&default));
@@ -497,8 +519,9 @@ mod tests {
     #[test]
     fn mapped_slack_preflight_marks_stored_team_mismatch_unready_and_redacts_urls() {
         let account = ChannelAccountId::new("work").unwrap();
-        let selection = resolve_slack_test_selection(&mapped_slack_pair(Some("TWORK")), Some(&account))
-            .unwrap();
+        let selection =
+            resolve_slack_test_selection(&mapped_slack_pair(Some("TWORK")), Some(&account))
+                .unwrap();
         let result = block_on(run_preflight_with(
             selection,
             |_token| async { Ok(auth_ok(Some("TOTHER"))) },
@@ -517,7 +540,8 @@ mod tests {
     #[test]
     fn slack_preflight_requires_a_usable_socket_url_and_returns_a_payload_free_failure() {
         let account = ChannelAccountId::new("work").unwrap();
-        let selection = resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
+        let selection =
+            resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
         let result = block_on(run_preflight_with(
             selection,
             |_token| async { Ok(auth_ok(None)) },
@@ -533,16 +557,22 @@ mod tests {
 
         assert!(!result.socket_mode_ready());
         assert!(!socket_url_is_usable(result.socket.url.as_deref()));
-        assert!(!socket_url_is_usable(Some("https://wss-primary.slack.com/link")));
+        assert!(!socket_url_is_usable(Some(
+            "https://wss-primary.slack.com/link"
+        )));
         assert!(!socket_url_is_usable(Some("wss:///missing-host")));
         let error = ensure_preflight_success(&result).unwrap_err().to_string();
-        assert_eq!(error, "Slack pre-flight failed; inspect the rendered status");
+        assert_eq!(
+            error,
+            "Slack pre-flight failed; inspect the rendered status"
+        );
     }
 
     #[test]
     fn slack_preflight_rejects_failed_auth_even_when_socket_endpoint_is_usable() {
         let account = ChannelAccountId::new("work").unwrap();
-        let selection = resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
+        let selection =
+            resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
         let result = block_on(run_preflight_with(
             selection,
             |_token| async {
@@ -570,7 +600,8 @@ mod tests {
     #[test]
     fn mapped_slack_preflight_redacts_provider_failure_detail() {
         let account = ChannelAccountId::new("work").unwrap();
-        let selection = resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
+        let selection =
+            resolve_slack_test_selection(&mapped_slack_pair(None), Some(&account)).unwrap();
         let error = block_on(run_preflight_with(
             selection,
             |_token| async { Err(anyhow::anyhow!("provider echoed xoxb-work-secret")) },

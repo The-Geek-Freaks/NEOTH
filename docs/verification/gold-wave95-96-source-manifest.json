@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T07:33:36.4670473Z",
-  "validationStatus": "W1954-W1956 source reviewed; hosted validation pending",
+  "capturedUtc": "2026-09-30T07:40:58.9215596Z",
+  "validationStatus": "W1957 exact hosted formatting imported; behavioral validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4913,8 +4913,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
-      "bytes": 107162,
-      "sha256": "0953FD6F069AB2984B03DFE9D22F8B25D0653B23BC8414207E9C4F200BE62152"
+      "bytes": 107127,
+      "sha256": "01A8D9F2606E542F43E2EA8F35F55D3FAE690EEC037B44ABE42961595DDC67AF"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
@@ -4998,8 +4998,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",
-      "bytes": 145611,
-      "sha256": "FFB53207D129AF31958E95502597A1973A5E0C6933E5D2ABD253E0C0E0ACBA71"
+      "bytes": 145937,
+      "sha256": "44331F390A0BF47ABFE48333408C130DD3BFA46CCCBAD0210D4EBF2A4F06C17F"
     },
     {
       "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
@@ -5008,8 +5008,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",
-      "bytes": 79994,
-      "sha256": "FF5141204C61AEEFDDFE5F3FD84934F1B94B470AD5519A7F2E5DCC9F70A4DB9C"
+      "bytes": 80040,
+      "sha256": "4A2AF685011F0F99AAEE6FC500EE5EC67CFE6C6AB6A111409C7EF8255299EDD5"
     },
     {
       "path": "SRC/neothd/src/cli/init/steps_channel.rs",
@@ -5183,8 +5183,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/slack.rs",
-      "bytes": 29978,
-      "sha256": "AD05AD9E24D61FE86EE34F8453B9C26C9541B171132F886F156C32E2639F81E1"
+      "bytes": 30400,
+      "sha256": "8EC6F825DE398211E7CFBD44F7D388ADBA32CFB223EEFD2A01E27F354C846B74"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",

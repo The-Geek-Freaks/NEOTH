@@ -134,7 +134,10 @@ fn verify_malformed_recovery_preimage(
     }
     let bytes = read_bounded_regular_file(freedom_yaml, MAX_INITIALIZATION_CONFIG_BYTES)?
         .ok_or_else(|| {
-            anyhow::anyhow!("{} disappeared before forced recovery", freedom_yaml.display())
+            anyhow::anyhow!(
+                "{} disappeared before forced recovery",
+                freedom_yaml.display()
+            )
         })?;
     if sha256_hex(&bytes) != recovery.expected_sha256 {
         anyhow::bail!(

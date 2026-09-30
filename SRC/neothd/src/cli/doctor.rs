@@ -807,10 +807,8 @@ mod tests {
                     .expect("documented findings must link to an exact quoted runbook");
                 assert_eq!(name, doc.name);
                 assert!(!name.contains(['\'', '\n', '\r']));
-                let cli = crate::cli::Cli::try_parse_from([
-                    "neoth", "doctor", "--explain", name,
-                ])
-                .expect("suggested command must be accepted by the public CLI");
+                let cli = crate::cli::Cli::try_parse_from(["neoth", "doctor", "--explain", name])
+                    .expect("suggested command must be accepted by the public CLI");
                 let crate::cli::Commands::Doctor(mut args) = cli.command else {
                     panic!("suggestion must select Doctor");
                 };

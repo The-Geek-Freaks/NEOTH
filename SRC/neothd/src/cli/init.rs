@@ -109,11 +109,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // force path. Its exact bounded bytes are privately preserved before the
     // wizard starts, while the canonical source remains in place until the
     // existing config transaction can replace it atomically.
-    let malformed_config_recovery = prepare_malformed_config_recovery(
-        &neoth_dir,
-        args.force,
-        args.dry_run,
-    )?;
+    let malformed_config_recovery =
+        prepare_malformed_config_recovery(&neoth_dir, args.force, args.dry_run)?;
     if let Some(recovery) = malformed_config_recovery.as_ref() {
         if args.dry_run {
             println!(
@@ -1292,9 +1289,11 @@ mod tests {
         std::fs::write(&path, b"operator_id: [a, b]\n").unwrap();
         assert!(prepare_malformed_config_recovery(&home, true, false).is_err());
         assert!(
-            std::fs::read_dir(&home)
+            std::fs::read_dir(&home).unwrap().all(|entry| !entry
                 .unwrap()
-                .all(|entry| !entry.unwrap().file_name().to_string_lossy().starts_with("freedom.yaml.malformed-")),
+                .file_name()
+                .to_string_lossy()
+                .starts_with("freedom.yaml.malformed-")),
             "valid YAML with an invalid typed shape must not enter malformed-document recovery"
         );
 
@@ -1318,7 +1317,11 @@ mod tests {
         let dry = prepare_malformed_config_recovery(&home, true, true)
             .unwrap()
             .expect("dry-run recovery plan");
-        assert!(write_config(&home, &fixture_state(), Some(&dry)).await.is_err());
+        assert!(
+            write_config(&home, &fixture_state(), Some(&dry))
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), original);
 
         let recovery = prepare_malformed_config_recovery(&home, true, false)
@@ -1352,9 +1355,11 @@ mod tests {
         let changed = b"operator_id: [changed\n";
         std::fs::write(&path, changed).unwrap();
 
-        assert!(write_config(&home, &fixture_state(), Some(&recovery))
-            .await
-            .is_err());
+        assert!(
+            write_config(&home, &fixture_state(), Some(&recovery))
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), changed);
         assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
         assert!(!home.join(".initialized").exists());
@@ -1373,15 +1378,19 @@ mod tests {
             .expect("force recovery custody");
 
         std::fs::write(&recovery.backup_path, b"tampered").unwrap();
-        assert!(write_config(&home, &fixture_state(), Some(&recovery))
-            .await
-            .is_err());
+        assert!(
+            write_config(&home, &fixture_state(), Some(&recovery))
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), original);
 
         std::fs::remove_file(&recovery.backup_path).unwrap();
-        assert!(write_config(&home, &fixture_state(), Some(&recovery))
-            .await
-            .is_err());
+        assert!(
+            write_config(&home, &fixture_state(), Some(&recovery))
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert!(!home.join(".initialized").exists());
     }
@@ -1438,9 +1447,12 @@ mod tests {
             .unwrap()
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.file_name().is_some_and(|name| {
-                name.to_string_lossy().starts_with("freedom.yaml.malformed-")
-            }))
+            .filter(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .starts_with("freedom.yaml.malformed-")
+                })
+            })
             .collect::<Vec<_>>();
         assert_eq!(backups.len(), 1);
         assert_eq!(std::fs::read(&backups[0]).unwrap(), original);
@@ -1522,7 +1534,9 @@ security:
         let mut state = fixture_state();
         state.operator_id = Some("new".to_string());
         state.omi.retention_days = 7;
-        write_config(&neoth_dir, &state, None).await.expect("merge write");
+        write_config(&neoth_dir, &state, None)
+            .await
+            .expect("merge write");
 
         let raw = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         let merged: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
@@ -1694,7 +1708,9 @@ audit_rpc:
             "0123456789abcdef0123456789abcdef",
         ));
 
-        write_config(&neoth_dir, &state, None).await.expect("OMI write");
+        write_config(&neoth_dir, &state, None)
+            .await
+            .expect("OMI write");
         let freedom = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         assert!(!freedom.contains("omi_dev_init_persist_test"));
         assert!(!freedom.contains("0123456789abcdef0123456789abcdef"));
@@ -1910,7 +1926,9 @@ audit_rpc:
 
         let mut s1 = fixture_state();
         s1.operator_id = Some("first".to_string());
-        write_config(&neoth_dir, &s1, None).await.expect("first write");
+        write_config(&neoth_dir, &s1, None)
+            .await
+            .expect("first write");
 
         let mut s2 = fixture_state();
         s2.operator_id = Some("second".to_string());
@@ -2359,7 +2377,9 @@ audit_rpc:
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
         let original = fixture_state();
-        write_config(&neoth_dir, &original, None).await.expect("write");
+        write_config(&neoth_dir, &original, None)
+            .await
+            .expect("write");
 
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         let restored =
