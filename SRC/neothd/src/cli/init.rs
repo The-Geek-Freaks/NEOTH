@@ -105,6 +105,28 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     }
 
     let mut state = fresh_wizard_state();
+    // A malformed public config is recoverable only through the explicit
+    // force path. Its exact bounded bytes are privately preserved before the
+    // wizard starts, while the canonical source remains in place until the
+    // existing config transaction can replace it atomically.
+    let malformed_config_recovery = prepare_malformed_config_recovery(
+        &neoth_dir,
+        args.force,
+        args.dry_run,
+    )?;
+    if let Some(recovery) = malformed_config_recovery.as_ref() {
+        if args.dry_run {
+            println!(
+                "[dry-run] Would preserve malformed configuration at {}; no files written.",
+                recovery.backup_path.display()
+            );
+        } else {
+            println!(
+                "Preserved malformed configuration at {}; it remains until replacement commits.",
+                recovery.backup_path.display()
+            );
+        }
+    }
     // `init --force` is a reconfiguration, not an OMI reset. Preserve the
     // complete existing OMI block (including advanced bounds not surfaced by
     // the wizard) and the credential backend before applying explicit answers.
@@ -165,7 +187,12 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         step4_role(&args, interactive, &mut state)?;
         save_checkpoint_best_effort(&neoth_dir, &state);
     }
-    let existing_security_policy = {
+    let existing_security_policy = if malformed_config_recovery.is_some() {
+        // The recovery preflight already proved the existing YAML cannot be
+        // parsed. Do not reread it through the normal config loader; rebuilt
+        // config starts from the fresh wizard's safe policy defaults.
+        crate::config::FreedomConfig::default().security
+    } else {
         let path = neoth_dir.join("freedom.yaml");
         crate::config::FreedomConfig::load_from_path_or_default(&path)?.security
     };
@@ -242,7 +269,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     if args.dry_run {
         println!("[dry-run] No files written.");
     } else {
-        write_config(&neoth_dir, &state).await?;
+        write_config(&neoth_dir, &state, malformed_config_recovery.as_ref()).await?;
         // ZF-01 — merge the chosen built-in's feature-flag overrides into the
         // freshly written freedom.yaml. Autonomy is stripped: the wizard's
         // explicit selection already wrote it into the config (the selection
@@ -1244,13 +1271,188 @@ mod tests {
         );
     }
 
+    #[test]
+    fn malformed_config_requires_explicit_force_and_dry_run_keeps_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+
+        assert!(prepare_malformed_config_recovery(&home, false, false).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let dry = prepare_malformed_config_recovery(&home, true, true)
+            .unwrap()
+            .expect("dry-run recovery plan");
+        assert!(!dry.backup_path.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        std::fs::write(&path, b"operator_id: [a, b]\n").unwrap();
+        assert!(prepare_malformed_config_recovery(&home, true, false).is_err());
+        assert!(
+            std::fs::read_dir(&home)
+                .unwrap()
+                .all(|entry| !entry.unwrap().file_name().to_string_lossy().starts_with("freedom.yaml.malformed-")),
+            "valid YAML with an invalid typed shape must not enter malformed-document recovery"
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(prepare_malformed_config_recovery(&home, true, false).is_err());
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, vec![b'x'; 4 * 1024 * 1024 + 1]).unwrap();
+        assert!(prepare_malformed_config_recovery(&home, true, false).is_err());
+    }
+
+    #[tokio::test]
+    async fn force_recovery_preserves_malformed_bytes_until_config_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+
+        let dry = prepare_malformed_config_recovery(&home, true, true)
+            .unwrap()
+            .expect("dry-run recovery plan");
+        assert!(write_config(&home, &fixture_state(), Some(&dry)).await.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let recovery = prepare_malformed_config_recovery(&home, true, false)
+            .unwrap()
+            .expect("force recovery custody");
+        assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        write_config(&home, &fixture_state(), Some(&recovery))
+            .await
+            .expect("rebuild malformed config");
+        assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
+        assert!(crate::config::FreedomConfig::load_from_path(&path).is_ok());
+        assert!(
+            !home.join(".initialized").exists(),
+            "config commit must precede the caller-owned initialized marker"
+        );
+    }
+
+    #[tokio::test]
+    async fn force_recovery_refuses_changed_preimage_before_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+        let recovery = prepare_malformed_config_recovery(&home, true, false)
+            .unwrap()
+            .expect("force recovery custody");
+        let changed = b"operator_id: [changed\n";
+        std::fs::write(&path, changed).unwrap();
+
+        assert!(write_config(&home, &fixture_state(), Some(&recovery))
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), changed);
+        assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
+        assert!(!home.join(".initialized").exists());
+    }
+
+    #[tokio::test]
+    async fn force_recovery_refuses_missing_or_tampered_backup_before_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+        let recovery = prepare_malformed_config_recovery(&home, true, false)
+            .unwrap()
+            .expect("force recovery custody");
+
+        std::fs::write(&recovery.backup_path, b"tampered").unwrap();
+        assert!(write_config(&home, &fixture_state(), Some(&recovery))
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        std::fs::remove_file(&recovery.backup_path).unwrap();
+        assert!(write_config(&home, &fixture_state(), Some(&recovery))
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(!home.join(".initialized").exists());
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn run_init_force_recovers_malformed_config_through_later_rereads() {
+        let _env_lock = lock_home_env();
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        let previous_home = std::env::var_os("HOME");
+        let previous_userprofile = std::env::var_os("USERPROFILE");
+        let previous_neoth_home = std::env::var_os("NEOTH_HOME");
+        unsafe {
+            std::env::set_var("HOME", &root);
+            std::env::set_var("USERPROFILE", &root);
+            std::env::set_var("NEOTH_HOME", root.join(".neoth"));
+        }
+        let home = root.join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let original = b"operator_id: [broken\n";
+        std::fs::write(home.join("freedom.yaml"), original).unwrap();
+
+        let result = run_init(InitArgs {
+            non_interactive: true,
+            cli: true,
+            accept_license: true,
+            force: true,
+            zero_friction: true,
+            operator_id: Some("repair-test".to_string()),
+            provider: Some(ProviderKind::Skip),
+            ..InitArgs::default()
+        })
+        .await;
+
+        unsafe {
+            match previous_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match previous_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match previous_neoth_home {
+                Some(value) => std::env::set_var("NEOTH_HOME", value),
+                None => std::env::remove_var("NEOTH_HOME"),
+            }
+        }
+        result.expect("full force recovery");
+        assert!(crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).is_ok());
+        assert!(initialized_home_is_ready(&home).unwrap());
+        let backups = std::fs::read_dir(&home)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.file_name().is_some_and(|name| {
+                name.to_string_lossy().starts_with("freedom.yaml.malformed-")
+            }))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(&backups[0]).unwrap(), original);
+    }
+
     #[tokio::test]
     async fn write_config_creates_freedom_yaml() {
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
         let state = fixture_state();
 
-        write_config(&neoth_dir, &state)
+        write_config(&neoth_dir, &state, None)
             .await
             .expect("write_config");
 
@@ -1320,7 +1522,7 @@ security:
         let mut state = fixture_state();
         state.operator_id = Some("new".to_string());
         state.omi.retention_days = 7;
-        write_config(&neoth_dir, &state).await.expect("merge write");
+        write_config(&neoth_dir, &state, None).await.expect("merge write");
 
         let raw = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         let merged: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
@@ -1492,7 +1694,7 @@ audit_rpc:
             "0123456789abcdef0123456789abcdef",
         ));
 
-        write_config(&neoth_dir, &state).await.expect("OMI write");
+        write_config(&neoth_dir, &state, None).await.expect("OMI write");
         let freedom = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         assert!(!freedom.contains("omi_dev_init_persist_test"));
         assert!(!freedom.contains("0123456789abcdef0123456789abcdef"));
@@ -1526,7 +1728,7 @@ audit_rpc:
         let freedom_path = neoth_dir.join("freedom.yaml");
         std::fs::write(&freedom_path, b"operator_id: [unterminated\n").unwrap();
 
-        let result = write_config(&neoth_dir, &fixture_state()).await;
+        let result = write_config(&neoth_dir, &fixture_state(), None).await;
         assert!(result.is_err());
         assert_eq!(
             std::fs::read(&cred_path).unwrap(),
@@ -1548,7 +1750,7 @@ audit_rpc:
         state.bootstrap_vault = true;
         state.vault_path = Some(vault.clone());
 
-        write_config(&neoth_dir, &state)
+        write_config(&neoth_dir, &state, None)
             .await
             .expect("write_config");
 
@@ -1649,7 +1851,7 @@ audit_rpc:
     async fn write_config_uses_atomic_temp_then_rename() {
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
-        write_config(&neoth_dir, &fixture_state())
+        write_config(&neoth_dir, &fixture_state(), None)
             .await
             .expect("write_config");
 
@@ -1708,11 +1910,11 @@ audit_rpc:
 
         let mut s1 = fixture_state();
         s1.operator_id = Some("first".to_string());
-        write_config(&neoth_dir, &s1).await.expect("first write");
+        write_config(&neoth_dir, &s1, None).await.expect("first write");
 
         let mut s2 = fixture_state();
         s2.operator_id = Some("second".to_string());
-        write_config(&neoth_dir, &s2)
+        write_config(&neoth_dir, &s2, None)
             .await
             .expect("second write replaces first");
 
@@ -1728,7 +1930,7 @@ audit_rpc:
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
-        write_config(&neoth_dir, &fixture_state())
+        write_config(&neoth_dir, &fixture_state(), None)
             .await
             .expect("write_config");
 
@@ -2157,7 +2359,7 @@ audit_rpc:
         let dir = tempfile::tempdir().unwrap();
         let neoth_dir = dir.path().join(".neoth");
         let original = fixture_state();
-        write_config(&neoth_dir, &original).await.expect("write");
+        write_config(&neoth_dir, &original, None).await.expect("write");
 
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         let restored =
@@ -2941,7 +3143,7 @@ audit_rpc:
         // write_config persists the path to freedom.yaml.
         let neoth_dir = dir.path().join(".neoth");
         std::fs::create_dir_all(&neoth_dir).unwrap();
-        write_config(&neoth_dir, &state).await.unwrap();
+        write_config(&neoth_dir, &state, None).await.unwrap();
 
         let yaml = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
         assert!(
@@ -3196,7 +3398,7 @@ audit_rpc:
         let neoth_dir = dir.path().join(".neoth");
         // fixture_state() has telegram_token set → onboarding_complete = true.
         let state = fixture_state();
-        write_config(&neoth_dir, &state)
+        write_config(&neoth_dir, &state, None)
             .await
             .expect("write_config");
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();
@@ -3220,7 +3422,7 @@ audit_rpc:
         // Fresh state with no channel remains incomplete. A force-reconfigure
         // state that was already complete is intentionally preserved because
         // lossless credential RMW also preserves its existing channel token.
-        write_config(&neoth_dir, &state)
+        write_config(&neoth_dir, &state, None)
             .await
             .expect("write_config");
         let body = std::fs::read_to_string(neoth_dir.join("freedom.yaml")).unwrap();

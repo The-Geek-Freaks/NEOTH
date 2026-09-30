@@ -99,7 +99,7 @@ pub struct DoctorArgs {
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
 /// exists for that check name (typo in operator's `--explain` flag).
-fn find_check_doc(name: &str) -> Option<&'static CheckDoc> {
+pub(crate) fn find_check_doc(name: &str) -> Option<&'static CheckDoc> {
     let needle = name.trim().to_ascii_lowercase();
     all_check_docs().find(|d| d.name.to_ascii_lowercase() == needle)
 }
@@ -792,6 +792,34 @@ mod tests {
     fn find_check_doc_returns_none_for_unknown_name() {
         assert!(find_check_doc("definitely-not-a-check").is_none());
         assert!(find_check_doc("").is_none());
+    }
+
+    #[tokio::test]
+    async fn cron_suggestions_resolve_every_documented_check() {
+        use clap::Parser;
+
+        for doc in all_check_docs() {
+            for status in [CheckStatus::Warn, CheckStatus::Fail] {
+                let command = crate::daemon::doctor_cron::suggested_command_for(doc.name, &status);
+                let name = command
+                    .strip_prefix("neoth doctor --explain '")
+                    .and_then(|value| value.strip_suffix('\''))
+                    .expect("documented findings must link to an exact quoted runbook");
+                assert_eq!(name, doc.name);
+                assert!(!name.contains(['\'', '\n', '\r']));
+                let cli = crate::cli::Cli::try_parse_from([
+                    "neoth", "doctor", "--explain", name,
+                ])
+                .expect("suggested command must be accepted by the public CLI");
+                let crate::cli::Commands::Doctor(mut args) = cli.command else {
+                    panic!("suggestion must select Doctor");
+                };
+                args.output = OutputFormat::Json;
+                run_doctor(args)
+                    .await
+                    .expect("suggested runbook must resolve without running diagnostics");
+            }
+        }
     }
 
     #[test]

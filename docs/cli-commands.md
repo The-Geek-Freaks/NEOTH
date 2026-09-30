@@ -4631,7 +4631,7 @@ _Aliases:_ `neoth skill`
 
 ## `neoth slack`
 
-Slack pre-flight (A-7). `test` validates xoxb + xapp tokens by calling `auth.test` + `apps.connections.open` and reports the WSS URL consumed by the live Socket Mode loop
+Slack pre-flight (A-7). `test --account <id>` validates a named account's bot and app tokens with `auth.test` + `apps.connections.open`. Legacy scalar credentials use `test` without `--account`. Secret URLs are withheld from output
 
 ### `neoth slack send`
 
@@ -4642,7 +4642,9 @@ Send a one-shot message to a Slack channel via `chat.postMessage`. Uses `credent
 
 ### `neoth slack test`
 
-Auth-test the configured Slack tokens. Reads `credentials.yaml::slack_bot_token` + `slack_app_token`, calls Slack's `auth.test` + `apps.connections.open`, and reports the result. The live Socket Mode loop dials the WSS URL this returns
+Auth-test one Slack credential binding. For a named account map, `--account` is required; the command never guesses a default account. Calls `auth.test` + `apps.connections.open` without revealing the WSS URL
+
+- `--account <ACCOUNT>` — Exact configured Slack account. Required whenever a Slack account map is active
 
 ## `neoth slash`
 

@@ -1,0 +1,29 @@
+{
+  "schema": "neoth-gold-wave1956-operator-recovery/v1",
+  "status": "Source reviewed; hosted validation pending",
+  "base": "5e885d384776c2053a0c7af9329caa9edf7e2422",
+  "batches": [
+    "W1954",
+    "W1955",
+    "W1956"
+  ],
+  "localExecutableValidationRan": false,
+  "staticReview": "APPROVE",
+  "newRustTests": 17,
+  "existingTestsNewlyRegistered": 12,
+  "selections": {
+    "Windows": 1001,
+    "Linux": 2216,
+    "macOS": 117,
+    "channel": 204,
+    "portable": 2441
+  },
+  "constraints": [
+    "Absolute local BSOD hold",
+    "No .slint edits",
+    "Root sole Git/PLAN/CI",
+    "Claude monitoring stopped"
+  ],
+  "fullIntegration": "One Root-coordinated milestone planned after hosted preflight at frozen producer; existing budgets and retries unchanged, runtime no-fail-fast override",
+  "releaseReadiness": false
+}

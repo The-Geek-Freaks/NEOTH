@@ -2,6 +2,34 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-30
 
+**W1954-W1956 operator recovery and integration milestone (2026-09-30; hosted pending):**
+The CLI now repairs syntactically malformed freedom.yaml through explicit
+init --force. Exact original bytes are preserved in a private durable backup,
+whose path is printed; source and backup must still match at the atomic
+config/credential commit. The original remains canonical until replacement.
+Valid YAML with an invalid schema stays an error, and valid force reconfiguration
+retains the existing lossless merge. Dry-run recovery cannot authorize a write.
+
+Slack test now accepts an explicit named account, uses both tokens from that
+exact authenticated bundle and checks the saved team binding plus usable WSS
+response. Missing/partial/unknown maps never fall back to scalar shadows.
+The result omits secret URLs and raw provider errors; failed preflights return
+a nonzero status. Legacy scalar tests remain available without --account.
+Doctor notifications resolve the actual runbook catalogue, including spaces and
+punctuation, instead of recommending absent flags or credential subcommands.
+
+Independent static source review APPROVE. Seventeen new Rust tests and twelve
+existing cases are newly registered: 2441 portable / 2216 Linux / 1001 Windows /
+204 focused channel (including existing CLI docgen drift check) / 117 macOS.
+The unchanged 61 Python product contracts and 20 Google Chat guards remain.
+No new dynamic pass is claimed; local compilation/runtime remain prohibited.
+
+The next Root-owned full CI milestone uses the frozen reviewed producer. Test
+execution continues after individual failures within existing time/resource
+limits and without retries. This addresses the previous full integration run's
+large unexecuted tail; it does not waive any failure or release gate.
+Root retains Git/PLAN/CI/final acceptance. No .slint edits or Claude polling.
+
 **W1951-W1953 daemon-start named-account readiness accepted (2026-09-30):**
 Run 36678205153 on bf046409 completed SUCCESS. Root verified all 7 original
 ZIP/API digests, 380 extracted entries,

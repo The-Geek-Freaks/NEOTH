@@ -630,7 +630,7 @@ class CiCadenceContractTests(unittest.TestCase):
             "\n".join(
                 [
                     "rm -f target/nextest/ci/junit.xml",
-                    "xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci",
+                    "xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast",
                 ]
             ),
         )
@@ -810,7 +810,7 @@ class CiCadenceContractTests(unittest.TestCase):
                     'if [[ "$RUNNER_OS" == "macOS" ]]; then',
                     "  nextest_features=(--features neothd-gui/macos-native-gui-test)",
                     "fi",
-                    'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail',
+                    'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast',
                 ]
             ),
         )
@@ -824,7 +824,7 @@ class CiCadenceContractTests(unittest.TestCase):
         discovery_step = platform_tests.index("Verify macOS native GUI fixture discovery")
         runtime_step = platform_tests.index("Run nextest workspace tests")
         runtime_command = platform_tests.index(
-            'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail'
+            'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast'
         )
         self.assertLess(compile_step, junit_cleanup)
         self.assertLess(junit_cleanup, compile_command)

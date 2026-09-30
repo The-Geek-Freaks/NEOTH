@@ -90,6 +90,14 @@ jobs:
             SRC/neothd/src/cli/onboarding_readiness.rs \
             SRC/neothd/src/cli/onboarding_status.rs \
             SRC/neothd/src/cli/doctor.rs \
+            SRC/neothd/src/cli/init.rs \
+            SRC/neothd/src/cli/init/io.rs \
+            SRC/neothd/src/cli/init/first_install_identity.rs \
+            SRC/neothd/src/cli/slack.rs \
+            SRC/neothd/src/channels/slack_api.rs \
+            SRC/neothd/src/daemon/doctor_cron.rs \
+            SRC/neothd/src/cli/docgen.rs \
+            docs/cli-commands.md \
             SRC/neothd/src/cli/privacy.rs \
             SRC/neothd/src/cli/doctor/checks/integrations.rs \
             SRC/neothd/src/daemon/post_init_cron.rs \
@@ -377,9 +385,39 @@ jobs:
           run_case 172 lib cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields --lib
           run_case 173 lib cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields --lib
           run_case 174 lib cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 174
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 174
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 174
+          run_case 175 lib cli::init::tests::malformed_config_requires_explicit_force_and_dry_run_keeps_bytes cli::init::tests::malformed_config_requires_explicit_force_and_dry_run_keeps_bytes --lib
+          run_case 176 lib cli::init::tests::force_recovery_preserves_malformed_bytes_until_config_commit cli::init::tests::force_recovery_preserves_malformed_bytes_until_config_commit --lib
+          run_case 177 lib cli::init::tests::force_recovery_refuses_changed_preimage_before_replacement cli::init::tests::force_recovery_refuses_changed_preimage_before_replacement --lib
+          run_case 178 lib cli::init::tests::force_recovery_refuses_missing_or_tampered_backup_before_replacement cli::init::tests::force_recovery_refuses_missing_or_tampered_backup_before_replacement --lib
+          run_case 179 lib cli::init::tests::run_init_force_recovers_malformed_config_through_later_rereads cli::init::tests::run_init_force_recovers_malformed_config_through_later_rereads --lib
+          run_case 180 lib cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields --lib
+          run_case 181 lib cli::init::tests::force_hydration_preserves_advanced_owned_values_without_importing_secrets cli::init::tests::force_hydration_preserves_advanced_owned_values_without_importing_secrets --lib
+          run_case 182 lib cli::init::tests::malformed_existing_yaml_fails_before_any_credential_mutation cli::init::tests::malformed_existing_yaml_fails_before_any_credential_mutation --lib
+          run_case 183 lib cli::init::tests::write_config_overwrites_existing_on_force_path cli::init::tests::write_config_overwrites_existing_on_force_path --lib
+          run_case 184 lib cli::slack::tests::mapped_slack_preflight_requires_an_explicit_account cli::slack::tests::mapped_slack_preflight_requires_an_explicit_account --lib
+          run_case 185 lib cli::slack::tests::mapped_slack_preflight_selects_exact_account_and_calls_both_probes cli::slack::tests::mapped_slack_preflight_selects_exact_account_and_calls_both_probes --lib
+          run_case 186 lib cli::slack::tests::mapped_slack_preflight_accepts_an_explicit_named_default_account cli::slack::tests::mapped_slack_preflight_accepts_an_explicit_named_default_account --lib
+          run_case 187 lib cli::slack::tests::mapped_slack_preflight_marks_stored_team_mismatch_unready_and_redacts_urls cli::slack::tests::mapped_slack_preflight_marks_stored_team_mismatch_unready_and_redacts_urls --lib
+          run_case 188 lib cli::slack::tests::slack_preflight_requires_a_usable_socket_url_and_returns_a_payload_free_failure cli::slack::tests::slack_preflight_requires_a_usable_socket_url_and_returns_a_payload_free_failure --lib
+          run_case 189 lib cli::slack::tests::slack_preflight_rejects_failed_auth_even_when_socket_endpoint_is_usable cli::slack::tests::slack_preflight_rejects_failed_auth_even_when_socket_endpoint_is_usable --lib
+          run_case 190 lib cli::slack::tests::mapped_slack_preflight_redacts_provider_failure_detail cli::slack::tests::mapped_slack_preflight_redacts_provider_failure_detail --lib
+          run_case 191 lib cli::slack::tests::legacy_slack_preflight_keeps_scalar_selection_without_account cli::slack::tests::legacy_slack_preflight_keeps_scalar_selection_without_account --lib
+          run_case 192 lib cli::slack::tests::mapped_slack_preflight_rejects_unknown_or_partial_accounts_without_scalar_fallback cli::slack::tests::mapped_slack_preflight_rejects_unknown_or_partial_accounts_without_scalar_fallback --lib
+          run_case 193 lib cli::slack::tests::credentials_only_slack_map_refuses_scalar_shadow_fallback cli::slack::tests::credentials_only_slack_map_refuses_scalar_shadow_fallback --lib
+          run_case 194 lib cli::slack::tests::public_cli_parses_slack_test_account_selector cli::slack::tests::public_cli_parses_slack_test_account_selector --lib
+          run_case 195 lib cli::slack::tests::slack_test_errors_when_credentials_missing cli::slack::tests::slack_test_errors_when_credentials_missing --lib
+          run_case 196 lib daemon::doctor_cron::tests::pass_status_returns_empty_suggested_command daemon::doctor_cron::tests::pass_status_returns_empty_suggested_command --lib
+          run_case 197 lib daemon::doctor_cron::tests::obsolete_home_isolation_maps_to_available_checks daemon::doctor_cron::tests::obsolete_home_isolation_maps_to_available_checks --lib
+          run_case 198 lib daemon::doctor_cron::tests::freedom_yaml_maps_to_exact_runbook daemon::doctor_cron::tests::freedom_yaml_maps_to_exact_runbook --lib
+          run_case 199 lib daemon::doctor_cron::tests::credentials_age_maps_to_supported_runbook daemon::doctor_cron::tests::credentials_age_maps_to_supported_runbook --lib
+          run_case 200 lib daemon::doctor_cron::tests::unknown_check_falls_back_to_available_checks daemon::doctor_cron::tests::unknown_check_falls_back_to_available_checks --lib
+          run_case 201 lib daemon::doctor_cron::tests::enrich_pass_outcome_has_empty_suggested_command daemon::doctor_cron::tests::enrich_pass_outcome_has_empty_suggested_command --lib
+          run_case 202 lib daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint --lib
+          run_case 203 lib cli::doctor::tests::cron_suggestions_resolve_every_documented_check cli::doctor::tests::cron_suggestions_resolve_every_documented_check --lib
+          run_case 204 lib cli::docgen::tests::cli_commands_md_is_up_to_date cli::docgen::tests::cli_commands_md_is_up_to_date --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 204
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 204
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 204
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

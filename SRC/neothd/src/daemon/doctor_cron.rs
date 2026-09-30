@@ -47,13 +47,12 @@ pub struct ActionableFinding {
     /// …). Derived deterministically from `check_name` via
     /// [`runbook_id_for`].
     pub runbook_id: String,
-    /// Operator-visible command they can copy-paste to fix the
-    /// finding, when one applies. Empty when the runbook says
-    /// "manual investigation needed".
+    /// Operator-visible command opening the finding's supported runbook.
+    /// Unknown names point to the available checks; PASS needs no action.
     pub suggested_command: String,
     /// One-line summary suitable for the proactive-channel
-    /// notification ("FAIL: home isolation — run `neoth doctor
-    /// --fix`").
+    /// notification ("FAIL: credentials age — run `neoth doctor
+    /// --explain 'credentials age'`").
     pub one_line: String,
 }
 
@@ -103,26 +102,15 @@ pub fn runbook_id_for(check_name: &str) -> String {
 }
 
 /// Build the operator-facing suggested command for a check.
-/// Returns empty when no canonical fix exists (operator runs
-/// `neoth doctor --check <id>` to re-read the runbook).
+/// Preserve the catalogue's exact names, including spaces and punctuation.
+/// An unknown name opens the catalogue instead of inventing a repair command.
 pub fn suggested_command_for(check_name: &str, status: &CheckStatus) -> String {
     if matches!(status, CheckStatus::Pass) {
         return String::new();
     }
-    let id = runbook_id_for(check_name);
-    // Pinned mapping of canonical fix commands. Adding a new
-    // mapping = one line here + a runbook entry under
-    // `cli::doctor::CHECK_DOCS`.
-    match id.as_str() {
-        // Home directory permissions — operator runs the
-        // `neoth doctor --fix-home-perms` helper.
-        "home_isolation" => "neoth doctor --fix-home-perms".to_string(),
-        // Missing freedom.yaml — re-run init.
-        "freedom_yaml" | "missing_freedom_yaml" => "neoth init".to_string(),
-        // Stale WAL credentials → re-issue.
-        "wal_dpapi" | "credential_age" => "neoth credentials rotate".to_string(),
-        // No canonical fix — operator re-reads the runbook entry.
-        _ => format!("neoth doctor --check {id}"),
+    match crate::cli::doctor::find_check_doc(check_name) {
+        Some(doc) => format!("neoth doctor --explain '{}'", doc.name),
+        None => "neoth doctor --list-checks".to_string(),
     }
 }
 
@@ -426,31 +414,31 @@ mod tests {
     }
 
     #[test]
-    fn home_isolation_maps_to_fix_home_perms() {
+    fn obsolete_home_isolation_maps_to_available_checks() {
         let cmd = suggested_command_for("home_isolation", &CheckStatus::Fail);
-        assert_eq!(cmd, "neoth doctor --fix-home-perms");
+        assert_eq!(cmd, "neoth doctor --list-checks");
     }
 
     #[test]
-    fn freedom_yaml_maps_to_init() {
+    fn freedom_yaml_maps_to_exact_runbook() {
         assert_eq!(
-            suggested_command_for("freedom_yaml", &CheckStatus::Fail),
-            "neoth init",
+            suggested_command_for("freedom.yaml", &CheckStatus::Fail),
+            "neoth doctor --explain 'freedom.yaml'",
         );
     }
 
     #[test]
-    fn wal_dpapi_maps_to_credentials_rotate() {
+    fn credentials_age_maps_to_supported_runbook() {
         assert_eq!(
-            suggested_command_for("wal_dpapi", &CheckStatus::Fail),
-            "neoth credentials rotate",
+            suggested_command_for("credentials age", &CheckStatus::Fail),
+            "neoth doctor --explain 'credentials age'",
         );
     }
 
     #[test]
-    fn unknown_check_falls_back_to_doctor_check_runbook() {
+    fn unknown_check_falls_back_to_available_checks() {
         let cmd = suggested_command_for("brand_new_check", &CheckStatus::Warn);
-        assert_eq!(cmd, "neoth doctor --check brand_new_check");
+        assert_eq!(cmd, "neoth doctor --list-checks");
     }
 
     // ── enrich_outcome ────────────────────────────────────────────
@@ -466,15 +454,15 @@ mod tests {
 
     #[test]
     fn enrich_fail_outcome_includes_try_hint() {
-        let o = outcome("home_isolation", CheckStatus::Fail, "g+r leaked");
+        let o = outcome("freedom.yaml", CheckStatus::Fail, "g+r leaked");
         let f = enrich_outcome(&o);
         assert_eq!(f.status, "FAIL");
-        assert_eq!(f.runbook_id, "home_isolation");
-        assert_eq!(f.suggested_command, "neoth doctor --fix-home-perms");
+        assert_eq!(f.runbook_id, "freedom_yaml");
+        assert_eq!(f.suggested_command, "neoth doctor --explain 'freedom.yaml'");
         assert!(f.one_line.contains("FAIL"));
-        assert!(f.one_line.contains("home_isolation"));
+        assert!(f.one_line.contains("freedom.yaml"));
         assert!(f.one_line.contains("g+r leaked"));
-        assert!(f.one_line.contains("neoth doctor --fix-home-perms"));
+        assert!(f.one_line.contains("neoth doctor --explain 'freedom.yaml'"));
     }
 
     #[test]

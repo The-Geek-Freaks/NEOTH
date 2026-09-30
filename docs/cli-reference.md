@@ -36,6 +36,24 @@ order. Existing JSON fields `telegram_enabled` and `whatsapp_enabled` remain
 available for older scripts. This is a setup snapshot; use `neoth status` to
 check the running daemon and listeners.
 
+If `freedom.yaml` contains malformed YAML, `neoth init --cli --force` preserves
+the exact bytes in a private `freedom.yaml.malformed-<id>.bak` file and prints
+its location before rebuilding configuration through the wizard. The original
+configuration remains in place until the replacement commits. A changed source
+or missing/changed backup stops replacement. Valid YAML with an unsupported
+configuration shape needs manual correction; it is not reset by this recovery.
+
+For named Slack accounts, use `neoth slack test --account work` with the exact
+configured account ID. The preflight checks both the bot credential and Socket
+Mode app credential, plus the saved workspace binding when present. A map
+requires an explicit account; no account is selected automatically. Legacy
+scalar credentials still use `neoth slack test`. Failed preflights return an
+error status, and results omit secret connection URLs.
+
+Doctor notifications link to `neoth doctor --explain '<exact check name>'` for
+the supported repair steps. Unknown check names point to `neoth doctor
+--list-checks`.
+
 ## Chat and recall
 
 ```bash

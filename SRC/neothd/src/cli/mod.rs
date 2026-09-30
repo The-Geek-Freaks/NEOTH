@@ -829,9 +829,10 @@ pub enum Commands {
     /// configured). NEOTH never touches the token directly.
     Github(github::GithubArgs),
 
-    /// Slack pre-flight (A-7). `test` validates xoxb + xapp tokens by
-    /// calling `auth.test` + `apps.connections.open` and reports the
-    /// WSS URL consumed by the live Socket Mode loop.
+    /// Slack pre-flight (A-7). `test --account <id>` validates a named
+    /// account's bot and app tokens with `auth.test` + `apps.connections.open`.
+    /// Legacy scalar credentials use `test` without `--account`. Secret URLs
+    /// are withheld from output.
     Slack(slack::SlackArgs),
 
     /// Todoist task management (TD-01). `list` / `add <content>` /

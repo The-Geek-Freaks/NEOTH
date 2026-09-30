@@ -261,6 +261,8 @@ jobs:
         run: cargo test --workspace --doc --locked
 
       - name: cargo nextest workspace (Linux)
+        # A milestone must expose remaining failures across the full suite.
+        # Continue after test failures within the existing timeout; no retries.
         timeout-minutes: 50
         working-directory: SRC
         env:
@@ -272,7 +274,7 @@ jobs:
           CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
-          xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci
+          xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast
 
       - name: Upload Linux JUnit report
         if: always()
@@ -458,6 +460,8 @@ jobs:
           key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Run nextest workspace tests
+        # Keep collecting failures within the bounded runtime budget instead
+        # of leaving most of the platform suite unrun after twenty failures.
         timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}
         shell: bash
         working-directory: SRC
@@ -470,7 +474,7 @@ jobs:
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             nextest_features=(--features neothd-gui/macos-native-gui-test)
           fi
-          cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail
+          cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast
 
       - name: Upload JUnit report
         if: always()

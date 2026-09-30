@@ -140,9 +140,38 @@ jobs:
           cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields	SRC/neothd/src/cli/serve_tasks.rs
           cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields	SRC/neothd/src/cli/serve_tasks.rs
           cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows	SRC/neothd/src/cli/serve_tasks.rs
+          cli::init::tests::malformed_config_requires_explicit_force_and_dry_run_keeps_bytes	SRC/neothd/src/cli/init.rs
+          cli::init::tests::force_recovery_preserves_malformed_bytes_until_config_commit	SRC/neothd/src/cli/init.rs
+          cli::init::tests::force_recovery_refuses_changed_preimage_before_replacement	SRC/neothd/src/cli/init.rs
+          cli::init::tests::force_recovery_refuses_missing_or_tampered_backup_before_replacement	SRC/neothd/src/cli/init.rs
+          cli::init::tests::run_init_force_recovers_malformed_config_through_later_rereads	SRC/neothd/src/cli/init.rs
+          cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields	SRC/neothd/src/cli/init.rs
+          cli::init::tests::force_hydration_preserves_advanced_owned_values_without_importing_secrets	SRC/neothd/src/cli/init.rs
+          cli::init::tests::malformed_existing_yaml_fails_before_any_credential_mutation	SRC/neothd/src/cli/init.rs
+          cli::init::tests::write_config_overwrites_existing_on_force_path	SRC/neothd/src/cli/init.rs
+          cli::slack::tests::mapped_slack_preflight_requires_an_explicit_account	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_preflight_selects_exact_account_and_calls_both_probes	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_preflight_accepts_an_explicit_named_default_account	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_preflight_marks_stored_team_mismatch_unready_and_redacts_urls	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::slack_preflight_requires_a_usable_socket_url_and_returns_a_payload_free_failure	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::slack_preflight_rejects_failed_auth_even_when_socket_endpoint_is_usable	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_preflight_redacts_provider_failure_detail	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::legacy_slack_preflight_keeps_scalar_selection_without_account	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_preflight_rejects_unknown_or_partial_accounts_without_scalar_fallback	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::credentials_only_slack_map_refuses_scalar_shadow_fallback	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::public_cli_parses_slack_test_account_selector	SRC/neothd/src/cli/slack.rs
+          cli::slack::tests::slack_test_errors_when_credentials_missing	SRC/neothd/src/cli/slack.rs
+          daemon::doctor_cron::tests::pass_status_returns_empty_suggested_command	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::obsolete_home_isolation_maps_to_available_checks	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::freedom_yaml_maps_to_exact_runbook	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::credentials_age_maps_to_supported_runbook	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::unknown_check_falls_back_to_available_checks	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::enrich_pass_outcome_has_empty_suggested_command	SRC/neothd/src/daemon/doctor_cron.rs
+          daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint	SRC/neothd/src/daemon/doctor_cron.rs
+          cli::doctor::tests::cron_suggestions_resolve_every_documented_check	SRC/neothd/src/cli/doctor.rs
           EOF
-          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 88
-          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 88
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 117
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 117
           cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
             shasum -a 256 "$source"
           done > "$evidence/source-sha256.txt"
@@ -178,8 +207,8 @@ jobs:
               failed=$((failed + 1))
             fi
           done < "$evidence/selection.tsv"
-          printf 'selected=88\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
-          test "$index" -eq 88 && test "$failed" -eq 0
+          printf 'selected=117\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq 117 && test "$failed" -eq 0
       - name: Preserve completed core compilation
         if: ${{ always() && steps.compile.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

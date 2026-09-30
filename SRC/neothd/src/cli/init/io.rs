@@ -27,6 +27,125 @@ pub(crate) fn fresh_wizard_state() -> WizardState {
     state
 }
 
+/// Force-only custody for a syntactically malformed `freedom.yaml`.
+///
+/// The backup is published before the wizard starts, but the malformed source
+/// remains at its canonical path until the normal config transaction commits.
+/// That preserves the last operator-visible configuration if setup is
+/// interrupted before the replacement boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct MalformedConfigRecovery {
+    expected_sha256: String,
+    pub(crate) backup_path: PathBuf,
+    backup_published: bool,
+}
+
+/// Inspect a malformed public config before `init --force` starts mutating.
+///
+/// This deliberately uses the bounded no-follow reader, and only treats a
+/// YAML parse failure as recoverable. Missing files are fresh installs; all
+/// filesystem shape, size, permission, UTF-8 and read failures stay errors.
+/// A normal init keeps rejecting malformed input. A dry run records no backup
+/// and never changes the source.
+pub(crate) fn prepare_malformed_config_recovery(
+    neoth_dir: &Path,
+    force: bool,
+    dry_run: bool,
+) -> Result<Option<MalformedConfigRecovery>> {
+    let path = neoth_dir.join("freedom.yaml");
+    let Some(bytes) = read_bounded_regular_file(&path, MAX_INITIALIZATION_CONFIG_BYTES)
+        .with_context(|| format!("inspect initialization config {}", path.display()))?
+    else {
+        return Ok(None);
+    };
+    std::str::from_utf8(&bytes).with_context(|| {
+        format!(
+            "{} is not UTF-8 and cannot be safely repaired",
+            path.display()
+        )
+    })?;
+    let parsed = serde_yaml::from_slice::<serde_yaml::Value>(&bytes);
+    if let Ok(value) = parsed {
+        // Valid YAML that fails the typed schema is not this recovery's
+        // malformed-document case. Keeping it visible avoids wiping an
+        // operator's future/unsupported configuration under `--force`.
+        serde_yaml::from_value::<crate::config::FreedomConfig>(value).with_context(|| {
+            format!(
+                "existing initialization config {} is invalid; run `neoth doctor --explain freedom.yaml` before changing it",
+                path.display()
+            )
+        })?;
+        return Ok(None);
+    }
+    if !force {
+        anyhow::bail!(
+            "existing initialization config {} is invalid; run `neoth init --force` to repair it",
+            path.display()
+        );
+    }
+    if dry_run {
+        return Ok(Some(MalformedConfigRecovery {
+            expected_sha256: sha256_hex(&bytes),
+            backup_path: malformed_config_backup_path(neoth_dir),
+            backup_published: false,
+        }));
+    }
+
+    ensure_dir_secure(neoth_dir)?;
+    let backup_path = malformed_config_backup_path(neoth_dir);
+    crate::util::atomic_write::write_private_create_new_durable(&backup_path, &bytes)
+        .with_context(|| format!("preserve malformed config at {}", backup_path.display()))?;
+    Ok(Some(MalformedConfigRecovery {
+        expected_sha256: sha256_hex(&bytes),
+        backup_path,
+        backup_published: true,
+    }))
+}
+
+fn malformed_config_backup_path(neoth_dir: &Path) -> PathBuf {
+    neoth_dir.join(format!(
+        "freedom.yaml.malformed-{}.bak",
+        uuid::Uuid::now_v7()
+    ))
+}
+
+fn verify_malformed_recovery_preimage(
+    freedom_yaml: &Path,
+    recovery: &MalformedConfigRecovery,
+) -> Result<()> {
+    if !recovery.backup_published {
+        anyhow::bail!(
+            "{} is a dry-run malformed-config recovery plan and cannot authorize a write",
+            recovery.backup_path.display()
+        );
+    }
+    let backup = read_bounded_regular_file(&recovery.backup_path, MAX_INITIALIZATION_CONFIG_BYTES)?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "malformed-config backup {} disappeared",
+                recovery.backup_path.display()
+            )
+        })?;
+    if sha256_hex(&backup) != recovery.expected_sha256 {
+        anyhow::bail!(
+            "malformed-config backup {} no longer matches its preserved source",
+            recovery.backup_path.display()
+        );
+    }
+    let bytes = read_bounded_regular_file(freedom_yaml, MAX_INITIALIZATION_CONFIG_BYTES)?
+        .ok_or_else(|| {
+            anyhow::anyhow!("{} disappeared before forced recovery", freedom_yaml.display())
+        })?;
+    if sha256_hex(&bytes) != recovery.expected_sha256 {
+        anyhow::bail!(
+            "{} changed after malformed-config backup {}; refusing to overwrite it",
+            freedom_yaml.display(),
+            recovery.backup_path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Hydrate every complete config object owned by the init wizard before a
 /// `--force` run. Steps then mutate only the answers they actually collect;
 /// advanced known fields retain their prior values, while the YAML merge in
@@ -1347,7 +1466,11 @@ fn merge_wizard_owned_config(
     Ok(output)
 }
 
-pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardState) -> Result<()> {
+pub(crate) async fn write_config(
+    neoth_dir: &std::path::Path,
+    state: &WizardState,
+    malformed_recovery: Option<&MalformedConfigRecovery>,
+) -> Result<()> {
     ensure_dir_secure(neoth_dir)?;
     ensure_dir_secure(&neoth_dir.join("credentials"))?;
 
@@ -1426,6 +1549,12 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
     // before overwriting so `neoth rollback list --kind config_write`
     // surfaces this rewrite. First-run wizard has no prior bytes →
     // skip (would produce a useless empty-restore snapshot).
+    if let Some(recovery) = malformed_recovery {
+        // The private backup was durably published before wizard input. Keep
+        // the malformed source in place until this immediate pre-commit
+        // check, then let the existing pair transaction replace it atomically.
+        verify_malformed_recovery_preimage(&freedom_yaml, recovery)?;
+    }
     let rollback_snapshot = if freedom_yaml.exists() {
         match snapshot_existing_config(&freedom_yaml).await {
             Ok(snapshot) => Some(snapshot),
@@ -1464,13 +1593,37 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
                 if let Some(snapshot) = rollback_snapshot.as_deref() {
                     ensure_snapshot_matches_source(source, snapshot)?;
                 }
-                let existing = source
-                    .map(|body| {
-                        serde_yaml::from_str(body).with_context(|| {
-                            format!("parse existing {} for merge", freedom_yaml.display())
+                if let Some(recovery) = malformed_recovery {
+                    let source = source.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{} disappeared before forced recovery commit",
+                            freedom_yaml.display()
+                        )
+                    })?;
+                    if sha256_hex(source.as_bytes()) != recovery.expected_sha256 {
+                        anyhow::bail!(
+                            "{} changed after malformed-config backup {}; refusing to overwrite it",
+                            freedom_yaml.display(),
+                            recovery.backup_path.display()
+                        );
+                    }
+                }
+                let existing = if malformed_recovery.is_some() {
+                    // The exact preimage was checked above and the durable
+                    // private backup retains every original byte. A malformed
+                    // document has no safe merge base, so rebuild only the
+                    // wizard-owned root rather than weakening valid-force
+                    // unknown-field preservation.
+                    None
+                } else {
+                    source
+                        .map(|body| {
+                            serde_yaml::from_str(body).with_context(|| {
+                                format!("parse existing {} for merge", freedom_yaml.display())
+                            })
                         })
-                    })
-                    .transpose()?;
+                        .transpose()?
+                };
                 let public_value = merge_wizard_owned_config(existing, &wizard_value)?;
                 let serialized = serde_yaml::to_string(&public_value)
                     .context("serialize losslessly merged init config for freedom.yaml")?;
