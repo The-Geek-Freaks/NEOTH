@@ -1,0 +1,121 @@
+{
+  "schema": "neoth-gold-wave1968-recovery-slack-integration-repair/v1",
+  "status": "SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "base": "02d6f9865f8037047df92a91fb11c484d0698fca",
+  "batches": [
+    "W1960",
+    "W1961",
+    "W1962",
+    "W1963",
+    "W1964",
+    "W1965",
+    "W1966"
+  ],
+  "localExecutableValidationRan": false,
+  "staticReview": "Independent source review APPROVE after encryption durability and JUnit path corrections",
+  "releaseAccepted": false,
+  "licenseNotices": {
+    "zipSha256": "a090f4fe88d5d56f21efbf633e57da23e646c697d76564574c0abcbbd1ab0e7e",
+    "run": 36685994397,
+    "sourceSha256": "3d250204546fab5543564558ec21f38f7297cb018fcc684744a7a69fea07aa9a",
+    "packagesAfter": 1222,
+    "snapshotChanged": false,
+    "artifact": 11083543769,
+    "restoredPackages": 15,
+    "packagesBefore": 1207
+  },
+  "slack": {
+    "hosted": "pending",
+    "proactive": "Exact authenticated named route required for active maps; no partial/unknown/scalar fallback before route writes",
+    "manualSend": "Exact named account through diagnostic coherent pair; legacy bot-only mode retained",
+    "newTestIdentities": 10,
+    "existingTestNewlyRegistered": 1,
+    "cron": "Selected account and sealed binding retained through existing durable egress checks"
+  },
+  "initRecovery": {
+    "hosted": "pending",
+    "fix": "Validated replacement encryption policy selected inside locked pair transaction, preserving encrypted credentials and future writes; original/backup custody retained",
+    "language": "Programmatic InitArgs Default matches CLI en; explicit empty validation retained",
+    "newRegressionTests": [
+      "cli::init::tests::force_recovery_preserves_existing_encrypted_credentials",
+      "cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key"
+    ]
+  },
+  "paperlessCleanup": {
+    "existingWindowsTestsNewlySelected": 2,
+    "hosted": "pending",
+    "fix": "Release owned Windows stage handles before identity-checked no-follow cleanup; preserve competing root and swapped stage",
+    "newTests": 0
+  },
+  "ci": {
+    "hosted": "pending",
+    "linux": "Independent nextest can run after doctest failure; doctest remains fatal and earlier setup/lint failures stop tests",
+    "nextestUpstreamCommit": "4cb109463d7f419d6475e2ea2f36eb3cabc1fbb6",
+    "windows": "ci-windows inherits ci; 65m global / 70m step / 80m compile / 160m job; build jobs1, test threads1, retries0",
+    "rustdoc": "Directory layout explicitly text",
+    "reportCustody": "Clear both profile JUnit paths before compile; upload runtime-selected profile"
+  },
+  "registeredSelections": {
+    "pythonContracts": 61,
+    "googleChatGuards": 20,
+    "portable": 2454,
+    "Windows": 1020,
+    "guiLinux": 159,
+    "guiUniversal": 126,
+    "channel": 221,
+    "Linux": 2229,
+    "macOS": 134
+  },
+  "originalIntegration": {
+    "run": 36685748514,
+    "sshTunnelTests": 39,
+    "cliReference": {
+      "sha256": "F05DC0C1D67CAE40FDBF456628740E9D0EAE4229C7D7509609E4156197D98805",
+      "sourceHeadMatches": true,
+      "matchesCommittedBlob": "58c6316d9fd6dbfa3cccb65b42e0725cd2dd8f27",
+      "zipSha256": "2381e200f856634eb22662da4489a3fb1727bb0f02ee04d12aa7180e9f23cace",
+      "artifact": 11083524113
+    },
+    "conclusion": "failure",
+    "producer": "02d6f9865f8037047df92a91fb11c484d0698fca",
+    "linux": "Clippy passed; doctest failed; nextest skipped",
+    "windows": {
+      "run": 14292,
+      "skipped": 28,
+      "runtimeSeconds": 2701.044,
+      "junitArtifact": 11087734430,
+      "failed": 3,
+      "unrun": 4570,
+      "total": 18862,
+      "zipSha256": "e17b67f933c4476d24ae79c07959d0b8a87886b49e383536c5e66e6c37c9904a",
+      "passed": 14289
+    },
+    "smoke": {
+      "errored": 0,
+      "total": 8,
+      "reportSha256": "4E13C14A4EBE2EEAE579DBDC8940C5C3A11C4519C47FF48F762029DE6DB9A0EF",
+      "artifact": 11083334951,
+      "zipSha256": "ebcc736384d69ede9eb99bdc1d62dffc39e7f59765f2e65e21b370e392ba09df",
+      "failed": 0,
+      "passed": 8
+    },
+    "evidenceSha256": "E4623FC49CC732DAF0E7CAA59179CAC85FD1325CB998D8DD4946724D709D32F1",
+    "channelAdapterTests": 7,
+    "evidence": "work/gold-20260906/wave1959-full-integration/final-evidence.json",
+    "macOS": {
+      "run": 18980,
+      "runtimeSeconds": 1082.461,
+      "failed": 163,
+      "zipSha256": "a8a3a18404354396fd5ffa32c23c230a2a857bbfd6b7db9b64045283463ff5a6",
+      "junitArtifact": 11089242621,
+      "passed": 18817,
+      "skipped": 29
+    },
+    "liveAudioExactTestsPerPlatform": 19
+  },
+  "deferred": {
+    "release": "Native signing, predecessor installer/PKG and full exact-producer release qualification remain open",
+    "W1967": "GUI Slack account candidate not imported: existing generic Slint rows expose Telegram-only edit/retire/pairing controls; required UI change conflicts with no-.slint boundary",
+    "macOS": "163 original failures retained and grouped for next diagnosis; not claimed repaired by this batch"
+  }
+}

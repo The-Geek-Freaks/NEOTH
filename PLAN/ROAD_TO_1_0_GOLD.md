@@ -8,6 +8,43 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1960-W1966 / W1968 recovery, named Slack and integration repair (2026-09-30; hosted pending):**
+Root retained the completed full CI run 36685748514 on 02d6f986. Public binary
+smoke passed 8/8; generated CLI reference matched; live-audio fixtures passed
+19 exact tests per OS, SSH passed 39 and channel adapters passed 7. Linux Clippy
+passed, but rustdoc failed and prevented nextest. Windows completed 14292/18862
+at the 45-minute limit (14289 passed, 3 failed, 4570 unrun). macOS completed
+18980 tests (18817 passed, 163 failed, 29 skipped). Full CI failed; no release
+or broad roadmap gate is accepted from these partial successes.
+
+The reviewed repair restores 15 exact RustCrypto notices from the original
+hosted export. Named Slack proactive routes, Cron and manual sends now retain
+exact authenticated account selection without scalar fallback for active maps.
+Malformed init recovery now commits through the durable pair transaction while
+preserving original/backup custody and matching encryption policy, including a
+subsequent ordinary credential write. Missing master key aborts before publish.
+Programmatic InitArgs defaults now match the CLI's English language default.
+Paperless releases its owned Windows staging handles before the existing
+identity-checked cleanup; competing or substituted directories stay protected.
+
+The directory-layout doctest is explicitly text. Linux nextest may continue
+after a failed doctest without hiding that failure. Windows alone inherits a
+65-minute Nextest profile, with 70-minute runtime and 160-minute job limits;
+one build job, one test thread and zero retries remain. Cached JUnit receipts
+for both profiles are cleared before compile and upload follows the used profile.
+
+Static review approved the imported sources. Twelve new Rust tests and one
+previously unregistered existing send test yield 2454 portable / 2229 Linux /
+1020 Windows / 134 macOS / 221 focused channel selections. GUI remains at
+126 universal and 159 Linux fixtures; 61 Python contracts and 20 Google Chat
+guards remain. Fresh hosted execution is required for these changed sources.
+The W1967 GUI Slack candidate is deferred: its needed UI gating would require
+forbidden .slint edits. The 163 original macOS failures remain the next diagnosis
+frontier, including 100 Paperless lifecycle cases; they are not claimed fixed.
+Report: docs/verification/gold-wave1968-recovery-slack-integration-repair.json.
+Root retains Git/PLAN/CI/final acceptance. Local BSOD hold stays absolute;
+Claude polling remains stopped. Raw open backlog lines are preserved below.
+
 **W1954-W1956 operator recovery and integration milestone (2026-09-30; hosted pending):**
 The CLI now repairs syntactically malformed freedom.yaml through explicit
 init --force. Exact original bytes are preserved in a private durable backup,

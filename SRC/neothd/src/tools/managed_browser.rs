@@ -7,9 +7,11 @@
 //!
 //! The immutable generation layout is:
 //!
-//!     <home>/managed-browser/generations/<platform>-<version>-<archive-sha256>/
-//!         .neoth-managed-browser-generation.json
-//!         chrome-headless-shell-<platform>/<reviewed executable>
+//! ```text
+//! <home>/managed-browser/generations/<platform>-<version>-<archive-sha256>/
+//!     .neoth-managed-browser-generation.json
+//!     chrome-headless-shell-<platform>/<reviewed executable>
+//! ```
 //!
 //! The resolver never turns a verified path into launch authority. It retains
 //! the capability and object bindings required for a downstream contained

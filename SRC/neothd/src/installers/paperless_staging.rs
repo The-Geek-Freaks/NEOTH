@@ -284,11 +284,14 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
     )
     .is_err()
     {
+        let stage_identity = stage_binding.identity_token().to_owned();
+        drop(stage_dir);
+        drop(stage_binding);
         let _ = crate::skills::store::remove_bound_real_directory_tree(
             &parent.dir,
             &stage_name,
             &stage_display,
-            stage_binding.identity_token(),
+            &stage_identity,
         );
         return Err(PaperlessStagingError::UnownedOrMismatch);
     }

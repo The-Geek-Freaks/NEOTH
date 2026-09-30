@@ -1342,6 +1342,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn force_recovery_preserves_existing_encrypted_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        std::fs::write(&path, "wal:\n  encryption: aes256_gcm_siv\n").unwrap();
+        crate::config::credentials::Credentials {
+            provider_key: Some(crate::secret::SecretString::from("prior-secret")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let encrypted_before = std::fs::read(&credentials_path).unwrap();
+        assert!(crate::config::credentials::credentials_blob_is_encrypted(
+            &encrypted_before
+        ));
+
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+        let recovery = prepare_malformed_config_recovery(&home, true, false)
+            .unwrap()
+            .expect("force recovery custody");
+
+        write_config(&home, &fixture_state(), Some(&recovery))
+            .await
+            .expect("rebuild malformed config without downgrading credentials");
+        let encrypted_after = std::fs::read(&credentials_path).unwrap();
+        assert!(crate::config::credentials::credentials_blob_is_encrypted(
+            &encrypted_after
+        ));
+        assert!(
+            !encrypted_after
+                .windows(b"prior-secret".len())
+                .any(|window| window == b"prior-secret"),
+            "recovery must not downgrade existing encrypted credentials to plaintext"
+        );
+        let recovered = crate::config::FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(
+            recovered.wal.encryption,
+            crate::config::WalEncryption::Aes256GcmSiv,
+            "recovery must publish a config that keeps existing credentials encrypted"
+        );
+
+        let mut normal_rmw =
+            crate::config::credentials::Credentials::load_or_default(&credentials_path).unwrap();
+        normal_rmw.telegram_token = Some(crate::secret::SecretString::from("after-recovery"));
+        normal_rmw.write(&credentials_path).unwrap();
+        let encrypted_after_normal_rmw = std::fs::read(&credentials_path).unwrap();
+        assert!(crate::config::credentials::credentials_blob_is_encrypted(
+            &encrypted_after_normal_rmw
+        ));
+        let reloaded =
+            crate::config::credentials::Credentials::load_or_default(&credentials_path).unwrap();
+        assert_eq!(
+            reloaded.provider_key.as_ref().unwrap().expose(),
+            "prior-secret"
+        );
+        assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn force_recovery_with_encrypted_credentials_refuses_missing_master_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".neoth");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        std::fs::write(&path, "wal:\n  encryption: aes256_gcm_siv\n").unwrap();
+        crate::config::credentials::Credentials {
+            provider_key: Some(crate::secret::SecretString::from("prior-secret")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let encrypted_before = std::fs::read(&credentials_path).unwrap();
+        assert!(crate::config::credentials::credentials_blob_is_encrypted(
+            &encrypted_before
+        ));
+
+        let original = b"operator_id: [broken\n";
+        std::fs::write(&path, original).unwrap();
+        let recovery = prepare_malformed_config_recovery(&home, true, false)
+            .unwrap()
+            .expect("force recovery custody");
+        std::fs::remove_file(crate::wal::master_key::master_key_path(&home)).unwrap();
+
+        assert!(
+            write_config(&home, &fixture_state(), Some(&recovery))
+                .await
+                .is_err(),
+            "missing key must abort recovery before either file is published"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read(&recovery.backup_path).unwrap(), original);
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), encrypted_before);
+    }
+
+    #[tokio::test]
     async fn force_recovery_refuses_changed_preimage_before_replacement() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join(".neoth");

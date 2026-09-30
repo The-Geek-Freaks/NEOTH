@@ -488,11 +488,19 @@ fn decode_credentials_yaml(path: &Path, raw: &[u8]) -> Result<zeroize::Zeroizing
     Ok(zeroize::Zeroizing::new(body))
 }
 
-fn encode_credentials_yaml(path: &Path, body: &str) -> Result<FileSnapshot> {
+fn encode_credentials_yaml(
+    path: &Path,
+    body: &str,
+    encryption_enabled_override: Option<bool>,
+) -> Result<FileSnapshot> {
     let home = transaction_directory(path);
-    let persisted = if crate::wal::master_key::wal_encryption_enabled_at(&home)
-        .context("resolve WAL/config at-rest encryption policy")?
-    {
+    let encryption_enabled = encryption_enabled_override
+        .map(Ok)
+        .unwrap_or_else(|| {
+            crate::wal::master_key::wal_encryption_enabled_at(&home)
+                .context("resolve WAL/config at-rest encryption policy")
+        })?;
+    let persisted = if encryption_enabled {
         match crate::wal::master_key::config_subkey_ensure_at(&home) {
             Some(key) => encrypt_credentials_body(&key, body)?,
             None => {
@@ -506,6 +514,19 @@ fn encode_credentials_yaml(path: &Path, body: &str) -> Result<FileSnapshot> {
         body.as_bytes().to_vec()
     };
     Ok(FileSnapshot::Present(zeroize::Zeroizing::new(persisted)))
+}
+
+/// Credential encryption policy for a raw public-config transaction.
+///
+/// The normal path derives policy from the currently committed public config.
+/// Forced malformed-config recovery cannot parse the current public source.
+/// It derives the replacement target's encryption setting from the captured
+/// credentials image inside the locked pair transaction, so an encrypted
+/// credential store never becomes orphaned or later downgraded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RawFreedomCredentialsEncryptionPolicy {
+    FromExistingFreedom,
+    PreserveExistingCredentialEncryption,
 }
 
 /// Shape of `credentials.yaml`. All fields optional so an operator who
@@ -3525,6 +3546,14 @@ impl Credentials {
     /// including the one-time AEAD nonce, so recovery can distinguish an exact
     /// committed image from an unexpected/tampered file.
     fn rendered_file_snapshot(&self, path: &Path) -> Result<FileSnapshot> {
+        self.rendered_file_snapshot_with_encryption_override(path, None)
+    }
+
+    fn rendered_file_snapshot_with_encryption_override(
+        &self,
+        path: &Path,
+        encryption_enabled_override: Option<bool>,
+    ) -> Result<FileSnapshot> {
         if self.is_empty() {
             return Ok(FileSnapshot::Missing);
         }
@@ -3537,7 +3566,7 @@ impl Credentials {
         // off the heap.
         let body =
             zeroize::Zeroizing::new(serde_yaml::to_string(self).context("serialise credentials")?);
-        encode_credentials_yaml(path, &body)
+        encode_credentials_yaml(path, &body, encryption_enabled_override)
     }
 
     /// Render an RMW target without deleting fields introduced by a newer
@@ -3550,8 +3579,20 @@ impl Credentials {
         path: &Path,
         before: &FileSnapshot,
     ) -> Result<FileSnapshot> {
+        self.rendered_file_snapshot_preserving_unknown_with_encryption_override(path, before, None)
+    }
+
+    fn rendered_file_snapshot_preserving_unknown_with_encryption_override(
+        &self,
+        path: &Path,
+        before: &FileSnapshot,
+        encryption_enabled_override: Option<bool>,
+    ) -> Result<FileSnapshot> {
         let FileSnapshot::Present(raw) = before else {
-            return self.rendered_file_snapshot(path);
+            return self.rendered_file_snapshot_with_encryption_override(
+                path,
+                encryption_enabled_override,
+            );
         };
         let original_body = decode_credentials_yaml(path, raw)?;
         let mut merged = SensitiveYamlValue(
@@ -3595,7 +3636,7 @@ impl Credentials {
         );
         let _: Self = serde_yaml::from_str(&body)
             .context("validate merged credentials after lossless update")?;
-        encode_credentials_yaml(path, &body)
+        encode_credentials_yaml(path, &body, encryption_enabled_override)
     }
 
     /// Sorted names of every explicitly configured credential field. The
@@ -4183,9 +4224,27 @@ impl Credentials {
     where
         F: FnOnce(Option<&str>, &mut Self) -> Result<(Option<String>, R)>,
     {
+        Self::update_raw_freedom_with_credentials_at_with_encryption_policy(
+            freedom_path,
+            credentials_path,
+            RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom,
+            mutation,
+        )
+    }
+
+    pub(crate) fn update_raw_freedom_with_credentials_at_with_encryption_policy<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        encryption_policy: RawFreedomCredentialsEncryptionPolicy,
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(Option<&str>, &mut Self) -> Result<(Option<String>, R)>,
+    {
         Self::update_raw_freedom_with_credentials_at_using_fault(
             freedom_path,
             credentials_path,
+            encryption_policy,
             mutation,
             |_| Ok(()),
         )
@@ -4204,6 +4263,7 @@ impl Credentials {
         Self::update_raw_freedom_with_credentials_at_using_fault(
             freedom_path,
             credentials_path,
+            RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom,
             mutation,
             |actual| {
                 let matches = matches!(
@@ -4493,6 +4553,7 @@ impl Credentials {
     fn update_raw_freedom_with_credentials_at_using_fault<F, R, H>(
         freedom_path: &Path,
         credentials_path: &Path,
+        encryption_policy: RawFreedomCredentialsEncryptionPolicy,
         mutation: F,
         fault: H,
     ) -> Result<R>
@@ -4523,24 +4584,89 @@ impl Credentials {
                             format!("load {} for raw update", credentials_path.display())
                         })?;
                     let (freedom_target, value) = mutation(source, &mut credentials)?;
-                    let freedom_target = freedom_target.map(zeroize::Zeroizing::new);
-                    if let Some(target) = freedom_target.as_ref() {
+                    let mut freedom_target = freedom_target.map(zeroize::Zeroizing::new);
+                    let credentials_were_encrypted = credentials_before
+                        .present_bytes()
+                        .is_some_and(credentials_blob_is_encrypted);
+                    if matches!(
+                        encryption_policy,
+                        RawFreedomCredentialsEncryptionPolicy::PreserveExistingCredentialEncryption
+                    )
+                        && credentials_were_encrypted
+                    {
+                        let target = freedom_target.as_mut().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "malformed-config recovery must publish a replacement freedom.yaml"
+                            )
+                        })?;
+                        let mut target_value: serde_yaml::Value = serde_yaml::from_str(target)
+                            .with_context(|| {
+                                format!(
+                                    "parse malformed-config recovery target for {}",
+                                    freedom_path.display()
+                                )
+                            })?;
+                        let root = target_value.as_mapping_mut().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "malformed-config recovery target must be a YAML mapping"
+                            )
+                        })?;
+                        let wal_key = serde_yaml::Value::String("wal".to_string());
+                        let encryption_key = serde_yaml::Value::String("encryption".to_string());
+                        let wal = root
+                            .entry(wal_key)
+                            .or_insert_with(|| serde_yaml::Value::Mapping(Default::default()));
+                        let wal = wal.as_mapping_mut().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "malformed-config recovery target wal must be a YAML mapping"
+                            )
+                        })?;
+                        wal.insert(
+                            encryption_key,
+                            serde_yaml::Value::String("aes256_gcm_siv".to_string()),
+                        );
+                        *target = zeroize::Zeroizing::new(
+                            serde_yaml::to_string(&target_value).with_context(|| {
+                                format!(
+                                    "serialize malformed-config recovery target for {}",
+                                    freedom_path.display()
+                                )
+                            })?,
+                        );
+                    }
+                    let target_encryption_enabled = if let Some(target) = freedom_target.as_ref()
+                    {
                         let candidate: super::FreedomConfig = serde_yaml::from_str(target)
                             .with_context(|| {
                                 format!("validate raw target for {}", freedom_path.display())
                             })?;
                         let _ = candidate.public_yaml()?;
-                    }
+                        Some(candidate.wal.encryption == super::WalEncryption::Aes256GcmSiv)
+                    } else {
+                        None
+                    };
+                    let encryption_enabled_override = match encryption_policy {
+                        RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom => None,
+                        RawFreedomCredentialsEncryptionPolicy::PreserveExistingCredentialEncryption => {
+                            anyhow::ensure!(
+                                target_encryption_enabled == Some(credentials_were_encrypted),
+                                "malformed-config recovery target encryption must match the captured credentials image"
+                            );
+                            Some(credentials_were_encrypted)
+                        }
+                    };
                     let freedom_after = match freedom_target.as_ref() {
                         Some(target) => FileSnapshot::Present(zeroize::Zeroizing::new(
                             target.as_bytes().to_vec(),
                         )),
                         None => freedom_before.duplicate(),
                     };
-                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
-                        credentials_path,
-                        &credentials_before,
-                    )?;
+                    let credentials_after = credentials
+                        .rendered_file_snapshot_preserving_unknown_with_encryption_override(
+                            credentials_path,
+                            &credentials_before,
+                            encryption_enabled_override,
+                        )?;
                     let write_freedom = freedom_target.as_ref().map(|_| {
                         |path: &Path, body: &[u8]| {
                             crate::util::atomic_write::atomic_write_private(path, body)
@@ -7065,6 +7191,7 @@ mod tests {
         let error = Credentials::update_raw_freedom_with_credentials_at_using_fault(
             &freedom_path,
             &credentials_path,
+            RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom,
             |_source, credentials| {
                 credentials.provider_key = None;
                 Ok((None, ()))
@@ -7107,6 +7234,7 @@ mod tests {
         let error = Credentials::update_raw_freedom_with_credentials_at_using_fault(
             &freedom_path,
             &credentials_path,
+            RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom,
             |source, credentials| {
                 assert!(source.is_none());
                 credentials.provider_key = Some(SecretString::from("first-run-provider"));

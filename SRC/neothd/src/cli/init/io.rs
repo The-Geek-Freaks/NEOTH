@@ -1588,10 +1588,17 @@ pub(crate) async fn write_config(
     } else {
         None
     };
+    let encryption_policy = if malformed_recovery.is_some() {
+        crate::config::credentials::
+            RawFreedomCredentialsEncryptionPolicy::PreserveExistingCredentialEncryption
+    } else {
+        crate::config::credentials::RawFreedomCredentialsEncryptionPolicy::FromExistingFreedom
+    };
     let transaction =
-        crate::config::credentials::Credentials::update_raw_freedom_with_credentials_at(
+        crate::config::credentials::Credentials::update_raw_freedom_with_credentials_at_with_encryption_policy(
             &freedom_yaml,
             &cred_path,
+            encryption_policy,
             |source, credentials| {
                 if let Some(snapshot) = rollback_snapshot.as_deref() {
                     ensure_snapshot_matches_source(source, snapshot)?;

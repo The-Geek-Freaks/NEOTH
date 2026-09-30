@@ -50,6 +50,23 @@ requires an explicit account; no account is selected automatically. Legacy
 scalar credentials still use `neoth slack test`. Failed preflights return an
 error status, and results omit secret connection URLs.
 
+For a one-shot manual message, use
+`neoth slack send --account work --channel C0123456789 --message "Build complete"`.
+The selected account supplies the bot credential; `--channel` is the explicit
+destination. An active map requires an exact authenticated account and rejects
+partial or shadowed credentials before sending. Legacy scalar sends omit
+`--account` and still require only the bot token.
+
+To select a named account for proactive delivery, use
+`neoth proactive route --source cron:daily-briefing --channel slack --account work`.
+Telegram routes use the same explicit account selector. Active account maps
+require an exact authenticated account; incomplete maps and unknown accounts
+are rejected before saving the route. Cron retains the selected account and
+its credential binding in each queued item, so later configuration changes
+cannot silently switch that item to a different account. Existing scalar
+routes remain available without `--account`; normal recipient and delivery
+policy checks still apply.
+
 Doctor notifications link to `neoth doctor --explain '<exact check name>'` for
 the supported repair steps. Unknown check names point to `neoth doctor
 --list-checks`.

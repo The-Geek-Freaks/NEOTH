@@ -175,6 +175,8 @@ jobs:
           skills::store::reported_commit_tests::private_stage_create_new_reports_sharing_violation_with_retained_delete_parent	neothd/src/skills/store.rs
           skills::store::reported_commit_tests::private_stage_create_new_succeeds_after_releasing_delete_binding	neothd/src/skills/store.rs
           installers::paperless_staging::tests::stage_source_swap_before_late_mutation_rebind_is_refused	neothd/src/installers/paperless_staging.rs
+          installers::paperless_staging::tests::competing_root_before_publication_is_preserved	neothd/src/installers/paperless_staging.rs
+          installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused	neothd/src/installers/paperless_staging.rs
           installers::paperless_staging::tests::requested_namespace_revalidation_composes_with_held_delete_binding	neothd/src/installers/paperless_staging.rs
           installers::paperless_staging::tests::requested_namespace_revalidation_rejects_wrong_generation_with_held_delete_binding	neothd/src/installers/paperless_staging.rs
           skills::doc_distill::tests::review_handle_rejects_later_writer_and_deleter	neothd/src/skills/doc_distill.rs
@@ -1047,6 +1049,8 @@ jobs:
           cli::init::tests::force_recovery_refuses_changed_preimage_before_replacement	neothd/src/cli/init.rs
           cli::init::tests::force_recovery_refuses_missing_or_tampered_backup_before_replacement	neothd/src/cli/init.rs
           cli::init::tests::run_init_force_recovers_malformed_config_through_later_rereads	neothd/src/cli/init.rs
+          cli::init::tests::force_recovery_preserves_existing_encrypted_credentials	neothd/src/cli/init.rs
+          cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key	neothd/src/cli/init.rs
           cli::init::tests::write_config_losslessly_merges_unknown_top_level_and_nested_fields	neothd/src/cli/init.rs
           cli::init::tests::force_hydration_preserves_advanced_owned_values_without_importing_secrets	neothd/src/cli/init.rs
           cli::init::tests::malformed_existing_yaml_fails_before_any_credential_mutation	neothd/src/cli/init.rs
@@ -1071,6 +1075,21 @@ jobs:
           daemon::doctor_cron::tests::enrich_pass_outcome_has_empty_suggested_command	neothd/src/daemon/doctor_cron.rs
           daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint	neothd/src/daemon/doctor_cron.rs
           cli::doctor::tests::cron_suggestions_resolve_every_documented_check	neothd/src/cli/doctor.rs
+          cli::proactive::tests::mapped_slack_route_requires_an_exact_account_and_never_writes_before_validation	neothd/src/cli/proactive.rs
+          cli::proactive::tests::scalar_slack_route_stays_legacy_unbound_without_an_account_selector	neothd/src/cli/proactive.rs
+          cli::proactive::tests::unbound_non_account_route_does_not_load_unrelated_account_configuration	neothd/src/cli/proactive.rs
+          cli::proactive::tests::public_cli_parses_an_exact_slack_route_account	neothd/src/cli/proactive.rs
+          cli::proactive::tests::mapped_telegram_route_requires_and_persists_an_exact_account	neothd/src/cli/proactive.rs
+          cli::proactive::tests::route_account_rejects_unbound_channels_and_unknown_bindings	neothd/src/cli/proactive.rs
+          cron::runner::workstream_c_tests::cron_delivery_persists_the_exact_sealed_slack_account_from_its_selected_route	neothd/src/cron/runner.rs
+          cron::runner::workstream_c_tests::cron_bound_slack_route_refuses_a_missing_exact_binding_without_scalar_fallback	neothd/src/cron/runner.rs
+          cron::runner::workstream_c_tests::cron_delivery_persists_the_account_from_its_selected_route	neothd/src/cron/runner.rs
+          cron::runner::workstream_c_tests::production_bound_unsupported_cron_route_rejects_before_queue_admission	neothd/src/cron/runner.rs
+          cli::slack::tests::mapped_slack_send_selects_the_exact_account_before_the_injected_post_seam	neothd/src/cli/slack.rs
+          cli::slack::tests::mapped_slack_send_refuses_missing_unknown_or_partial_accounts_before_post_selection	neothd/src/cli/slack.rs
+          cli::slack::tests::legacy_slack_send_uses_only_the_bot_token_and_rejects_an_account_selector	neothd/src/cli/slack.rs
+          cli::slack::tests::public_cli_parses_slack_send_account_selector	neothd/src/cli/slack.rs
+          cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing	neothd/src/cli/slack.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -1095,7 +1114,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 1001 ]]; then
+          if [[ "$expected" -ne 1020 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/cli/channel/converted_relink.rs neothd/src/cli/doctor/checks/integrations.rs neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1181,7 +1200,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 1001 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 1020 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

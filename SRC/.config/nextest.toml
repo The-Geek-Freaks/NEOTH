@@ -19,3 +19,9 @@ path = "junit.xml"
 report-name = "neoth-nextest"
 store-success-output = false
 store-failure-output = true
+
+# The serial Windows suite needs more than 45m (run 36685748514).
+# Inherit retries, per-test limits and JUnit settings without extending Linux.
+[profile.ci-windows]
+inherits = "ci"
+global-timeout = "65m"

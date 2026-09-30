@@ -200,7 +200,7 @@ pub enum OperatorRole {
 }
 
 /// Arguments for `neoth init`.
-#[derive(Args, Debug, Clone, Default)]
+#[derive(Args, Debug, Clone)]
 pub struct InitArgs {
     /// Run without interactive prompts. All values via flags.
     /// On a TTY, `neoth init` defaults to interactive; pass this to force
@@ -505,6 +505,67 @@ pub struct InitArgs {
     /// Output final config as JSON to stdout.
     #[arg(long)]
     pub output_json: bool,
+}
+
+impl Default for InitArgs {
+    fn default() -> Self {
+        Self {
+            non_interactive: false,
+            gui: false,
+            begin_from_gui: false,
+            complete_from_gui: false,
+            check_completion_from_gui: false,
+            cli: false,
+            accept_license: false,
+            experience_level_override: None,
+            operator_id: None,
+            language: "en".to_string(),
+            code_language: None,
+            role: None,
+            provider: None,
+            provider_binary: None,
+            provider_key: None,
+            provider_endpoint: None,
+            provider_model: None,
+            provider_region: None,
+            provider_api_version: None,
+            auto_update: false,
+            auto_update_apply: false,
+            no_auto_update: false,
+            telegram_token: None,
+            telegram_user_id: None,
+            omi: false,
+            no_omi: false,
+            omi_mode: None,
+            omi_endpoint: None,
+            omi_listen_addr: None,
+            omi_allow_cloud_api: None,
+            omi_retention_days: None,
+            omi_retain_transcripts: None,
+            omi_audio: None,
+            omi_images: None,
+            omi_video: None,
+            omi_create_actions: None,
+            omi_seed_groundtruth: None,
+            omi_summary: None,
+            omi_allow_cloud_summary: None,
+            autonomy: None,
+            inference_mode: None,
+            zero_friction: false,
+            accelerator_override: None,
+            embedding_provider: None,
+            council_depth: None,
+            enable_plugin: Vec::new(),
+            download_qwen_weights: false,
+            install_obsidian: false,
+            bootstrap_vault: false,
+            install_n8n: false,
+            import_memory: None,
+            force: false,
+            dry_run: false,
+            output_json: false,
+        }
+    }
 }
 
 /// GOLD-COR-07 / A-26: single source of truth for the `WizardState::

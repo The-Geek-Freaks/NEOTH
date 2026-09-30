@@ -3559,7 +3559,7 @@ GOLD-FEAT-13 — view or set per-purpose channel routing for proactive sends (`~
 - `--dest <DEST>` — Per-channel destination id (use with `--channel`)
 - `--default` — Set `--channel` as the default proactive destination
 - `--failure` — Set `--channel` as the failure-alert destination
-- `--account <ACCOUNT>` — Exact configured Telegram account for this route. Required for new Telegram route mutations while the Telegram account map is active
+- `--account <ACCOUNT>` — Exact configured Telegram or Slack account for this route. Required for new route mutations while that channel's account map is active
 
 ### `neoth proactive show`
 
@@ -4635,8 +4635,9 @@ Slack pre-flight (A-7). `test --account <id>` validates a named account's bot an
 
 ### `neoth slack send`
 
-Send a one-shot message to a Slack channel via `chat.postMessage`. Uses `credentials.yaml::slack_bot_token`. `channel` accepts an id (`Cxxxxxx`), a DM id (`Dxxxxxx`), or `#channel-name` (Slack resolves server-side). Returns the message timestamp (Slack's `ts`) so operators can correlate with later edits/reactions
+Send a one-shot message to a Slack channel via `chat.postMessage`. A named Slack account map requires `--account`; legacy scalar Slack uses no selector. `channel` accepts an id (`Cxxxxxx`), a DM id (`Dxxxxxx`), or `#channel-name` (Slack resolves server-side). Returns the message timestamp (Slack's `ts`) so operators can correlate with later edits/reactions
 
+- `--account <ACCOUNT>` — Exact configured Slack account. Required whenever a Slack account map is active
 - `--channel <CHANNEL>` — Channel id or `#name`
 - `--message <MESSAGE>` — Message body (UTF-8, Slack mrkdwn supported)
 

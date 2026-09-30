@@ -1442,26 +1442,47 @@ fn resolve_cron_delivery_route(
             Ok((configured_channel.trim().to_ascii_lowercase(), None, None))
         }
         Some(RouteTarget::Bound { channel_ref }) => {
-            anyhow::ensure!(
-                channel_ref.channel_id == crate::channels::registry::ChannelId::Telegram,
-                "account-bound Cron delivery route for `{}` is unsupported; only Telegram account routes can be queued",
-                channel_ref.channel_id.as_str(),
-            );
-            let runtime =
-                crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+            let binding = match channel_ref.channel_id {
+                crate::channels::registry::ChannelId::Telegram => {
+                    let runtime = crate::config::load_runtime_config_pair_from_path(
+                        &home.join("freedom.yaml"),
+                    )
                     .context("load coherent runtime pair for account-bound Cron delivery")?;
-            let binding = runtime
-                .authenticated_telegram_accounts()?
-                .into_iter()
-                .find_map(|account| {
-                    let binding = account.account_binding()?;
-                    (binding.channel_ref() == &channel_ref).then_some(binding)
-                })
-                .context(
-                    "account-bound Cron delivery route is not authenticated with its sealed binding in the coherent runtime pair",
-                )?;
+                    runtime
+                        .authenticated_telegram_accounts()?
+                        .into_iter()
+                        .find_map(|account| {
+                            let binding = account.account_binding()?;
+                            (!account.is_legacy_singleton()
+                                && binding.channel_ref() == &channel_ref)
+                                .then_some(binding)
+                        })
+                }
+                crate::channels::registry::ChannelId::Slack => {
+                    let runtime = crate::config::load_runtime_config_pair_from_path(
+                        &home.join("freedom.yaml"),
+                    )
+                    .context("load coherent runtime pair for account-bound Cron delivery")?;
+                    runtime
+                        .authenticated_slack_accounts()?
+                        .into_iter()
+                        .find_map(|account| {
+                            let binding = account.account_binding()?;
+                            (!account.is_legacy_singleton()
+                                && binding.channel_ref() == &channel_ref)
+                                .then_some(binding)
+                        })
+                }
+                _ => anyhow::bail!(
+                    "account-bound Cron delivery route for `{}` is unsupported; only Telegram and Slack account routes can be queued",
+                    channel_ref.channel_id.as_str(),
+                ),
+            }
+            .context(
+                "account-bound Cron delivery route is not authenticated with its sealed binding in the coherent runtime pair",
+            )?;
             Ok((
-                "telegram".to_string(),
+                channel_ref.channel_id.as_str().to_string(),
                 Some(channel_ref.account_id),
                 Some(binding),
             ))
@@ -2970,15 +2991,107 @@ channel_accounts:
         assert!(reloaded.peek()[0].account_binding.is_some());
     }
 
+    #[test]
+    fn cron_delivery_persists_the_exact_sealed_slack_account_from_its_selected_route() {
+        let dir = tempdir().unwrap();
+        let account = crate::channels::registry::ChannelAccountId::new("work").unwrap();
+        let mut routing = ChannelRouting::default();
+        routing.by_source.insert(
+            "cron:daily".to_string(),
+            RouteTarget::Bound {
+                channel_ref: crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Slack,
+                    account.clone(),
+                ),
+            },
+        );
+        routing
+            .save_to(&dir.path().join(CHANNEL_ROUTING_FILE))
+            .unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      allowed_user_id: U123WORK\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      bot_token: xoxb-work-token\n      app_token: xapp-work-token\n",
+        )
+        .unwrap();
+
+        let (channel, selected_account, binding) =
+            resolve_cron_delivery_route(dir.path(), "daily", "cli").unwrap();
+        assert_eq!(channel, "slack");
+        assert_eq!(selected_account, Some(account.clone()));
+        assert_eq!(
+            binding.as_ref().unwrap().channel_ref().channel_id,
+            crate::channels::registry::ChannelId::Slack
+        );
+        assert_eq!(binding.as_ref().unwrap().channel_ref().account_id, account);
+
+        let queue_path = dir.path().join("proactive_queue.json");
+        enqueue_cron_delivery_with_binding(
+            &queue_path,
+            "daily",
+            &channel,
+            selected_account,
+            binding.clone(),
+            "finished body",
+            "cron-delivery:daily:slack",
+            1_700_000_000,
+        )
+        .unwrap();
+        let reloaded = ProactiveQueue::load_from(&queue_path).unwrap();
+        let item = &reloaded.peek()[0];
+        assert_eq!(item.channel, "slack");
+        assert_eq!(item.account_id, Some(account));
+        assert_eq!(item.account_binding, binding);
+    }
+
+    #[test]
+    fn cron_bound_slack_route_refuses_a_missing_exact_binding_without_scalar_fallback() {
+        let dir = tempdir().unwrap();
+        let mut routing = ChannelRouting::default();
+        routing.by_source.insert(
+            "cron:daily".to_string(),
+            RouteTarget::Bound {
+                channel_ref: crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Slack,
+                    crate::channels::registry::ChannelAccountId::new("work").unwrap(),
+                ),
+            },
+        );
+        routing
+            .save_to(&dir.path().join(CHANNEL_ROUTING_FILE))
+            .unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    personal:\n      allowed_user_id: U123PERSONAL\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    personal:\n      bot_token: xoxb-personal-token\n      app_token: xapp-personal-token\n",
+        )
+        .unwrap();
+
+        let error = resolve_cron_delivery_route(dir.path(), "daily", "slack").unwrap_err();
+        assert!(error.to_string().contains("not authenticated with its sealed binding"));
+        assert!(
+            !dir.path().join("proactive_queue.json").exists(),
+            "a named Slack route must not fall back to another account or a scalar queue item"
+        );
+    }
+
     #[tokio::test]
-    async fn production_bound_non_telegram_cron_route_rejects_before_queue_admission() {
+    async fn production_bound_unsupported_cron_route_rejects_before_queue_admission() {
         let home = tempdir().unwrap();
         let mut routing = ChannelRouting::default();
         routing.by_source.insert(
             "cron:delivery-job".to_string(),
             RouteTarget::Bound {
                 channel_ref: crate::channels::registry::ChannelRef::new(
-                    crate::channels::registry::ChannelId::Slack,
+                    crate::channels::registry::ChannelId::Discord,
                     crate::channels::registry::ChannelAccountId::new("ops_a").unwrap(),
                 ),
             },

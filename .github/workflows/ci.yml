@@ -256,11 +256,15 @@ jobs:
         run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       - name: cargo doctest workspace
+        id: doctests
         timeout-minutes: 20
         working-directory: SRC
         run: cargo test --workspace --doc --locked
 
       - name: cargo nextest workspace (Linux)
+        # A documentation failure remains fatal to the job, but must not hide
+        # the independent runtime suite. Earlier setup/lint failures still stop it.
+        if: ${{ !cancelled() && (steps.doctests.outcome == 'success' || steps.doctests.outcome == 'failure') }}
         # A milestone must expose remaining failures across the full suite.
         # Continue after test failures within the existing timeout; no retries.
         timeout-minutes: 50
@@ -323,9 +327,9 @@ jobs:
             test_threads: 1
             junit_name: windows
             test_build_timeout_minutes: 80
-            test_execution_timeout_minutes: 60
-            # 80-minute compile + 60-minute execution + 10-minute setup/cache margin.
-            job_timeout_minutes: 150
+            test_execution_timeout_minutes: 70
+            # 80-minute compile + 70-minute execution + 10-minute setup/cache margin.
+            job_timeout_minutes: 160
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -380,7 +384,7 @@ jobs:
         shell: bash
         working-directory: SRC
         run: |
-          rm -f target/nextest/ci/junit.xml
+          rm -f target/nextest/ci/junit.xml target/nextest/ci-windows/junit.xml
           if [[ "$RUNNER_OS" != "macOS" ]]; then
             cargo nextest run --workspace --locked --profile ci --no-run
             exit 0
@@ -474,14 +478,18 @@ jobs:
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             nextest_features=(--features neothd-gui/macos-native-gui-test)
           fi
-          cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast
+          nextest_profile=ci
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            nextest_profile=ci-windows
+          fi
+          cargo nextest run --workspace --locked --profile "$nextest_profile" "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast
 
       - name: Upload JUnit report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nextest-junit-${{ matrix.junit_name }}
-          path: SRC/target/nextest/ci/junit.xml
+          path: SRC/target/nextest/${{ runner.os == 'Windows' && 'ci-windows' || 'ci' }}/junit.xml
           if-no-files-found: warn
           retention-days: 14
 

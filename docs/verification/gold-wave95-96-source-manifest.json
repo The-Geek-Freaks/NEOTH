@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T07:42:21.0453383Z",
-  "validationStatus": "W1958 missing-host fixture corrected; hosted execution pending",
+  "capturedUtc": "2026-09-30T10:05:27.1399172Z",
+  "validationStatus": "W1968 reviewed source; exact hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -28,8 +28,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 39985,
-      "sha256": "7872B7F07AD4DF67869BB20B78C797C251340E1758C06123F89F707CBC4DA76C"
+      "bytes": 40515,
+      "sha256": "7087CE216CEDE3D6485EE246CBEE9F0389598C25E52B155FA6AB6B5750C9765D"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 64788,
-      "sha256": "B551A832A2B1E10D856C4E8A4BD0D4B45B9FC8CED3873B540CC2BA07DEB0D6E8"
+      "bytes": 68582,
+      "sha256": "F69AB83C04CCB1F661BA3C9B26BC9159AF97EAB91EDE915A66D39C5F8FD69AB9"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 19723,
-      "sha256": "5B379A457BA19F6CA66FC69837195162F5B8E7768BC7E9EC7B420D26550C9DDD"
+      "bytes": 21947,
+      "sha256": "9D52CE55D0674891828F1EF3D6489ECE5B95A124BCD7AE2CD33CC702572358DC"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 30457,
-      "sha256": "FCF8FE9CC7624402F1345C32B97363B4E06C5CB14A7B9A3A604F96A748E8577C"
+      "bytes": 30598,
+      "sha256": "030AC58EC32D4E7E9F5DDC5251ABE03EA55DA38E7B6909DA4441D6EFAAB0F1F6"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -188,8 +188,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 167592,
-      "sha256": "7BD164DEB9EC16FB9D1C752F51CA18521EBE359C0894AC401CBD314E5EDA69F3"
+      "bytes": 170027,
+      "sha256": "88C135645D82E548D98BEBE5A5BF1723131CFF856708B5E7ACF3F618A0A7CCBF"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -228,13 +228,13 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 258296,
-      "sha256": "F05DC0C1D67CAE40FDBF456628740E9D0EAE4229C7D7509609E4156197D98805"
+      "bytes": 258450,
+      "sha256": "2968BFDEE08E23C39187BBF9501326EC14D9E309C1AA628CB691FD0F5CE11BAB"
     },
     {
       "path": "docs/cli-reference.md",
-      "bytes": 28468,
-      "sha256": "4901361663E760A2666E73892733938CE05B98B2623F09FCA8EFAD88903B83E4"
+      "bytes": 29487,
+      "sha256": "CD5654A92F7488808A61CF8B0C74674F4D41A1EDA51A6D2045BB8B768FAB4853"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -2862,6 +2862,11 @@
       "sha256": "6D0EED4103E2DD349B0E59E623F36883B1815D6B401137A21CC03A3F5BCE4ACD"
     },
     {
+      "path": "docs/verification/gold-wave1968-recovery-slack-integration-repair.json",
+      "bytes": 4977,
+      "sha256": "4906727A3C68C0FC416D7ACC3F10B42504AE5B995DD259DF1D02D0E61E65256B"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3803,8 +3808,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 45134,
-      "sha256": "02C67734044542772B8BB334749E4194EA6F4008CECC24ACF723791016FE7F0B"
+      "bytes": 46268,
+      "sha256": "506F44A599BA2EE8F44DDE726D095FFD4DA3D42FFB4A4DFBA33DCBD79F1E9A5A"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -3923,18 +3928,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 584509,
-      "sha256": "D08A85B2526D396639A724990A2D6F2B29A47B8A8BF0DEAA6F952FA62A87B174"
+      "bytes": 587090,
+      "sha256": "88B0D523B3B7A20AEA73D26096A75F01D4224725ABBF0AA9410027078E29130A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1620939,
-      "sha256": "C50628AF7D4BA09D1F784E132B7C472B2FC4DF5BD31BCAE9A5A7F51AF03A8E6D"
+      "bytes": 1623520,
+      "sha256": "DE105701A712316A581CE136B0522FCC9A51C9FA096DDF4D6873807CFD705982"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2231949,
-      "sha256": "CAAC416672CCA5D24A171B69170B018C25F588EF34085BA287D9BE6CE06CC288"
+      "bytes": 2234530,
+      "sha256": "BBF8DE03E3BA33B57390BA53A47ED874D79C6A49FAE9D0C9248FE6DABF55BF06"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3990,6 +3995,11 @@
       "path": "SRC/_gui_lint.ps1",
       "bytes": 30539,
       "sha256": "8259EBB59BAD3E43B0DA1482283DB6ADF47B0115A1374089C60C358ADDD754D9"
+    },
+    {
+      "path": "SRC/.config/nextest.toml",
+      "bytes": 894,
+      "sha256": "A0255DE0EE70B793EA8DF1ED286F0D91F7FE21140D4B78AC7501DF63737864EE"
     },
     {
       "path": "SRC/Cargo.lock",
@@ -4998,8 +5008,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init.rs",
-      "bytes": 145937,
-      "sha256": "44331F390A0BF47ABFE48333408C130DD3BFA46CCCBAD0210D4EBF2A4F06C17F"
+      "bytes": 150380,
+      "sha256": "5E5B54D714CE579A4DD21F8562EA33B5E0C232238512BCAADBEF3670123C114F"
     },
     {
       "path": "SRC/neothd/src/cli/init/first_install_identity.rs",
@@ -5008,13 +5018,18 @@
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",
-      "bytes": 80040,
-      "sha256": "4A2AF685011F0F99AAEE6FC500EE5EC67CFE6C6AB6A111409C7EF8255299EDD5"
+      "bytes": 80396,
+      "sha256": "8032F7A90DEBC22F331A62F62EF16D086A95B1D80975981A65D3AEE523760A2B"
     },
     {
       "path": "SRC/neothd/src/cli/init/steps_channel.rs",
       "bytes": 27039,
       "sha256": "DDA09A8F969B7F1E2101BCE098BE11D76C69878CC6A31250FDCA986A191B2C20"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/types.rs",
+      "bytes": 39910,
+      "sha256": "4359C6F4BDA66B5F49C3A8023B08C0D005880A9AB18088CB160EB097DC3A7CE4"
     },
     {
       "path": "SRC/neothd/src/cli/internal.rs",
@@ -5108,8 +5123,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
-      "bytes": 60339,
-      "sha256": "AB2E714B0B41F332A41CCD981415FCB9B4FC2A45C6E4F835CAE8F3E282455A26"
+      "bytes": 68849,
+      "sha256": "B72ADCF2400B0E5D8919D67B416A455CDD3852B0BF62261578AA1A8C065DE3D5"
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
@@ -5183,8 +5198,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/slack.rs",
-      "bytes": 30387,
-      "sha256": "30A76C90F64794FDD65030D7AF3C51CA86856FB58D15E8DE9C75E1B794ED1F3A"
+      "bytes": 37477,
+      "sha256": "5CC2B7EFA2D34FD6E8A6AFB5E310FB0AB667DADE993F481741ED2B8CFBF0FA67"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",
@@ -5498,8 +5513,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 436727,
-      "sha256": "301E3BBDBEFA7F486E6E32B7BADA80AF2CBAF5466FE5B4D103FC2EE5313D8EAE"
+      "bytes": 442881,
+      "sha256": "5F9E990C7B55C1EF01DD1DB2388CAE6DA147C7C8A5FD70FCB1B3929760942751"
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
@@ -5648,8 +5663,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 161880,
-      "sha256": "DBA53476C7F6186376FCF663EA9F42ACA60D90F7B138C344D6033D2B71C26A56"
+      "bytes": 166638,
+      "sha256": "97CB4CBE23836C4BFD199BDA6FC076A6193938DD5818E4FC377794990E8F7F2C"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -6138,8 +6153,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 43342,
-      "sha256": "F906157F37A71301F86C0BBF4C1E4F6A3CA2BCCADE68CD465A828467E49EF247"
+      "bytes": 43453,
+      "sha256": "C2F6873012274F596BAD740E19E45A85DC17EB742D3552F7363149FF31B86906"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
@@ -7233,8 +7248,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64640,
-      "sha256": "3C6347A8A399126EA2139D8D1BB948765385B1C3734020642EF6BF210905DB5C"
+      "bytes": 64648,
+      "sha256": "7E5D1166AA23C31B858C930DDB60A9A52471917912F2E6A247251AC7A7AEEEAF"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -7518,8 +7533,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2306292,
-      "sha256": "1D54C796ACD37411D54FEC4C997ABBAAB53323E251A56228CC75329B41D1E1D3"
+      "bytes": 2321915,
+      "sha256": "3D250204546FAB5543564558EC21F38F7297CB018FCC684744A7A69FEA07AA9A"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",

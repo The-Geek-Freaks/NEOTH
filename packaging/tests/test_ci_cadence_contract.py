@@ -625,6 +625,16 @@ class CiCadenceContractTests(unittest.TestCase):
         # The Linux visual-ingest regression decodes a real silent video.
         # Missing ffmpeg/ffprobe must fail that test, never silently skip it.
         self.assertIn("ffmpeg", dependencies)
+        doctests = steps["cargo doctest workspace"]
+        runtime = steps["cargo nextest workspace (Linux)"]
+        self.assertIn("id: doctests", doctests)
+        self.assertNotIn("continue-on-error:", doctests)
+        self.assertIn(
+            "if: ${{ !cancelled() && (steps.doctests.outcome == 'success' "
+            "|| steps.doctests.outcome == 'failure') }}",
+            runtime,
+        )
+        self.assertNotIn("continue-on-error:", runtime)
         self.assertEqual(
             step_run_command(steps["cargo nextest workspace (Linux)"]),
             "\n".join(
@@ -637,6 +647,12 @@ class CiCadenceContractTests(unittest.TestCase):
 
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
         platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]
+        nextest = (ROOT / "SRC" / ".config" / "nextest.toml").read_text(encoding="utf-8")
+        self.assertIn('global-timeout = "45m"', nextest)
+        self.assertIn(
+            '[profile.ci-windows]\ninherits = "ci"\nglobal-timeout = "65m"',
+            nextest,
+        )
         self.assertIn("timeout-minutes: ${{ matrix.job_timeout_minutes }}", platform_tests)
         self.assertIn("CARGO_BUILD_JOBS: ${{ matrix.build_jobs }}", platform_tests)
         self.assertNotIn("nextest_timeout_minutes", platform_tests)
@@ -673,9 +689,9 @@ class CiCadenceContractTests(unittest.TestCase):
                     "            test_threads: 1",
                     "            junit_name: windows",
                     "            test_build_timeout_minutes: 80",
-                    "            test_execution_timeout_minutes: 60",
-                    "            # 80-minute compile + 60-minute execution + 10-minute setup/cache margin.",
-                    "            job_timeout_minutes: 150",
+                    "            test_execution_timeout_minutes: 70",
+                    "            # 80-minute compile + 70-minute execution + 10-minute setup/cache margin.",
+                    "            job_timeout_minutes: 160",
                 ]
             ),
             platform_tests,
@@ -722,7 +738,7 @@ class CiCadenceContractTests(unittest.TestCase):
             step_run_command(build),
             "\n".join(
                 [
-                    "rm -f target/nextest/ci/junit.xml",
+                    "rm -f target/nextest/ci/junit.xml target/nextest/ci-windows/junit.xml",
                     'if [[ "$RUNNER_OS" != "macOS" ]]; then',
                     "  cargo nextest run --workspace --locked --profile ci --no-run",
                     "  exit 0",
@@ -810,21 +826,27 @@ class CiCadenceContractTests(unittest.TestCase):
                     'if [[ "$RUNNER_OS" == "macOS" ]]; then',
                     "  nextest_features=(--features neothd-gui/macos-native-gui-test)",
                     "fi",
-                    'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast',
+                    "nextest_profile=ci",
+                    'if [[ "$RUNNER_OS" == "Windows" ]]; then',
+                    "  nextest_profile=ci-windows",
+                    "fi",
+                    'cargo nextest run --workspace --locked --profile "$nextest_profile" "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast',
                 ]
             ),
         )
         self.assertNotIn("--no-run", step_run_command(execute))
         self.assertNotIn("junit.xml", step_run_command(execute))
         compile_step = platform_tests.index("Compile nextest workspace test binaries")
-        junit_cleanup = platform_tests.index("rm -f target/nextest/ci/junit.xml")
+        junit_cleanup = platform_tests.index(
+            "rm -f target/nextest/ci/junit.xml target/nextest/ci-windows/junit.xml"
+        )
         compile_command = platform_tests.index(
             "cargo nextest run --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run"
         )
         discovery_step = platform_tests.index("Verify macOS native GUI fixture discovery")
         runtime_step = platform_tests.index("Run nextest workspace tests")
         runtime_command = platform_tests.index(
-            'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast'
+            'cargo nextest run --workspace --locked --profile "$nextest_profile" "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail --no-fail-fast'
         )
         self.assertLess(compile_step, junit_cleanup)
         self.assertLess(junit_cleanup, compile_command)
@@ -894,7 +916,10 @@ class CiCadenceContractTests(unittest.TestCase):
 
         junit = steps["Upload JUnit report"]
         self.assertIn("if: always()", junit)
-        self.assertIn("path: SRC/target/nextest/ci/junit.xml", junit)
+        self.assertIn(
+            "path: SRC/target/nextest/${{ runner.os == 'Windows' && 'ci-windows' || 'ci' }}/junit.xml",
+            junit,
+        )
 
     def test_windows_preview_gui_timeout_remains_bounded_and_serial(self) -> None:
         preview = workflow_jobs(PREVIEW_WINDOWS_TEXT)["preview-windows-x64"]

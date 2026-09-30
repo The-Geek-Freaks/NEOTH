@@ -12,7 +12,6 @@ use serde_json::json;
 use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef};
 use crate::channels::slack_api;
 use crate::cli::OutputFormat;
-use crate::config::credentials::Credentials;
 use crate::config::{FreedomConfig, RuntimeConfigPair};
 use crate::secret::SecretString;
 
@@ -36,11 +35,15 @@ pub enum SlackAction {
         account: Option<ChannelAccountId>,
     },
     /// Send a one-shot message to a Slack channel via `chat.postMessage`.
-    /// Uses `credentials.yaml::slack_bot_token`. `channel` accepts an
+    /// A named Slack account map requires `--account`; legacy scalar Slack
+    /// uses no selector. `channel` accepts an
     /// id (`Cxxxxxx`), a DM id (`Dxxxxxx`), or `#channel-name` (Slack
     /// resolves server-side). Returns the message timestamp (Slack's
     /// `ts`) so operators can correlate with later edits/reactions.
     Send {
+        /// Exact configured Slack account. Required whenever a Slack account map is active.
+        #[arg(long)]
+        account: Option<ChannelAccountId>,
         /// Channel id or `#name`.
         #[arg(long)]
         channel: String,
@@ -53,19 +56,66 @@ pub enum SlackAction {
 pub async fn run_slack(args: SlackArgs) -> Result<()> {
     match args.action {
         SlackAction::Test { account } => run_test(account, &args.output).await,
-        SlackAction::Send { channel, message } => run_send(&channel, &message, &args.output).await,
+        SlackAction::Send {
+            account,
+            channel,
+            message,
+        } => run_send(account, &channel, &message, &args.output).await,
     }
 }
 
-async fn run_send(channel: &str, message: &str, output: &OutputFormat) -> Result<()> {
-    let creds = Credentials::load().context("load credentials.yaml")?;
-    let bot = creds.slack_bot_token.as_ref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "no slack_bot_token in credentials.yaml. Run `neoth init --force` \
-             or add it manually before sending."
-        )
-    })?;
-    let result = slack_api::post_message(bot, channel, message)
+async fn run_send(
+    account: Option<ChannelAccountId>,
+    channel: &str,
+    message: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let pair = crate::config::load_runtime_config_pair_from_path_or_default_for_diagnostic(
+        &home.join("freedom.yaml"),
+    )
+    .context("load coherent Slack config and credentials for send")?;
+    run_send_with(
+        &pair,
+        account.as_ref(),
+        channel,
+        message,
+        output,
+        |token, channel, message| async move {
+            slack_api::post_message(&token, &channel, &message).await
+        },
+    )
+    .await
+}
+
+async fn run_send_with<F, Fut>(
+    pair: &RuntimeConfigPair,
+    account: Option<&ChannelAccountId>,
+    channel: &str,
+    message: &str,
+    output: &OutputFormat,
+    post_message: F,
+) -> Result<()>
+where
+    F: FnOnce(SecretString, String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<slack_api::PostMessageResult>>,
+{
+    let bot_token = resolve_slack_send_selection(pair, account)?;
+    run_send_with_selected_token(bot_token, channel, message, output, post_message).await
+}
+
+async fn run_send_with_selected_token<F, Fut>(
+    bot_token: SecretString,
+    channel: &str,
+    message: &str,
+    output: &OutputFormat,
+    post_message: F,
+) -> Result<()>
+where
+    F: FnOnce(SecretString, String, String) -> Fut,
+    Fut: std::future::Future<Output = Result<slack_api::PostMessageResult>>,
+{
+    let result = post_message(bot_token, channel.to_string(), message.to_string())
         .await
         .context("Slack chat.postMessage")?;
     match output {
@@ -137,6 +187,41 @@ fn slack_account_map_active(pair: &RuntimeConfigPair) -> bool {
     !pair.config.channel_accounts.slack.is_empty()
         || pair.credentials.slack_account_map_active()
         || pair.raw_credentials.slack_account_map_active()
+}
+
+/// Resolve the exact coherent bot credential for an operator-requested manual
+/// send. Named maps require an explicit account and never fall back to a
+/// scalar credential; legacy scalar Slack remains bot-token-only.
+fn resolve_slack_send_selection(
+    pair: &RuntimeConfigPair,
+    requested_account: Option<&ChannelAccountId>,
+) -> Result<SecretString> {
+    if slack_account_map_active(pair) {
+        let requested_account = requested_account
+            .context("Slack account map is active; pass `neoth slack send --account <id>`")?;
+        let accounts = pair.authenticated_slack_accounts().map_err(|_| {
+            anyhow::anyhow!(
+                "Slack account map is invalid; repair matching policy and credential entries before sending"
+            )
+        })?;
+        let account = accounts
+            .into_iter()
+            .find(|account| {
+                !account.is_legacy_singleton()
+                    && account.channel_ref()
+                        == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
+            })
+            .ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
+        return Ok(account.bot_token().clone());
+    }
+
+    anyhow::ensure!(
+        requested_account.is_none(),
+        "--account is invalid for legacy scalar Slack; omit it to send with the legacy singleton"
+    );
+    pair.credentials.slack_bot_token.clone().context(
+        "no slack_bot_token in credentials.yaml. Run `neoth init --force` or add it manually before sending.",
+    )
 }
 
 /// Resolve the exact coherent credential generation before either remote probe.
@@ -421,6 +506,15 @@ mod tests {
         }
     }
 
+    fn post_ok() -> slack_api::PostMessageResult {
+        slack_api::PostMessageResult {
+            ok: true,
+            ts: Some("1700000000.000100".into()),
+            channel: Some("C123".into()),
+            error: None,
+        }
+    }
+
     #[test]
     fn mapped_slack_preflight_requires_an_explicit_account() {
         let error = resolve_slack_test_selection(&mapped_slack_pair(None), None)
@@ -701,6 +795,80 @@ mod tests {
     }
 
     #[test]
+    fn mapped_slack_send_selects_the_exact_account_before_the_injected_post_seam() {
+        let work = ChannelAccountId::new("work").unwrap();
+        let mut pair = mapped_slack_pair(None);
+        add_second_named_slack_account(&mut pair);
+        let observed = Arc::new(Mutex::new(None));
+        let observed_for_post = Arc::clone(&observed);
+        block_on(run_send_with(
+            &pair,
+            Some(&work),
+            "C123",
+            "hello",
+            &OutputFormat::Json,
+            move |token, channel, message| {
+                *observed_for_post.lock().unwrap() = Some((token.expose().to_owned(), channel, message));
+                async { Ok(post_ok()) }
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            observed.lock().unwrap().as_ref(),
+            Some(&("xoxb-work-secret".to_string(), "C123".to_string(), "hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn mapped_slack_send_refuses_missing_unknown_or_partial_accounts_before_post_selection() {
+        let work = ChannelAccountId::new("work").unwrap();
+        let missing = resolve_slack_send_selection(&mapped_slack_pair(None), None).unwrap_err();
+        assert!(missing.to_string().contains("slack send --account"));
+
+        let unknown = ChannelAccountId::new("unknown").unwrap();
+        let unknown_error = resolve_slack_send_selection(&mapped_slack_pair(None), Some(&unknown))
+            .unwrap_err();
+        assert!(unknown_error.to_string().contains("not configured"));
+
+        let mut partial = mapped_slack_pair(None);
+        partial.credentials.channel_accounts.slack.clear();
+        partial.raw_credentials.channel_accounts.slack.clear();
+        partial.credentials.slack_bot_token = Some(SecretString::from("xoxb-shadow"));
+        let post_calls = Arc::new(AtomicUsize::new(0));
+        let post_calls_for_attempt = Arc::clone(&post_calls);
+        let partial_error = block_on(run_send_with(
+            &partial,
+            Some(&work),
+            "C123",
+            "must not send",
+            &OutputFormat::Json,
+            move |_token, _channel, _message| {
+                post_calls_for_attempt.fetch_add(1, Ordering::SeqCst);
+                async { Ok(post_ok()) }
+            },
+        ))
+        .unwrap_err();
+        assert!(partial_error.to_string().contains("account map is invalid"));
+        assert!(!partial_error.to_string().contains("xoxb-shadow"));
+        assert_eq!(post_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn legacy_slack_send_uses_only_the_bot_token_and_rejects_an_account_selector() {
+        let mut pair = RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: Credentials::default(),
+            credentials: Credentials::default(),
+        };
+        pair.credentials.slack_bot_token = Some(SecretString::from("xoxb-legacy"));
+        let token = resolve_slack_send_selection(&pair, None).unwrap();
+        assert_eq!(token.expose(), "xoxb-legacy");
+        let account = ChannelAccountId::new("work").unwrap();
+        let error = resolve_slack_send_selection(&pair, Some(&account)).unwrap_err();
+        assert!(error.to_string().contains("invalid for legacy scalar Slack"));
+    }
+
+    #[test]
     fn public_cli_parses_slack_test_account_selector() {
         let parsed = Cli::try_parse_from(["neoth", "slack", "test", "--account", "work"])
             .expect("public CLI must accept Slack account selector");
@@ -712,6 +880,25 @@ mod tests {
                 },
                 ..
             }) if account.as_str() == "work"
+        ));
+    }
+
+    #[test]
+    fn public_cli_parses_slack_send_account_selector() {
+        let parsed = Cli::try_parse_from([
+            "neoth", "slack", "send", "--account", "work", "--channel", "C123", "--message", "hello",
+        ])
+        .expect("public CLI must accept a Slack send account selector");
+        assert!(matches!(
+            parsed.command,
+            Commands::Slack(SlackArgs {
+                action: SlackAction::Send {
+                    account: Some(account),
+                    channel,
+                    message,
+                },
+                ..
+            }) if account.as_str() == "work" && channel == "C123" && message == "hello"
         ));
     }
 
@@ -765,6 +952,7 @@ mod tests {
         }
         let args = SlackArgs {
             action: SlackAction::Send {
+                account: None,
                 channel: "#general".into(),
                 message: "hello".into(),
             },

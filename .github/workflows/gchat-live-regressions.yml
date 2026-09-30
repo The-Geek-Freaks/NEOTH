@@ -92,10 +92,13 @@ jobs:
             SRC/neothd/src/cli/doctor.rs \
             SRC/neothd/src/cli/init.rs \
             SRC/neothd/src/cli/init/io.rs \
+            SRC/neothd/src/cli/init/types.rs \
             SRC/neothd/src/cli/init/first_install_identity.rs \
             SRC/neothd/src/cli/slack.rs \
             SRC/neothd/src/channels/slack_api.rs \
             SRC/neothd/src/daemon/doctor_cron.rs \
+            SRC/neothd/src/cli/proactive.rs \
+            SRC/neothd/src/cron/runner.rs \
             SRC/neothd/src/cli/docgen.rs \
             docs/cli-commands.md \
             SRC/neothd/src/cli/privacy.rs \
@@ -415,9 +418,26 @@ jobs:
           run_case 202 lib daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint daemon::doctor_cron::tests::enrich_fail_outcome_includes_try_hint --lib
           run_case 203 lib cli::doctor::tests::cron_suggestions_resolve_every_documented_check cli::doctor::tests::cron_suggestions_resolve_every_documented_check --lib
           run_case 204 lib cli::docgen::tests::cli_commands_md_is_up_to_date cli::docgen::tests::cli_commands_md_is_up_to_date --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 204
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 204
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 204
+          run_case 205 lib cli::proactive::tests::mapped_slack_route_requires_an_exact_account_and_never_writes_before_validation cli::proactive::tests::mapped_slack_route_requires_an_exact_account_and_never_writes_before_validation --lib
+          run_case 206 lib cli::proactive::tests::scalar_slack_route_stays_legacy_unbound_without_an_account_selector cli::proactive::tests::scalar_slack_route_stays_legacy_unbound_without_an_account_selector --lib
+          run_case 207 lib cli::proactive::tests::unbound_non_account_route_does_not_load_unrelated_account_configuration cli::proactive::tests::unbound_non_account_route_does_not_load_unrelated_account_configuration --lib
+          run_case 208 lib cli::proactive::tests::public_cli_parses_an_exact_slack_route_account cli::proactive::tests::public_cli_parses_an_exact_slack_route_account --lib
+          run_case 209 lib cli::proactive::tests::mapped_telegram_route_requires_and_persists_an_exact_account cli::proactive::tests::mapped_telegram_route_requires_and_persists_an_exact_account --lib
+          run_case 210 lib cli::proactive::tests::route_account_rejects_unbound_channels_and_unknown_bindings cli::proactive::tests::route_account_rejects_unbound_channels_and_unknown_bindings --lib
+          run_case 211 lib cron::runner::workstream_c_tests::cron_delivery_persists_the_exact_sealed_slack_account_from_its_selected_route cron::runner::workstream_c_tests::cron_delivery_persists_the_exact_sealed_slack_account_from_its_selected_route --lib
+          run_case 212 lib cron::runner::workstream_c_tests::cron_bound_slack_route_refuses_a_missing_exact_binding_without_scalar_fallback cron::runner::workstream_c_tests::cron_bound_slack_route_refuses_a_missing_exact_binding_without_scalar_fallback --lib
+          run_case 213 lib cron::runner::workstream_c_tests::cron_delivery_persists_the_account_from_its_selected_route cron::runner::workstream_c_tests::cron_delivery_persists_the_account_from_its_selected_route --lib
+          run_case 214 lib cron::runner::workstream_c_tests::production_bound_unsupported_cron_route_rejects_before_queue_admission cron::runner::workstream_c_tests::production_bound_unsupported_cron_route_rejects_before_queue_admission --lib
+          run_case 215 lib cli::slack::tests::mapped_slack_send_selects_the_exact_account_before_the_injected_post_seam cli::slack::tests::mapped_slack_send_selects_the_exact_account_before_the_injected_post_seam --lib
+          run_case 216 lib cli::slack::tests::mapped_slack_send_refuses_missing_unknown_or_partial_accounts_before_post_selection cli::slack::tests::mapped_slack_send_refuses_missing_unknown_or_partial_accounts_before_post_selection --lib
+          run_case 217 lib cli::slack::tests::legacy_slack_send_uses_only_the_bot_token_and_rejects_an_account_selector cli::slack::tests::legacy_slack_send_uses_only_the_bot_token_and_rejects_an_account_selector --lib
+          run_case 218 lib cli::slack::tests::public_cli_parses_slack_send_account_selector cli::slack::tests::public_cli_parses_slack_send_account_selector --lib
+          run_case 219 lib cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing --lib
+          run_case 220 lib cli::init::tests::force_recovery_preserves_existing_encrypted_credentials cli::init::tests::force_recovery_preserves_existing_encrypted_credentials --lib
+          run_case 221 lib cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key cli::init::tests::force_recovery_with_encrypted_credentials_refuses_missing_master_key --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 221
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 221
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 221
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

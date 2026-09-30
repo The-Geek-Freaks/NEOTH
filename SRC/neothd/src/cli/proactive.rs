@@ -119,8 +119,7 @@ pub enum ProactiveAction {
         /// Set `--channel` as the failure-alert destination.
         #[arg(long)]
         failure: bool,
-        /// Exact configured Telegram account for this route. Required for new
-        /// Telegram route mutations while the Telegram account map is active.
+        /// Exact configured Telegram or Slack account for this route. Required for new route mutations while that channel's account map is active.
         #[arg(long)]
         account: Option<ChannelAccountId>,
     },
@@ -388,7 +387,7 @@ fn run_route(
     let mut changed = false;
 
     if account.is_some() && channel.is_none() {
-        anyhow::bail!("--account requires a Telegram --channel route mutation");
+        anyhow::bail!("--account requires a --channel route mutation");
     }
 
     if let (Some(ch), Some(id)) = (channel.as_ref(), dest.as_ref()) {
@@ -422,7 +421,7 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        let target = validated_telegram_route_target(home, ch, account)?;
+        let target = validated_account_route_target(home, ch, account)?;
         routing.by_source.insert(src.clone(), target);
         println!("route: source '{src}' -> {ch}");
         changed = true;
@@ -431,7 +430,7 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        routing.default = Some(validated_telegram_route_target(home, ch, account)?);
+        routing.default = Some(validated_account_route_target(home, ch, account)?);
         println!("default proactive channel -> {ch}");
         changed = true;
     } else if failure {
@@ -439,7 +438,7 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        routing.failure = Some(validated_telegram_route_target(home, ch, account)?);
+        routing.failure = Some(validated_account_route_target(home, ch, account)?);
         println!("failure-alert channel -> {ch}");
         changed = true;
     }
@@ -458,59 +457,94 @@ fn run_route(
     Ok(())
 }
 
-/// Accept an account selector only for a Telegram route and only when it is
-/// an exact non-legacy member of one coherent authenticated runtime bundle.
-/// A map-active route without an account is rejected instead of guessing a
-/// default or first account. Legacy scalar Telegram routes remain explicitly
-/// unbound so their historical queue semantics remain intact.
-fn validated_telegram_route_target(
+/// Accept an account selector only for a mapped Telegram or Slack route and
+/// only when it is an exact non-legacy member of one coherent authenticated
+/// runtime bundle. A map-active route without an account is rejected instead
+/// of guessing a default or first account. Legacy scalar routes remain
+/// explicitly unbound so their historical queue semantics remain intact.
+fn validated_account_route_target(
     home: &std::path::Path,
     channel: &str,
     account: Option<ChannelAccountId>,
 ) -> Result<RouteTarget> {
     let channel_id = crate::channels::registry::resolve_channel_id(channel)
         .context("resolve canonical channel route")?;
-    if channel != "telegram" {
+    if !matches!(channel_id, ChannelId::Telegram | ChannelId::Slack) {
         anyhow::ensure!(
             account.is_none(),
-            "--account is supported only with --channel telegram"
+            "--account is supported only with --channel telegram or slack"
         );
         return Ok(RouteTarget::LegacyUnbound {
             channel: channel_id,
         });
     }
-
     let pair =
         crate::config::load_runtime_config_pair_from_path_or_default(&home.join("freedom.yaml"))
-            .context("load coherent Telegram account configuration")?;
-    let map_active = pair.config.telegram_account_map_active()
-        || pair.credentials.telegram_account_map_active()
-        || pair.raw_credentials.telegram_account_map_active();
-    match account {
-        Some(account) => {
-            let accounts = pair
-                .authenticated_telegram_accounts()
-                .context("validate configured Telegram account bundle")?;
-            anyhow::ensure!(
-                accounts.iter().any(|configured| {
-                    !configured.is_legacy_singleton()
-                        && configured.channel_ref().account_id == account
-                }),
-                "Telegram route account `{account}` is not an exactly authenticated configured account"
-            );
-            Ok(RouteTarget::Bound {
-                channel_ref: ChannelRef::new(ChannelId::Telegram, account),
-            })
+            .context("load coherent channel account configuration")?;
+    match channel_id {
+        ChannelId::Telegram => {
+            let map_active = pair.config.telegram_account_map_active()
+                || pair.credentials.telegram_account_map_active()
+                || pair.raw_credentials.telegram_account_map_active();
+            match account {
+                Some(account) => {
+                    let accounts = pair
+                        .authenticated_telegram_accounts()
+                        .context("validate configured Telegram account bundle")?;
+                    anyhow::ensure!(
+                        accounts.iter().any(|configured| {
+                            !configured.is_legacy_singleton()
+                                && configured.channel_ref().account_id == account
+                        }),
+                        "Telegram route account `{account}` is not an exactly authenticated configured account"
+                    );
+                    Ok(RouteTarget::Bound {
+                        channel_ref: ChannelRef::new(ChannelId::Telegram, account),
+                    })
+                }
+                None => {
+                    anyhow::ensure!(
+                        !map_active,
+                        "--account is required for new Telegram routing while channel_accounts.telegram is active"
+                    );
+                    Ok(RouteTarget::LegacyUnbound {
+                        channel: ChannelId::Telegram,
+                    })
+                }
+            }
         }
-        None => {
-            anyhow::ensure!(
-                !map_active,
-                "--account is required for new Telegram routing while channel_accounts.telegram is active"
-            );
-            Ok(RouteTarget::LegacyUnbound {
-                channel: ChannelId::Telegram,
-            })
+        ChannelId::Slack => {
+            let map_active = !pair.config.channel_accounts.slack.is_empty()
+                || pair.credentials.slack_account_map_active()
+                || pair.raw_credentials.slack_account_map_active();
+            match account {
+                Some(account) => {
+                    let accounts = pair
+                        .authenticated_slack_accounts()
+                        .context("validate configured Slack account bundle")?;
+                    anyhow::ensure!(
+                        accounts.iter().any(|configured| {
+                            !configured.is_legacy_singleton()
+                                && configured.channel_ref().account_id == account
+                        }),
+                        "Slack route account `{account}` is not an exactly authenticated configured account"
+                    );
+                    Ok(RouteTarget::Bound {
+                        channel_ref: ChannelRef::new(ChannelId::Slack, account),
+                    })
+                }
+                None => {
+                    anyhow::ensure!(
+                        !map_active,
+                        "--account is required for new Slack routing while channel_accounts.slack is active"
+                    );
+                    Ok(RouteTarget::LegacyUnbound {
+                        channel: ChannelId::Slack,
+                    })
+                }
+            }
         }
+        _ => unreachable!("non-account channels return before loading the runtime pair"),
     }
 }
 
@@ -1501,7 +1535,145 @@ mod tests {
                 if channel_ref.channel_id == ChannelId::Telegram
                     && channel_ref.account_id == account
         ));
+    }
 
+    #[test]
+    fn mapped_slack_route_requires_an_exact_account_and_never_writes_before_validation() {
+        let partial = tempfile::tempdir().unwrap();
+        std::fs::write(
+            partial.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      allowed_user_id: U123WORK\n",
+        )
+        .unwrap();
+        let account = ChannelAccountId::new("work").unwrap();
+        let partial_error = run_route(
+            partial.path(),
+            Some("cron:daily".to_string()),
+            Some("slack".to_string()),
+            None,
+            false,
+            false,
+            Some(account.clone()),
+        )
+        .unwrap_err();
+        assert!(
+            partial_error
+                .chain()
+                .any(|cause| cause.to_string().contains("Slack account policy"))
+        );
+        assert!(
+            !partial.path().join(CHANNEL_ROUTING_FILE).exists(),
+            "a partial Slack account map must fail before routing state is written"
+        );
+
+        let invalid = tempfile::tempdir().unwrap();
+        std::fs::write(
+            invalid.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      allowed_user_id: not-a-slack-id\n",
+        )
+        .unwrap();
+        std::fs::write(
+            invalid.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      bot_token: xoxb-work-token\n      app_token: xapp-work-token\n",
+        )
+        .unwrap();
+        let invalid_error = run_route(
+            invalid.path(),
+            Some("cron:daily".to_string()),
+            Some("slack".to_string()),
+            None,
+            false,
+            false,
+            Some(account.clone()),
+        )
+        .unwrap_err();
+        assert!(
+            invalid_error
+                .chain()
+                .any(|cause| cause.to_string().contains("invalid allowed_user_id"))
+        );
+        assert!(
+            !invalid.path().join(CHANNEL_ROUTING_FILE).exists(),
+            "an invalid Slack account map must fail before routing state is written"
+        );
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      allowed_user_id: U123WORK\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      bot_token: xoxb-work-token\n      app_token: xapp-work-token\n",
+        )
+        .unwrap();
+
+        let missing = run_route(
+            home.path(),
+            Some("cron:daily".to_string()),
+            Some("slack".to_string()),
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert!(missing.to_string().contains("--account is required"));
+        assert!(
+            !home.path().join(CHANNEL_ROUTING_FILE).exists(),
+            "a map-active Slack route must not be persisted without an explicit account"
+        );
+
+        run_route(
+            home.path(),
+            Some("cron:daily".to_string()),
+            Some("slack".to_string()),
+            None,
+            false,
+            false,
+            Some(account.clone()),
+        )
+        .unwrap();
+        let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
+        assert!(matches!(
+            routing.by_source.get("cron:daily"),
+            Some(RouteTarget::Bound { channel_ref })
+                if channel_ref.channel_id == ChannelId::Slack
+                    && channel_ref.account_id == account
+        ));
+
+        let unknown_home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            unknown_home.path().join("freedom.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      allowed_user_id: U123WORK\n",
+        )
+        .unwrap();
+        std::fs::write(
+            unknown_home.path().join("credentials.yaml"),
+            "channel_accounts:\n  slack:\n    work:\n      bot_token: xoxb-work-token\n      app_token: xapp-work-token\n",
+        )
+        .unwrap();
+        let unknown = run_route(
+            unknown_home.path(),
+            Some("cron:daily".to_string()),
+            Some("slack".to_string()),
+            None,
+            false,
+            false,
+            Some(ChannelAccountId::new("unknown").unwrap()),
+        )
+        .unwrap_err();
+        assert!(unknown.to_string().contains("not an exactly authenticated"));
+        assert!(
+            !unknown_home.path().join(CHANNEL_ROUTING_FILE).exists(),
+            "an unknown Slack account must fail before routing state is written"
+        );
+    }
+
+    #[test]
+    fn scalar_slack_route_stays_legacy_unbound_without_an_account_selector() {
+        let home = tempfile::tempdir().unwrap();
         run_route(
             home.path(),
             Some("cron:daily".to_string()),
@@ -1522,13 +1694,13 @@ mod tests {
     }
 
     #[test]
-    fn route_account_rejects_non_telegram_and_unknown_bindings() {
+    fn route_account_rejects_unbound_channels_and_unknown_bindings() {
         let home = tempfile::tempdir().unwrap();
         let account = ChannelAccountId::new("ops_a").unwrap();
-        let non_telegram = run_route(
+        let unsupported = run_route(
             home.path(),
             Some("cron:daily".to_string()),
-            Some("slack".to_string()),
+            Some("discord".to_string()),
             None,
             false,
             false,
@@ -1536,9 +1708,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            non_telegram
+            unsupported
                 .to_string()
-                .contains("only with --channel telegram")
+                .contains("only with --channel telegram or slack")
         );
 
         let unknown = run_route(
@@ -1552,5 +1724,58 @@ mod tests {
         )
         .unwrap_err();
         assert!(unknown.to_string().contains("not an exactly authenticated"));
+    }
+
+    #[test]
+    fn unbound_non_account_route_does_not_load_unrelated_account_configuration() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "not: [valid").unwrap();
+        run_route(
+            home.path(),
+            Some("cron:daily".to_string()),
+            Some("discord".to_string()),
+            None,
+            false,
+            false,
+            None,
+        )
+        .expect("an unbound non-account route must not load unrelated account configuration");
+        let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
+        assert!(matches!(
+            routing.by_source.get("cron:daily"),
+            Some(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Discord
+            })
+        ));
+    }
+
+    #[test]
+    fn public_cli_parses_an_exact_slack_route_account() {
+        use clap::Parser as _;
+
+        let parsed = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "proactive",
+            "route",
+            "--source",
+            "cron:daily",
+            "--channel",
+            "slack",
+            "--account",
+            "work",
+        ])
+        .expect("public CLI must parse a Slack route account selector");
+        assert!(matches!(
+            parsed.command,
+            crate::cli::Commands::Proactive(ProactiveArgs {
+                action: ProactiveAction::Route {
+                    source: Some(source),
+                    channel: Some(channel),
+                    account: Some(account),
+                    ..
+                },
+                ..
+            }) if source == "cron:daily" && channel == "slack" && account.as_str() == "work"
+        ));
     }
 }
