@@ -3543,10 +3543,6 @@ impl Credentials {
     /// The transaction journal and the actual rename use this same snapshot,
     /// including the one-time AEAD nonce, so recovery can distinguish an exact
     /// committed image from an unexpected/tampered file.
-    fn rendered_file_snapshot(&self, path: &Path) -> Result<FileSnapshot> {
-        self.rendered_file_snapshot_with_encryption_override(path, None)
-    }
-
     fn rendered_file_snapshot_with_encryption_override(
         &self,
         path: &Path,

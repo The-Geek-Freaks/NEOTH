@@ -195,6 +195,8 @@ PATH and the current process PATH, without copying system PATH entries into the
 user value. It enforces the same minisign/cosign and native crash-recoverable
 bundle transaction as the Unix installer; PowerShell has no second file-swap
 algorithm or caller-defined member list.
+
+The release workflow can also run a retained signed predecessor upgrade smoke. Leave all predecessor variables empty to retain the same-package smoke. To enable the upgrade lane, set all three immutable values for each architecture: `NEOTH_WINDOWS_PREDECESSOR_X64_RELEASE_TAG`, `NEOTH_WINDOWS_PREDECESSOR_X64_VERSION`, `NEOTH_WINDOWS_PREDECESSOR_X64_SHA256`, and `NEOTH_WINDOWS_PREDECESSOR_ARM64_RELEASE_TAG`, `NEOTH_WINDOWS_PREDECESSOR_ARM64_VERSION`, `NEOTH_WINDOWS_PREDECESSOR_ARM64_SHA256`. Each tag must equal `v<version>` and each SHA-256 must identify the exact `NEOTH-<version>-<architecture>-Setup.exe` asset in this repository. The smoke harness receives the retained installer and version only as the paired `-PreviousInstaller` and `-PreviousVersion` arguments; partial configuration fails before download.
 It also starts the packaged Keet standalone in a hidden console for an exact
 pre-install version check; a missing, broken, or mixed-version companion blocks
 the transaction before the public `neoth.exe` commit point.

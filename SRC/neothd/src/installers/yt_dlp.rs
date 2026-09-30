@@ -21,7 +21,7 @@ const MAX_INSTALL_BYTES: usize = 64 * 1024 * 1024;
 const YT_DLP_RELEASE_HOST: &str = "github.com";
 const YT_DLP_RELEASE_REDIRECT_HOST: &str = "release-assets.githubusercontent.com";
 const YT_DLP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const YT_DLP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const YT_DLP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAsset {

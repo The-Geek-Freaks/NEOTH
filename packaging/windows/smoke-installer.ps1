@@ -8,6 +8,8 @@ param(
 
     [string]$PreviousInstaller = '',
 
+    [string]$PreviousVersion = '',
+
     [switch]$RequireSignature
 )
 
@@ -34,6 +36,7 @@ $requiredSupportFiles = @(
     'THIRD_PARTY_LICENSES'
 )
 
+# BEGIN PURE SEMVER CONTRACT
 function Stop-Smoke {
     param([Parameter(Mandatory = $true)][string]$Message)
     throw "NEOTH Windows installer smoke failed: $Message"
@@ -58,6 +61,87 @@ function Test-StrictSemVer {
         }
     }
     return $true
+}
+
+function Compare-StrictSemVer {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    foreach ($value in @($Left, $Right)) {
+        if (-not (Test-StrictSemVer -Value $value)) {
+            Stop-Smoke "version '$value' is not strict SemVer"
+        }
+    }
+    $pattern = '\A(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z'
+    $leftMatch = [regex]::Match($Left, $pattern)
+    $rightMatch = [regex]::Match($Right, $pattern)
+
+    foreach ($component in @('major', 'minor', 'patch')) {
+        $leftPart = $leftMatch.Groups[$component].Value
+        $rightPart = $rightMatch.Groups[$component].Value
+        if ($leftPart.Length -ne $rightPart.Length) {
+            return $(if ($leftPart.Length -lt $rightPart.Length) { -1 } else { 1 })
+        }
+        $comparison = [string]::CompareOrdinal($leftPart, $rightPart)
+        if ($comparison -ne 0) {
+            return $(if ($comparison -lt 0) { -1 } else { 1 })
+        }
+    }
+
+    $leftPre = $leftMatch.Groups['pre'].Value
+    $rightPre = $rightMatch.Groups['pre'].Value
+    if ($leftPre -eq '' -or $rightPre -eq '') {
+        if ($leftPre -eq $rightPre) { return 0 }
+        return $(if ($leftPre -eq '') { 1 } else { -1 })
+    }
+    $leftIdentifiers = $leftPre -split '\.'
+    $rightIdentifiers = $rightPre -split '\.'
+    $count = [Math]::Min($leftIdentifiers.Count, $rightIdentifiers.Count)
+    for ($index = 0; $index -lt $count; $index++) {
+        $leftIdentifier = $leftIdentifiers[$index]
+        $rightIdentifier = $rightIdentifiers[$index]
+        $leftNumeric = $leftIdentifier -cmatch '^[0-9]+$'
+        $rightNumeric = $rightIdentifier -cmatch '^[0-9]+$'
+        if ($leftNumeric -and $rightNumeric) {
+            if ($leftIdentifier.Length -ne $rightIdentifier.Length) {
+                return $(if ($leftIdentifier.Length -lt $rightIdentifier.Length) { -1 } else { 1 })
+            }
+            $comparison = [string]::CompareOrdinal($leftIdentifier, $rightIdentifier)
+        } elseif ($leftNumeric -ne $rightNumeric) {
+            return $(if ($leftNumeric) { -1 } else { 1 })
+        } else {
+            $comparison = [string]::CompareOrdinal($leftIdentifier, $rightIdentifier)
+        }
+        if ($comparison -ne 0) {
+            return $(if ($comparison -lt 0) { -1 } else { 1 })
+        }
+    }
+    if ($leftIdentifiers.Count -eq $rightIdentifiers.Count) { return 0 }
+    return $(if ($leftIdentifiers.Count -lt $rightIdentifiers.Count) { -1 } else { 1 })
+}
+# END PURE SEMVER CONTRACT
+
+function Assert-InstalledPredecessorVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][string]$UninstallRegistryKey
+    )
+
+    $publicVersion = (& (Join-Path $Directory 'neoth.exe') --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Smoke "predecessor neoth --version exited $LASTEXITCODE"
+    }
+    if ($publicVersion -notmatch "(^|\s)$([regex]::Escape($ExpectedVersion))($|\s)") {
+        Stop-Smoke "predecessor neoth --version returned '$publicVersion'"
+    }
+    $uninstallState = Get-ItemProperty -LiteralPath $UninstallRegistryKey -ErrorAction SilentlyContinue
+    $displayVersion = if ($null -eq $uninstallState) { $null } else { $uninstallState.PSObject.Properties['DisplayVersion'] }
+    if ($null -eq $displayVersion -or $displayVersion.Value -cne $ExpectedVersion) {
+        Stop-Smoke 'installed predecessor uninstall registration does not report its pinned version'
+    }
 }
 
 function Assert-ValidSignature {
@@ -591,8 +675,17 @@ if (-not (Test-StrictSemVer -Value $Version)) {
     Stop-Smoke "version '$Version' is not strict SemVer"
 }
 
+$hasPreviousInstaller = $PreviousInstaller -ne ''
+$hasPreviousVersion = $PreviousVersion -ne ''
+if ($hasPreviousInstaller -ne $hasPreviousVersion) {
+    Stop-Smoke 'PreviousInstaller and PreviousVersion must be supplied together'
+}
+if ($hasPreviousVersion -and (Compare-StrictSemVer -Left $PreviousVersion -Right $Version) -ge 0) {
+    Stop-Smoke "predecessor version '$PreviousVersion' is not older than candidate '$Version'"
+}
+
 $installerPath = (Resolve-Path -LiteralPath $Installer).Path
-$previousInstallerPath = if ($PreviousInstaller -eq '') {
+$previousInstallerPath = if (-not $hasPreviousInstaller) {
     $installerPath
 } else {
     (Resolve-Path -LiteralPath $PreviousInstaller).Path
@@ -737,6 +830,12 @@ try {
         -Scope User `
         -Directory $ownedDirectory `
         -InstallerFile $previousInstallerPath
+    if ($hasPreviousVersion) {
+        Assert-InstalledPredecessorVersion `
+            -Directory $ownedDirectory `
+            -ExpectedVersion $PreviousVersion `
+            -UninstallRegistryKey $userUninstall
+    }
     $installedRecoverySignature = Get-AuthenticodeSignature `
         -LiteralPath (Join-Path $ownedDirectory 'neoth.exe')
     $setupRecoverySignature = Get-AuthenticodeSignature -LiteralPath $installerPath

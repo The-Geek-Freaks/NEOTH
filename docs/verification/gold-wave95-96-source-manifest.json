@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T10:36:10.4716333Z",
-  "validationStatus": "SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-30T11:18:19.8424525Z",
+  "validationStatus": "W1982_SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 70964,
-      "sha256": "F28424CD966D2CF03F4964F5FF3FCD4EF6F20DB326A34C4C5519468FD4A40337"
+      "bytes": 71235,
+      "sha256": "99EBCA8914C9EC686023471D33B38876B33314F7FE27B08D7604B920C7B422BB"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "bytes": 140230,
-      "sha256": "2B9504F6413476D518CAC20A902D50D225EE6A16ED59985A1F4C95B0788E011A"
+      "bytes": 143359,
+      "sha256": "F4D5AEC684C66F04A2E3924507567A31AB68CCE5D2DEDAB7A46856E84376CCF7"
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
@@ -1303,8 +1303,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 13637,
-      "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
+      "bytes": 14457,
+      "sha256": "3D4EB6D46F0B486107E2E346A5E4DAB0981B4FD550F00D416007887809154EA0"
     },
     {
       "path": "docs/local-models.md",
@@ -2872,6 +2872,11 @@
       "sha256": "2CA80E7BEA95E16BA408D2CA209D33A7EC459DC145CCC9EA669DAAF3BAC2683E"
     },
     {
+      "path": "docs/verification/gold-wave1982-egress-and-windows-upgrade.json",
+      "bytes": 7336,
+      "sha256": "97A7F24316686BECBD4BEE0123A9380B1F772DE20D69ADF15035C8280E0D7963"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3893,8 +3898,8 @@
     },
     {
       "path": "packaging/tests/test_release_capability_contract.py",
-      "bytes": 12097,
-      "sha256": "3CA49806CC197270DB2841EB02CD31E9F6FDCBD53C5DAF2539531C60B0FF142D"
+      "bytes": 16852,
+      "sha256": "BF66542408AF75F08C86F06C3C347DCCF4377C2E0CD31DA195FFF070C7384A00"
     },
     {
       "path": "packaging/tests/test_workflow_replay_gate.py",
@@ -3918,8 +3923,8 @@
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
-      "bytes": 48211,
-      "sha256": "750ABDC136D266FD7A9A050AE473DE8D05D09ABF5E53900CD817303EF4C5136C"
+      "bytes": 52630,
+      "sha256": "376C113510BC09BEE2F6439DF5F14A5DDB001248E85553B8B4CF500A1D975877"
     },
     {
       "path": "packaging/workflow_replay_gate.py",
@@ -3933,18 +3938,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 588906,
-      "sha256": "7729874D611E20FF28754C3C946442D5B102A708C766236FA81641C3E703332E"
+      "bytes": 590895,
+      "sha256": "19079B2A5247C8B6AE7EF75AC4D2A77F43746C226B78D25E4A3AC6978B0B16F0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1625336,
-      "sha256": "2A95E56E33928F3BA342EEC33EE9B29BE9FC466D1166DF6382A8776F6DC5F039"
+      "bytes": 1627325,
+      "sha256": "9AD07C05E78CF1BE94BBD617CD44BF84C94BB76D58B95A94856E0A8C51FE79B0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2236346,
-      "sha256": "558B20F7761923383C4A82349F143E4FC80668A10C4D52C231DA8B02E8665D7B"
+      "bytes": 2238335,
+      "sha256": "3B5A1BF6D47F7C8D9CE078F29EB312BF083A27645F764B3A9E8CCBAA60185D14"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5518,8 +5523,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 443503,
-      "sha256": "35FA297E057767A7045DC32C588552DFD5DF042F44D8B842679C8D0CE547E629"
+      "bytes": 443347,
+      "sha256": "A2E385AFB722CAF55AAAE51A59DA220C2F897786930C0B6099E7F68DBD1D8063"
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
@@ -6178,8 +6183,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/yt_dlp.rs",
-      "bytes": 13139,
-      "sha256": "833FF7730E3440E4F77CA305D8FC399042746524EFB5B5DFFA1CD9727B29CE0C"
+      "bytes": 13143,
+      "sha256": "85A1C750E734E663E18FB67BA84B112AF2516041C55786554E558B8E3466A7F3"
     },
     {
       "path": "SRC/neothd/src/integrations/jobs.rs",
@@ -7513,8 +7518,8 @@
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "bytes": 59984,
-      "sha256": "10C3CED7A90388B3AF5EDA09A5B2A7A62736E4C15EE542FCC68F8CE36448EADF"
+      "bytes": 64233,
+      "sha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17"
     },
     {
       "path": "SRC/neothd/tests/provider_response_bounds_source_gate.rs",

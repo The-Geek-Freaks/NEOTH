@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import tomllib
 import unittest
 
@@ -263,6 +266,102 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         self.assertNotIn("Start-Process", helper)
         self.assertNotIn("-ArgumentList $Arguments", helper)
         self.assertNotIn("neothd-gui.exe') `\n            -ArgumentList '--runtime-probe'", smoke[smoke.index("function Invoke-InstalledCodeMapLifecycleSmoke"):])
+
+
+    def test_windows_semver_precedence_contract_uses_only_pure_helpers(self) -> None:
+        match = re.search(
+            r"(?ms)^# BEGIN PURE SEMVER CONTRACT\n(?P<pure>.*?)^# END PURE SEMVER CONTRACT$",
+            self.windows_smoke,
+        )
+
+        self.assertIsNotNone(match)
+        pwsh = shutil.which("pwsh")
+        self.assertIsNotNone(pwsh, "hosted packaging contract requires pwsh")
+        script = match.group("pure") + r"""
+$ErrorActionPreference = 'Stop'
+$cases = @(
+    @('1.0.0-alpha', '1.0.0-alpha.1', -1),
+    @('1.0.0-alpha.1', '1.0.0-alpha.beta', -1),
+    @('1.0.0-alpha.beta', '1.0.0-beta', -1),
+    @('1.0.0-beta', '1.0.0-beta.2', -1),
+    @('1.0.0-beta.2', '1.0.0-beta.11', -1),
+    @('1.0.0-rc.1', '1.0.0', -1),
+    @('1.0.0-alpha.2', '1.0.0-alpha.10', -1),
+    @('1.0.0-alpha', '1.0.0-beta', -1),
+    @('1.0.0+build.1', '1.0.0+build.2', 0),
+    @('999999999999999999999999.0.0', '1000000000000000000000000.0.0', -1)
+)
+foreach ($case in $cases) {
+    $actual = Compare-StrictSemVer -Left $case[0] -Right $case[1]
+    if ($actual -ne [int]$case[2]) {
+        throw "unexpected SemVer precedence for '$($case[0])' and '$($case[1])': $actual"
+    }
+}
+foreach ($invalid in @('01.0.0', '1.01.0', '1.0.01', '1.0.0-alpha.01')) {
+    if (Test-StrictSemVer -Value $invalid) {
+        throw "accepted invalid SemVer '$invalid'"
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            contract = Path(temporary_directory) / "semver-contract.ps1"
+            contract.write_text(script, encoding="utf-8")
+            result = subprocess.run(
+                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(contract)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_windows_predecessor_upgrade_lane_is_pinned_and_signed(self) -> None:
+        workflow = self.workflow
+        smoke = self.windows_smoke
+        job = re.search(
+            r"(?ms)^  smoke-windows-installer:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            workflow,
+        )
+
+        self.assertIsNotNone(job)
+        windows_smoke_job = job.group("body")
+        native_smoke = workflow_step(workflow, "Native clean-machine installer smoke")
+        for architecture in ("X64", "ARM64"):
+            with self.subTest(architecture=architecture):
+                self.assertIn(
+                    f"NEOTH_WINDOWS_PREDECESSOR_{architecture}_RELEASE_TAG",
+                    windows_smoke_job,
+                )
+                self.assertIn(
+                    f"NEOTH_WINDOWS_PREDECESSOR_{architecture}_VERSION",
+                    windows_smoke_job,
+                )
+                self.assertIn(
+                    f"NEOTH_WINDOWS_PREDECESSOR_{architecture}_SHA256",
+                    windows_smoke_job,
+                )
+        self.assertIn("https://github.com/$env:GITHUB_REPOSITORY/releases/download/", native_smoke)
+        self.assertIn("Invoke-WebRequest -Uri $predecessorUri -OutFile $previousInstaller", native_smoke)
+        self.assertIn("Get-FileHash -LiteralPath $previousInstaller -Algorithm SHA256", native_smoke)
+        self.assertIn("-TimeoutSec 300", native_smoke)
+        self.assertIn(".Hash -ine $predecessor.Sha256", native_smoke)
+        self.assertIn("$smokeArguments = @{", native_smoke)
+        self.assertIn("$smokeArguments.RequireSignature = [bool]$requireSignature", native_smoke)
+        self.assertIn("release tag, version, and SHA-256 must be supplied together", native_smoke)
+        self.assertIn("$predecessor.Tag -cne \"v$($predecessor.Version)\"", native_smoke)
+        self.assertIn("$smokeArguments.PreviousInstaller = $previousInstaller", native_smoke)
+        self.assertIn("$smokeArguments.PreviousVersion = $predecessor.Version", native_smoke)
+        self.assertIn("$requireSignature = $true", native_smoke)
+        self.assertNotIn("/releases/latest", windows_smoke_job)
+
+        self.assertIn("[string]$PreviousVersion = ''", smoke)
+        self.assertIn("PreviousInstaller and PreviousVersion must be supplied together", smoke)
+        self.assertIn("function Compare-StrictSemVer", smoke)
+        self.assertIn("predecessor version '$PreviousVersion' is not older than candidate '$Version'", smoke)
+        self.assertIn("function Assert-InstalledPredecessorVersion", smoke)
+        self.assertIn("predecessor neoth --version exited $LASTEXITCODE", smoke)
+        self.assertIn("installed predecessor uninstall registration does not report its pinned version", smoke)
+        self.assertIn("-ExpectedVersion $PreviousVersion", smoke)
 
 
 if __name__ == "__main__":

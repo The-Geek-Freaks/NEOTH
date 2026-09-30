@@ -1,5 +1,35 @@
 # NEOTH 1.0 build and release cadence
 
+**W1978-W1982 egress proof repair and Windows upgrade input (2026-09-30; hosted pending):**
+Run 36703834678 on 895d9f8e compiled and executed all 230 selected cases:
+228 passed and two proactive-egress source guards failed. Root verified the
+three original ZIP/API digests, 466 extracted entries, 105 producer source
+bindings and all per-case discovery/outcome logs. The 61 Python product
+contracts passed; downstream Google Chat guards and four CLI/daemon products
+were skipped. This failed run is retained as partial evidence, not acceptance.
+
+The source guards now recognize only the exact relink adapter that revalidates
+its binding before forwarding once, and use the actual connection-bound claim
+constructor while requiring channel, account and connection bindings. A new
+negative regression brings portable registration to 2461 and focused selection
+to 231. An unused private credentials wrapper reported by the compiler is
+removed before the strict Clippy milestone. Pinned yt-dlp downloads now have a
+finite five-minute transfer budget appropriate for the observed 17-39 MiB
+assets; connect timeout, host/redirect, 64 MiB cap and digest rules remain.
+
+Windows release smoke now accepts a complete explicit per-architecture retained
+predecessor tag/version/SHA256 set. It verifies the pinned digest, requires both
+signatures and proves an older installed version before exercising replacement.
+No configured predecessor preserves same-package smoke without claiming a
+historical upgrade. Pure hosted SemVer cases cover ordering and invalid forms.
+No signing settings or predecessor values were created; native upgrade and
+macOS historical PKG qualification remain open. Fresh complete focused and
+full cross-OS runs are required for the changed source.
+Report: docs/verification/gold-wave1982-egress-and-windows-upgrade.json.
+Root retains Git/PLAN/CI/final acceptance; local BSOD hold and no-Slint rule
+remain. Claude polling stays stopped. Raw open backlog is preserved below.
+
+
 **W1969-W1977 / W1976 integration repair (2026-09-30; hosted pending):**
 The frozen 221-case run36701587742 on66ff762c failed before Rust test execution:
 four compiler errors exposed an invalid FreedomConfig.wal assumption. The

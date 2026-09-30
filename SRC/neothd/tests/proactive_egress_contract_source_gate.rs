@@ -345,6 +345,36 @@ fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
     &tail[..end]
 }
 
+/// The only non-egress `send_proactive` reference allowed outside the live
+/// registry is the reconstructed iMessage forwarder. It must re-read its exact
+/// relink binding, reject drift, and forward exactly once; `deliver_live_route`
+/// separately proves that this adapter is itself consumed by execute!.
+fn is_validated_relink_forwarder(source: &str) -> bool {
+    let Some(start) = source.find("impl crate::channels::Channel for RelinkCheckedChannel {") else {
+        return false;
+    };
+    let Some(end_relative) = source[start..].find("/// Construct one configured adapter") else {
+        return false;
+    };
+    let forwarder = &source[start..start + end_relative];
+    let binding = "crate::channels::relink::traffic_binding_at(&self.home, &self.channel_ref)";
+    let drift_guard = "if current != self.traffic_binding {";
+    let forward = "self.inner.send_proactive(chat_id, text).await";
+    let (Some(binding_at), Some(guard_at), Some(forward_at)) = (
+        forwarder.find(binding),
+        forwarder.find(drift_guard),
+        forwarder.find(forward),
+    ) else {
+        return false;
+    };
+    binding_at < guard_at
+        && guard_at < forward_at
+        && forwarder[guard_at..forward_at].contains("return Err(")
+        && forwarder[guard_at..forward_at]
+            .contains("converted channel relink generation changed before proactive transport")
+        && forwarder.matches(forward).count() == 1
+}
+
 #[test]
 fn cfg_test_module_filter_preserves_production_after_nested_test_syntax() {
     let fixture = r##"
@@ -391,12 +421,54 @@ fn implementation(channel: &dyn Channel) {
 }
 
 #[test]
+fn validated_relink_forwarder_recognizer_requires_revalidation_and_one_forward() {
+    let accepted = r#"
+impl crate::channels::Channel for RelinkCheckedChannel {
+    async fn send_proactive(&self, chat_id: &str, text: &str) -> Result<(), ()> {
+        let current = crate::channels::relink::traffic_binding_at(&self.home, &self.channel_ref)?;
+        if current != self.traffic_binding {
+            return Err("converted channel relink generation changed before proactive transport");
+        }
+        self.inner.send_proactive(chat_id, text).await
+    }
+}
+/// Construct one configured adapter
+"#;
+    assert!(is_validated_relink_forwarder(accepted));
+    for rejected in [
+        accepted.replace("if current != self.traffic_binding {", "if false {"),
+        accepted.replace("return Err(", "return Ok("),
+        accepted.replace(
+            "self.inner.send_proactive(chat_id, text).await",
+            "self.inner.send_proactive(chat_id, text).await; self.inner.send_proactive(chat_id, text).await",
+        ),
+        accepted.replace(
+            "crate::channels::relink::traffic_binding_at(&self.home, &self.channel_ref)",
+            "unvalidated_binding",
+        ),
+        accepted.replace(
+            "if current != self.traffic_binding {
+            return Err",
+            "self.inner.send_proactive(chat_id, text).await;
+        if current != self.traffic_binding {
+            return Err",
+        ),
+    ] {
+        assert!(
+            !is_validated_relink_forwarder(&rejected),
+            "an unvalidated or multi-forward adapter must not be exempt from the sole seam gate"
+        );
+    }
+}
+
+#[test]
 fn exactly_one_production_proactive_transport_seam_exists() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut sources = Vec::new();
     rust_sources_below(&root, &mut sources);
     let mut seams = Vec::new();
     let mut connection_bound_proxy_sends = Vec::new();
+    let mut validated_relink_forwarders = Vec::new();
     for path in sources {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -413,6 +485,10 @@ fn exactly_one_production_proactive_transport_seam_exists() {
                 .replace('\\', "/");
             if relative == "daemon/channel_live_registry.rs" {
                 connection_bound_proxy_sends.push(format!("{relative}:{line}"));
+            } else if relative == "daemon/proactive_dispatcher.rs"
+                && is_validated_relink_forwarder(&source)
+            {
+                validated_relink_forwarders.push(format!("{relative}:{line}"));
             } else {
                 seams.push(format!("{relative}:{line}"));
             }
@@ -422,6 +498,28 @@ fn exactly_one_production_proactive_transport_seam_exists() {
         connection_bound_proxy_sends.len(),
         1,
         "unexpected live-registry raw send topology: {connection_bound_proxy_sends:?}"
+    );
+    assert_eq!(
+        validated_relink_forwarders.len(),
+        1,
+        "only the validated reconstructed iMessage forwarder may sit beside the durable egress seam: {validated_relink_forwarders:?}"
+    );
+    let dispatcher = include_str!("../src/daemon/proactive_dispatcher.rs");
+    let live_routes = between(
+        dispatcher,
+        "async fn deliver_live_route(",
+        "fn canonical_target_channel(",
+    );
+    let imessage_route = between(
+        live_routes,
+        "DeliveryRoute::IMessage",
+        "#[cfg(feature = \"matrix-channel\")]",
+    );
+    assert!(
+        imessage_route.contains("RelinkCheckedChannel {")
+            && imessage_route.contains("execute!(")
+            && !imessage_route.contains(".send_proactive("),
+        "the validated forwarding adapter must enter the durable executor and cannot bypass it"
     );
     let registry = include_str!("../src/daemon/channel_live_registry.rs");
     let connection_bound_proxy = between(
@@ -653,12 +751,13 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
     assert!(checked_ref < fresh_pair && fresh_pair < prepared);
     let bound_claim = between(
         inner,
-        "let mut claim = new_claim_with_deadline_and_account_binding(",
+        "let mut claim = new_claim_with_deadline_and_connection_binding(",
         "let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)",
     );
     assert!(
         bound_claim.contains("channel_ref.clone(),")
             && bound_claim.contains("account_binding.clone(),")
+            && bound_claim.contains("connection_binding.clone(),")
     );
     assert!(inner.contains("item.account_id.as_ref() != Some(&channel_ref.account_id)"));
 
@@ -684,7 +783,7 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
     let fresh_v4_account = between(
         EGRESS,
         "fn fresh_historic_bound_telegram_account(",
-        "/// Sole production transport seam for proactive messages.",
+        "pub(crate) async fn execute_claimed_once(",
     );
     assert!(fresh_v4_account.contains("crate::config::load_runtime_config_pair_from_path(config_source_path)") && fresh_v4_account.contains("accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels") && fresh_v4_account.contains("runtime\n        .authenticated_telegram_accounts()") && fresh_v4_account.contains("!account.is_legacy_singleton()\n                && account.channel_ref() == channel_ref") && fresh_v4_account.contains("binding.incarnation().is_none()"));
 }

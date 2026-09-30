@@ -1480,6 +1480,13 @@ jobs:
             runner: windows-2022
           - architecture: arm64
             runner: windows-11-arm
+    env:
+      NEOTH_WINDOWS_PREDECESSOR_X64_RELEASE_TAG: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_X64_RELEASE_TAG }}
+      NEOTH_WINDOWS_PREDECESSOR_X64_VERSION: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_X64_VERSION }}
+      NEOTH_WINDOWS_PREDECESSOR_X64_SHA256: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_X64_SHA256 }}
+      NEOTH_WINDOWS_PREDECESSOR_ARM64_RELEASE_TAG: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_ARM64_RELEASE_TAG }}
+      NEOTH_WINDOWS_PREDECESSOR_ARM64_VERSION: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_ARM64_VERSION }}
+      NEOTH_WINDOWS_PREDECESSOR_ARM64_SHA256: ${{ vars.NEOTH_WINDOWS_PREDECESSOR_ARM64_SHA256 }}
     steps:
       - name: Checkout smoke harness
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -1497,10 +1504,46 @@ jobs:
         run: |
           $stable = $env:GITHUB_REF_NAME -notmatch '-'
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          ./packaging/windows/smoke-installer.ps1 `
-            -Installer "dist/installer/NEOTH-$version-${{ matrix.architecture }}-Setup.exe" `
-            -Version $version `
-            -RequireSignature:$stable
+          $predecessor = switch ('${{ matrix.architecture }}') {
+            'x64' {
+              @{ Tag = $env:NEOTH_WINDOWS_PREDECESSOR_X64_RELEASE_TAG; Version = $env:NEOTH_WINDOWS_PREDECESSOR_X64_VERSION; Sha256 = $env:NEOTH_WINDOWS_PREDECESSOR_X64_SHA256 }
+              break
+            }
+            'arm64' {
+              @{ Tag = $env:NEOTH_WINDOWS_PREDECESSOR_ARM64_RELEASE_TAG; Version = $env:NEOTH_WINDOWS_PREDECESSOR_ARM64_VERSION; Sha256 = $env:NEOTH_WINDOWS_PREDECESSOR_ARM64_SHA256 }
+              break
+            }
+            default { throw "unsupported Windows architecture '${{ matrix.architecture }}'" }
+          }
+          $supplied = @(@($predecessor.Tag, $predecessor.Version, $predecessor.Sha256) | Where-Object { $_ -ne '' })
+          if ($supplied.Count -ne 0 -and $supplied.Count -ne 3) {
+            throw 'Windows predecessor release tag, version, and SHA-256 must be supplied together'
+          }
+          $smokeArguments = @{
+            Installer = "dist/installer/NEOTH-$version-${{ matrix.architecture }}-Setup.exe"
+            Version = $version
+          }
+          $requireSignature = $stable
+          if ($supplied.Count -eq 3) {
+            if ($predecessor.Tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$' -or
+                $predecessor.Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$' -or
+                $predecessor.Tag -cne "v$($predecessor.Version)" -or
+                $predecessor.Sha256 -cnotmatch '^[0-9A-Fa-f]{64}$') {
+              throw 'Windows predecessor configuration is not an exact tagged SemVer asset with a SHA-256 digest'
+            }
+            $assetName = "NEOTH-$($predecessor.Version)-${{ matrix.architecture }}-Setup.exe"
+            $previousInstaller = Join-Path $env:RUNNER_TEMP $assetName
+            $predecessorUri = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$($predecessor.Tag)/$assetName"
+            Invoke-WebRequest -Uri $predecessorUri -OutFile $previousInstaller -TimeoutSec 300
+            if ((Get-FileHash -LiteralPath $previousInstaller -Algorithm SHA256).Hash -ine $predecessor.Sha256) {
+              throw 'downloaded Windows predecessor SHA-256 does not match its pinned digest'
+            }
+            $smokeArguments.PreviousInstaller = $previousInstaller
+            $smokeArguments.PreviousVersion = $predecessor.Version
+            $requireSignature = $true
+          }
+          $smokeArguments.RequireSignature = [bool]$requireSignature
+          & ./packaging/windows/smoke-installer.ps1 @smokeArguments
 
   # Execute runtime/version probes on keyless native runners, then bind every
   # Linux bundle byte to a receipt. Package construction consumes the receipt

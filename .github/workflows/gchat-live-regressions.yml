@@ -448,9 +448,10 @@ jobs:
           run_case 228 integration proactive_egress_contract_source_gate::durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization --test proactive_egress_contract_source_gate
           run_case 229 integration proactive_egress_contract_source_gate::bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account --test proactive_egress_contract_source_gate
           run_case 230 integration proactive_egress_contract_source_gate::armed_claim_lease_and_registration_cover_admission_transport_and_terminalization armed_claim_lease_and_registration_cover_admission_transport_and_terminalization --test proactive_egress_contract_source_gate
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 230
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 230
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 230
+          run_case 231 integration proactive_egress_contract_source_gate::validated_relink_forwarder_recognizer_requires_revalidation_and_one_forward validated_relink_forwarder_recognizer_requires_revalidation_and_one_forward --test proactive_egress_contract_source_gate
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 231
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 231
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 231
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

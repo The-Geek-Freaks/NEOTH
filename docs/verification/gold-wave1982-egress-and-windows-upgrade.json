@@ -1,0 +1,152 @@
+{
+  "schema": "neoth-gold-wave1982-egress-and-windows-upgrade/v1",
+  "status": "SOURCE_IMPLEMENTED_STATIC_APPROVED_HOSTED_PENDING",
+  "base": "895d9f8e31004733131b5a76a61e51117e533c47",
+  "batches": [
+    "W1978",
+    "W1979",
+    "W1980",
+    "W1981"
+  ],
+  "localExecutableValidationRan": false,
+  "releaseAccepted": false,
+  "priorFocused": {
+    "passed": 228,
+    "localExecutableValidationRan": false,
+    "failed": [
+      "proactive_egress_contract_source_gate::exactly_one_production_proactive_transport_seam_exists",
+      "proactive_egress_contract_source_gate::bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account"
+    ],
+    "conclusion": "failure",
+    "productScenariosExecuted": false,
+    "run": 36703834678,
+    "releaseAccepted": false,
+    "verifiedExtractedEntries": 466,
+    "guardsExecuted": false,
+    "originalArchives": 3,
+    "producer": "895d9f8e31004733131b5a76a61e51117e533c47",
+    "started": 230,
+    "executed": 230,
+    "verifiedSourceBindings": 105,
+    "pythonContractsPassed": 61,
+    "pythonContractGroups": [
+      10,
+      18,
+      8,
+      25
+    ]
+  },
+  "priorFocusedEvidence": "work/gold-20260906/wave1976-product230-admission/partial-root-checks.json",
+  "egressGuard": "One exact revalidated RelinkCheckedChannel forwarder plus one durable egress seam; source markers align with connection-bound claim constructor; all three account/channel/connection bindings required",
+  "newRegression": "proactive_egress_contract_source_gate::validated_relink_forwarder_recognizer_requires_revalidation_and_one_forward",
+  "strictLint": "Delete only the unused private rendered_file_snapshot wrapper reported by hosted compilation; active encryption-override renderer retained",
+  "download": {
+    "connectTimeoutSeconds": 5,
+    "observedAssets": [
+      {
+        "id": 521488854,
+        "name": "yt-dlp.exe",
+        "size_bytes": 17840399
+      },
+      {
+        "id": 521488857,
+        "name": "yt-dlp_arm64.exe",
+        "size_bytes": 21159286
+      },
+      {
+        "id": 521488856,
+        "name": "yt-dlp_linux",
+        "size_bytes": 40446224
+      },
+      {
+        "id": 521488871,
+        "name": "yt-dlp_linux_aarch64",
+        "size_bytes": 40167448
+      },
+      {
+        "id": 521488882,
+        "name": "yt-dlp_macos",
+        "size_bytes": 37146048
+      }
+    ],
+    "totalTimeoutSeconds": 300,
+    "metadataReceiptSha256": "F8FF915537186DEC4E91E6D8339C32FCCFFA8A9CD7FC5E92AF43B18892AC1760",
+    "pinnedVersion": "2026.08.19",
+    "integrity": "Unchanged pinned hash, exact single HTTPS asset redirect and private atomic install",
+    "liveDownloadTested": false,
+    "maxBytes": 67108864
+  },
+  "windowsUpgrade": {
+    "nativeProof": "Both signatures required; strict older SemVer plus actual predecessor CLI exit/version and uninstall registration",
+    "source": "Implemented optional x64/arm64 pinned predecessor lane",
+    "configuration": "Complete per-architecture RELEASE_TAG, VERSION and SHA256 repository variables, or no historical lane",
+    "download": "Exact same-repository tagged canonical asset, 300s timeout and case-insensitive SHA256 verification before installation",
+    "signingOrPredecessorVariablesChanged": false,
+    "historicalUpgradeExecuted": false,
+    "pureContract": "Existing hosted Python contract runs bounded pure PowerShell precedence cases; no installer/registry/product calls"
+  },
+  "registeredSelections": {
+    "portable": 2461,
+    "Windows": 1020,
+    "googleChatGuards": 20,
+    "macOS": 134,
+    "pythonProductContracts": 61,
+    "focused": 231,
+    "guiUniversal": 126,
+    "Linux": 2229,
+    "guiLinux": 159
+  },
+  "remaining": "Fresh complete focused proof, full cross-OS CI and release signing/predecessor qualification remain required. W1967 GUI remains deferred under no-Slint hold. macOS historical PKG lane is not implemented by this batch.",
+  "staticReview": "Independent review approved final candidate hashes; original 230-case run remains failure despite228 verified passes",
+  "sources": [
+    {
+      "batch": "wave1978-yt-dlp-download-deadline",
+      "path": "SRC/neothd/src/installers/yt_dlp.rs",
+      "beforeSha256": "833FF7730E3440E4F77CA305D8FC399042746524EFB5B5DFFA1CD9727B29CE0C",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1978-yt-dlp-download-deadline\\candidate\\SRC\\neothd\\src\\installers\\yt_dlp.rs",
+      "afterSha256": "85A1C750E734E663E18FB67BA84B112AF2516041C55786554E558B8E3466A7F3"
+    },
+    {
+      "batch": "wave1980-current-egress-gates",
+      "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "beforeSha256": "10C3CED7A90388B3AF5EDA09A5B2A7A62736E4C15EE542FCC68F8CE36448EADF",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1980-current-egress-gates\\candidate\\SRC\\neothd\\tests\\proactive_egress_contract_source_gate.rs",
+      "afterSha256": "C67FB35899E982359D7E5EBA11F916D2255E938E79D14E3D42FC7984C1B4EB17"
+    },
+    {
+      "batch": "wave1981-unused-credential-renderer",
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "beforeSha256": "35FA297E057767A7045DC32C588552DFD5DF042F44D8B842679C8D0CE547E629",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1981-unused-credential-renderer\\candidate\\SRC\\neothd\\src\\config\\credentials.rs",
+      "afterSha256": "A2E385AFB722CAF55AAAE51A59DA220C2F897786930C0B6099E7F68DBD1D8063"
+    },
+    {
+      "batch": "wave1979-windows-predecessor",
+      "path": "docs/install.md",
+      "beforeSha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1979-windows-predecessor\\candidate\\docs\\install.md",
+      "afterSha256": "3D4EB6D46F0B486107E2E346A5E4DAB0981B4FD550F00D416007887809154EA0"
+    },
+    {
+      "batch": "wave1979-windows-predecessor",
+      "path": "packaging/windows/smoke-installer.ps1",
+      "beforeSha256": "750ABDC136D266FD7A9A050AE473DE8D05D09ABF5E53900CD817303EF4C5136C",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1979-windows-predecessor\\candidate\\packaging\\windows\\smoke-installer.ps1",
+      "afterSha256": "376C113510BC09BEE2F6439DF5F14A5DDB001248E85553B8B4CF500A1D975877"
+    },
+    {
+      "batch": "wave1979-windows-predecessor",
+      "path": "packaging/tests/test_release_capability_contract.py",
+      "beforeSha256": "3CA49806CC197270DB2841EB02CD31E9F6FDCBD53C5DAF2539531C60B0FF142D",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1979-windows-predecessor\\candidate\\packaging\\tests\\test_release_capability_contract.py",
+      "afterSha256": "BF66542408AF75F08C86F06C3C347DCCF4377C2E0CD31DA195FFF070C7384A00"
+    },
+    {
+      "batch": "wave1979-windows-predecessor",
+      "path": ".github/workflows/release.yml",
+      "beforeSha256": "2B9504F6413476D518CAC20A902D50D225EE6A16ED59985A1F4C95B0788E011A",
+      "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave1979-windows-predecessor\\candidate\\.github\\workflows\\release.yml",
+      "afterSha256": "F4D5AEC684C66F04A2E3924507567A31AB68CCE5D2DEDAB7A46856E84376CCF7"
+    }
+  ]
+}
