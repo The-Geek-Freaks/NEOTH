@@ -3076,7 +3076,11 @@ channel_accounts:
         .unwrap();
 
         let error = resolve_cron_delivery_route(dir.path(), "daily", "slack").unwrap_err();
-        assert!(error.to_string().contains("not authenticated with its sealed binding"));
+        assert!(
+            error
+                .to_string()
+                .contains("not authenticated with its sealed binding")
+        );
         assert!(
             !dir.path().join("proactive_queue.json").exists(),
             "a named Slack route must not fall back to another account or a scalar queue item"

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T10:05:27.1399172Z",
-  "validationStatus": "W1968 reviewed source; exact hosted validation pending",
+  "capturedUtc": "2026-09-30T10:13:01.1041642Z",
+  "validationStatus": "W1968 exact hosted formatting imported; fresh validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2863,8 +2863,8 @@
     },
     {
       "path": "docs/verification/gold-wave1968-recovery-slack-integration-repair.json",
-      "bytes": 4977,
-      "sha256": "4906727A3C68C0FC416D7ACC3F10B42504AE5B995DD259DF1D02D0E61E65256B"
+      "bytes": 5548,
+      "sha256": "BB29A864B85386CAA92BA5476676530A98FEDF216D0ED097D6F4677BCD5951FF"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5198,8 +5198,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/slack.rs",
-      "bytes": 37477,
-      "sha256": "5CC2B7EFA2D34FD6E8A6AFB5E310FB0AB667DADE993F481741ED2B8CFBF0FA67"
+      "bytes": 37742,
+      "sha256": "6D507B50724E401AF3B07B395803440980BA062B3D57FBFED21C7E08BBB2066D"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",
@@ -5513,8 +5513,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 442881,
-      "sha256": "5F9E990C7B55C1EF01DD1DB2388CAE6DA147C7C8A5FD70FCB1B3929760942751"
+      "bytes": 442807,
+      "sha256": "BB7A9F80BBAC44B6BF7AA8792B4E50BF2BB57A56B5F2BB70DE2CE08ED0D3CA27"
     },
     {
       "path": "SRC/neothd/src/config/credentials/file_migration_batch.rs",
@@ -5663,8 +5663,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 166638,
-      "sha256": "97CB4CBE23836C4BFD199BDA6FC076A6193938DD5818E4FC377794990E8F7F2C"
+      "bytes": 166694,
+      "sha256": "346366616551B7DDB49A3413BBD6E5AB5F1ABD2509B994CB0F42DB7C731B2FEE"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",

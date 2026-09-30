@@ -494,12 +494,10 @@ fn encode_credentials_yaml(
     encryption_enabled_override: Option<bool>,
 ) -> Result<FileSnapshot> {
     let home = transaction_directory(path);
-    let encryption_enabled = encryption_enabled_override
-        .map(Ok)
-        .unwrap_or_else(|| {
-            crate::wal::master_key::wal_encryption_enabled_at(&home)
-                .context("resolve WAL/config at-rest encryption policy")
-        })?;
+    let encryption_enabled = encryption_enabled_override.map(Ok).unwrap_or_else(|| {
+        crate::wal::master_key::wal_encryption_enabled_at(&home)
+            .context("resolve WAL/config at-rest encryption policy")
+    })?;
     let persisted = if encryption_enabled {
         match crate::wal::master_key::config_subkey_ensure_at(&home) {
             Some(key) => encrypt_credentials_body(&key, body)?,
@@ -4591,8 +4589,7 @@ impl Credentials {
                     if matches!(
                         encryption_policy,
                         RawFreedomCredentialsEncryptionPolicy::PreserveExistingCredentialEncryption
-                    )
-                        && credentials_were_encrypted
+                    ) && credentials_were_encrypted
                     {
                         let target = freedom_target.as_mut().ok_or_else(|| {
                             anyhow::anyhow!(
@@ -4634,8 +4631,7 @@ impl Credentials {
                             })?,
                         );
                     }
-                    let target_encryption_enabled = if let Some(target) = freedom_target.as_ref()
-                    {
+                    let target_encryption_enabled = if let Some(target) = freedom_target.as_ref() {
                         let candidate: super::FreedomConfig = serde_yaml::from_str(target)
                             .with_context(|| {
                                 format!("validate raw target for {}", freedom_path.display())

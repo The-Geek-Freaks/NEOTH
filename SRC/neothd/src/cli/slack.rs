@@ -211,7 +211,9 @@ fn resolve_slack_send_selection(
                     && account.channel_ref()
                         == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
             })
-            .ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Slack account `{requested_account}` is not configured")
+            })?;
         return Ok(account.bot_token().clone());
     }
 
@@ -808,14 +810,19 @@ mod tests {
             "hello",
             &OutputFormat::Json,
             move |token, channel, message| {
-                *observed_for_post.lock().unwrap() = Some((token.expose().to_owned(), channel, message));
+                *observed_for_post.lock().unwrap() =
+                    Some((token.expose().to_owned(), channel, message));
                 async { Ok(post_ok()) }
             },
         ))
         .unwrap();
         assert_eq!(
             observed.lock().unwrap().as_ref(),
-            Some(&("xoxb-work-secret".to_string(), "C123".to_string(), "hello".to_string()))
+            Some(&(
+                "xoxb-work-secret".to_string(),
+                "C123".to_string(),
+                "hello".to_string()
+            ))
         );
     }
 
@@ -826,8 +833,8 @@ mod tests {
         assert!(missing.to_string().contains("slack send --account"));
 
         let unknown = ChannelAccountId::new("unknown").unwrap();
-        let unknown_error = resolve_slack_send_selection(&mapped_slack_pair(None), Some(&unknown))
-            .unwrap_err();
+        let unknown_error =
+            resolve_slack_send_selection(&mapped_slack_pair(None), Some(&unknown)).unwrap_err();
         assert!(unknown_error.to_string().contains("not configured"));
 
         let mut partial = mapped_slack_pair(None);
@@ -865,7 +872,11 @@ mod tests {
         assert_eq!(token.expose(), "xoxb-legacy");
         let account = ChannelAccountId::new("work").unwrap();
         let error = resolve_slack_send_selection(&pair, Some(&account)).unwrap_err();
-        assert!(error.to_string().contains("invalid for legacy scalar Slack"));
+        assert!(
+            error
+                .to_string()
+                .contains("invalid for legacy scalar Slack")
+        );
     }
 
     #[test]
@@ -886,7 +897,15 @@ mod tests {
     #[test]
     fn public_cli_parses_slack_send_account_selector() {
         let parsed = Cli::try_parse_from([
-            "neoth", "slack", "send", "--account", "work", "--channel", "C123", "--message", "hello",
+            "neoth",
+            "slack",
+            "send",
+            "--account",
+            "work",
+            "--channel",
+            "C123",
+            "--message",
+            "hello",
         ])
         .expect("public CLI must accept a Slack send account selector");
         assert!(matches!(

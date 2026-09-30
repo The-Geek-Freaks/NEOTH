@@ -117,5 +117,20 @@
     "release": "Native signing, predecessor installer/PKG and full exact-producer release qualification remain open",
     "W1967": "GUI Slack account candidate not imported: existing generic Slint rows expose Telegram-only edit/retire/pairing controls; required UI change conflicts with no-.slint boundary",
     "macOS": "163 original failures retained and grouped for next diagnosis; not claimed repaired by this batch"
+  },
+  "hostedFormatting": {
+    "run": 36700912224,
+    "artifact": 11088864714,
+    "producer": "1810634c639a0a387f220493d0c09a8517eea31f",
+    "originalZipSha256": "1b182558bfa435ebf8f5b63d89d7506c90feccb487e2f1b36478807a56ce327a",
+    "patchSha256": "0bce782718daa0c0fe65b561e746dfcd0a628445e1df8c50efed56b46aef9dae",
+    "paths": [
+      "SRC/neothd/src/cli/slack.rs",
+      "SRC/neothd/src/config/credentials.rs",
+      "SRC/neothd/src/cron/runner.rs"
+    ],
+    "exactPreimagePostimageVerified": true,
+    "localRustfmtRan": false,
+    "freshPreflight": "pending"
   }
 }
