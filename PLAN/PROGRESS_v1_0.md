@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-29
 
+**W1951 daemon-start named-account readiness (2026-09-30; hosted pending):**
+The normal daemon-start secondary onboarding gate now shares canonical channel
+readiness with onboarding and Doctor. Valid named Telegram/Slack maps can pass
+when onboarding_complete is false and legacy scalar credentials are absent.
+Partial policy/credential maps remain rejected, including maps with legacy scalar
+shadows. The gate checks channel state only, without provider credential resolution.
+The explicit-completion fast path and unrelated startup order are retained.
+
+Three new regression tests cover valid Telegram and Slack maps and both channels'
+policy-only/credential-only failures with and without scalar shadows. Three
+existing flag/no-channel/legacy-Telegram tests are also newly selected to protect
+the prior gate behavior. Registrations become 2412 portable, 2187 Linux,
+972 Windows, 174 channel and 88 macOS; 61 Python contracts and 20 Google Chat
+guards are unchanged. Independent source review approved; hosted execution remains pending.
+No wider native, external-service, release or roadmap acceptance is claimed.
+Root retains Git/PLAN/CI/final acceptance. Absolute local BSOD hold/no-.slint
+remain; Claude polling stays stopped and its automation remains deleted.
+
 **W1948-W1950 Doctor named-account wiring accepted (2026-09-29):**
 Run 36620856538 on 4c315a50 completed SUCCESS. Root verified all 7 original
 ZIP/API digests, 368 extracted entries, 106 raw producer source bindings,

@@ -1036,6 +1036,12 @@ jobs:
           cli::doctor::tests::channels_wiring_partial_named_slack_maps_need_repair_without_legacy_shadow	neothd/src/cli/doctor.rs
           cli::doctor::tests::channels_wiring_existing_malformed_config_is_fail_closed	neothd/src/cli/doctor.rs
           cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials	neothd/src/cli/doctor.rs
+          cli::serve_tasks::tests::oh03_gate_passes_when_flag_set	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::tests::oh03_gate_rejects_when_no_channel_configured	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::tests::oh03_secondary_probe_passes_when_telegram_in_config	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows	neothd/src/cli/serve_tasks.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -1060,7 +1066,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 966 ]]; then
+          if [[ "$expected" -ne 972 ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/cli/channel/converted_relink.rs neothd/src/cli/doctor/checks/integrations.rs neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1146,7 +1152,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 966 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 972 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

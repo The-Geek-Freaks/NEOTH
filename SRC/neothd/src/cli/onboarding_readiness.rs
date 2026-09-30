@@ -63,6 +63,10 @@ pub(crate) fn evaluate(cfg: &FreedomConfig, credentials: &Credentials) -> Onboar
     }
 }
 
+pub(crate) fn has_ready_channel(cfg: &FreedomConfig, credentials: &Credentials) -> bool {
+    !configured_channels(cfg, credentials).is_empty()
+}
+
 fn provider_gap(cfg: &FreedomConfig) -> Option<String> {
     let kind = match cfg.provider_kind {
         Some(ProviderKind::Skip) | None => {

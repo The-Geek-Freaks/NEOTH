@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1948-W1950 Doctor named-account wiring accepted:168 exact Rust cases,61 Python contracts,20 guards and four authenticated loopback products; wider native and release gates remain open",
+  "status": "W1951 secondary serve gate source reviewed;174 exact channel cases await hosted execution",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 270849,
-    "sha256": "08216727F869431C3CDD4C789C05DA2013C665B54DB724424BC2A67CEAFA8B5C"
+    "bytes": 270754,
+    "sha256": "386EE4A1087C6892FFF8E3480C92449FA64D6E510EB1ED97AF6E61BD4E80006E"
   },
   "sourceInputs": 1501,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -7818,13 +7818,13 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_startup_factory_keeps_two_named_accounts_and_reload_is_account_scoped",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_framed_tokens_disambiguate_health_and_reload_fingerprints",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -8148,7 +8148,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_workspace_change_retires_only_matching_runtime_health_and_reload_generation",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -9528,13 +9528,13 @@
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::document_ingest_is_absent_by_default_and_reload_disable_stops_it",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::document_ingest_fleet_tests::disabled_document_ingest_returns_before_worker_construction",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -13548,19 +13548,19 @@
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::unimported_scalar_channels_remain_startable",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_relink_blocks_both_converted_families_before_pipeline",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::converted_relink_traffic_tests::pending_committed_during_pipeline_suppresses_both_replies",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
@@ -13998,43 +13998,43 @@
     {
       "test": "cli::onboarding_readiness::tests::self_contained_providers_do_not_require_credentials_yaml",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::metered_provider_requires_an_actual_provider_key",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::openai_compat_allows_keyless_local_endpoint_but_requires_model",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::token_only_telegram_is_not_ready",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::descriptor_projection_returns_ordered_usable_channels_and_excludes_incomplete_ones",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::feature_gated_irc_readiness_matches_the_compiled_runtime",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::discord_is_visible_only_with_exact_sender_policy",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
@@ -14388,25 +14388,25 @@
     {
       "test": "cli::serve_tasks::tests::omi_supervisor_shutdown_drains_disabled_retention_before_writer_join",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "C0574C18E5148538A6F7451CE48F8ED5FBD324B946A1C91CC052D5C2AA788BD5",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::named_telegram_and_slack_maps_are_ready_without_legacy_fields",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::configured_channel_names_follow_descriptor_order_without_duplicates",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::onboarding_readiness::tests::invalid_named_maps_are_excluded_and_do_not_fall_back_to_legacy_credentials",
       "sourcePath": "SRC/neothd/src/cli/onboarding_readiness.rs",
-      "sourceSha256": "D32A0A94817DF283E8C2E2845C07B672AD4DBA98188A516A548DF6437D252D8F",
+      "sourceSha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
       "junitClass": "neoth"
     },
     {
@@ -14443,6 +14443,42 @@
       "test": "cli::doctor::tests::channels_wiring_preserves_legacy_ssh_config_and_credentials",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
       "sourceSha256": "91AF94195419FB24E96F23A397A0D6CAABFFB2AABC8A731A92140E3633544A7B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_gate_passes_when_flag_set",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_gate_rejects_when_no_channel_configured",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_secondary_probe_passes_when_telegram_in_config",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
       "junitClass": "neoth"
     }
   ],
@@ -61842,6 +61878,85 @@
       }
     ],
     "note": "Root verified seven original ZIP/API digests,368 entries,106 raw producer source bindings and exact168 discovery/start/executed/PASS identities. Both daemons adopted,exit0,other WAL senders absent,receiver closed,WAL drained,cleanup complete. Independent four-product and20guard original review PASS. No local executable validation or broader release claim.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1951ServeNamedAccounts": {
+    "requiredTests": [
+      "cli::serve_tasks::tests::oh03_gate_passes_when_flag_set",
+      "cli::serve_tasks::tests::oh03_gate_rejects_when_no_channel_configured",
+      "cli::serve_tasks::tests::oh03_secondary_probe_passes_when_telegram_in_config",
+      "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields",
+      "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields",
+      "cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows"
+    ],
+    "newTests": [
+      "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields",
+      "cli::serve_tasks::tests::oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields",
+      "cli::serve_tasks::tests::oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows"
+    ],
+    "status": "Independent final source review APPROVE; channel-only helper excludes provider lookup. Six selected OH03 identities await hosted execution.",
+    "note": "Daemon secondary onboarding gate uses shared canonical channel readiness. Valid named Telegram/Slack maps pass without legacy fields; policy-only and credential-only maps fail with or without scalar shadows. Explicit flag/no-channel/legacy regression identities also selected. No local executable validation. Channel-only helper avoids provider credential lookup at the secondary gate."
+  },
+  "wave1951ServeNamedAccountBindings": {
+    "base": "fefcf20626bc956bc86702b9341684f866065ce3",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 58769,
+        "sha256": "052A4C4B74CD77BA7B2FBA8C0CB8DB432AE1467A99F3A3F470CAFFE3A3C42FEA",
+        "blob": "6c0877530c0ab6aa25deb54042a542b95b5c962b"
+      },
+      {
+        "path": ".github/workflows/macos-contract-regressions.yml",
+        "bytes": 16283,
+        "sha256": "8BF1AAC30B508A0446F49364BE9B5D28DC3D70190A9ECBF9CEF5DE4230100C14",
+        "blob": "25d8d195be50a58fc9e9a3b38812b679ec1c2c68"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 30306,
+        "sha256": "70EFED849041D8A5409FF0AF9F247C143D918B60AA9618F99995F8B13EAEBF3C",
+        "blob": "45c9ba40f5af71fc398f6601d0d67fa28f7b0a67"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 164270,
+        "sha256": "426A514DC8599FDF8D028A625DBB5D7E0B50B1158B11738D088F72483052EC9D",
+        "blob": "635f0970381aa22b2513b9661a04f1c841b75a2a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 581877,
+        "sha256": "92CC6B3458523A3E94E96DED101E2F5CF127B0BD945D3B6F2CBDBF05F32BA89C",
+        "blob": "b1f70672a83bcf4611f53043a3e04c8efecb0199"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1618307,
+        "sha256": "086C39AFFE27EE0227637102BD18DD136A511AB1F23BA7E9E87221107EF42F98",
+        "blob": "c3c8f92d81b25003523fcadda7b5884463f9e5a7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2229317,
+        "sha256": "27584961BE381D4A43B6CAF9DE30D309A8C26D5986338BB15628400516F20257",
+        "blob": "92ccd166c1d0e308bee53b2afb6ab6464b863483"
+      },
+      {
+        "path": "SRC/neothd/src/cli/onboarding_readiness.rs",
+        "bytes": 16106,
+        "sha256": "74BB74C930426D8E500FFAF84112AB272E62D0954A7CD891A15863FA08932BE9",
+        "blob": "10b4349951b9d899ef50a01272ab1d1669e8fdd3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 580207,
+        "sha256": "293F3EB0C9238CE6B258CD3DB66AADBC4BAA24EB31FE1437BD4EE29C6110274E",
+        "blob": "8ae5dd0775ee7b1123193be74c0ecd22b61ba5ca"
+      }
+    ],
+    "note": "Shared channel-only readiness for OH03 accepts valid named Telegram/Slack accounts, rejects partial maps/shadows and excludes provider/AWS credential lookup. Three new tests plus three existing gate identities registered. Independent source APPROVE; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

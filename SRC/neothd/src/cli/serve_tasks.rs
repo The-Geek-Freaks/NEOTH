@@ -8561,10 +8561,9 @@ pub(crate) async fn prepare_wal(
 /// configured at init time. Two-stage check for idempotency:
 ///
 /// 1. Fast path: `onboarding_complete` flag in freedom.yaml is `true` → pass.
-/// 2. Secondary probe: even if flag is `false` (old freedom.yaml or flag absent),
-///    load credentials.yaml + [`ChannelCredsView`] + [`probe_all`] — if any
-///    channel is `Ok` or `Warn`, pass (operator configured channels manually or
-///    via step6g after initial wizard).
+/// 2. Secondary projection: even if flag is `false` (old freedom.yaml or flag
+///    absent), reuse [`crate::cli::onboarding_readiness::has_ready_channel`] so named
+///    account maps and legacy channels share the same accepted-channel rules.
 ///
 /// Call this from `run_serve` BEFORE `prime_runtime_services`, guarded by
 /// `!args.one_shot` so integration tests with ephemeral configs pass through.
@@ -8577,21 +8576,10 @@ pub(crate) fn check_onboarding_complete(
         return Ok(());
     }
 
-    // Secondary probe: even without the wizard flag, the operator may have
-    // hand-configured channels in credentials.yaml (step6g, manual edit, or an
-    // old freedom.yaml that pre-dates the flag). Use the authoritative
-    // ChannelCredsView + probe_all so every supported channel adapter is
-    // covered, not just the wizard-path channels.
-    let view = crate::channels::probe::ChannelCredsView::from_config(Some(cfg), creds);
-    let any_channel = crate::channels::probe::probe_all(&view)
-        .into_iter()
-        .any(|h| {
-            matches!(
-                h.status,
-                crate::channels::probe::ProbeStatus::Ok | crate::channels::probe::ProbeStatus::Warn
-            )
-        });
-    if any_channel {
+    // Secondary projection: manual configuration may pre-date the wizard
+    // flag. The shared readiness projection covers both legacy fields and
+    // named account maps, including map/legacy-shadow rejection.
+    if crate::cli::onboarding_readiness::has_ready_channel(cfg, creds) {
         return Ok(());
     }
 
@@ -11439,9 +11427,8 @@ mod tests {
         );
     }
 
-    /// Secondary probe: `onboarding_complete = false` but telegram_token is
-    /// present in the FreedomConfig (e.g. legacy freedom.yaml with inline token).
-    /// The probe via ChannelCredsView sees `telegram_token = true` → gate passes.
+    /// Secondary projection: `onboarding_complete = false` but legacy Telegram
+    /// fields are present in FreedomConfig, so shared onboarding readiness passes.
     #[test]
     fn oh03_secondary_probe_passes_when_telegram_in_config() {
         let cfg = FreedomConfig {
@@ -11450,13 +11437,202 @@ mod tests {
             telegram_user_id: Some(12345),
             ..Default::default()
         };
-        // ChannelCredsView.telegram_token = true + user_id = true
-        // → probe_channel(Telegram) → ProbeStatus::Ok → any_channel = true → Ok
+        // Shared readiness recognizes the complete legacy Telegram binding.
         assert!(
             check_onboarding_complete(&cfg, &crate::config::credentials::Credentials::default())
                 .is_ok(),
             "secondary probe must pass when telegram_token + telegram_user_id present"
         );
+    }
+
+    #[test]
+    fn oh03_secondary_probe_passes_for_named_telegram_map_without_legacy_fields() {
+        let account = crate::channels::registry::ChannelAccountId::new("family").unwrap();
+        let mut cfg = FreedomConfig {
+            onboarding_complete: false,
+            ..Default::default()
+        };
+        cfg.channel_accounts.telegram.insert(
+            account.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 42,
+                ..Default::default()
+            },
+        );
+        let mut creds = crate::config::credentials::Credentials::default();
+        creds.channel_accounts.telegram.insert(
+            account,
+            crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::from("named-telegram-token")),
+            },
+        );
+
+        assert!(cfg.telegram_token.is_none());
+        assert_eq!(cfg.telegram_user_id, None);
+        assert!(creds.telegram_token.is_none());
+        assert!(check_onboarding_complete(&cfg, &creds).is_ok());
+    }
+
+    #[test]
+    fn oh03_secondary_probe_passes_for_named_slack_map_without_legacy_fields() {
+        let account = crate::channels::registry::ChannelAccountId::new("ops").unwrap();
+        let mut cfg = FreedomConfig {
+            onboarding_complete: false,
+            ..Default::default()
+        };
+        cfg.channel_accounts.slack.insert(
+            account.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: "U0123456789".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut creds = crate::config::credentials::Credentials::default();
+        creds.channel_accounts.slack.insert(
+            account,
+            crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::from("xoxb-named-token")),
+                app_token: Some(crate::secret::SecretString::from("xapp-named-token")),
+            },
+        );
+
+        assert!(creds.slack_bot_token.is_none());
+        assert!(creds.slack_app_token.is_none());
+        assert!(creds.slack_allowed_user_id.is_none());
+        assert!(check_onboarding_complete(&cfg, &creds).is_ok());
+    }
+
+    #[test]
+    fn oh03_secondary_probe_rejects_partial_named_maps_even_with_legacy_shadows() {
+        let rejected = |cfg: FreedomConfig, creds: crate::config::credentials::Credentials| {
+            check_onboarding_complete(&cfg, &creds)
+                .unwrap_err()
+                .to_string()
+        };
+        let mut errors = Vec::new();
+
+        let telegram_policy = crate::channels::registry::ChannelAccountId::new("tg-policy").unwrap();
+        let mut telegram_policy_only = FreedomConfig {
+            onboarding_complete: false,
+            ..Default::default()
+        };
+        telegram_policy_only.channel_accounts.telegram.insert(
+            telegram_policy,
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 42,
+                ..Default::default()
+            },
+        );
+        errors.push(rejected(
+            telegram_policy_only.clone(),
+            crate::config::credentials::Credentials::default(),
+        ));
+        let mut telegram_policy_shadow = telegram_policy_only;
+        telegram_policy_shadow.telegram_user_id = Some(42);
+        errors.push(rejected(
+            telegram_policy_shadow,
+            crate::config::credentials::Credentials {
+                telegram_token: Some(crate::secret::SecretString::from("legacy-telegram")),
+                ..Default::default()
+            },
+        ));
+
+        let telegram_credentials = crate::channels::registry::ChannelAccountId::new("tg-credentials").unwrap();
+        let mut telegram_credentials_only = crate::config::credentials::Credentials::default();
+        telegram_credentials_only.channel_accounts.telegram.insert(
+            telegram_credentials.clone(),
+            crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::from("named-telegram")),
+            },
+        );
+        errors.push(rejected(
+            FreedomConfig {
+                onboarding_complete: false,
+                ..Default::default()
+            },
+            telegram_credentials_only.clone(),
+        ));
+        errors.push(rejected(
+            FreedomConfig {
+                onboarding_complete: false,
+                telegram_user_id: Some(42),
+                ..Default::default()
+            },
+            crate::config::credentials::Credentials {
+                telegram_token: Some(crate::secret::SecretString::from("legacy-telegram")),
+                channel_accounts: crate::config::credentials::ChannelAccountCredentials {
+                    telegram: telegram_credentials_only.channel_accounts.telegram,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ));
+
+        let slack_policy = crate::channels::registry::ChannelAccountId::new("slack-policy").unwrap();
+        let mut slack_policy_only = FreedomConfig {
+            onboarding_complete: false,
+            ..Default::default()
+        };
+        slack_policy_only.channel_accounts.slack.insert(
+            slack_policy,
+            crate::config::SlackAccountConfig {
+                allowed_user_id: "U0123456789".to_string(),
+                ..Default::default()
+            },
+        );
+        errors.push(rejected(
+            slack_policy_only.clone(),
+            crate::config::credentials::Credentials::default(),
+        ));
+        errors.push(rejected(
+            slack_policy_only,
+            crate::config::credentials::Credentials {
+                slack_bot_token: Some(crate::secret::SecretString::from("xoxb-legacy")),
+                slack_app_token: Some(crate::secret::SecretString::from("xapp-legacy")),
+                slack_allowed_user_id: Some("U0123456789".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let slack_credentials = crate::channels::registry::ChannelAccountId::new("slack-credentials").unwrap();
+        let mut slack_credentials_only = crate::config::credentials::Credentials::default();
+        slack_credentials_only.channel_accounts.slack.insert(
+            slack_credentials,
+            crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::from("xoxb-named")),
+                app_token: Some(crate::secret::SecretString::from("xapp-named")),
+            },
+        );
+        errors.push(rejected(
+            FreedomConfig {
+                onboarding_complete: false,
+                ..Default::default()
+            },
+            slack_credentials_only.clone(),
+        ));
+        errors.push(rejected(
+            FreedomConfig {
+                onboarding_complete: false,
+                ..Default::default()
+            },
+            crate::config::credentials::Credentials {
+                slack_bot_token: Some(crate::secret::SecretString::from("xoxb-legacy")),
+                slack_app_token: Some(crate::secret::SecretString::from("xapp-legacy")),
+                slack_allowed_user_id: Some("U0123456789".to_string()),
+                channel_accounts: crate::config::credentials::ChannelAccountCredentials {
+                    slack: slack_credentials_only.channel_accounts.slack,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ));
+
+        let expected = errors.first().expect("partial-map matrix has cases");
+        assert!(
+            errors.iter().all(|error| error == expected),
+            "partial named maps must return the same OH03 error: {errors:?}"
+        );
+        assert!(expected.contains("GOLD-ADAPT-OH-03"));
     }
 
     #[tokio::test]
