@@ -1,5 +1,17 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2052 hosted AST fixture repair (2026-10-01):**
+Run36893505482 compiled and executed all285 cases. Root matched283 exact
+passes and two fixture failures to three original archives,576 entries and144
+producer Git source bindings. All six shared-policy regressions passed.
+The two AST fixtures requested impossible overlap conditions: their small
+nodes exceeded300characters, while the near-cap node still had128bytes of
+headroom. Corrected inputs now exercise real overlap and real16KiB carry
+suppression; production code and assertions are unchanged. This reviewed
+three-line repair awaits the300-case run. Public CLI/daemon scenarios and
+Google Chat guards were skipped in the failed baseline, so this partial
+case evidence is not product, native or release acceptance.
+
 **W2049 explicit local code-vector recall (2026-10-01):**
 A statically reviewed explicit reindex-embeddings command now produces bounded
 local code-chunk corpora. Delta reuse requires matching current source identity;

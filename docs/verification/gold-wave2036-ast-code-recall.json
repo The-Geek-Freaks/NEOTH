@@ -116,5 +116,38 @@
     "preserved": "Metadata-only eligibility unchanged; AST loader alone enforces AST generation equality",
     "patchSHA256": "1F38DD56A24E6A4FC387A8F8EA5A738875CFE58AE529E827A11AC65451FDFC1F",
     "importMethod": "Verified clean base Git blobs and Git-filtered candidate postimages; copied original candidate bytes because portable patch line endings differ from working checkout"
+  },
+  "focused285PartialEvidence": {
+    "run": 36893505482,
+    "producer": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+    "runConclusion": "failure",
+    "discoveredAndExecuted": 285,
+    "passed": 283,
+    "failed": [
+      "code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap",
+      "code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes"
+    ],
+    "originalArchives": 3,
+    "verifiedArchiveEntries": 576,
+    "rawGitSourceBindings": 144,
+    "productCanaries": "skipped",
+    "googleChatGuards": "skipped",
+    "acceptance": "PARTIAL_CASE_EVIDENCE_ONLY_NOT_PRODUCT_ACCEPTANCE",
+    "localTestsRan": false,
+    "custodySHA256": "03A1A8850E22AEDC643A2F3465306938E81CB70140246D553EF59B15B601ED32"
+  },
+  "hostedFixtureRepair": {
+    "status": "STATIC_APPROVED_FIXTURE_ONLY",
+    "reviewer": "/root/w2031_rust_review",
+    "candidateSHA256": "A61101B13801C2FDE254E77371B8EC82009AAAD53DA1C671BE9626822808D9BC",
+    "baseBlob": "99e5a6c40684c6fc6f51f71c3e87452214e41fb8",
+    "productionChanged": false,
+    "assertionsWeakened": false,
+    "oldOverlap": "Approx310char nodes could not overlap below300",
+    "correctedOverlap": "211char nodes fit overlap and16 force2500char split",
+    "oldNearCap": "128byte reserve still allowed prefix carry",
+    "correctedNearCap": "Standalone16367bytes remains legal; with25byteprefix16392 exceeds16384",
+    "localTestsRan": false,
+    "hostedValidation": "pending"
   }
 }

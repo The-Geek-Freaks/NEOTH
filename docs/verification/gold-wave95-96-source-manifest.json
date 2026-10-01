@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T16:54:53.8446306Z",
-  "validationStatus": "HOSTED_FORMAT_APPLIED_EXECUTION_PENDING",
+  "capturedUtc": "2026-10-01T17:04:49.2920262Z",
+  "validationStatus": "HOSTED283_OF285_FIXTURE_REPAIR_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2988,13 +2988,13 @@
     },
     {
       "path": "docs/verification/gold-wave2036-ast-code-recall.json",
-      "bytes": 6420,
-      "sha256": "C2EBBBA4FF887E081E84881558BAAC5AFDA51E638C4406B366F42E700686EA85"
+      "bytes": 7913,
+      "sha256": "D2915D4CD6ED2FF5B8A86DF1195F15351C821436E21CE8AD7D9C1BFC889BFD40"
     },
     {
       "path": "docs/verification/gold-wave2044-context-policy-and-ast-repair.json",
-      "bytes": 2918,
-      "sha256": "70A44EFBEA065D76F7BF420BB4401EAAB7FFAC7F9F8B2F44837D1F21402BAF42"
+      "bytes": 3741,
+      "sha256": "4482B8300D6B71F5BEF67BA4B31796D87135756DC8D0DC709036A635CCBC25C2"
     },
     {
       "path": "docs/verification/gold-wave2046-codeql-checkpoint.json",
@@ -3003,8 +3003,8 @@
     },
     {
       "path": "docs/verification/gold-wave2049-code-vector-recall.json",
-      "bytes": 5819,
-      "sha256": "3DF4D797987DB87331ABAAD8B1E3160A70C088FCD41BBDE177EE25F657DE6BBF"
+      "bytes": 6658,
+      "sha256": "8642B5FE6ECD65193E2C7BF72F6ED516934EB99B82BC47E82DF3C96ACFE7ED7A"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4108,8 +4108,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2269194,
-      "sha256": "CE4500C5003BAC1FD1C8830CA5745CF58BE756635D8A5593B1F80FC1896E684B"
+      "bytes": 2269968,
+      "sha256": "CA5E3F3A9D9EBF9F021790A12E6B77D95AC96B39D4E132FDC9367EC41B918966"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5523,8 +5523,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/chunk.rs",
-      "bytes": 10116,
-      "sha256": "3B60B93D18A7A7772FA3CEB8E9EBBE8FFB237913726BFE7BDC4D59CC0B3FCC76"
+      "bytes": 10115,
+      "sha256": "A61101B13801C2FDE254E77371B8EC82009AAAD53DA1C671BE9626822808D9BC"
     },
     {
       "path": "SRC/neothd/src/code_map/co_change.rs",

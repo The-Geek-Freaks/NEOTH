@@ -196,8 +196,8 @@ mod tests {
 
     #[test]
     fn rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap() {
-        let source = (0..12)
-            .map(|n| format!("pub fn declaration_{n}_é() {{ {} }}\n", "x".repeat(280)))
+        let source = (0..16)
+            .map(|n| format!("pub fn declaration_{n}_é() {{ {} }}\n", "x".repeat(180)))
             .collect::<String>();
         let chunks = rust_chunks_from_verified_source("src/lib.rs", SHA, &source).unwrap();
         assert!(chunks.len() > 1);
@@ -244,7 +244,7 @@ mod tests {
         let prefix = "pub fn overlap_seed() {}\n";
         let declaration = format!(
             "pub const NEAR_CAP: &str = \"{}\";\n",
-            "x".repeat(MAX_CHUNK_BYTES - 128)
+            "x".repeat(MAX_CHUNK_BYTES - 48)
         );
         let source = format!("{prefix}{declaration}");
         let chunks = rust_chunks_from_verified_source("src/lib.rs", SHA, &source).unwrap();

@@ -55,5 +55,25 @@
     ],
     "verifiedEntries": 3,
     "localFormatterRan": false
-  }
+  },
+  "focused285PartialEvidence": {
+    "run": 36893505482,
+    "producer": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+    "runConclusion": "failure",
+    "discoveredAndExecuted": 285,
+    "passed": 283,
+    "failed": [
+      "code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap",
+      "code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes"
+    ],
+    "originalArchives": 3,
+    "verifiedArchiveEntries": 576,
+    "rawGitSourceBindings": 144,
+    "productCanaries": "skipped",
+    "googleChatGuards": "skipped",
+    "acceptance": "PARTIAL_CASE_EVIDENCE_ONLY_NOT_PRODUCT_ACCEPTANCE",
+    "localTestsRan": false,
+    "custodySHA256": "03A1A8850E22AEDC643A2F3465306938E81CB70140246D553EF59B15B601ED32"
+  },
+  "sharedPolicyRegressionsPassed": 6
 }
