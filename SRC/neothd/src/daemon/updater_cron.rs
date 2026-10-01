@@ -284,7 +284,9 @@ fn install_skill_git_probe_fixture(fixture: SkillGitProbeFixture) -> SkillGitPro
         .lock()
         .expect("Skill Git cron fixture registry");
     assert!(
-        !fixtures.iter().any(|registered| registered.home == fixture.home),
+        !fixtures
+            .iter()
+            .any(|registered| registered.home == fixture.home),
         "Skill Git cron fixture home is already registered"
     );
     let home = fixture.home.clone();
@@ -319,35 +321,45 @@ async fn run_skill_git_probe_fixture(
     match runner {
         SkillGitProbeFixtureRunner::Success { version, launches } => {
             launches.fetch_add(1, Ordering::SeqCst);
-            Some(Ok(UpdaterLeafSuccess::new(version, UpdaterLeafOutcomeCode::Completed)))
+            Some(Ok(UpdaterLeafSuccess::new(
+                version,
+                UpdaterLeafOutcomeCode::Completed,
+            )))
         }
         SkillGitProbeFixtureRunner::MutateSourceAfterIntent { manifest, launches } => {
-            std::fs::write(home.join("skills").join("alpha").join("skill.yaml"), manifest)
-                .expect("mutate exact installed Skill source after leaf Intent");
+            std::fs::write(
+                home.join("skills").join("alpha").join("skill.yaml"),
+                manifest,
+            )
+            .expect("mutate exact installed Skill source after leaf Intent");
             assert_eq!(launches.load(Ordering::SeqCst), 0);
             None
         }
         SkillGitProbeFixtureRunner::HoldContained { launches, observed } => {
             let marker = home.join("contained-skill-git-marker");
             let mut command = tokio::process::Command::new(
-                std::env::current_exe().expect("current test executable for contained Skill Git fixture"),
+                std::env::current_exe()
+                    .expect("current test executable for contained Skill Git fixture"),
             );
             command
                 .arg("contained_child_parent_helper")
                 .env("NEOTH_TEST_UPDATER_CONTAINED_MARKER", &marker);
-            let mut child = match crate::updater::process_containment::ContainedChild::spawn_configured(
-                command,
-                b"",
-                8 * 1024,
-            )
-            .await
-            {
-                Ok(child) => child,
-                Err(error) => return Some(Err(UpdaterLeafFailure::new(
-                    UpdaterLeafFailureKind::Process,
-                    anyhow::Error::new(error),
-                ))),
-            };
+            let mut child =
+                match crate::updater::process_containment::ContainedChild::spawn_configured(
+                    command,
+                    b"",
+                    8 * 1024,
+                )
+                .await
+                {
+                    Ok(child) => child,
+                    Err(error) => {
+                        return Some(Err(UpdaterLeafFailure::new(
+                            UpdaterLeafFailureKind::Process,
+                            anyhow::Error::new(error),
+                        )));
+                    }
+                };
             launches.fetch_add(1, Ordering::SeqCst);
             observed.notify_one();
             let failure = if control.is_cancelled() {
@@ -710,11 +722,9 @@ fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline:
         // per-row denied inside the specialized pass until they have matching
         // activation authority; CLI auto-apply stays entirely denied.
         RecurringUpdateLane::SkillPluginProbe => crate::updater::pipeline::GateDecision::Allow,
-        RecurringUpdateLane::CliAutoApply => {
-            crate::updater::pipeline::GateDecision::Deny {
-                reason: UNAUDITED_RECURRING_EGRESS_DENIED.to_string(),
-            }
-        }
+        RecurringUpdateLane::CliAutoApply => crate::updater::pipeline::GateDecision::Deny {
+            reason: UNAUDITED_RECURRING_EGRESS_DENIED.to_string(),
+        },
     }
 }
 
@@ -1473,7 +1483,11 @@ async fn run_production_lane_once(
                     || async { Ok(denied_probe_specs(UpdaterTaskKind::SkillPlugin, reason)) },
                 )
                 .await?;
-                tracing::debug!(components = result.components.len(), epoch = snapshot.epoch(), "Skill/plugin probe denied before leaf authority");
+                tracing::debug!(
+                    components = result.components.len(),
+                    epoch = snapshot.epoch(),
+                    "Skill/plugin probe denied before leaf authority"
+                );
                 return Ok(());
             }
             let result = run_authorized_skill_git_probe(
@@ -1485,7 +1499,11 @@ async fn run_production_lane_once(
                 control,
             )
             .await?;
-            tracing::debug!(components = result.components.len(), epoch = snapshot.epoch(), "authorized Installed-Skill Git probe complete");
+            tracing::debug!(
+                components = result.components.len(),
+                epoch = snapshot.epoch(),
+                "authorized Installed-Skill Git probe complete"
+            );
             Ok(())
         }
         RecurringUpdateLane::NeothSelfProbe => {
@@ -2279,8 +2297,7 @@ async fn run_authorized_skill_git_probe(
     #[cfg(not(test))]
     let configured_limits = UpdaterRunLimits::default_skill_git_probe();
     let run_clock = UpdaterRunClock::start(
-        configured_limits
-            .map_err(|error| format!("configure bounded Skill Git pass: {error}"))?,
+        configured_limits.map_err(|error| format!("configure bounded Skill Git pass: {error}"))?,
     )
     .map_err(|error| format!("admit bounded Skill Git pass: {error}"))?;
     // Admit the finite clock before the durable FIRED append. The WAL append
@@ -2292,7 +2309,9 @@ async fn run_authorized_skill_git_probe(
     let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
     let pass_id = identity
         .correlatable_pass_id_for(task_kind)
-        .ok_or_else(|| "authorized Skill Git probe requires a bound outer pass identity".to_string())?;
+        .ok_or_else(|| {
+            "authorized Skill Git probe requires a bound outer pass identity".to_string()
+        })?;
     let authorizer = UpdaterLeafAuthorizer::for_snapshot(
         writer.clone(),
         Arc::clone(&snapshot),
@@ -2322,15 +2341,25 @@ async fn run_authorized_skill_git_probe(
     for (ordinal, row) in scan.rows.into_iter().enumerate() {
         let name = row.name.clone();
         let Some(source) = row.source.clone() else {
-            components.push(ComponentOutcome::skipped_by_gate(name, row.version, "skill declares no update source"));
+            components.push(ComponentOutcome::skipped_by_gate(
+                name,
+                row.version,
+                "skill declares no update source",
+            ));
             continue;
         };
         if !row.enabled {
-            components.push(ComponentOutcome::skipped_by_gate(name, row.version, REQUEST_BOUND_POLICY_REFUSED));
+            components.push(ComponentOutcome::skipped_by_gate(
+                name,
+                row.version,
+                REQUEST_BOUND_POLICY_REFUSED,
+            ));
             continue;
         }
         let source = crate::updater::skill_resolver::normalize_git_source_for_leaf(&source)
-            .map_err(|error| format!("normalize installed Skill source before leaf intent: {error}"))?;
+            .map_err(|error| {
+                format!("normalize installed Skill source before leaf intent: {error}")
+            })?;
         let argv = vec![
             "ls-remote".to_string(),
             "--tags".to_string(),
@@ -2361,82 +2390,127 @@ async fn run_authorized_skill_git_probe(
         let effect_clock = run_clock.clone();
         let expected_source = source.clone();
         let effect_row = row.clone();
-        let execution = authorizer.execute_process_with_receipt(
-            request,
-            run_clock.clone(),
-            UpdaterLeafEffect::SkillGitProbe,
-            UpdaterProgram::Git,
-            &argv,
-            &[],
-            2 * 1024 * 1024,
-            move || async move {
-                #[cfg(test)]
-                if let Some(fixture) = fixture {
-                    if let Some(result) = run_skill_git_probe_fixture(
-                        &home,
-                        fixture.runner,
+        let execution = authorizer
+            .execute_process_with_receipt(
+                request,
+                run_clock.clone(),
+                UpdaterLeafEffect::SkillGitProbe,
+                UpdaterProgram::Git,
+                &argv,
+                &[],
+                2 * 1024 * 1024,
+                move || async move {
+                    #[cfg(test)]
+                    if let Some(fixture) = fixture {
+                        if let Some(result) = run_skill_git_probe_fixture(
+                            &home,
+                            fixture.runner,
+                            &effect_control,
+                            effect_clock.deadline(UpdaterDeadlinePhase::Effect),
+                        )
+                        .await
+                        {
+                            return result;
+                        }
+                    }
+                    let current_source =
+                        crate::updater::probes::revalidate_authorized_skill_source_for_cron(
+                            home,
+                            reload,
+                            effect_row,
+                            expected_source,
+                            &effect_control,
+                            effect_clock.deadline(UpdaterDeadlinePhase::Effect),
+                        )
+                        .await
+                        .map_err(
+                            crate::updater::probes::CronSkillRevalidationError::into_leaf_failure,
+                        )?;
+                    crate::updater::skill_resolver::resolve_latest_version_contained(
+                        &current_source,
                         &effect_control,
                         effect_clock.deadline(UpdaterDeadlinePhase::Effect),
-                    ).await {
-                        return result;
-                    }
-                }
-                let current_source = crate::updater::probes::revalidate_authorized_skill_source_for_cron(
-                    home,
-                    reload,
-                    effect_row,
-                    expected_source,
-                    &effect_control,
-                    effect_clock.deadline(UpdaterDeadlinePhase::Effect),
-                )
-                .await
-                .map_err(crate::updater::probes::CronSkillRevalidationError::into_leaf_failure)?;
-                crate::updater::skill_resolver::resolve_latest_version_contained(
-                    &current_source,
-                    &effect_control,
-                    effect_clock.deadline(UpdaterDeadlinePhase::Effect),
-                )
-                .await
-            },
-        )
-        .await;
+                    )
+                    .await
+                },
+            )
+            .await;
         match execution {
             Ok((latest, receipt)) => {
                 components.push(ComponentOutcome::observed(name, latest));
                 terminal_receipts.push(receipt);
             }
             Err(error) if error.is_policy_refusal() => {
-                if let Some(receipt) = error.terminal_receipt() { terminal_receipts.push(receipt); }
-                components.push(ComponentOutcome::skipped_by_gate(name, "unobserved", REQUEST_BOUND_POLICY_REFUSED));
+                if let Some(receipt) = error.terminal_receipt() {
+                    terminal_receipts.push(receipt);
+                }
+                components.push(ComponentOutcome::skipped_by_gate(
+                    name,
+                    "unobserved",
+                    REQUEST_BOUND_POLICY_REFUSED,
+                ));
             }
             Err(error) => {
                 if error.leaves_outer_terminal_indeterminate() {
                     return Err("Skill Git leaf terminal acknowledgement is indeterminate; outer RESULT withheld for recovery".to_string());
                 }
-                if let Some(receipt) = error.terminal_receipt() { terminal_receipts.push(receipt); }
-                if matches!(&error, crate::updater::authority::UpdaterLeafExecutionError::Effect { kind: "cancelled", .. }) && control.is_cancelled() {
+                if let Some(receipt) = error.terminal_receipt() {
+                    terminal_receipts.push(receipt);
+                }
+                if matches!(
+                    &error,
+                    crate::updater::authority::UpdaterLeafExecutionError::Effect {
+                        kind: "cancelled",
+                        ..
+                    }
+                ) && control.is_cancelled()
+                {
                     outer_terminal_outcome = UpdaterTerminalOutcome::Cancelled;
-                } else if matches!(&error, crate::updater::authority::UpdaterLeafExecutionError::Effect { kind: "timeout", .. }) {
+                } else if matches!(
+                    &error,
+                    crate::updater::authority::UpdaterLeafExecutionError::Effect {
+                        kind: "timeout",
+                        ..
+                    }
+                ) {
                     outer_terminal_outcome = UpdaterTerminalOutcome::TimedOut;
                 }
-                components.push(ComponentOutcome::failed(name, "unobserved", format!("contained Skill Git probe failed: {error}")));
-                if outer_terminal_outcome != UpdaterTerminalOutcome::Completed { break; }
+                components.push(ComponentOutcome::failed(
+                    name,
+                    "unobserved",
+                    format!("contained Skill Git probe failed: {error}"),
+                ));
+                if outer_terminal_outcome != UpdaterTerminalOutcome::Completed {
+                    break;
+                }
             }
         }
     }
-    let failed = components.iter().any(|component| component.status == crate::wal::payloads_u04::ComponentStatus::Failed);
+    let failed = components
+        .iter()
+        .any(|component| component.status == crate::wal::payloads_u04::ComponentStatus::Failed);
     let result = UpdaterTaskResultPayload {
         identity,
         task_kind,
         ts_unix: crate::time::now_unix_secs(),
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
-        terminal_outcome: Some(if outer_terminal_outcome != UpdaterTerminalOutcome::Completed { outer_terminal_outcome } else if failed { UpdaterTerminalOutcome::Failed } else { UpdaterTerminalOutcome::Completed }),
+        terminal_outcome: Some(
+            if outer_terminal_outcome != UpdaterTerminalOutcome::Completed {
+                outer_terminal_outcome
+            } else if failed {
+                UpdaterTerminalOutcome::Failed
+            } else {
+                UpdaterTerminalOutcome::Completed
+            },
+        ),
         fired_receipt_sha256: Some(fired_receipt_sha256),
-        leaf_receipt_binding: (!terminal_receipts.is_empty()).then_some(UpdaterLeafReceiptBinding {
-            schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
-            budgets: run_clock.budgets().clone(),
-            terminal_receipts,
-        }),
+        leaf_receipt_binding: (!terminal_receipts.is_empty()).then_some(
+            UpdaterLeafReceiptBinding {
+                schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+                budgets: run_clock.budgets().clone(),
+                terminal_receipts,
+            },
+        ),
         components,
     };
     append_updater_result(&result, writer).await?;
@@ -2759,21 +2833,26 @@ mod tests {
             .expect("secure Skill authority WAL fixture directory");
         crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key"))
             .expect("install Skill authority WAL fixture key");
-        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), "alpha")
-            .expect("inspect exact installed Skill fixture generation");
+        let current =
+            crate::skills::installer::inspect_current_install(&home.join("skills"), "alpha")
+                .expect("inspect exact installed Skill fixture generation");
         crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,
             "alpha",
             &current.generation_sha256,
             crate::skills::installer::SkillMutationOrigin::CliInstall,
-        ).expect("record exact Skill fixture install incarnation");
+        )
+        .expect("record exact Skill fixture install incarnation");
         let decision = crate::skills::authority::SkillAuthorityDecision::new(
             crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
             crate::skills::authority::SkillAuthorityState::Active,
             None,
-        ).expect("construct active Skill authority fixture decision");
-        crate::skills::authority::publish_installed_authority_decision(home, "alpha", reload, decision)
-            .expect("publish active exact-generation Skill authority fixture");
+        )
+        .expect("construct active Skill authority fixture decision");
+        crate::skills::authority::publish_installed_authority_decision(
+            home, "alpha", reload, decision,
+        )
+        .expect("publish active exact-generation Skill authority fixture");
     }
 
     #[test]
@@ -3733,7 +3812,9 @@ mod tests {
                 assert!(reason.contains("intent/result WAL"));
                 assert!(reason.contains("descendant process trees"));
             }
-            GateDecision::Allow => panic!("CLI auto-apply must remain denied until every process/HTTP/install leaf is wired"),
+            GateDecision::Allow => panic!(
+                "CLI auto-apply must remain denied until every process/HTTP/install leaf is wired"
+            ),
         }
     }
 
@@ -4835,9 +4916,15 @@ mod tests {
         let launches = Arc::new(AtomicUsize::new(0));
         let _fixture = install_skill_git_probe_fixture(SkillGitProbeFixture {
             home: home.clone(),
-            limits: Some(UpdaterRunLimits::new(
-                Duration::from_secs(2), Duration::from_secs(2), Duration::from_secs(2), Duration::from_secs(2),
-            ).unwrap()),
+            limits: Some(
+                UpdaterRunLimits::new(
+                    Duration::from_secs(2),
+                    Duration::from_secs(2),
+                    Duration::from_secs(2),
+                    Duration::from_secs(2),
+                )
+                .unwrap(),
+            ),
             runner: SkillGitProbeFixtureRunner::Success {
                 version: "1.2.3".to_string(),
                 launches: Arc::clone(&launches),
@@ -4845,8 +4932,12 @@ mod tests {
         });
         let reload = skill_git_fixture_reload(&home);
         let snapshot = reload.accepted_snapshot();
-        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, snapshot.epoch());
-        let expected_pass_id = identity.correlatable_pass_id_for(UpdaterTaskKind::SkillPlugin).unwrap().to_string();
+        let identity =
+            UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, snapshot.epoch());
+        let expected_pass_id = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::SkillPlugin)
+            .unwrap()
+            .to_string();
         let result = run_authorized_skill_git_probe(
             identity,
             reload,
@@ -4854,24 +4945,67 @@ mod tests {
             &home,
             &writer,
             UpdaterPassControl::new(Some(writer.clone())),
-        ).await.expect("authorized fake Skill Git leaf must commit outer RESULT");
+        )
+        .await
+        .expect("authorized fake Skill Git leaf must commit outer RESULT");
 
-        assert_eq!(result.terminal_outcome, Some(UpdaterTerminalOutcome::Completed));
+        assert_eq!(
+            result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Completed)
+        );
         result.validate_leaf_receipt_binding().unwrap();
-        let binding = result.leaf_receipt_binding.as_ref().expect("exact terminal binding");
+        let binding = result
+            .leaf_receipt_binding
+            .as_ref()
+            .expect("exact terminal binding");
         assert_eq!(binding.terminal_receipts.len(), 1);
         assert_eq!(binding.terminal_receipts[0].request_id, "skill-git-0");
         assert_eq!(binding.terminal_receipts[0].operation_id, expected_pass_id);
         assert_eq!(launches.load(Ordering::SeqCst), 1);
-        assert!(result.components.iter().any(|row| row.name == "skill:alpha"));
-        assert!(result.components.iter().any(|row| row.name == "plugin_inventory" && row.status == crate::wal::payloads_u04::ComponentStatus::SkippedByGate));
+        assert!(
+            result
+                .components
+                .iter()
+                .any(|row| row.name == "skill:alpha")
+        );
+        assert!(
+            result
+                .components
+                .iter()
+                .any(|row| row.name == "plugin_inventory"
+                    && row.status == crate::wal::payloads_u04::ComponentStatus::SkippedByGate)
+        );
 
         drop(writer);
         writer_join.await.unwrap().unwrap();
         let events = cli_fixture_wal_events(&segment);
-        assert_eq!(events.iter().filter(|(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8).count(), 1);
-        assert_eq!(events.iter().filter(|(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8).count(), 1);
-        assert_eq!(events.iter().filter(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT).count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT)
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -4889,71 +5023,148 @@ mod tests {
         ready.wait().await.unwrap();
         let launches = Arc::new(AtomicUsize::new(0));
         let _fixture = install_skill_git_probe_fixture(SkillGitProbeFixture {
-            home: home.clone(), limits: None,
+            home: home.clone(),
+            limits: None,
             runner: SkillGitProbeFixtureRunner::MutateSourceAfterIntent {
-                manifest: skill_git_fixture_manifest("git+https://github.com/neoth-fixtures/revoked-alpha.git"),
+                manifest: skill_git_fixture_manifest(
+                    "git+https://github.com/neoth-fixtures/revoked-alpha.git",
+                ),
                 launches: Arc::clone(&launches),
             },
         });
         let reload = skill_git_fixture_reload(&home);
         activate_skill_git_fixture(&home, &reload);
-        assert!(matches!(
-            crate::skills::authority::validate_installed_authority(&home, "alpha", &reload),
-            crate::skills::authority::InstalledSkillAuthorityValidation::Active(_)
-        ), "the pre-Intent fixture must start from active exact-generation authority");
+        assert!(
+            matches!(
+                crate::skills::authority::validate_installed_authority(&home, "alpha", &reload),
+                crate::skills::authority::InstalledSkillAuthorityValidation::Active(_)
+            ),
+            "the pre-Intent fixture must start from active exact-generation authority"
+        );
         let result = run_authorized_skill_git_probe(
-            UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, 0), reload.clone(), reload.accepted_snapshot(),
-            &home, &writer, UpdaterPassControl::new(Some(writer.clone())),
-        ).await.expect("post-Intent source drift must terminalize as an audited skip");
+            UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, 0),
+            reload.clone(),
+            reload.accepted_snapshot(),
+            &home,
+            &writer,
+            UpdaterPassControl::new(Some(writer.clone())),
+        )
+        .await
+        .expect("post-Intent source drift must terminalize as an audited skip");
         result.validate_leaf_receipt_binding().unwrap();
-        assert_eq!(launches.load(Ordering::SeqCst), 0, "source drift must stop before DNS/Git launch");
-        assert!(result.components.iter().any(|row| row.name == "skill:alpha" && row.status == crate::wal::payloads_u04::ComponentStatus::SkippedByGate));
-        assert!(!result.components.iter().any(|row| row.name == "skill:alpha" && row.status == crate::wal::payloads_u04::ComponentStatus::Observed));
+        assert_eq!(
+            launches.load(Ordering::SeqCst),
+            0,
+            "source drift must stop before DNS/Git launch"
+        );
+        assert!(result.components.iter().any(|row| row.name == "skill:alpha"
+            && row.status == crate::wal::payloads_u04::ComponentStatus::SkippedByGate));
+        assert!(
+            !result.components.iter().any(|row| row.name == "skill:alpha"
+                && row.status == crate::wal::payloads_u04::ComponentStatus::Observed)
+        );
 
         drop(writer);
         writer_join.await.unwrap().unwrap();
         let events = cli_fixture_wal_events(&segment);
-        assert_eq!(events.iter().filter(|(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8).count(), 1);
-        assert_eq!(events.iter().filter(|(event, subtype, _)| *event == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8).count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(event, subtype, _)| *event
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8)
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
     async fn skill_git_cancellation_and_timeout_reap_containment_before_terminal_receipts() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        for (cancelled, expected) in [(true, UpdaterTerminalOutcome::Cancelled), (false, UpdaterTerminalOutcome::TimedOut)] {
+        for (cancelled, expected) in [
+            (true, UpdaterTerminalOutcome::Cancelled),
+            (false, UpdaterTerminalOutcome::TimedOut),
+        ] {
             let root = tempfile::tempdir().unwrap();
             let home = root.path().join("home");
             write_skill_git_fixture(&home, "git+https://github.com/neoth-fixtures/alpha.git");
             let wal = home.join("wal");
             std::fs::create_dir_all(&wal).unwrap();
             let segment = wal.join("000001.wal");
-            let (writer, writer_join, ready) = crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+            let (writer, writer_join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
             ready.wait().await.unwrap();
             let launches = Arc::new(AtomicUsize::new(0));
             let observed = Arc::new(tokio::sync::Notify::new());
             let _fixture = install_skill_git_probe_fixture(SkillGitProbeFixture {
                 home: home.clone(),
                 limits: Some(if cancelled {
-                    UpdaterRunLimits::new(Duration::from_secs(2), Duration::from_secs(2), Duration::from_secs(2), Duration::from_secs(2)).unwrap()
+                    UpdaterRunLimits::new(
+                        Duration::from_secs(2),
+                        Duration::from_secs(2),
+                        Duration::from_secs(2),
+                        Duration::from_secs(2),
+                    )
+                    .unwrap()
                 } else {
-                    UpdaterRunLimits::new(Duration::from_millis(40), Duration::from_millis(80), Duration::from_millis(120), Duration::from_millis(160)).unwrap()
+                    UpdaterRunLimits::new(
+                        Duration::from_millis(40),
+                        Duration::from_millis(80),
+                        Duration::from_millis(120),
+                        Duration::from_millis(160),
+                    )
+                    .unwrap()
                 }),
-                runner: SkillGitProbeFixtureRunner::HoldContained { launches: Arc::clone(&launches), observed: Arc::clone(&observed) },
+                runner: SkillGitProbeFixtureRunner::HoldContained {
+                    launches: Arc::clone(&launches),
+                    observed: Arc::clone(&observed),
+                },
             });
             let reload = skill_git_fixture_reload(&home);
             let control = UpdaterPassControl::new(Some(writer.clone()));
             let task = tokio::spawn({
-                let task_home = home.clone(); let task_writer = writer.clone(); let task_control = control.clone(); let task_reload = Arc::clone(&reload);
-                async move { run_authorized_skill_git_probe(UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, 0), task_reload.clone(), task_reload.accepted_snapshot(), &task_home, &task_writer, task_control).await }
+                let task_home = home.clone();
+                let task_writer = writer.clone();
+                let task_control = control.clone();
+                let task_reload = Arc::clone(&reload);
+                async move {
+                    run_authorized_skill_git_probe(
+                        UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, 0),
+                        task_reload.clone(),
+                        task_reload.accepted_snapshot(),
+                        &task_home,
+                        &task_writer,
+                        task_control,
+                    )
+                    .await
+                }
             });
-            tokio::time::timeout(Duration::from_secs(2), observed.notified()).await.expect("contained Skill Git fixture did not launch");
-            if cancelled { control.cancel(); }
-            let result = tokio::time::timeout(Duration::from_secs(3), task).await.expect("contained Skill Git fixture did not terminalize").unwrap().expect("contained Skill Git fixture must commit outer result");
+            tokio::time::timeout(Duration::from_secs(2), observed.notified())
+                .await
+                .expect("contained Skill Git fixture did not launch");
+            if cancelled {
+                control.cancel();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(3), task)
+                .await
+                .expect("contained Skill Git fixture did not terminalize")
+                .unwrap()
+                .expect("contained Skill Git fixture must commit outer result");
             assert_eq!(result.terminal_outcome, Some(expected));
             result.validate_leaf_receipt_binding().unwrap();
             assert_eq!(launches.load(Ordering::SeqCst), 1);
-            drop(control); drop(writer);
+            drop(control);
+            drop(writer);
             writer_join.await.unwrap().unwrap();
             let events = cli_fixture_wal_events(&segment);
             tokio::time::sleep(Duration::from_millis(900)).await;
@@ -4961,16 +5172,34 @@ mod tests {
                 !home.join("contained-skill-git-marker").exists(),
                 "contained Skill Git descendant escaped terminal cleanup"
             );
-            let leaf_result = events.iter().position(|(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8).unwrap();
-            let outer_result = events.iter().position(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT).unwrap();
-            assert!(leaf_result < outer_result, "contained child must be reaped before leaf receipt and outer RESULT");
+            let leaf_result = events
+                .iter()
+                .position(|(event, subtype, _)| {
+                    *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+                })
+                .unwrap();
+            let outer_result = events
+                .iter()
+                .position(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT)
+                .unwrap();
+            assert!(
+                leaf_result < outer_result,
+                "contained child must be reaped before leaf receipt and outer RESULT"
+            );
         }
     }
 
     #[test]
     fn skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied() {
-        assert!(matches!(recurring_egress_gate(RecurringUpdateLane::SkillPluginProbe), crate::updater::pipeline::GateDecision::Allow));
-        assert!(matches!(recurring_egress_gate(RecurringUpdateLane::CliAutoApply), crate::updater::pipeline::GateDecision::Deny { .. }));
+        assert!(matches!(
+            recurring_egress_gate(RecurringUpdateLane::SkillPluginProbe),
+            crate::updater::pipeline::GateDecision::Allow
+        ));
+        assert!(matches!(
+            recurring_egress_gate(RecurringUpdateLane::CliAutoApply),
+            crate::updater::pipeline::GateDecision::Deny { .. }
+        ));
     }
 
     #[tokio::test]

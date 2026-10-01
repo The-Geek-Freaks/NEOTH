@@ -70,5 +70,31 @@
   },
   "localExecutableValidationRan": false,
   "hosted": "pending",
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "hostedFormatting": {
+    "run": 36832249436,
+    "producer": "9ec1df4909a113bcc5ab55e67769dc5ddb1bbf9e",
+    "artifact": 11147561980,
+    "zipSha256": "AD94195E2F8D54D70DB90CF67E56A6BF027CE75256E9E56713670413D7BED105",
+    "patchSha256": "B8C67D473149DCADC09E46F16D5D81FCFAE3DC3F655F795A5F4BA433E9987DEE",
+    "resultBindings": [
+      {
+        "path": "SRC/neothd/src/daemon/updater_cron.rs",
+        "blob": "860dc626002027f2e97a113f5c7995cd82582920",
+        "sha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C"
+      },
+      {
+        "path": "SRC/neothd/src/updater/probes.rs",
+        "blob": "e30b3c1fad20348348b5a2a9e4569fd0ef2a1b62",
+        "sha256": "C97BAF109C880ED8BB308D73D1A229D0A3D0BDEFB246A71C1816ED8ACEE6D85B"
+      },
+      {
+        "path": "SRC/neothd/src/updater/skill_resolver.rs",
+        "blob": "46a8d66ea4ad18928f930fdb155b5d3986464ac6",
+        "sha256": "E5A42266B98BD2B8E254BAD69EBB03474453A917BA70CF1D57B2FB3DE4580834"
+      }
+    ],
+    "scope": "Exact hosted rustfmt output for three changed updater files",
+    "semanticChange": false
+  }
 }

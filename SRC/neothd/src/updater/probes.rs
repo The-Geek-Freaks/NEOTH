@@ -482,9 +482,17 @@ impl CronSkillRevalidationError {
     pub(crate) fn into_leaf_failure(self) -> crate::updater::authority::UpdaterLeafFailure {
         use crate::updater::authority::{UpdaterLeafFailure, UpdaterLeafFailureKind};
         match self {
-            Self::Policy(reason) => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Policy, anyhow::anyhow!(reason)),
-            Self::Cancelled => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("accepted updater generation retired during Skill revalidation")),
-            Self::TimedOut => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("Skill revalidation exceeded the inherited effect deadline")),
+            Self::Policy(reason) => {
+                UpdaterLeafFailure::new(UpdaterLeafFailureKind::Policy, anyhow::anyhow!(reason))
+            }
+            Self::Cancelled => UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Cancelled,
+                anyhow::anyhow!("accepted updater generation retired during Skill revalidation"),
+            ),
+            Self::TimedOut => UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Timeout,
+                anyhow::anyhow!("Skill revalidation exceeded the inherited effect deadline"),
+            ),
         }
     }
 }
@@ -1316,7 +1324,10 @@ pub(crate) async fn revalidate_authorized_skill_source_for_cron(
     let source = crate::updater::skill_resolver::normalize_git_source_for_leaf(&source)
         .map_err(CronSkillRevalidationError::Policy)?;
     if source != expected_source {
-        return Err(CronSkillRevalidationError::Policy("upstream probe skipped without network: skill source changed after leaf intent".to_string()));
+        return Err(CronSkillRevalidationError::Policy(
+            "upstream probe skipped without network: skill source changed after leaf intent"
+                .to_string(),
+        ));
     }
     if let Some(error) = invalid_source_probe_status(&source) {
         return Err(CronSkillRevalidationError::Policy(error));

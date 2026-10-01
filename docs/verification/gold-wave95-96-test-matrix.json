@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1988_SKILL_GIT_AND_W1989_BOUNDED_CI_IMPORTED_STATIC_APPROVED_HOSTED_PENDING",
+  "status": "W1988_HOSTED_FORMAT_IMPORTED_FRESH_238_CASE_AND_FULL_CI_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 273645,
-    "sha256": "9329139507FC678DD2291A986B096DE580824094AF48C94FF28CD29467C950B6"
+    "bytes": 273632,
+    "sha256": "952B8DC10BC46D9A92B478CA73BFC0A6308E682C43F84FDFE7A1DB92346965AF"
   },
   "sourceInputs": 1517,
   "requiredNativeTests": [
@@ -14778,43 +14778,43 @@
     {
       "test": "daemon::updater_cron::tests::recurring_gate_admits_only_wired_skill_git_and_keeps_auto_apply_denied",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::authorized_skill_git_success_binds_exact_leaf_receipt_and_outer_result",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_cancellation_and_timeout_reap_containment_before_terminal_receipts",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
       "junitClass": "neoth"
     },
     {
       "test": "updater::probes::native_cli_version_tests::cron_skill_revalidation_cancelled_before_worker_is_network_free",
       "sourcePath": "SRC/neothd/src/updater/probes.rs",
-      "sourceSha256": "5FF56FA8194777FA49584E66D08C058C1FF1C88D98D405727D6DAB51A355AF28",
+      "sourceSha256": "C97BAF109C880ED8BB308D73D1A229D0A3D0BDEFB246A71C1816ED8ACEE6D85B",
       "junitClass": "neoth"
     },
     {
       "test": "updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free",
       "sourcePath": "SRC/neothd/src/updater/probes.rs",
-      "sourceSha256": "5FF56FA8194777FA49584E66D08C058C1FF1C88D98D405727D6DAB51A355AF28",
+      "sourceSha256": "C97BAF109C880ED8BB308D73D1A229D0A3D0BDEFB246A71C1816ED8ACEE6D85B",
       "junitClass": "neoth"
     }
   ],
@@ -63418,6 +63418,38 @@
       }
     ],
     "note": "Installed-Skill request-bound Git leaf;238 focused cases,2468 portable registrations; bounded Linux Clippy45m/job150m after baseline36826661054 timed out. Source14f58624 remains the baseline CI producer; new source requires own hosted validation. No local executable checks.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1988HostedFormat": {
+    "base": "9ec1df4909a113bcc5ab55e67769dc5ddb1bbf9e",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1988-skill-git-probe.json",
+        "bytes": 4210,
+        "sha256": "75A3095941ECBD470EF85E3A45BC81481FBF0E04738F16EAE666A7FB8721DC7D",
+        "blob": "6db8e9342018c6e5dd5cb9b303b9b7ffaf27eedf"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/updater_cron.rs",
+        "bytes": 227972,
+        "sha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+        "blob": "860dc626002027f2e97a113f5c7995cd82582920"
+      },
+      {
+        "path": "SRC/neothd/src/updater/probes.rs",
+        "bytes": 130063,
+        "sha256": "C97BAF109C880ED8BB308D73D1A229D0A3D0BDEFB246A71C1816ED8ACEE6D85B",
+        "blob": "e30b3c1fad20348348b5a2a9e4569fd0ef2a1b62"
+      },
+      {
+        "path": "SRC/neothd/src/updater/skill_resolver.rs",
+        "bytes": 43591,
+        "sha256": "E5A42266B98BD2B8E254BAD69EBB03474453A917BA70CF1D57B2FB3DE4580834",
+        "blob": "46a8d66ea4ad18928f930fdb155b5d3986464ac6"
+      }
+    ],
+    "note": "Exact hosted rustfmt artifact11147561980 for source9ec1df49; API/archive/entry digests and allthree result Git blobs verified. No local formatter/compiler/runtime; fresh fast gates and238-case run required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
