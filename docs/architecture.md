@@ -110,6 +110,23 @@ CI remain pending.
 Neither boundary establishes daemon replay/status/cancel APIs, native GUI
 behavior, live-provider behavior, or cross-platform acceptance.
 
+## Recurring installed Skill version probes
+
+The Skill Git lane uses the same accepted-generation updater supervisor as
+self-probes and native CLI version checks. It admits only activated installed
+Skills; plugin inventory is reported as deliberately skipped. The leaf request
+binds the normalized source and logical Git arguments before durable intent.
+After intent acknowledgement, it reloads installed authority and verifies the
+package generation and source before the contained resolver can reach DNS/Git.
+
+One pass clock covers every Skill row: later rows do not restart the budget.
+Cancellation and timeout retain typed leaf outcomes, process-tree cleanup and
+ordered terminal receipts. The outer updater result binds those leaf receipts.
+The lane only observes a version; Skill installation/activation and CLI
+replacement retain their separate authority boundaries. See
+[the Skill update contract](plugins.md#skills) for operator configuration and
+source restrictions. Source wiring alone is not hosted or release acceptance.
+
 ## W41 Main and Buddy daemon chat
 
 Wave 42 typed channel health is published at

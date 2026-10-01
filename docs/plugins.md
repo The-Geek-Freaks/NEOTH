@@ -70,15 +70,28 @@ a permissive meaning to an omitted/empty `tool_allowlist`. GOLD-R3-17 remains
 open for running-daemon adoption/revocation, subprocess MCP
 reconnect/poisoning, Buddy parity, and exact-head gates.
 
-An optional `source: git+https://...` enables version checks only for an
-effectively enabled Skill. Version probes currently accept repositories hosted
+An optional `source: git+https://...` enables version checks for an effectively
+enabled, activated installed Skill. Version probes accept repositories hosted
 on `github.com`, `gitlab.com`, or `codeberg.org`; self-hosted forges remain
 disabled until an explicit operator host policy exists. Userinfo, non-default
 ports, redirects, credential helpers, interactive prompts, and inherited Git
-request configuration are rejected or disabled. A disabled Skill never starts
-the Git probe. Even an eligible source does not create recurring daemon egress
-in the current release candidate: updater lanes return `SkippedByGate` until
-request-bound transport authorization and intent/result WAL are complete.
+request configuration are rejected or disabled. Git uses the validated public
+DNS addresses for the actual connection. A disabled or inactive Skill cannot
+start a remote version check.
+
+Recurring checks require `updater.enabled` and an autonomy policy that allows
+the scheduler; `updater.interval_secs` supplies their cadence. Each admitted
+Skill probe binds its normalized source, logical Git arguments, accepted
+configuration epoch and run budgets to durable leaf intent. Installed authority,
+package generation and source are revalidated after that intent, before DNS or
+Git. Cancellation and the shared pass deadline bound the effect; the contained
+child is terminated and reaped before its terminal receipt is published. The
+outer updater result retains the leaf receipt binding.
+
+A Skill version check reads tags only. It does not install a new generation or
+grant activation authority. Plugin remote probes remain explicitly skipped,
+and recurring CLI auto-apply remains denied. Missing or changed installed
+Skill authority leaves that row without a remote probe.
 
 The running registry uses the daemon's exact `freedom.yaml` path, including a
 custom `neoth serve --config ...` instance. It rebuilds Skill routing only from

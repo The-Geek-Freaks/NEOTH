@@ -455,6 +455,59 @@ pub struct InstalledSkillRow {
     id: String,
 }
 
+impl InstalledSkillRow {
+    /// Stable, non-secret identity material for the request-bound updater
+    /// component. The authority serializes only its SHA-256, never the skill
+    /// identifier, package tree or source URL.
+    pub(crate) fn updater_identity_bytes(&self) -> Vec<u8> {
+        format!("{}\0{}", self.id, self.generation_sha256).into_bytes()
+    }
+}
+
+/// Installed-Skill-only inventory for the admitted recurring Git leaf. Plugin
+/// rows deliberately do not appear here: they remain denied until they gain
+/// an equivalent exact-generation activation authority.
+pub(crate) struct AuthorizedSkillCronScan {
+    pub(crate) rows: Vec<InstalledSkillRow>,
+    pub(crate) failures: Vec<(String, String)>,
+}
+
+pub(crate) enum CronSkillRevalidationError {
+    Policy(String),
+    Cancelled,
+    TimedOut,
+}
+
+impl CronSkillRevalidationError {
+    pub(crate) fn into_leaf_failure(self) -> crate::updater::authority::UpdaterLeafFailure {
+        use crate::updater::authority::{UpdaterLeafFailure, UpdaterLeafFailureKind};
+        match self {
+            Self::Policy(reason) => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Policy, anyhow::anyhow!(reason)),
+            Self::Cancelled => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("accepted updater generation retired during Skill revalidation")),
+            Self::TimedOut => UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("Skill revalidation exceeded the inherited effect deadline")),
+        }
+    }
+}
+
+pub(crate) async fn scan_authorized_skills_for_cron(
+    home: PathBuf,
+    policy: crate::config::SkillsConfig,
+) -> Result<AuthorizedSkillCronScan, String> {
+    tokio::task::spawn_blocking(move || {
+        let scan = scan_installed_skills_checked(&home, &policy);
+        Ok(AuthorizedSkillCronScan {
+            rows: scan.rows,
+            failures: scan
+                .failures
+                .into_iter()
+                .map(|failure| (failure.component, failure.error))
+                .collect(),
+        })
+    })
+    .await
+    .map_err(|_| "authorized Skill cron inventory worker failed".to_string())?
+}
+
 #[derive(Debug)]
 struct ManifestScanFailure {
     component: String,
@@ -1227,6 +1280,46 @@ fn revalidate_authorized_skill_at_resolver_sink(
         return Err(
             "upstream probe skipped without network: skill source changed after scan".to_string(),
         );
+    }
+    Ok(source)
+}
+
+/// Run after the updater leaf Intent has been acknowledged and immediately
+/// before DNS/Git. A pre-Intent inventory row is merely an optimization; this
+/// is the authority decision that makes the external effect executable.
+pub(crate) async fn revalidate_authorized_skill_source_for_cron(
+    home: PathBuf,
+    reload: std::sync::Arc<crate::config::reload::ReloadController>,
+    row: InstalledSkillRow,
+    expected_source: String,
+    control: &crate::daemon::updater_cron::UpdaterPassControl,
+    effect_deadline: tokio::time::Instant,
+) -> Result<String, CronSkillRevalidationError> {
+    if control.is_cancelled() {
+        return Err(CronSkillRevalidationError::Cancelled);
+    }
+    if tokio::time::Instant::now() >= effect_deadline {
+        return Err(CronSkillRevalidationError::TimedOut);
+    }
+    let revalidation = tokio::task::spawn_blocking(move || {
+        revalidate_authorized_skill_at_resolver_sink(&home, &reload, &row)
+    });
+    let source = tokio::select! {
+        biased;
+        _ = control.cancelled() => return Err(CronSkillRevalidationError::Cancelled),
+        result = tokio::time::timeout_at(effect_deadline, revalidation) => {
+            result.map_err(|_| CronSkillRevalidationError::TimedOut)?
+                .map_err(|_| CronSkillRevalidationError::Policy("authorized Skill source revalidation worker failed".to_string()))?
+                .map_err(CronSkillRevalidationError::Policy)?
+        }
+    };
+    let source = crate::updater::skill_resolver::normalize_git_source_for_leaf(&source)
+        .map_err(CronSkillRevalidationError::Policy)?;
+    if source != expected_source {
+        return Err(CronSkillRevalidationError::Policy("upstream probe skipped without network: skill source changed after leaf intent".to_string()));
+    }
+    if let Some(error) = invalid_source_probe_status(&source) {
+        return Err(CronSkillRevalidationError::Policy(error));
     }
     Ok(source)
 }
@@ -3209,6 +3302,65 @@ mod native_cli_version_tests {
             native_cli_descriptor(file.path()).unwrap_err(),
             NativeCliProbeError::UnsupportedLaunchForm
         );
+    }
+
+    #[tokio::test]
+    async fn cron_skill_revalidation_cancelled_before_worker_is_network_free() {
+        let control = crate::daemon::updater_cron::UpdaterPassControl::for_test();
+        control.cancel();
+        let row = InstalledSkillRow {
+            name: "skill:cancelled".to_string(),
+            version: "1.0.0".to_string(),
+            source: Some("git+https://github.com/example/cancelled".to_string()),
+            enabled: true,
+            generation_sha256: "0".repeat(64),
+            id: "cancelled".to_string(),
+        };
+        let home = tempfile::tempdir().unwrap();
+        let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.path().join("freedom.yaml"),
+        ));
+        let error = revalidate_authorized_skill_source_for_cron(
+            home.path().to_path_buf(),
+            reload,
+            row,
+            "https://github.com/example/cancelled".to_string(),
+            &control,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, CronSkillRevalidationError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn cron_skill_revalidation_expired_before_worker_is_network_free() {
+        let control = crate::daemon::updater_cron::UpdaterPassControl::for_test();
+        let row = InstalledSkillRow {
+            name: "skill:expired".to_string(),
+            version: "1.0.0".to_string(),
+            source: Some("git+https://github.com/example/expired".to_string()),
+            enabled: true,
+            generation_sha256: "0".repeat(64),
+            id: "expired".to_string(),
+        };
+        let home = tempfile::tempdir().unwrap();
+        let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.path().join("freedom.yaml"),
+        ));
+        let error = revalidate_authorized_skill_source_for_cron(
+            home.path().to_path_buf(),
+            reload,
+            row,
+            "https://github.com/example/expired".to_string(),
+            &control,
+            tokio::time::Instant::now(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, CronSkillRevalidationError::TimedOut));
     }
     #[cfg(unix)]
     #[test]

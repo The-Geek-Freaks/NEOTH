@@ -1,0 +1,41 @@
+{
+  "schema": "neoth-gold-wave1989-linux-ci-budget/v1",
+  "base": "14f586246ec4a3a945b7517c29ad37543b844c17",
+  "status": "IMPORTED_STATIC_APPROVED_HOSTED_PENDING",
+  "failedRun": 36826661054,
+  "failedJob": 110253748444,
+  "failure": "Cold-cache serial workspace Clippy reached the30minute step deadline without a compiler diagnostic; subsequent Linux workspace tests did not run.",
+  "evidenceLogSha256": "6B2E948671BC5574B88E2B939124B728C52485533BD17E6BA20E3A11C1E36435",
+  "correction": {
+    "workspaceClippyMinutesBefore": 30,
+    "workspaceClippyMinutesAfter": 45,
+    "linuxJobMinutesBefore": 120,
+    "linuxJobMinutesAfter": 150,
+    "compilerJobs": 1,
+    "command": "cargo clippy --workspace --all-targets --features \"wizard wasm-plugin-host\" --locked -- -D warnings",
+    "targetsFeaturesLintsTestsRetained": true,
+    "cadenceContractPinsBudgetsAndCommand": true
+  },
+  "review": {
+    "reviewer": "w1986_actual_review",
+    "result": "APPROVE",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "candidate": "work/gold-20260906/wave1989-linux-ci-budget/candidate/ci.yml",
+        "base": "0A0FA31A46E4A7DDA4DF637A2DA142C985B2286A1666C05B50B9F668A6CBE475",
+        "result": "F7D864BC8022A8ECF0E9174B2268BD2F79844D0C8E16D1179DAC465B074F1E23"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "candidate": "work/gold-20260906/wave1989-linux-ci-budget/candidate/test_ci_cadence_contract.py",
+        "base": "0B16C8F04C585D2D3FBF685F26C8BA7E9817184A23AD1106C942CEF84824E9EF",
+        "result": "8ABC6FA6C7725DB6E97A81C3F623D4ED4A35D1C4E8EDD118B1FBDD0C304CC7AD"
+      }
+    ]
+  },
+  "validation": "Fast hosted cadence contract, then exact-producer full CI; a larger bound is not a passing Clippy result.",
+  "localExecutableValidationRan": false,
+  "hosted": "pending",
+  "releaseAccepted": false
+}

@@ -157,7 +157,10 @@ jobs:
   linux-quality:
     name: Linux quality / Rust 1.91
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # Cold-cache serial workspace validation needs 140 minutes of declared
+    # command budgets (5 + 20 + 45 + 20 + 50); retain a 10-minute setup/upload
+    # margin without changing targets, features, lints, or compiler parallelism.
+    timeout-minutes: 150
     env:
       # FullCI954's original Linux job and its targeted retry both received a
       # runner shutdown during workspace Clippy without a compiler diagnostic.
@@ -250,8 +253,11 @@ jobs:
 
       # CDX-08 cross-crate guarantee. qwen-cuda remains in the dedicated
       # feature matrix because hosted runners do not provide nvcc.
+      # Run 36826661054 restored no cache and reached this step's 30-minute
+      # limit without a compiler diagnostic. Keep the serial memory boundary;
+      # reserve 45 minutes for the same complete lint on a cold cache.
       - name: cargo clippy workspace
-        timeout-minutes: 30
+        timeout-minutes: 45
         working-directory: SRC
         run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 

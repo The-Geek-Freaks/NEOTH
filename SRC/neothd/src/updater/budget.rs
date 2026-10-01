@@ -87,6 +87,19 @@ impl UpdaterRunLimits {
         )
     }
 
+    /// A remote Skill probe owns DNS validation, the contained Git process,
+    /// complete process-tree teardown and its terminal WAL acknowledgement.
+    /// These are offsets from one pass start, so a sequence of installed
+    /// Skills cannot reset an unbounded five-second Git timeout per row.
+    pub(crate) fn default_skill_git_probe() -> Result<Self> {
+        Self::new(
+            Duration::from_secs(90),
+            Duration::from_secs(105),
+            Duration::from_secs(120),
+            Duration::from_secs(135),
+        )
+    }
+
     /// The contained SelfStage helper gets its own finite pass contract.  The
     /// extra effect time covers archive unpacking, while the later phases
     /// retain enough room to cancel, kill/reap and durably close its WAL edge.

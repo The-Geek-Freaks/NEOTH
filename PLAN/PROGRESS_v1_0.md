@@ -1,5 +1,40 @@
 # PROGRESS — v1.0 working backlog
 
+**W1988-W1989 installed-Skill probe integration and Linux CI budget (2026-10-01; hosted pending):**
+The independently reviewed W1984 Installed-Skill Git leaf is now integrated.
+Recurring probes admit only activated installed Skills, bind normalized source,
+logical Git arguments, accepted epoch and one pass clock into leaf authority,
+and revalidate installed generation/source after durable Intent before DNS/Git.
+Cancellation and timeout retain contained child teardown and typed terminal
+receipts bound into the outer RESULT. Plugin remote probes and CLI auto-apply
+remain denied. This observes versions and grants no install/activation rights.
+
+Focused selection is231->238: six new cases plus the previously unregistered
+renamed gate. All prior231 exact cases,20 Google Chat guards and four product
+canaries are preserved. The current portable registry is2461->2468; six are new
+test implementations and one is an added registration of the renamed gate.
+Six updater source bindings join the hosted provenance set. Operator and
+architecture documentation reflect the admitted lanes. Nextest final output
+now includes leaky test identities; execution and pass/fail policy are unchanged.
+
+The still-running baseline full CI36826661054 is bound only to14f58624.
+Its Linux job110253748444 hit the30minute workspace-Clippy step deadline after
+a cache miss; the preserved log contains no compiler diagnostic. This neither
+proves successful lint nor executes downstream Linux tests. The next producer
+reserves45minutes for that same full serial Clippy command and150minutes for
+the Linux job. Targets,features,locked dependencies,-Dwarnings,doctests and
+Nextest remain intact; the existing cadence contract pins the new limits.
+The baseline Windows/macOS outcomes will remain attributed to their producer.
+
+Independent static review approves the implementation,238-case admission,
+documentation,leak reporting and bounded CI correction. No local executable
+validation,Slint edits,Claude polling or release acceptance. The current run
+is not canceled or superseded; the next heavy dispatch remains Root-owned and
+serial. Fresh hosted format/contracts and238-case proof are required before
+the next complete integration milestone. Raw backlog below remains verbatim.
+Reports: docs/verification/gold-wave1988-skill-git-probe.json and
+docs/verification/gold-wave1989-linux-ci-budget.json.
+
 **W1985-W1986 full-run evidence and Paperless fixture repair (2026-10-01; hosted pending):**
 Full run36713548383 on16d007b5466e91df75548da042b7fa80523c324b completed with
 Windows success:18877/18877 tests passed,28 skipped and one Nextest leaky

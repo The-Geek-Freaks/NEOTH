@@ -644,6 +644,17 @@ class CiCadenceContractTests(unittest.TestCase):
                 ]
             ),
         )
+        # Run 36826661054 was a cold-cache timeout rather than a Clippy finding.
+        # Preserve all existing lint coverage while reserving time for serialized
+        # frontend compilation and the downstream doctest/nextest contracts.
+        linux_header = linux_quality.split("    steps:", 1)[0]
+        self.assertIn("timeout-minutes: 150", linux_header)
+        workspace_clippy = steps["cargo clippy workspace"]
+        self.assertIn("timeout-minutes: 45", workspace_clippy)
+        self.assertEqual(
+            step_run_command(workspace_clippy),
+            'cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings',
+        )
 
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
         platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]

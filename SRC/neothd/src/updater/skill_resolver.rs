@@ -41,6 +41,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::time::Instant;
 use tracing::debug;
 
 const APPROVED_GIT_HOSTS: &[&str] = &["github.com", "gitlab.com", "codeberg.org"];
@@ -153,6 +154,113 @@ pub async fn resolve_latest_version(source: &str) -> Result<String, String> {
             )
         }
     })
+}
+
+/// Normalize a declared Git source without performing DNS or spawning a
+/// process. The request-bound outer leaf binds this canonical value before it
+/// writes Intent; the effect rechecks the same canonical value afterwards.
+pub(crate) fn normalize_git_source_for_leaf(source: &str) -> Result<String, String> {
+    Ok(parse_git_source_url(source)?.as_str().to_string())
+}
+
+/// Request-bound recurring counterpart to [`resolve_latest_version`].  Its
+/// caller has already persisted the exact logical `git ls-remote` request;
+/// this function must not be reached until that leaf Intent is durable. DNS,
+/// capability detection and the actual Git process all share the caller's
+/// cancellation edge and absolute effect deadline.
+pub(crate) async fn resolve_latest_version_contained(
+    source: &str,
+    control: &crate::daemon::updater_cron::UpdaterPassControl,
+    effect_deadline: Instant,
+) -> Result<crate::updater::authority::UpdaterLeafSuccess<String>, crate::updater::authority::UpdaterLeafFailure> {
+    use crate::updater::authority::{UpdaterLeafFailure, UpdaterLeafFailureKind, UpdaterLeafOutcomeCode, UpdaterLeafSuccess};
+
+    let fail = |kind, message: String| UpdaterLeafFailure::new(kind, anyhow::anyhow!(message));
+    if control.is_cancelled() {
+        return Err(fail(UpdaterLeafFailureKind::Cancelled, "Skill Git probe cancelled before DNS".to_string()));
+    }
+    let parsed = parse_git_source_url(source)
+        .map_err(|error| fail(UpdaterLeafFailureKind::Policy, error))?;
+    let host = parsed.host_str().expect("approved git source parser always returns a host").to_string();
+    let url = parsed.as_str().to_string();
+    let isolated_cwd = tempfile::Builder::new()
+        .prefix("neoth-git-probe-")
+        .tempdir()
+        .map_err(|_| fail(UpdaterLeafFailureKind::Process, "create isolated git probe directory".to_string()))?;
+
+    let mut version = hardened_git_process(isolated_cwd.path());
+    version.arg("--version").stdin(Stdio::null());
+    let version_output = run_contained_git(version, control, effect_deadline).await?;
+    if !version_output.status.success() {
+        return Err(fail(UpdaterLeafFailureKind::Process, "Git version capability check failed".to_string()));
+    }
+    let version_text = std::str::from_utf8(&version_output.stdout)
+        .map_err(|_| fail(UpdaterLeafFailureKind::Protocol, "Git version capability output is not UTF-8".to_string()))?;
+    let version = parse_git_version(version_text)
+        .ok_or_else(|| fail(UpdaterLeafFailureKind::Protocol, "Git version capability output is invalid".to_string()))?;
+    if version < MIN_DNS_PIN_GIT_VERSION {
+        return Err(fail(UpdaterLeafFailureKind::Policy, format!(
+            "Git {}.{}.{} or newer is required for DNS-pinned Skill source probes",
+            MIN_DNS_PIN_GIT_VERSION.0, MIN_DNS_PIN_GIT_VERSION.1, MIN_DNS_PIN_GIT_VERSION.2
+        )));
+    }
+
+    let addresses = tokio::select! {
+        biased;
+        _ = control.cancelled() => return Err(fail(UpdaterLeafFailureKind::Cancelled, "Skill Git probe cancelled before DNS".to_string())),
+        result = tokio::time::timeout_at(effect_deadline, resolve_public_git_addresses(&host)) => {
+            result.map_err(|_| fail(UpdaterLeafFailureKind::Timeout, "approved git source DNS resolution exceeded the inherited effect deadline".to_string()))?
+                .map_err(|error| fail(UpdaterLeafFailureKind::Protocol, error))?
+        }
+    };
+    let dns_pin = curlopt_resolve_value(&host, &addresses);
+    let command = hardened_git_command(&url, &dns_pin, isolated_cwd.path());
+    let output = run_contained_git(command, control, effect_deadline).await?;
+    if !output.status.success() {
+        return Err(fail(UpdaterLeafFailureKind::Process, "hardened git ls-remote exited unsuccessfully".to_string()));
+    }
+    let stdout = std::str::from_utf8(&output.stdout)
+        .map_err(|_| fail(UpdaterLeafFailureKind::Protocol, "git ls-remote returned non-UTF-8 output".to_string()))?;
+    let tags = parse_ls_remote_tags(stdout);
+    let tag = pick_highest_semver_tag(&tags).ok_or_else(|| fail(UpdaterLeafFailureKind::Protocol, if tags.is_empty() {
+        "git ls-remote returned no tags".to_string()
+    } else {
+        format!("git ls-remote returned {} tags but none were semver-shaped", tags.len())
+    }))?;
+    Ok(UpdaterLeafSuccess::new(tag, UpdaterLeafOutcomeCode::Completed))
+}
+
+async fn run_contained_git(
+    command: tokio::process::Command,
+    control: &crate::daemon::updater_cron::UpdaterPassControl,
+    effect_deadline: Instant,
+) -> Result<crate::updater::process_containment::ContainedOutput, crate::updater::authority::UpdaterLeafFailure> {
+    use crate::updater::authority::{UpdaterLeafFailure, UpdaterLeafFailureKind};
+    if control.is_cancelled() {
+        return Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("contained Git probe cancelled before spawn")));
+    }
+    if Instant::now() >= effect_deadline {
+        return Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("contained Git probe deadline elapsed before spawn")));
+    }
+    let mut child = crate::updater::process_containment::ContainedChild::spawn_configured(
+        command,
+        &[],
+        MAX_GIT_STDOUT_BYTES,
+    ).await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Process, anyhow::anyhow!("spawn contained Git probe: {error}")))?;
+    tokio::select! {
+        biased;
+        _ = control.cancelled() => {
+            child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("cancel/reap contained Git probe: {error}")))?;
+            Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("contained Git probe cancelled after reap")))
+        }
+        output = child.wait_until(effect_deadline) => match output {
+            Ok(output) => Ok(output),
+            Err(_) => {
+                child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("reap contained Git probe: {error}")))?;
+                Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("contained Git probe exceeded its inherited effect deadline after reap")))
+            }
+        },
+    }
 }
 
 fn hardened_git_command(url: &str, dns_pin: &str, cwd: &Path) -> tokio::process::Command {

@@ -1,0 +1,74 @@
+{
+  "schema": "neoth-gold-wave1988-skill-git-probe/v1",
+  "base": "14f586246ec4a3a945b7517c29ad37543b844c17",
+  "status": "IMPORTED_STATIC_APPROVED_HOSTED_PENDING",
+  "behavior": "Recurring installed Skill Git version probes consume exact request-bound authority and revalidate installed generation/source after durable Intent, before DNS/Git; one shared pass budget, contained child cleanup, leaf terminal receipt bound into outer result.",
+  "sourceApproval": "W1984 exact candidate approved independently; W1988 docs, provenance, selection and nextest reporting approved by w1986_actual_review.",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/updater_cron.rs",
+      "candidateSha256": "6add08b263e1911d4e61b3931106f36662471d81297756c2ba7c70c573108c31"
+    },
+    {
+      "path": "SRC/neothd/src/updater/authority.rs",
+      "candidateSha256": "4353d329c4d6f1237a867ef511a0bfd3ce47ec7e779b0664905727db1f798e7c"
+    },
+    {
+      "path": "SRC/neothd/src/updater/budget.rs",
+      "candidateSha256": "63e0e7d80df888debcceb25772685d97a36b02b1c86e061cd8b63cbc6016ac19"
+    },
+    {
+      "path": "SRC/neothd/src/updater/probes.rs",
+      "candidateSha256": "5ff56fa8194777fa49584e66d08c058c1ff1c88d98d405727d6dab51a355af28"
+    },
+    {
+      "path": "SRC/neothd/src/updater/skill_resolver.rs",
+      "candidateSha256": "7cdf8cf3c584a51d87ae42ce02ae678951e39c15404e061bb4031bebcbeac096"
+    },
+    {
+      "path": "docs/plugins.md",
+      "candidateSha256": "7F77DAD2AA20AEB99F9BBBCE8F41437593CA21CB65C41B63EA7F2F52FB379847"
+    },
+    {
+      "path": "docs/architecture.md",
+      "candidateSha256": "F62B8DD55A141042244BEB0F6FA2B3CC740FBC7488DCFB3E5DAC354944D78F74"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "candidateSha256": "9D41DFFD07DA5670CCD9E463569C8D8BDC4C09A137AEEE007B480601D5E396E1"
+    },
+    {
+      "path": "SRC/.config/nextest.toml",
+      "candidateSha256": "1BDC72578261FB6EDBA1574BB4E9CF6A238DDF70636A587D1D2E2D459653EDC9"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "candidateSha256": "9a414b5946c4860d4afd5b202d86659b14a7e6909ada2e57df73e79ca3a77bc1"
+    }
+  ],
+  "scope": {
+    "installedActivatedSkills": true,
+    "pluginRemoteProbeEnabled": false,
+    "cliAutoApplyEnabled": false,
+    "newlyAuthoredPortableTests": 6,
+    "newRegistrations": 7,
+    "priorUnregisteredGate": 1,
+    "portableTotal": 2468,
+    "focusedTotal": 238,
+    "prior231CasesPreserved": true,
+    "gchatGuards": 20,
+    "cliDaemonProducts": 4
+  },
+  "observability": "Nextest final-status-level=leak records names of leaky tests; no test execution or pass/fail policy changed. Supported by pinned cargo-nextest0.9.134 reporter source.",
+  "historicalCi": {
+    "run": 36826661054,
+    "producer": "14f586246ec4a3a945b7517c29ad37543b844c17",
+    "linux": "Clippy step timeout after30minutes, no compiler diagnostic observed",
+    "windows": "in progress at import",
+    "macOS": "in progress at import",
+    "evidenceDoesNotCoverThisChange": true
+  },
+  "localExecutableValidationRan": false,
+  "hosted": "pending",
+  "releaseAccepted": false
+}

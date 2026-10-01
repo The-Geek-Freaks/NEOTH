@@ -2245,8 +2245,8 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--provider-model <MODEL>` — Override default model
 - `--provider-region <REGION>` — AWS region for `aws_bedrock` (for example `eu-central-1`). Falls back to AWS_REGION/AWS_DEFAULT_REGION, then `us-east-1`
 - `--provider-api-version <VERSION>` — Azure OpenAI API version (for example `2024-10-21`)
-- `--auto-update` — Arm the recurring release-check supervisor and status. The current v1 safety boundary keeps every unattended network, process, staging, and replacement effect `SkippedByGate`; no GitHub/npm/Git probe runs until request-bound transport authorization and mandatory intent/result WAL are wired. Manual `neoth update` remains available
-- `--auto-update-apply` — Arm the recurring supervisor and record future verified-staging intent. The current v1 boundary still performs no unattended probe, process, staging, handoff, or replacement until request-bound authorization, mandatory WAL, and finite kill/reap lifecycle are complete. Binary replacement remains an explicit `neoth update --self --apply`
+- `--auto-update` — Enable recurring NEOTH release checks under the updater master switch and accepted autonomy policy. Admitted probes use request-bound authorization and durable intent/result WAL; denied checks remain visible as skipped. Manual `neoth update` remains available
+- `--auto-update-apply` — Enable policy-admitted, verified self-update staging through the contained helper. Staging uses finite deadlines, retained recovery and bound WAL receipts. Binary replacement remains an explicit `neoth update --self --apply`; recurring CLI auto-apply remains denied
 - `--no-auto-update` — Explicitly disable release checks during unattended reconfiguration
 - `--telegram-token <TOKEN>` — Telegram bot token. Prefer env NEOTH_TELEGRAM_TOKEN
 - `--telegram-user-id <USER_ID>` — Restrict Telegram bot to a single user ID

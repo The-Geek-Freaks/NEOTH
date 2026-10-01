@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1986_HOSTED_FORMAT_IMPORTED_FRESH_INTEGRATION_PENDING",
+  "status": "W1988_SKILL_GIT_AND_W1989_BOUNDED_CI_IMPORTED_STATIC_APPROVED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 272922,
-    "sha256": "93915D1B85FBCFF927A448FB71981F8AB824AB39C564B3A025028B8F93A6BD01"
+    "bytes": 273645,
+    "sha256": "9329139507FC678DD2291A986B096DE580824094AF48C94FF28CD29467C950B6"
   },
-  "sourceInputs": 1513,
+  "sourceInputs": 1517,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -14774,6 +14774,48 @@
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
       "sourceSha256": "E91145677D87A1DFE65A40DB3332AF54F4F3D865A8734F4B71D4DC0327E88124",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
+    },
+    {
+      "test": "daemon::updater_cron::tests::recurring_gate_admits_only_wired_skill_git_and_keeps_auto_apply_denied",
+      "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::updater_cron::tests::authorized_skill_git_success_binds_exact_leaf_receipt_and_outer_result",
+      "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch",
+      "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::updater_cron::tests::skill_git_cancellation_and_timeout_reap_containment_before_terminal_receipts",
+      "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::updater_cron::tests::skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied",
+      "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sourceSha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "updater::probes::native_cli_version_tests::cron_skill_revalidation_cancelled_before_worker_is_network_free",
+      "sourcePath": "SRC/neothd/src/updater/probes.rs",
+      "sourceSha256": "5FF56FA8194777FA49584E66D08C058C1FF1C88D98D405727D6DAB51A355AF28",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free",
+      "sourcePath": "SRC/neothd/src/updater/probes.rs",
+      "sourceSha256": "5FF56FA8194777FA49584E66D08C058C1FF1C88D98D405727D6DAB51A355AF28",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -63266,6 +63308,116 @@
       }
     ],
     "note": "Exact run36826235602 formatter artifact11145149400 verified against API ZIP and entry hashes; one return tuple wrapped, no semantic change. CodeQuality36826234861 passed source566af96f. Fresh preflight/full CI still required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1988SkillGitAnd1989CiBudget": {
+    "base": "14f586246ec4a3a945b7517c29ad37543b844c17",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 41232,
+        "sha256": "F7D864BC8022A8ECF0E9174B2268BD2F79844D0C8E16D1179DAC465B074F1E23",
+        "blob": "0ea388008c078a21ba04fb02afbecee22bcfacd2"
+      },
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 73219,
+        "sha256": "9A414B5946C4860D4AFD5B202D86659B14A7E6909ADA2E57DF73E79CA3A77BC1",
+        "blob": "eb0ff81c6532fb8135822ea98c489629063dd10a"
+      },
+      {
+        "path": "docs/architecture.md",
+        "bytes": 33079,
+        "sha256": "F62B8DD55A141042244BEB0F6FA2B3CC740FBC7488DCFB3E5DAC354944D78F74",
+        "blob": "0e0ad4f884dff7f8a43cb2b7b70cf01ea8f54fd6"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 258306,
+        "sha256": "9D41DFFD07DA5670CCD9E463569C8D8BDC4C09A137AEEE007B480601D5E396E1",
+        "blob": "5cae786cb5ace295ec978eacb8976d36a7675709"
+      },
+      {
+        "path": "docs/plugins.md",
+        "bytes": 10526,
+        "sha256": "7F77DAD2AA20AEB99F9BBBCE8F41437593CA21CB65C41B63EA7F2F52FB379847",
+        "blob": "c69db10575e0ab5e3def3922feea926e685985d2"
+      },
+      {
+        "path": "docs/verification/gold-wave1988-skill-git-probe.json",
+        "bytes": 3107,
+        "sha256": "46D7FE8F954204C45A4B86248DBF30AD352C37F841F04CEC726511F1783177F1",
+        "blob": "e0dbf3d9e9f3630d9aed97f970052819d9a9c6cc"
+      },
+      {
+        "path": "docs/verification/gold-wave1989-linux-ci-budget.json",
+        "bytes": 1876,
+        "sha256": "A06D2A0FAE2A9864B96CEDD49902B5B0DD2E7C9DFEED186C6EF969C648818B6E",
+        "blob": "353049be3e00bb0c78685f75fa1ed8ce7c7df89e"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 47580,
+        "sha256": "8ABC6FA6C7725DB6E97A81C3F623D4ED4A35D1C4E8EDD118B1FBDD0C304CC7AD",
+        "blob": "e80d5440ce0d704ebe034326ce1ffbf2e9f7c503"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 596632,
+        "sha256": "B2896DCA0B4E6F5440CEDFC6D89D54B367D743574C1C4855E1B2F3FAB7B8ECBF",
+        "blob": "aa3e936656b7419485ffa77014178c116c13400f"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1633062,
+        "sha256": "919F28C8CC764770FA49235A35CABE58A103CB9B709771D8D1EEB7F2F06A8E8F",
+        "blob": "2dbcd92d6e3b7696af50c158d0ef595ee2d6c4d3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2244072,
+        "sha256": "3EC2671B8A479D424AEA726A8287F0D3993A238D7DF361DF012A9054996BBC6F",
+        "blob": "92838b5a787a175ca7758d707b5369ac947899a0"
+      },
+      {
+        "path": "SRC/.config/nextest.toml",
+        "bytes": 963,
+        "sha256": "1BDC72578261FB6EDBA1574BB4E9CF6A238DDF70636A587D1D2E2D459653EDC9",
+        "blob": "0d71d1f5a9a675245387609395d90262e68de2c6"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/updater_cron.rs",
+        "bytes": 223927,
+        "sha256": "7499692C02EE912D3834B14925FE337935CFADAB0AD1BAC2152537EE8F085767",
+        "blob": "4e18015efa3f7bcc03480ce1d0fe22640eaa5acf"
+      },
+      {
+        "path": "SRC/neothd/src/updater/authority.rs",
+        "bytes": 158804,
+        "sha256": "4353D329C4D6F1237A867EF511A0BFD3CE47EC7E779B0664905727DB1F798E7C",
+        "blob": "b321356b25cee7321d41d5b90297506cf5413ded"
+      },
+      {
+        "path": "SRC/neothd/src/updater/budget.rs",
+        "bytes": 14023,
+        "sha256": "63E0E7D80DF888DEBCCEB25772685D97A36B02B1C86E061CD8B63CBC6016AC19",
+        "blob": "d3cd57b7cff0d3c9a52e666bc8077a36484c4f63"
+      },
+      {
+        "path": "SRC/neothd/src/updater/probes.rs",
+        "bytes": 129898,
+        "sha256": "5FF56FA8194777FA49584E66D08C058C1FF1C88D98D405727D6DAB51A355AF28",
+        "blob": "0dbddc609c79f62f0d13c90c6cc461f2ba751a08"
+      },
+      {
+        "path": "SRC/neothd/src/updater/skill_resolver.rs",
+        "bytes": 42883,
+        "sha256": "7CDF8CF3C584A51D87AE42CE02AE678951E39C15404E061BB4031BEBCBEAC096",
+        "blob": "b27ccb4559a5b920a96d253dfc8815a294636daa"
+      }
+    ],
+    "note": "Installed-Skill request-bound Git leaf;238 focused cases,2468 portable registrations; bounded Linux Clippy45m/job150m after baseline36826661054 timed out. Source14f58624 remains the baseline CI producer; new source requires own hosted validation. No local executable checks.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

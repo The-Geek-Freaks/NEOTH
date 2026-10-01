@@ -181,7 +181,8 @@ pub(crate) enum UpdaterLeafEffect {
     VendorInstallerFetch,
     #[allow(dead_code)] // R3-18 auto-apply lane is still fail-closed.
     CliInstall,
-    #[allow(dead_code)] // R3-18 skill/plugin lane is still fail-closed.
+    // Used only by the exact-generation Installed-Skill Git leaf. Plugins
+    // remain denied until they acquire the same activation authority.
     SkillGitProbe,
 }
 
