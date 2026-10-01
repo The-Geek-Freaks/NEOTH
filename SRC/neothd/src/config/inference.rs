@@ -1294,8 +1294,6 @@ impl InferenceTopology {
         }
         self.slot_for(inner_role)
     }
-
-
 }
 
 fn slot_or_default<'a>(
@@ -2076,8 +2074,6 @@ model: claude-opus-4-7
             "yaml should contain transparent integer: {yaml}",
         );
     }
-
-
 
     #[test]
     fn profile_provider_serialises_as_snake_case_provider_id() {

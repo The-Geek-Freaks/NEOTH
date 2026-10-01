@@ -363,5 +363,22 @@
     "blueprint": "work/gold-20260906/wave2028-next-frontier/E2-BLUEPRINT.md",
     "blueprintSha256": "663B4AB4B8714E4D3807F9E5D89D8E809670585F4FE08408D3EF11B65CE5F859",
     "implementationClaimed": false
+  },
+  "hostedFormatting": {
+    "producer": "7fe65fded115b0e494479819e6efb0a495e8aed6",
+    "run": 36874761649,
+    "artifact": 11168667395,
+    "zipSha256": "AB9423C2DB416B7D09C5D660E3EB9D1AFEC423544B0450F431871E0BAB01E3BE",
+    "patchSha256": "487BEAF73F70CFAB09303429F6D374EF2C2CC9F5C8504FC60112202B516E4496",
+    "appliedFiles": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/cli/serve_pipeline.rs",
+      "SRC/neothd/src/config/inference.rs",
+      "SRC/neothd/src/cron/runner.rs",
+      "SRC/neothd/src/profile/extract.rs",
+      "SRC/neothd/src/providers/mod.rs"
+    ],
+    "localFormatterRan": false,
+    "nextProducerPreflight": "pending"
   }
 }

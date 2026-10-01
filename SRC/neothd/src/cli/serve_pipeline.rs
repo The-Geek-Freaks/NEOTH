@@ -5814,37 +5814,42 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .await
                 {
                     Ok(explicit_profile_provider) => {
-                let timeout = std::time::Duration::from_secs(profile_config.timeout_secs.max(1));
-                let views_path = neoth_home.join("views.db");
-                // K-Wire-3 v3 Send-escape: `rusqlite::Transaction` is
-                // !Send. The channel handler's outer future must be
-                // Send (PipelineHandler = Pin<Box<dyn Future + Send>>),
-                // so we cannot hold a Transaction across an await on
-                // the main task path. `block_in_place` moves the
-                // current task to a blocking-pool thread; we then
-                // `block_on` a !Send future on that same thread. The
-                // multi-threaded tokio runtime keeps making progress
-                // on other channel messages because the blocking task
-                // is moved off the worker pool.
-                let writer_for_pipeline = writer.clone();
-                let (provider_for_pipeline, model_for_pipeline): (Arc<dyn Provider>, Option<String>) =
-                    match explicit_profile_provider {
-                        Some(explicit_provider) => {
-                            let provider: Arc<dyn Provider> = Arc::from(explicit_provider);
-                            let model = crate::providers::provider_default_wire_model(provider.as_ref());
-                            (provider, model)
-                        }
-                        None => (Arc::clone(&provider), channel_effective_model.clone()),
-                    };
-                let authorizer_for_pipeline = provider_call_authorizer.clone();
-                let segment_path_for_pipeline = segment_path.clone();
-                let channel_str_for_pipeline = channel_str.to_string();
-                let sender_id_for_pipeline = inbound.sender_id.clone();
-                let views_conn_for_pipeline = views_conn.clone();
-                let profile_home_for_pipeline = instance_paths.home.clone();
-                tokio::task::block_in_place(|| {
-                    let handle = tokio::runtime::Handle::current();
-                    handle.block_on(async move {
+                        let timeout =
+                            std::time::Duration::from_secs(profile_config.timeout_secs.max(1));
+                        let views_path = neoth_home.join("views.db");
+                        // K-Wire-3 v3 Send-escape: `rusqlite::Transaction` is
+                        // !Send. The channel handler's outer future must be
+                        // Send (PipelineHandler = Pin<Box<dyn Future + Send>>),
+                        // so we cannot hold a Transaction across an await on
+                        // the main task path. `block_in_place` moves the
+                        // current task to a blocking-pool thread; we then
+                        // `block_on` a !Send future on that same thread. The
+                        // multi-threaded tokio runtime keeps making progress
+                        // on other channel messages because the blocking task
+                        // is moved off the worker pool.
+                        let writer_for_pipeline = writer.clone();
+                        let (provider_for_pipeline, model_for_pipeline): (
+                            Arc<dyn Provider>,
+                            Option<String>,
+                        ) = match explicit_profile_provider {
+                            Some(explicit_provider) => {
+                                let provider: Arc<dyn Provider> = Arc::from(explicit_provider);
+                                let model = crate::providers::provider_default_wire_model(
+                                    provider.as_ref(),
+                                );
+                                (provider, model)
+                            }
+                            None => (Arc::clone(&provider), channel_effective_model.clone()),
+                        };
+                        let authorizer_for_pipeline = provider_call_authorizer.clone();
+                        let segment_path_for_pipeline = segment_path.clone();
+                        let channel_str_for_pipeline = channel_str.to_string();
+                        let sender_id_for_pipeline = inbound.sender_id.clone();
+                        let views_conn_for_pipeline = views_conn.clone();
+                        let profile_home_for_pipeline = instance_paths.home.clone();
+                        tokio::task::block_in_place(|| {
+                            let handle = tokio::runtime::Handle::current();
+                            handle.block_on(async move {
                         let authorized_profile_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
                             provider_for_pipeline.as_ref(),
                             authorizer_for_pipeline,
@@ -5989,7 +5994,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             }
                         }
                     });
-                });
+                        });
                     }
                     Err(error) => {
                         tracing::warn!(

@@ -13373,9 +13373,7 @@ async fn maybe_guidance_block(
 
 /// Bind session-history summaries to the same canonical untrusted-memory
 /// envelope used by automatic recall before they reach any provider prompt.
-fn render_session_guidance_context(
-    guidance: String,
-) -> crate::pipeline::RenderedUntrustedContext {
+fn render_session_guidance_context(guidance: String) -> crate::pipeline::RenderedUntrustedContext {
     crate::pipeline::UntrustedContext::new(
         crate::pipeline::UntrustedContextClass::Memory,
         "memory:cli-session-guidance",
@@ -13390,11 +13388,9 @@ fn append_session_guidance_block(
     items: &mut Vec<crate::tokens::budget::BlockItem>,
     guidance: &crate::pipeline::RenderedUntrustedContext,
 ) {
-    let mut item = crate::tokens::budget::BlockItem::new(
-        crate::tokens::budget::Block::D,
-        guidance.as_str(),
-    )
-    .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+    let mut item =
+        crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance.as_str())
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
     item.ts_ns = 1;
     items.push(item);
 }
@@ -26234,7 +26230,10 @@ template = "[REDACTED]"
         let guidance = render_session_guidance_context(
             render_guidance_block(&[card], 0, None).expect("hostile card still yields guidance"),
         );
-        assert_eq!(guidance.class(), crate::pipeline::UntrustedContextClass::Memory);
+        assert_eq!(
+            guidance.class(),
+            crate::pipeline::UntrustedContextClass::Memory
+        );
         assert_eq!(guidance.source_id().as_str(), "memory:cli-session-guidance");
         assert_eq!(guidance.as_str().matches(GUARD_OPEN).count(), 1);
         assert_eq!(guidance.as_str().matches(GUARD_CLOSE).count(), 1);

@@ -1986,7 +1986,10 @@ channel_accounts:
             Some("right-secret")
         );
         assert_eq!(slot.endpoint.as_deref(), Some("https://api.deepseek.com"));
-        assert_eq!(slot.openai_compat_profile, Some(OpenAiCompatibleProfile::DeepSeek));
+        assert_eq!(
+            slot.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::DeepSeek)
+        );
         assert_eq!(slot.region.as_deref(), Some("right-region"));
         assert_eq!(slot.api_version.as_deref(), Some("right-version"));
     }
@@ -2044,16 +2047,10 @@ channel_accounts:
         job.execution.provider = Some(InferenceProvider::OpenAiCompat);
         job.execution.model = Some("right-provider-override".into());
         job.execution.hemisphere_role = Some(HemisphereRole::Right);
-        let provider = resolve_job_provider(
-            home.path(),
-            &job,
-            &default_provider,
-            &writer,
-            &config,
-            None,
-        )
-        .await
-        .expect("Right-only consent admits the declared Right provider leaf");
+        let provider =
+            resolve_job_provider(home.path(), &job, &default_provider, &writer, &config, None)
+                .await
+                .expect("Right-only consent admits the declared Right provider leaf");
         assert_eq!(provider.get().name(), "deepseek_api");
         assert_eq!(
             crate::providers::provider_default_wire_model(provider.get()).as_deref(),
@@ -2075,7 +2072,9 @@ channel_accounts:
         let (writer, join) = crate::wal::spawn(home.path().join("cron-role-mismatch.wal"))
             .expect("start role-mismatch WAL writer");
         let calls = Arc::new(AtomicUsize::new(0));
-        let default_provider = authorized(CountingProvider { calls: calls.clone() });
+        let default_provider = authorized(CountingProvider {
+            calls: calls.clone(),
+        });
         let mut config = crate::config::FreedomConfig::default();
         config.inference.mode = TopologyMode::Custom;
         config.inference.left = HemisphereSlot {
@@ -2108,7 +2107,9 @@ channel_accounts:
             Err(error) => error,
         };
         assert!(
-            error.to_string().contains("resolves to provider `gemini_api`"),
+            error
+                .to_string()
+                .contains("resolves to provider `gemini_api`"),
             "unexpected role mismatch: {error:#}"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);

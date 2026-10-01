@@ -6539,7 +6539,9 @@ mod tests {
         // failure deterministic regardless of keys or environment state.
         cfg.inference.profile_provider = Some(InferenceProvider::OpenAiCompat);
         assert!(
-            from_config_for_profile_at(&cfg, Path::new(".")).await.is_err(),
+            from_config_for_profile_at(&cfg, Path::new("."))
+                .await
+                .is_err(),
             "an explicit typed provider build failure must not reach the legacy/main fallback"
         );
     }
