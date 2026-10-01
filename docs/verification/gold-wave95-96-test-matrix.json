@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1991_HOSTED_SSH_LOCK_RECONCILIATION_PREPARED_RUNTIME_GATES_PENDING",
+  "status": "W1991_EXACT_RUSSH_PIN_HOSTED_RESOLUTION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 274017,
-    "sha256": "20864065F0F87AAABCE2149CE06932680B02CB445A234972158CF90FC9D0AD1C"
+    "bytes": 273997,
+    "sha256": "AD7608E18EE792270951F9CA5E75EF87F2EE7DD3D0B0C12C43E4608F7BFCFBA3"
   },
   "sourceInputs": 1519,
   "requiredNativeTests": [
@@ -63508,6 +63508,26 @@
       }
     ],
     "note": "Reviewed exact-main metadata-only hosted Russh0.63.2/Pageant0.2.3 reconciliation; no dependency imported and no local runtime. Existing baseline CI not superseded. e725c0e3 fast gates passed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1991ExactRusshPin": {
+    "base": "4b9865bd3ffe6b41afc126a821ff40a4cc12b05a",
+    "sources": [
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 4127,
+        "sha256": "5E71339F02C700CFCFC1D806460BB2CD039243C81CC064CB1D86688A17B6A98E",
+        "blob": "ad4654dc39d2d7b8db89ac3959e11c1d7aa29091"
+      },
+      {
+        "path": "docs/verification/gold-wave1991-ssh-dependency-frontier.json",
+        "bytes": 2075,
+        "sha256": "B6BBE2269584556ED6CC050A9A44D0D45BE3B56AA645AEEC532FAD86D590926D",
+        "blob": "fda619554b14995195d3a3e6cdc317ab43d2cd2c"
+      }
+    ],
+    "note": "Metadata run36834313054 correctly rejected unexpected Russh0.63.3 after subsequent Pageant resolution. Prepared manifest now requires=0.63.2, matching the reviewed source candidate; no dependency artifact was accepted from the failed run.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

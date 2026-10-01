@@ -43,5 +43,13 @@
   },
   "localExecutableValidationRan": false,
   "dependencyUpgradeAccepted": false,
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "exactPinCorrection": {
+    "failedRun": 36834313054,
+    "producer": "4b9865bd3ffe6b41afc126a821ff40a4cc12b05a",
+    "failure": "Exact version guard found russh0.63.3 after Pageant resolution under the caret manifest",
+    "artifactsAdmitted": false,
+    "correction": "Prepared manifest requires =0.63.2 so a later dependency update cannot advance Russh",
+    "rerun": "pending"
+  }
 }

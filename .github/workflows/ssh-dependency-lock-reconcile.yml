@@ -55,7 +55,7 @@ jobs:
           from pathlib import Path
           path = Path("SRC/neothd/Cargo.toml")
           before = 'russh               = { version = "0.62.5", default-features = false, features = ["ring"], optional = true }'
-          after = before.replace('"0.62.5"', '"0.63.2"')
+          after = before.replace('"0.62.5"', '"=0.63.2"')
           source = path.read_text(encoding="utf-8")
           if source.count(before) != 1:
               raise SystemExit("Expected Russh 0.62.5 preimage is absent or ambiguous")

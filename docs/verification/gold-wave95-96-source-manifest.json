@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T08:03:56.0620423Z",
-  "validationStatus": "W1991_HOSTED_SSH_LOCK_RECONCILIATION_PREPARED_RUNTIME_GATES_PENDING",
+  "capturedUtc": "2026-10-01T08:09:03.9870243Z",
+  "validationStatus": "W1991_EXACT_RUSSH_PIN_HOSTED_RESOLUTION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
-      "bytes": 4126,
-      "sha256": "70C578C8E2F30BE0B30D3A2C24639E170E651633942BC5E31317CD4A0EAC10C9"
+      "bytes": 4127,
+      "sha256": "5E71339F02C700CFCFC1D806460BB2CD039243C81CC064CB1D86688A17B6A98E"
     },
     {
       "path": ".github/workflows/webchat-browser.yml",
@@ -2913,8 +2913,8 @@
     },
     {
       "path": "docs/verification/gold-wave1991-ssh-dependency-frontier.json",
-      "bytes": 1687,
-      "sha256": "3A6A2D212809040313F03CD05A0871A1E434659FEE1DD6DE438D5029DA0244BC"
+      "bytes": 2075,
+      "sha256": "B6BBE2269584556ED6CC050A9A44D0D45BE3B56AA645AEEC532FAD86D590926D"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
