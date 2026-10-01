@@ -1,5 +1,17 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2000 exact notices admitted; final producer acceptance pending (2026-10-01):**
+Producer41f41baa passed Preflight36846026606, CodeQuality36846025524 and
+Rust notice export36846057672. Root admitted original artifact11153691271:
+577985 bytes, API/ZIP SHA256 matched,10 safe entries,13 sidecar records,
+150 unchanged snapshot identities and exactly two Cranelift additions.
+The generated THIRD_PARTY_LICENSES and merged Rust snapshot file are now
+imported. Source/licensing preparation is complete for the repaired graph.
+The next frozen producer still requires fresh focused239 CLI/daemon cases,
+Security and full native CI. Prior producer successes are not those proofs;
+Windows/Apple signing and historical native predecessor qualification remain
+separate release requirements. No local executable validation or release claim.
+
 **W1999 hosted integration follow-through (2026-10-01):**
 The narrowed W1995 producer passed both upstream suites as well:122+120
 and132+125 unit/doc tests. Preflight36845590950 passed the new full imbl

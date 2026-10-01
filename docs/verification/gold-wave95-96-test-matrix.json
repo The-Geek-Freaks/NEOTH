@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1999_VENDOR_TESTS_PASSED_NOTICE_EXPORT_PENDING",
+  "status": "W2000_GRAPH_AND_NOTICES_ADMITTED_FINAL_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 285603,
-    "sha256": "F00DF6D8D5BAAEFD104C31979CCA2EE8818E1BCB8B4D1355DEF0577659A9F335"
+    "bytes": 285609,
+    "sha256": "CE5FD692594C5A62270707FDBAEC7A6A01B2797852AC3001EBA1EDC812C37830"
   },
   "sourceInputs": 1588,
   "requiredNativeTests": [
@@ -64262,6 +64262,38 @@
       }
     ],
     "note": "Scope Cosign label guard to actual signing/publication jobs; export two observed missing exact Cranelift license snapshots. New native/focused acceptance pending; no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2000NoticeAdmission": {
+    "base": "41f41baa17cd5155a86e5565713997416a6078db",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1995-imbl-backport.json",
+        "bytes": 6178,
+        "sha256": "9715091EE17BD7E66226E4EF6F6B7BBC76DD6727465F6557BC33494ECB4FE3C0",
+        "blob": "23deab8b213c91eb36bf1210d70a501e1595b6db"
+      },
+      {
+        "path": "packaging/rust-license-snapshots.json",
+        "bytes": 1348423,
+        "sha256": "527EF42DBC8B7B34150DE11E6D148744D91177B94EF7EB86BAC9B0D83C0BD3D5",
+        "blob": "4ff13bce6dcf22f28e96ff5971ed066c5fb79dd2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2255233,
+        "sha256": "FB45F11DC0A12CB0B04DD6117E438A2EFF31F7436DDAB7E3C5C98C6717257141",
+        "blob": "cb4b3112934993cf006841208fe6d726d2b700cc"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2309122,
+        "sha256": "F900E459A07088E2BA1DF2ADE653D247D54751C4D1ADFDDFCEBB2B42933653F9",
+        "blob": "d2d53e221359555eb219dfecd4950e8b91c813c5"
+      }
+    ],
+    "note": "Source-bound exact notice export admitted;150 existing snapshots preserved,2 observed Cranelift additions;239focused/fullnative/Security on final producer pending; local runtime hold retained.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

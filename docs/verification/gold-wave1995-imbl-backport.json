@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave1995-imbl-backport/v1",
   "base": "545a504ff6003c57ef463f767d6d3674ea5eaac0",
-  "status": "NARROW_HOSTED_LOCK_ADMITTED_UPSTREAM_TESTS_PASSED_NEOTH_INTEGRATION_PENDING",
+  "status": "DEPENDENCIES_AND_NOTICES_ADMITTED_FINAL_NEOTH_HOSTED_TESTS_PENDING",
   "reason": "Matrix0.18/eyeball-im0.8/imbl6.1 selects vulnerable imbl-sized-chunks0.1.3; upgrading Matrix0.19 would require Rust1.96 rather than supported1.91.",
   "upstream": {
     "archive": "https://crates.io/api/v1/crates/imbl/6.1.0/download",
@@ -82,6 +82,20 @@
     "noticeRun": 36845626053,
     "noticeFailure": "Missing exact upstream license snapshots for cranelift-assembler-x64 and cranelift-assembler-x64-meta0.123.16",
     "noticeRepair": "Add only both observed exact package versions to existing hosted snapshot allowlist",
-    "hosted": "fresh Preflight and notice export pending"
+    "hosted": "Preflight36846026606 and CodeQuality36846025524 passed41f41baa; notice36846057672 passed and outputs admitted. Final producer native/focused/Security pending."
+  },
+  "noticeAdmission": {
+    "run": 36846057672,
+    "producer": "41f41baa17cd5155a86e5565713997416a6078db",
+    "artifact": 11153691271,
+    "archiveSha256": "79FE6F9D19126FC9C660773755413EB07E0DADC80922D1F2EC342A9D7C2F8515",
+    "entries": 10,
+    "verifiedSidecarRecords": 13,
+    "unchangedSnapshots": 150,
+    "addedSnapshots": 2,
+    "noticeSha256": "F900E459A07088E2BA1DF2ADE653D247D54751C4D1ADFDDFCEBB2B42933653F9",
+    "snapshotSha256": "527EF42DBC8B7B34150DE11E6D148744D91177B94EF7EB86BAC9B0D83C0BD3D5",
+    "localExecutableValidationRan": false,
+    "imported": true
   }
 }

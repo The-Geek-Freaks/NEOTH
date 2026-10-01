@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T09:54:58.8780667Z",
-  "validationStatus": "W1999_VENDOR_TESTS_PASSED_NOTICE_EXPORT_PENDING",
+  "capturedUtc": "2026-10-01T10:03:44.8116313Z",
+  "validationStatus": "W2000_GRAPH_AND_NOTICES_ADMITTED_FINAL_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "docs/verification/gold-wave1995-imbl-backport.json",
-      "bytes": 5489,
-      "sha256": "E07F3A86AEFA4B91D24245BE6CE3BAD268F1F0A186CDE174FDEA18EEB44879D9"
+      "bytes": 6178,
+      "sha256": "9715091EE17BD7E66226E4EF6F6B7BBC76DD6727465F6557BC33494ECB4FE3C0"
     },
     {
       "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",
@@ -3883,8 +3883,8 @@
     },
     {
       "path": "packaging/rust-license-snapshots.json",
-      "bytes": 1322529,
-      "sha256": "1CF71B7212A9171CEDDDE963E1A4F26786EF84CE9A0E31AADC275D288B7FFCC8"
+      "bytes": 1348423,
+      "sha256": "527EF42DBC8B7B34150DE11E6D148744D91177B94EF7EB86BAC9B0D83C0BD3D5"
     },
     {
       "path": "packaging/specialize_silero.py",
@@ -4058,8 +4058,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2254402,
-      "sha256": "CD0654A825BA03F28EA9382A80B0CD9BA388893B432176126413CA246B126761"
+      "bytes": 2255233,
+      "sha256": "FB45F11DC0A12CB0B04DD6117E438A2EFF31F7436DDAB7E3C5C98C6717257141"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7933,8 +7933,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2321915,
-      "sha256": "3D250204546FAB5543564558EC21F38F7297CB018FCC684744A7A69FEA07AA9A"
+      "bytes": 2309122,
+      "sha256": "F900E459A07088E2BA1DF2ADE653D247D54751C4D1ADFDDFCEBB2B42933653F9"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",
