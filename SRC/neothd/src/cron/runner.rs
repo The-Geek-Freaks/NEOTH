@@ -373,7 +373,7 @@ async fn resolve_job_provider<'a>(
                 slot.provider = Some(target.provider);
                 slot.model = target.model.clone().or(slot.model);
                 slot.voice = None;
-                slot
+                Ok(slot)
             })
             .collect::<Result<Vec<_>>>()?;
         scoped.fallback.max_hops = u8::try_from(scoped.fallback.chain.len())

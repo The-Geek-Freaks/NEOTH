@@ -393,7 +393,7 @@ fn render_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         Some(
             FreedomConfig::load_from_path(&config_path)
                 .context("load freedom.yaml for current consent-route status")?,
-        )?
+        )
     } else {
         None
     };

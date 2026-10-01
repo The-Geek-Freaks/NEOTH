@@ -6326,10 +6326,10 @@ pub(super) async fn dispatch_provider(
         let binding = config
             .inference
             .resolve_role_binding(crate::config::inference::HemisphereRole::Left)?;
+        let provider_descriptor_id =
+            crate::providers::resolved_binding_descriptor_id(config, &binding);
         provider_audit_context.provider_instance_id = binding.provider_instance_id;
-        provider_audit_context.provider_descriptor_id = Some(
-            crate::providers::resolved_binding_descriptor_id(config, &binding),
-        );
+        provider_audit_context.provider_descriptor_id = Some(provider_descriptor_id);
     }
     let call_authorizer =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
@@ -18828,12 +18828,12 @@ modes:
         let primary_only =
             routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         let fallback_model = "named-fallback-model-with-a-materially-longer-wire-id";
-        config.inference = serde_yaml::from_str(format!(
-            "provider_instances:\n  - id: cap-fallback\n    descriptor: openai_compat\n    endpoint: https://cap-fallback.example/v1\n    model: {fallback_model}\n"
+        config.inference = serde_yaml::from_str(&format!(
+            "provider_instances:\n  - id: cap_fallback\n    descriptor: openai_compat\n    endpoint: https://cap-fallback.example/v1\n    model: {fallback_model}\n"
         ))
         .expect("parse named routing-cap fallback instance");
         config.fallback.chain = vec![
-            serde_yaml::from_str("provider_instance_id: cap-fallback")
+            serde_yaml::from_str("provider_instance_id: cap_fallback")
                 .expect("parse named routing-cap fallback reference"),
         ];
 

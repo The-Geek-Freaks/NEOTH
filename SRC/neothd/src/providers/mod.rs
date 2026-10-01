@@ -3741,14 +3741,13 @@ async fn fallback_chain_from_config_inner(
         match from_config_for_instance(&synthetic, Some(home)).await {
             Ok(p) => {
                 let wire_model = provider_default_wire_model(p.as_ref());
+                let provider_descriptor_id =
+                    resolved_binding_descriptor_id(config, &resolved.binding);
                 chain.push(p);
                 configured_models.push(wire_model);
                 bindings.push(fallback::FallbackCandidateBinding {
                     provider_instance_id: resolved.binding.provider_instance_id,
-                    provider_descriptor_id: resolved_binding_descriptor_id(
-                        config,
-                        &resolved.binding,
-                    ),
+                    provider_descriptor_id,
                 });
             }
             Err(e) => tracing::warn!(
@@ -6917,9 +6916,9 @@ mod tests {
     #[test]
     fn named_bedrock_fallback_does_not_inherit_global_region_for_consent() {
         let mut config = FreedomConfig::default();
-        config.provider_region = Some("eu-central-1".into());
+        config.provider_region = Some("us-east-1".into());
         config.inference = serde_yaml::from_str(
-            "mode: custom\nprovider_instances:\n  - id: bedrock-default-region\n    descriptor: aws_bedrock\n    model: named-bedrock-model\nleft: { provider_instance_id: bedrock-default-region }\n",
+            "mode: custom\nprovider_instances:\n  - id: bedrock_default_region\n    descriptor: aws_bedrock\n    model: named-bedrock-model\n  - id: bedrock_explicit_region\n    descriptor: aws_bedrock\n    model: named-bedrock-explicit-model\n    region: eu-central-1\nleft: { provider_instance_id: bedrock_default_region }\n",
         )
         .expect("parse named Bedrock topology");
 
@@ -6931,12 +6930,12 @@ mod tests {
         assert_eq!(
             fallback_consent_region(&config, &named),
             None,
-            "a named instance without region must reach the same adapter-default route as its synthetic factory config"
+            "a named instance without region must not inherit the legacy global region"
         );
 
         config.fallback.max_hops = 1;
         config.fallback.chain = vec![
-            serde_yaml::from_str("provider_instance_id: bedrock-default-region")
+            serde_yaml::from_str("provider_instance_id: bedrock_default_region")
                 .expect("parse named Bedrock fallback reference"),
         ];
         let home = tempfile::tempdir().expect("create named Bedrock consent home");
@@ -6953,15 +6952,23 @@ mod tests {
                 .is_empty(),
             "a named Bedrock instance without region must not inherit the global route"
         );
-        let adapter_default_route =
-            crate::consent::route_for_provider_config(ProviderKind::AwsBedrock, None, None);
-        crate::consent::grant_route(home.path(), &adapter_default_route)
-            .expect("grant the named adapter-default route");
+        config.fallback.chain = vec![
+            serde_yaml::from_str("provider_instance_id: bedrock_explicit_region")
+                .expect("parse explicitly regional named Bedrock fallback reference"),
+        ];
+        let exact_named_route = crate::consent::route_for_provider_config(
+            ProviderKind::AwsBedrock,
+            None,
+            Some("eu-central-1"),
+        );
+        crate::consent::grant_route(home.path(), &exact_named_route)
+            .expect("grant the explicit named Bedrock region");
         assert_eq!(
             resolved_fallback_slots_allowed(home.path(), &config, None)
-                .expect("resolve granted named fallback route")
+                .expect("resolve explicitly regional named fallback")
                 .len(),
-            1
+            1,
+            "a named Bedrock instance with its own exact regional consent is eligible"
         );
 
         let legacy = config
@@ -6974,7 +6981,7 @@ mod tests {
         assert!(!legacy.is_named_instance);
         assert_eq!(
             fallback_consent_region(&config, &legacy),
-            Some("eu-central-1"),
+            Some("us-east-1"),
             "legacy inline slots retain their top-level region fallback"
         );
     }

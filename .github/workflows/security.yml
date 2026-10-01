@@ -304,10 +304,98 @@ jobs:
             free -b
             nproc
             cat /proc/loadavg
-            for field in memory.current memory.max memory.events cpu.stat; do
-              printf '\n[%s]\n' "$field"
-              cat "/sys/fs/cgroup/$field" 2>/dev/null || printf 'unavailable\n'
-            done
+            read_cgroup_file() {
+              local label="$1" path="$2"
+              printf '\n[%s]\n' "$label"
+              if [[ -r "$path" ]]; then
+                cat "$path"
+              else
+                printf 'unavailable path=%s\n' "$path"
+              fi
+            }
+            resolve_cgroup_path() {
+              local mount="$1" mount_root="$2" member="$3" relative
+              [[ -n "$mount" && -n "$member" ]] || return 1
+              relative="$member"
+              if [[ -n "$mount_root" && "$mount_root" != / ]]; then
+                if [[ "$relative" == "$mount_root" ]]; then
+                  relative=/
+                elif [[ "$relative" == "$mount_root/"* ]]; then
+                  relative="/${relative#"$mount_root"/}"
+                else
+                  return 1
+                fi
+              fi
+              if [[ "$relative" == / ]]; then
+                printf '%s\n' "$mount"
+              else
+                printf '%s/%s\n' "$mount" "${relative#/}"
+              fi
+            }
+            printf '\n[cgroup.proc-self]\n'
+            cat /proc/self/cgroup
+            cgroup_path=$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup)
+            cgroup_mount= cgroup_mount_root=
+            read -r cgroup_mount cgroup_mount_root < <(awk '
+              { for (i = 1; i <= NF; i++) if ($i == "-") { sep = i; break } }
+              sep && $(sep + 1) == "cgroup2" { print $5, $4; exit }
+            ' /proc/self/mountinfo) || true
+            if [[ -n "$cgroup_path" || -n "$cgroup_mount" ]]; then
+              cgroup_mode=v2
+              if cgroup_root=$(resolve_cgroup_path "$cgroup_mount" "$cgroup_mount_root" "$cgroup_path"); then
+                printf '\n[cgroup.resolved]\nmode=%s member=%s mount=%s mount_root=%s root=%s\n' \
+                  "$cgroup_mode" "$cgroup_path" "$cgroup_mount" "$cgroup_mount_root" "$cgroup_root"
+                printf '\n[cgroup.v2.ancestor-view]\nmax_levels=16; labels are per-level observations, not an effective-limit claim\n'
+                cgroup_level=0 cgroup_probe="$cgroup_root"
+                while :; do
+                  for field in memory.max memory.current memory.peak memory.events cpu.max cpu.stat; do
+                    read_cgroup_file "cgroup.v2.level${cgroup_level}.${field}" "$cgroup_probe/$field"
+                  done
+                  [[ "$cgroup_probe" == "$cgroup_mount" || "$cgroup_level" -ge 15 ]] && break
+                  cgroup_parent="${cgroup_probe%/*}"
+                  [[ -n "$cgroup_parent" && "$cgroup_parent" != "$cgroup_probe" ]] || break
+                  cgroup_probe="$cgroup_parent"
+                  ((cgroup_level += 1))
+                done
+              else
+                printf '\n[cgroup.resolved]\nmode=%s unavailable reason=missing-or-incompatible-membership-or-mount member=%s mount=%s mount_root=%s\n' \
+                  "$cgroup_mode" "$cgroup_path" "$cgroup_mount" "$cgroup_mount_root"
+              fi
+            else
+              cgroup_mode=v1
+              memory_path=$(awk -F: '$2 ~ /(^|,)memory(,|$)/ { print $3; exit }' /proc/self/cgroup)
+              memory_mount= memory_mount_root=
+              read -r memory_mount memory_mount_root < <(awk '
+                { for (i = 1; i <= NF; i++) if ($i == "-") { sep = i; break } }
+                sep && $(sep + 1) == "cgroup" && $(sep + 3) ~ /(^|,)memory(,|$)/ { print $5, $4; exit }
+              ' /proc/self/mountinfo) || true
+              if memory_root=$(resolve_cgroup_path "$memory_mount" "$memory_mount_root" "$memory_path"); then
+                printf '\n[cgroup.resolved]\nmode=%s memory_path=%s memory_mount=%s memory_mount_root=%s memory_root=%s\n' \
+                  "$cgroup_mode" "$memory_path" "$memory_mount" "$memory_mount_root" "$memory_root"
+                for field in memory.limit_in_bytes memory.usage_in_bytes memory.max_usage_in_bytes memory.failcnt memory.stat; do
+                  read_cgroup_file "cgroup.v1.$field" "$memory_root/$field"
+                done
+              else
+                printf '\n[cgroup.v1.memory.resolved]\nunavailable reason=missing-or-incompatible-membership-or-mount path=%s mount=%s mount_root=%s\n' \
+                  "$memory_path" "$memory_mount" "$memory_mount_root"
+              fi
+              cpu_path=$(awk -F: '$2 ~ /(^|,)cpu(,|$)/ { print $3; exit }' /proc/self/cgroup)
+              cpu_mount= cpu_mount_root=
+              read -r cpu_mount cpu_mount_root < <(awk '
+                { for (i = 1; i <= NF; i++) if ($i == "-") { sep = i; break } }
+                sep && $(sep + 1) == "cgroup" && $(sep + 3) ~ /(^|,)cpu(,|$)/ { print $5, $4; exit }
+              ' /proc/self/mountinfo) || true
+              if cpu_root=$(resolve_cgroup_path "$cpu_mount" "$cpu_mount_root" "$cpu_path"); then
+                printf '\n[cgroup.v1.cpu.resolved]\npath=%s mount=%s mount_root=%s root=%s\n' \
+                  "$cpu_path" "$cpu_mount" "$cpu_mount_root" "$cpu_root"
+                for field in cpu.cfs_quota_us cpu.cfs_period_us cpu.stat; do
+                  read_cgroup_file "cgroup.v1.$field" "$cpu_root/$field"
+                done
+              else
+                printf '\n[cgroup.v1.cpu.resolved]\nunavailable reason=missing-or-incompatible-membership-or-mount path=%s mount=%s mount_root=%s\n' \
+                  "$cpu_path" "$cpu_mount" "$cpu_mount_root"
+              fi
+            fi
             ps -eo pid,ppid,stat,pcpu,pmem,rss,etime,comm --sort=-rss | sed -n '1,26p'
           } > "$capture/checkpoint.txt"
           (cd "$capture" && sha256sum source-head.txt checkpoint.txt > SHA256SUMS)

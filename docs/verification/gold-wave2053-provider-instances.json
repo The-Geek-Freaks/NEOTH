@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-wave2053-provider-instances/v1",
-  "capturedUtc": "2026-10-01T17:55:46.7234040Z",
+  "capturedUtc": "2026-10-01T17:55:46.723404Z",
   "baseline": "f94fd91f8069ff3f65832c222ef6b3b67b3ad268",
-  "status": "STATIC_REVIEWED_HOSTED_EXECUTION_PENDING",
+  "status": "HOSTED_COMPILE_DIAGNOSTICS_REPAIRED_EXECUTION_PENDING",
   "behavior": [
     "Named existing-transport instances resolve endpoint, key, model, profile, region and API version atomically",
     "Role and sub-role policy, consent, discovery, cost and factory consumers use fallible resolution",
@@ -185,5 +185,24 @@
   "nativeReleaseAcceptance": false,
   "completeAdapterParityClaim": false,
   "noSlintChanges": true,
-  "priorPlanBytesPreserved": true
+  "priorPlanBytesPreserved": true,
+  "hostedRepair2066": {
+    "producer": "da0ddd551c92a15526f7f3c22cdf5fc21b2e672b",
+    "run": 36904912363,
+    "conclusion": "failure",
+    "failurePhase": "Rust compilation before focused execution",
+    "diagnostics": 6,
+    "testsExecuted": 0,
+    "originalArchives": 3,
+    "custodySHA256": "8873690117DE804BA5FAB1257706AAD63B50942B0C6A79D73889756410734A51",
+    "repairs": [
+      "Borrow descriptor metadata before moving instance identity in Chat and fallback",
+      "Return Result from Cron closure and retain Option around consent config",
+      "Borrow formatted fixture YAML and use valid cap_fallback instance ID",
+      "Bedrock fixture denies missing region and admits only its own exact region"
+    ],
+    "localExecutableValidationRan": false,
+    "hostedRevalidation": "pending",
+    "securityCheckpoint": "Bounded cgroup v1/v2 membership and mount diagnostics; full Rust security-extended scope unchanged; shutdown cause remains unproven"
+  }
 }

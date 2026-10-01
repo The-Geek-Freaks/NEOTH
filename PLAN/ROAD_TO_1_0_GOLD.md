@@ -1,5 +1,19 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2064-2066 hosted provider integration repair (2026-10-01):**
+The 325-case producer da0ddd run36904912363 stopped at compilation before
+any test executed. Six diagnostics identify two metadata partial moves,
+Result/Option return-shape mistakes and a borrowed fixture string. The narrow
+repair preserves named authority and propagates errors before provider calls.
+Two positive fixtures now use valid instance IDs; the Bedrock fixture rejects
+missing own-region authority and proves exact regional consent eligibility.
+Root verified three original failed-run archives against GitHub API digests.
+The Security checkpoint additionally resolves bounded cgroup v1/v2 resource
+observations from actual membership/mount data without reducing scan coverage.
+The earlier runner shutdown remains unexplained. Focused/product/native and
+Security/release acceptance remain open; no local executable validation ran.
+All original backlog bytes below remain preserved.
+
 **W2053 / W2058 provider instances and hosted CLI-reference repair (2026-10-01):**
 Named provider instances now retain separate endpoint, key, model, profile and
 region authority through role policy, consent, discovery, cost and dispatch.
