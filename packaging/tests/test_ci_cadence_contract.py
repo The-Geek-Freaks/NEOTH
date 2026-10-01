@@ -332,6 +332,8 @@ class CiCadenceContractTests(unittest.TestCase):
                 ),
                 "python3 packaging/tests/test_arrayref_provenance_gate.py",
                 "python3 packaging/arrayref_provenance_gate.py",
+                "python3 packaging/tests/test_imbl_provenance_gate.py",
+                "python3 packaging/imbl_provenance_gate.py",
                 "cargo metadata --locked --no-deps --format-version 1 > /dev/null",
                 "cargo fmt --all -- --check",
                 "\n".join(

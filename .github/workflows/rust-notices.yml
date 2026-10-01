@@ -39,6 +39,9 @@ jobs:
         with:
           toolchain: '1.91.0'
 
+      - name: Verify vendored imbl provenance before notice graph
+        run: python3 packaging/imbl_provenance_gate.py
+
       # Keep this repair deliberately package-scoped. The checked-in helper
       # supplies all VCS, archive, lock-checksum, path, and notice extraction
       # primitives; this wrapper exports only the explicit missing allowlist

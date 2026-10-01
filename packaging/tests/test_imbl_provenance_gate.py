@@ -55,9 +55,7 @@ checksum = "2a0813be332553f857953298749fa19549e8b61b80589757c29b4e2a804fa9c6"
                 gate.validate(root)
 
     def test_checked_in_containment_passes(self) -> None:
-        # Fixture coverage must run before the initial Cargo resolution, when
-        # the source tree is already patched but Cargo.lock is intentionally old.
-        gate.validate(ROOT, check_lock=False)
+        gate.validate(ROOT)
 
     def test_source_only_mode_does_not_consume_lock(self) -> None:
         with self.fixture_root() as temporary:
@@ -172,6 +170,22 @@ checksum = "2a0813be332553f857953298749fa19549e8b61b80589757c29b4e2a804fa9c6"
             with self.assertRaisesRegex(gate.ImblProvenanceError, "must not resolve bitmaps"):
                 gate.require_patch_and_lock_identity(root)
 
+    def test_provenance_precedes_cargo_in_preflight_and_security(self) -> None:
+        commands = (
+            "python3 packaging/tests/test_arrayref_provenance_gate.py",
+            "python3 packaging/arrayref_provenance_gate.py",
+            "python3 packaging/tests/test_imbl_provenance_gate.py",
+            "python3 packaging/imbl_provenance_gate.py",
+            "cargo metadata --",
+        )
+        for name in ("preflight.yml", "security.yml"):
+            with self.subTest(workflow=name):
+                source = (ROOT / ".github" / "workflows" / name).read_text(
+                    encoding="utf-8"
+                )
+                offsets = [source.index(command) for command in commands]
+                self.assertEqual(offsets, sorted(offsets))
+                self.assertNotIn("imbl_provenance_gate.py --source-only", source)
 
 if __name__ == "__main__":
     unittest.main()

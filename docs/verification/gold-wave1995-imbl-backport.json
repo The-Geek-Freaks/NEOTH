@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave1995-imbl-backport/v1",
   "base": "545a504ff6003c57ef463f767d6d3674ea5eaac0",
-  "status": "UPSTREAM_TESTS_PASSED_NARROWER_LOCK_EXPORT_REQUIRED",
+  "status": "NARROW_HOSTED_LOCK_ADMITTED_UPSTREAM_TESTS_PASSED_NEOTH_INTEGRATION_PENDING",
   "reason": "Matrix0.18/eyeball-im0.8/imbl6.1 selects vulnerable imbl-sized-chunks0.1.3; upgrading Matrix0.19 would require Rust1.96 rather than supported1.91.",
   "upstream": {
     "archive": "https://crates.io/api/v1/crates/imbl/6.1.0/download",
@@ -31,7 +31,7 @@
     "sourceBoundArtifact": "Lock and two config postimages only, metadata and source/vendor hash manifests",
     "upstreamTests": "Dependent hosted job default and all-features tests in RUNNER_TEMP copy with original checkout preserved"
   },
-  "transition": "Checked-in lock and both existing exceptions deliberately unchanged until hosted exact graph proof and Root artifact admission.",
+  "transition": "Narrow hosted lock and dual advisory removal imported after independent review; full gates now protect permanent metadata/release consumers.",
   "localExecutableValidationRan": false,
   "hosted": "pending",
   "releaseAccepted": false,
@@ -51,5 +51,26 @@
     "admissionFinding": "Six incidental consumer edges select older socket2/windows-core implementations within their allowed ranges. Preserve all unrelated package blocks before locked metadata in the narrower export.",
     "sourceProof": "The same exact vendor backport passed both upstream configurations; artifact remains retained but not imported."
   },
-  "narrowedExport": "Only imbl/chunks Cargo updates; every unrelated raw HEAD package block restored and compared in order, then locked metadata must leave the restored lock hash unchanged. Independent review approved preservation logic."
+  "narrowedExport": "Only imbl/chunks Cargo updates; every unrelated raw HEAD package block restored and compared in order, then locked metadata must leave the restored lock hash unchanged. Independent review approved preservation logic.",
+  "admission": {
+    "run": 36845167851,
+    "producer": "3b6da6aeebaabb855ea1e6588144533ead04f9da",
+    "artifact": 11153012784,
+    "archiveSha256": "88B5F922425EA19391F1664D1F045D8E67CB40464C24F26B8803AEB8F92C78A1",
+    "artifactLockSha256": "09DAB6B85801DE558982B49F2A60DD88D4634E549965648DEFD91377E0626897",
+    "importedLockSha256": "ED560B3766E53E1852F2F2053B3A995D72036636A6A56895B109F6AE71C601F0",
+    "formatOnlyFollowup": "Removed one surplus final blank line after exact artifact import check; no package record changed",
+    "entries": 10,
+    "checksums": 9,
+    "sourceHashRecords": 55,
+    "unrelatedGraphPreserved": true,
+    "review": "w1994_repair_review approved actual narrow artifact, final consumer wiring and full-state tests",
+    "imbl": "6.1.0 path",
+    "chunks": "0.2.0 exact registry",
+    "bitmaps": 0,
+    "rsa": 0,
+    "temporaryIgnoresRemoved": 2,
+    "proof": "Locked all-features metadata and unchanged post-resolution lock hash passed before artifact sealing",
+    "upstreamAcceptance": "Same vendor source passed default122+120doc and all-features132+125doc on36844253038; final-producer suite and NEOTH runtime tracked separately"
+  }
 }

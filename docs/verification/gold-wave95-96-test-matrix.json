@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1995_UPSTREAM_TESTS_PASSED_NARROW_LOCK_PENDING",
+  "status": "W1998_NARROW_LOCK_ADMITTED_NEOTH_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 285447,
-    "sha256": "C9CE0CBC5E2ED0DCD6234C02A724E7606AD6B43B72A580D129E771CB28BEC9EE"
+    "bytes": 285603,
+    "sha256": "0690479FC123A23284B24257199F1430733A2BA44F06C4FCEB25EAE2905AE76B"
   },
-  "sourceInputs": 1587,
+  "sourceInputs": 1588,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -64150,6 +64150,86 @@
       }
     ],
     "note": "Retain every unrelated HEAD lock package block; locked metadata must leave its exact hash unchanged. First hosted upstream suites passed, initial incidental graph rewires not imported.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1998LockAdmission": {
+    "base": "3b6da6aeebaabb855ea1e6588144533ead04f9da",
+    "sources": [
+      {
+        "path": ".github/workflows/preflight.yml",
+        "bytes": 5767,
+        "sha256": "0C3C6AB4AFB18497985091D26FA144E6A6B1F3E7D0210A43F72CDDE8FF8FFA48",
+        "blob": "d210ef3c700633bb73d75c98d21f55c6eb933894"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "bytes": 149659,
+        "sha256": "8E403AF6D597F8002F45E7D90DC39D3D75208ACD49F9C863E78C717B1F3B6284",
+        "blob": "aa29e7b1bb871f96b0ce372f4f10ebd5063f46a5"
+      },
+      {
+        "path": ".github/workflows/rust-notices.yml",
+        "bytes": 9113,
+        "sha256": "80F4E978241A442E878AE57E1D56A64D70D767BDCD7DEA22E1136B8E778C1105",
+        "blob": "05a39aa764d1e42028a3c847629fec55b690ce51"
+      },
+      {
+        "path": ".github/workflows/security.yml",
+        "bytes": 16105,
+        "sha256": "A0088AE20830EF0A31FCFCD3626AE76957C6FFD44B60180A1D8424E9346AABA7",
+        "blob": "28d0053ef185d8ba463ac03353ba4bb1111ab99c"
+      },
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 4247,
+        "sha256": "66D26F2325D63AD6E37203723D9DE5E987F8D0030DC5A86F8DDA6005046F2E21",
+        "blob": "4b7c9a207fda011dbe6b4c8a9c050d966f853e8a"
+      },
+      {
+        "path": "docs/verification/gold-wave1995-imbl-backport.json",
+        "bytes": 4655,
+        "sha256": "82455B2F69BCB492F071052E0670D3171E4F7B8304BD96EC59949699826E6B07",
+        "blob": "10c6554e309e1b41a2034491d8359a4694947a08"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 47741,
+        "sha256": "0E476A09D7247575BE8C6796E7D76F4F2D27F9BB26E21BD6EA5CAE5CE05491EE",
+        "blob": "d36b37542e65d9292533e75e058c64962153c728"
+      },
+      {
+        "path": "packaging/tests/test_imbl_provenance_gate.py",
+        "bytes": 7965,
+        "sha256": "D1EDD75E2976FF1BF68B6A1A75F86009D84E7EAF6961A40FD375273A96845C04",
+        "blob": "4f9d3fa04b4c66c7217eb69f0174a28479f1b420"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2253608,
+        "sha256": "6B6EB3238EC0825B1B333183F68A4D84B896516C29A3F2000B965FC7E79CA25F",
+        "blob": "d60d0ae81c54bfebd9e085916ecafa5c50e7106b"
+      },
+      {
+        "path": "SRC/.cargo/audit.toml",
+        "bytes": 1674,
+        "sha256": "11EA81A3F85613A746BD084F7EFE6C7945E7FD0CD30D4AE5F875B10BA0DDDD79",
+        "blob": "05e22170261ce94915d0878b3cd5ffc79df3a89a"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 386253,
+        "sha256": "ED560B3766E53E1852F2F2053B3A995D72036636A6A56895B109F6AE71C601F0",
+        "blob": "920851f665a9b98d5c0168c9126059f13f82e1aa"
+      },
+      {
+        "path": "SRC/deny.toml",
+        "bytes": 10463,
+        "sha256": "C4EC62043989D0DA6C5006F7E6BE993521D543CE888AA36E383839C4BBD6FCFE",
+        "blob": "80eaea2b75d814ae2cc85de01f0ebe421a3e47c8"
+      }
+    ],
+    "note": "Admitted exact narrow imbl/chunks/bitmaps graph; removed both temporary ignores; permanent full provenance and order checks; upstream vendor suites passed, NEOTH focused239/native/Security pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

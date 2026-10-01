@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T09:46:44.5132026Z",
-  "validationStatus": "W1995_UPSTREAM_TESTS_PASSED_NARROW_LOCK_PENDING",
+  "capturedUtc": "2026-10-01T09:50:57.7112642Z",
+  "validationStatus": "W1998_NARROW_LOCK_ADMITTED_NEOTH_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -143,8 +143,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 5382,
-      "sha256": "6DB279987A8D6FEF92AA98EE47A5333F4EDF48B1D2EA0D44E04B0B2133D30087"
+      "bytes": 5767,
+      "sha256": "0C3C6AB4AFB18497985091D26FA144E6A6B1F3E7D0210A43F72CDDE8FF8FFA48"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "bytes": 149408,
-      "sha256": "08EBB311DE44BE29244ED290419E0DEE33A4312237A6C96C0D70635F22FCC37E"
+      "bytes": 149659,
+      "sha256": "8E403AF6D597F8002F45E7D90DC39D3D75208ACD49F9C863E78C717B1F3B6284"
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
@@ -173,8 +173,8 @@
     },
     {
       "path": ".github/workflows/rust-notices.yml",
-      "bytes": 8991,
-      "sha256": "95D24F2AAE1038F665AD90A210C61E56356141980F9E80EECB896F53C09297BB"
+      "bytes": 9113,
+      "sha256": "80F4E978241A442E878AE57E1D56A64D70D767BDCD7DEA22E1136B8E778C1105"
     },
     {
       "path": ".github/workflows/security-dependency-lock-reconcile.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": ".github/workflows/security.yml",
-      "bytes": 15716,
-      "sha256": "9B53423E0E79DA945C6AF7C4AC463E0D663535BCD36ABFA4E7A49B3A0F2AF3AA"
+      "bytes": 16105,
+      "sha256": "A0088AE20830EF0A31FCFCD3626AE76957C6FFD44B60180A1D8424E9346AABA7"
     },
     {
       "path": ".github/workflows/silero-specialize.yml",
@@ -193,8 +193,8 @@
     },
     {
       "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
-      "bytes": 4127,
-      "sha256": "5E71339F02C700CFCFC1D806460BB2CD039243C81CC064CB1D86688A17B6A98E"
+      "bytes": 4247,
+      "sha256": "66D26F2325D63AD6E37203723D9DE5E987F8D0030DC5A86F8DDA6005046F2E21"
     },
     {
       "path": ".github/workflows/webchat-browser.yml",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "docs/verification/gold-wave1995-imbl-backport.json",
-      "bytes": 3443,
-      "sha256": "B88FACA4B459606DE6F3D40BA9535162BDF7C36B1CE9EB52769F948A74D57CE0"
+      "bytes": 4655,
+      "sha256": "82455B2F69BCB492F071052E0670D3171E4F7B8304BD96EC59949699826E6B07"
     },
     {
       "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",
@@ -3913,8 +3913,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 47608,
-      "sha256": "AB168B1AF9BAD1568BD55A1DB3E7EB0E61F086D3E36FA41FEB6D0D729483FD53"
+      "bytes": 47741,
+      "sha256": "0E476A09D7247575BE8C6796E7D76F4F2D27F9BB26E21BD6EA5CAE5CE05491EE"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -3933,8 +3933,8 @@
     },
     {
       "path": "packaging/tests/test_imbl_provenance_gate.py",
-      "bytes": 7294,
-      "sha256": "FE2931D59790BB71FF8186A584146DFDACB6A2C1918199662D3D1D4EB3D719AE"
+      "bytes": 7965,
+      "sha256": "D1EDD75E2976FF1BF68B6A1A75F86009D84E7EAF6961A40FD375273A96845C04"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -4058,8 +4058,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2252211,
-      "sha256": "065BBEA216ED8501B33D768C6DC1CD2327F74BCCE6D5E1B7FC5BF1135FFB8528"
+      "bytes": 2253608,
+      "sha256": "6B6EB3238EC0825B1B333183F68A4D84B896516C29A3F2000B965FC7E79CA25F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4117,14 +4117,19 @@
       "sha256": "8259EBB59BAD3E43B0DA1482283DB6ADF47B0115A1374089C60C358ADDD754D9"
     },
     {
+      "path": "SRC/.cargo/audit.toml",
+      "bytes": 1674,
+      "sha256": "11EA81A3F85613A746BD084F7EFE6C7945E7FD0CD30D4AE5F875B10BA0DDDD79"
+    },
+    {
       "path": "SRC/.config/nextest.toml",
       "bytes": 963,
       "sha256": "1BDC72578261FB6EDBA1574BB4E9CF6A238DDF70636A587D1D2E2D459653EDC9"
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 386631,
-      "sha256": "6C61CD5F5D52A46BE44B14E504AA457338686A708F0245F22546748A14B00EDE"
+      "bytes": 386253,
+      "sha256": "ED560B3766E53E1852F2F2053B3A995D72036636A6A56895B109F6AE71C601F0"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -4133,8 +4138,8 @@
     },
     {
       "path": "SRC/deny.toml",
-      "bytes": 11180,
-      "sha256": "0938B78207CFEA8B890F80894F753EABC54AEBE87BF49710F97B46C2C24C8F73"
+      "bytes": 10463,
+      "sha256": "C4EC62043989D0DA6C5006F7E6BE993521D543CE888AA36E383839C4BBD6FCFE"
     },
     {
       "path": "SRC/freedom.yaml.example",

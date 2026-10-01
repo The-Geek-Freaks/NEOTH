@@ -1,5 +1,26 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1998 narrow Matrix lock admission and permanent gates (2026-10-01):**
+Hosted run36844253038 passed the identical vendored imbl source in default
+configuration (122 tests,120 doctests) and with all features (132 tests,
+125 doctests), all without failures. Its initial lock artifact was retained
+but not imported because Cargo rewired six unrelated networking/Windows
+edges within broad version ranges. The narrowed producer3b6da6ae restores
+all unrelated HEAD package records byte-for-byte and requires locked metadata
+to preserve the restored hash. Run36845167851 produced the accepted artifact
+11153012784:10 entries,9 artifact checksums and55 source hashes verified.
+Only bitmaps removal, path imbl6.1.0 and registry chunks0.2.0 remain in its
+package delta. Both temporary advisory ignores are now removed together.
+The sole postimage normalization removed an extra final blank line.
+
+Independent review approved the actual narrow artifact and permanent full
+provenance gates in Preflight, Security, notice export, SSH reconciliation,
+and release notice/build paths. Full-state and consumer-order tests protect
+these boundaries. Fresh NEOTH focused239/native integration, exact notices,
+Security and release proof remain distinct pending gates. No local runtime,
+.slint modification, Claude polling or release acceptance occurred.
+Report: docs/verification/gold-wave1995-imbl-backport.json.
+
 **W1995 Matrix dependency repair, source transition (2026-10-01):**
 W1996 producer545a504f passed Preflight36843417318 and CodeQuality36843416584.
 The remaining Matrix dependency repair backports the upstream imbl change to

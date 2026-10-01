@@ -64,6 +64,14 @@ jobs:
       - name: Verify vendored arrayref provenance before Cargo metadata
         run: python3 packaging/arrayref_provenance_gate.py
 
+      - name: Test vendored imbl provenance gate
+        # Keep fixture coverage before Cargo: a path-patched backport must be
+        # authenticated before the workspace graph can consume it.
+        run: python3 packaging/tests/test_imbl_provenance_gate.py
+
+      - name: Verify vendored imbl provenance before Cargo metadata
+        run: python3 packaging/imbl_provenance_gate.py
+
       - name: Validate locked workspace metadata without dependencies
         working-directory: SRC
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null

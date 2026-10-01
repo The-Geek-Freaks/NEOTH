@@ -312,6 +312,9 @@ jobs:
       - name: Verify clean-machine authenticity bootstrap contract
         run: python packaging/test_bootstrap_verifier.py
 
+      - name: Verify vendored imbl provenance before release notice graph
+        run: python packaging/imbl_provenance_gate.py
+
       - name: Verify exact Rust third-party notice graph
         run: python packaging/generate_rust_notices.py --check
 
@@ -853,6 +856,9 @@ jobs:
           key: release-${{ matrix.target }}-${{ matrix.crt_mode }}-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
             release-${{ matrix.target }}-${{ matrix.crt_mode }}-cargo-
+
+      - name: Verify vendored imbl provenance before package build
+        run: python packaging/imbl_provenance_gate.py
 
       - name: Install cross
         if: matrix.use_cross

@@ -68,6 +68,14 @@ jobs:
       - name: Verify vendored arrayref provenance before Cargo metadata
         run: python3 packaging/arrayref_provenance_gate.py
 
+      - name: Test vendored imbl provenance gate
+        # The reviewed path-patched backport must be tested and authenticated
+        # before Cargo metadata, audit, or deny can consume its graph.
+        run: python3 packaging/tests/test_imbl_provenance_gate.py
+
+      - name: Verify vendored imbl provenance before Cargo metadata
+        run: python3 packaging/imbl_provenance_gate.py
+
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

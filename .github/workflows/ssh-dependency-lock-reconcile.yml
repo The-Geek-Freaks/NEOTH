@@ -47,6 +47,9 @@ jobs:
       - name: Verify the existing vendored dependency before resolution
         run: python3 packaging/arrayref_provenance_gate.py
 
+      - name: Verify vendored imbl provenance before resolution
+        run: python3 packaging/imbl_provenance_gate.py
+
       - name: Prepare the exact Russh manifest candidate
         shell: bash
         run: |
