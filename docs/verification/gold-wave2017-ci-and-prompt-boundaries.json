@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2017-ci-and-prompt-boundaries/v1",
   "base": "9ce94547ed694298433bdd634e6dbef22d57cda3",
-  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "status": "FOCUSED_HOSTED_ACCEPTED_NATIVE_PENDING",
   "capturedUtc": "2026-10-01T14:11:14.7196518Z",
   "baseline": {
     "focused": {
@@ -315,7 +315,7 @@
   "review": "Independent W1994 review and Root integration review; corrected contradictory guard assertion, test-only helper scope, exact lossy-root checks, patch paths and guidance budget/data proof before acceptance; W2021 independent review requires actual Right-only consent and actual resolved wire-model regressions; final revision approved; W2026 independent final review approved absolute deadline and descendant cleanup regression; W2024 independent final review approved actual factory success/failure, caller selection, and cross-vendor field separation",
   "statusBoundary": {
     "localExecutableValidationRan": false,
-    "hostedAcceptanceOnCandidate": "pending",
+    "hostedAcceptanceOnCandidate": "focused266,20guards,61contracts,4products independently admitted on c9bd411; native and full security remain pending",
     "R3_14Umbrella": "OPEN",
     "originalRoadmapBacklogPreserved": true,
     "nativeReleaseAccepted": false,
@@ -379,6 +379,22 @@
       "SRC/neothd/src/providers/mod.rs"
     ],
     "localFormatterRan": false,
-    "nextProducerPreflight": "pending"
+    "nextProducerPreflight": "c9bd411 Preflight36878416954 success; CodeQuality36878417231 success"
+  },
+  "focusedAcceptance": {
+    "status": "ADMITTED",
+    "run": 36878864062,
+    "producer": "c9bd41136365e193081cc343c1247f1f3df76c9f",
+    "exactCases": 266,
+    "guards": 20,
+    "pythonContracts": 61,
+    "products": 4,
+    "archives": 7,
+    "archiveEntries": 564,
+    "sourceBindings": 140,
+    "rootChecksPath": "work/gold-20260906/wave2032-focused266-validation/ROOT_CHECKS.json",
+    "rootChecksSHA256": "A5CC1CF8FAC52277F72253BD51A13DBA7D96C9E2600C30FF7679BA0F395DC1E7",
+    "freshNative": false,
+    "releaseAccepted": false
   }
 }

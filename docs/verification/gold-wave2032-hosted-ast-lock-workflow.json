@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-wave2032-hosted-ast-lock-workflow/v1",
-  "base": "37afec2d894cfb50c36562d62087db8482ae9e55",
+  "base": "ff703155d27bf1228c4aadbeaebaedc8fbf754f2",
   "status": "STATIC_REVIEWED_HOSTED_PENDING",
-  "capturedUtc": "2026-10-01T15:21:57.5453831Z",
+  "capturedUtc": "2026-10-01T15:34:27.2505473Z",
   "workflow": {
     "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
-    "sha256": "DA46132E3392E70214FED5DC563527EE1391079EC42E6B011DFB83EB79D7D946",
+    "sha256": "F5C5D7050FC2CC53BFF4CD0176485371477FD93D1B10DC14EE0BAD2125307C20",
     "trustedRef": "refs/heads/main",
     "baseline": "exact GITHUB_SHA",
     "candidate": "40 lowercase hex descendant commit; not a file SHA256",
@@ -19,10 +19,24 @@
     "output": "heads,manifest/lock/notice patches,baseline/resolved postimages,metadata,self-contained producer inputs,nested and outer checksums",
     "notices": "existing packaging/generate_rust_notices.py --write then --check; only lock and THIRD_PARTY_LICENSES may change"
   },
-  "review": "Independent workflow reviewer approved final self-contained notice producer custody delta; separate Rust reviewer approved isolated W2036 source candidate",
+  "review": "Independent workflow review approved non-importable rejected-resolution diagnostics; strict acceptance gate unchanged",
   "astSourceCandidate": "STATIC_APPROVED separately as combined W2036 candidate; isolated, uncompiled, and not imported",
   "lockGenerated": false,
   "sourceOrEmbeddingAcceptance": false,
   "localExecutableValidationRan": false,
-  "noticesGenerated": false
+  "noticesGenerated": false,
+  "firstHostedAttempt": {
+    "run": 36884451803,
+    "baseline": "ff703155d27bf1228c4aadbeaebaedc8fbf754f2",
+    "candidate": "1da1bda78a01ef1936b3f5a1c90a73ef95b6a640",
+    "conclusion": "failure",
+    "stage": "strict lock admission",
+    "firstDrift": "arboard3.6.1 block",
+    "observedUpdates": [
+      "cc1.2.62 to1.5.1",
+      "find-msvc-tools0.1.9 to0.1.14"
+    ],
+    "imported": false,
+    "next": "capture actual rejected diff; preserve strict gate until evaluated"
+  }
 }

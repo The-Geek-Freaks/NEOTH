@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T15:22:41.1277058Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T15:34:28.2768342Z",
+  "validationStatus": "FOCUSED_HOSTED_ACCEPTED_NEXT_SOURCE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
-      "bytes": 13485,
-      "sha256": "DA46132E3392E70214FED5DC563527EE1391079EC42E6B011DFB83EB79D7D946"
+      "bytes": 15481,
+      "sha256": "F5C5D7050FC2CC53BFF4CD0176485371477FD93D1B10DC14EE0BAD2125307C20"
     },
     {
       "path": ".github/workflows/bge-m3.yml",
@@ -2978,13 +2978,13 @@
     },
     {
       "path": "docs/verification/gold-wave2017-ci-and-prompt-boundaries.json",
-      "bytes": 19611,
-      "sha256": "2A323408357D1FF9ACAC3D2FC41A06EB7C4CC6B2BE6E168DFCD53A38512B2563"
+      "bytes": 20319,
+      "sha256": "8EFFD8F6AE39FD0D3DC5698C967D73510967FA4C19B73BA1A414AC048AAAD69E"
     },
     {
       "path": "docs/verification/gold-wave2032-hosted-ast-lock-workflow.json",
-      "bytes": 1651,
-      "sha256": "A138CA8B615ABA7F4CB1E2ED4E69CF187DAFB81DD0F42BF36DEF4CBD585F2FB5"
+      "bytes": 2097,
+      "sha256": "D7AA238549115226C0FCB12FD5D5EA1DE74DFFFADA84F454780EF2A3F7E5266D"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4088,8 +4088,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2264340,
-      "sha256": "A65E70E83EDE30DC6B7D5CB87F04B04CAB0D219654B535ACB970F52C392C72C3"
+      "bytes": 2265071,
+      "sha256": "0C2F1CB3B227310FC0E96FEFC181ECB0D01CC82F9F03FD8D25F1A0D30BAE9E01"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

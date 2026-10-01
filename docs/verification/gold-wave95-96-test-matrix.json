@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "FOCUSED_HOSTED_ACCEPTED_NEXT_SOURCE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 287080,
-    "sha256": "C1C07A3955233442E025D07DC6D8E5661D0761CD4C6F4B1C60225238C7C82CDA"
+    "bytes": 287093,
+    "sha256": "AB4124017BC53952D41DB95DCBACB4E2DC557B807A75B529145FC1C97A0F37A4"
   },
   "sourceInputs": 1596,
   "requiredNativeTests": [
@@ -64746,6 +64746,38 @@
       }
     ],
     "note": "Hosted AST candidate now seals generated lock and required notices with self-contained producer inputs; source isolated and uncompiled; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2038RejectedLockAnd266Admission": {
+    "base": "ff703155d27bf1228c4aadbeaebaedc8fbf754f2",
+    "sources": [
+      {
+        "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
+        "bytes": 15481,
+        "sha256": "F5C5D7050FC2CC53BFF4CD0176485371477FD93D1B10DC14EE0BAD2125307C20",
+        "blob": "45a665884fd4e4f7b8d9afff851be25c62e2e9b9"
+      },
+      {
+        "path": "docs/verification/gold-wave2017-ci-and-prompt-boundaries.json",
+        "bytes": 20319,
+        "sha256": "8EFFD8F6AE39FD0D3DC5698C967D73510967FA4C19B73BA1A414AC048AAAD69E",
+        "blob": "f3077886887ecdae1fc8168a03c0d702ad357564"
+      },
+      {
+        "path": "docs/verification/gold-wave2032-hosted-ast-lock-workflow.json",
+        "bytes": 2097,
+        "sha256": "D7AA238549115226C0FCB12FD5D5EA1DE74DFFFADA84F454780EF2A3F7E5266D",
+        "blob": "9ffb5601b8b2c74532b9f0c16455d71167fc53d8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2265071,
+        "sha256": "0C2F1CB3B227310FC0E96FEFC181ECB0D01CC82F9F03FD8D25F1A0D30BAE9E01",
+        "blob": "bc8546b2c26c15066efe20cb4236f1b6c62da16f"
+      }
+    ],
+    "note": "c9 focused266/20/61/4 admitted from original artifacts; diagnostic-only AST lock failure receipt added without weakening gate; native/security/AST execution still pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -130,6 +130,28 @@ jobs:
           cargo metadata --manifest-path SRC/neothd/Cargo.toml --format-version 1 > "$RUNNER_TEMP/metadata.json"
           cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/metadata-locked.json"
           cmp "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/metadata-locked.json"
+
+      - name: Seal non-importable pre-admission lock-drift diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/ast-tree-sitter-lock-drift"
+          mkdir -p "$evidence"
+          printf '%s\n' "$BASELINE_HEAD" > "$evidence/baseline-head.txt"
+          printf '%s\n' "$CANDIDATE_HEAD" > "$evidence/candidate-head.txt"
+          printf '%s\n' 'DIAGNOSTIC ONLY: captured before the strict lock admission gate. It is not an importable accepted candidate.' > "$evidence/NOT_IMPORTABLE.txt"
+          git diff --binary --full-index "$BASELINE_HEAD" "$CANDIDATE_HEAD" -- SRC/neothd/Cargo.toml > "$evidence/manifest-input.patch"
+          git diff --binary --full-index -- SRC/Cargo.lock > "$evidence/resolved-Cargo.lock.patch"
+          git diff --name-only > "$evidence/resolved-name-only.txt"
+          git diff --name-status "$BASELINE_HEAD" "$CANDIDATE_HEAD" > "$evidence/candidate-source-name-status.txt"
+          cp "$RUNNER_TEMP/baseline-Cargo.lock" "$evidence/baseline-Cargo.lock"
+          cp SRC/Cargo.lock SRC/neothd/Cargo.toml "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/metadata-locked.json" "$evidence/"
+          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt NOT_IMPORTABLE.txt manifest-input.patch resolved-Cargo.lock.patch resolved-name-only.txt candidate-source-name-status.txt baseline-Cargo.lock Cargo.lock Cargo.toml metadata.json metadata-locked.json > SHA256SUMS)
+
+      - name: Enforce strict existing-lock and Tree-sitter-closure admission
+        shell: bash
+        run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import json, os, tomllib
@@ -202,6 +224,15 @@ jobs:
                   raise SystemExit(f"new lock package is outside the direct Tree-sitter closure: {identity(package)!r}")
           PY
           test "$(git diff --name-only | LC_ALL=C sort)" = 'SRC/Cargo.lock'
+
+      - name: Upload rejected pre-admission lock-drift diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ast-tree-sitter-lock-drift-diagnostic-${{ inputs.candidate_head }}
+          path: ${{ runner.temp }}/ast-tree-sitter-lock-drift
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Generate and verify exact Rust distribution notices for the resolved lock
         shell: bash

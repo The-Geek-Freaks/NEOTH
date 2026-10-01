@@ -1,5 +1,16 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2032 focused product acceptance and W2038 AST lock diagnosis (2026-10-01):**
+Producer c9bd411 completed run 36878864062: Root independently admitted all
+266 focused cases, 20 guards, 61 contract tests and four actual CLI/daemon
+scenarios. Seven original archives, 564 entries and 140 raw Git source
+bindings were verified; both daemons adopted and closed/drained their WAL.
+Fresh native and full Security acceptance remain pending.
+AST lock run 36884451803 correctly rejected existing-lock drift before any
+import. A reviewed diagnostic receipt now preserves the rejected lock and
+diff with NOT_IMPORTABLE custody; no admission gate was relaxed. Parser
+source remains isolated while the required dependency delta is evaluated.
+
 **W2035 AST dependency notice custody (2026-10-01):**
 The hosted AST lock candidate now also runs the existing Rust distribution
 notice generator and its check. Only Cargo.lock and THIRD_PARTY_LICENSES
