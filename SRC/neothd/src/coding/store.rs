@@ -1281,6 +1281,7 @@ mod tests {
                 root_identity: "volume:repo".to_owned(),
                 index_generation: 9,
                 graph_generation: 9,
+                chunk_generation: 0,
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
@@ -1289,6 +1290,7 @@ mod tests {
                     path: "src/lib.rs".to_owned(),
                     symbols: vec!["entrypoint".to_owned()],
                 }],
+                selected_chunks: Vec::new(),
                 callers: vec![CodeMapCaller {
                     target_symbol: "entrypoint".to_owned(),
                     caller_symbol: "main".to_owned(),
@@ -1323,6 +1325,7 @@ mod tests {
             root_identity: "volume:repo".to_owned(),
             index_generation: 9,
             graph_generation: 9,
+            chunk_generation: 0,
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
@@ -1331,6 +1334,7 @@ mod tests {
                 path: "src/lib.rs".to_owned(),
                 symbols: Vec::new(),
             }],
+            selected_chunks: Vec::new(),
             callers: Vec::new(),
         };
         let target = MAX_CODE_MAP_SOURCE_BYTES - 1_024;

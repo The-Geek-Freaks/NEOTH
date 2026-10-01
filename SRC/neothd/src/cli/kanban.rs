@@ -1460,6 +1460,7 @@ mod tests {
             root_identity: "test-physical-root".into(),
             index_generation: 7,
             graph_generation: 7,
+            chunk_generation: 0,
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
@@ -1468,6 +1469,7 @@ mod tests {
                 path: format!("src/{sensitive_name}.rs"),
                 symbols: vec!["verify_token".into()],
             }],
+            selected_chunks: Vec::new(),
             callers: Vec::new(),
         };
         let prepared =
