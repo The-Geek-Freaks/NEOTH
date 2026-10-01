@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "FOCUSED_HOSTED_ACCEPTED_NEXT_SOURCE_PENDING",
+  "status": "STATIC_APPROVED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 287093,
-    "sha256": "AB4124017BC53952D41DB95DCBACB4E2DC557B807A75B529145FC1C97A0F37A4"
+    "bytes": 287080,
+    "sha256": "F296D1CF56CDA1C03950551228D31A3D5B07B3D94E9B149496839F88387E5BF9"
   },
   "sourceInputs": 1596,
   "requiredNativeTests": [
@@ -64778,6 +64778,32 @@
       }
     ],
     "note": "c9 focused266/20/61/4 admitted from original artifacts; diagnostic-only AST lock failure receipt added without weakening gate; native/security/AST execution still pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2040MinimalAstLock": {
+    "base": "3b7173b495cc93c7097e694a3e297ba33d0a1322",
+    "sources": [
+      {
+        "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
+        "bytes": 27745,
+        "sha256": "1EF2EA51AB61BD1865A63899F6183F0DB6D0A716497BFB46B6D814BC0053A0EA",
+        "blob": "9903301238c42932822c1c4239c4cf605086e833"
+      },
+      {
+        "path": "docs/verification/gold-wave2032-hosted-ast-lock-workflow.json",
+        "bytes": 3380,
+        "sha256": "B882B7A04320479FD741F977782F223BBAB2CA06B8BB8EB6E883DF1C55A084F0",
+        "blob": "cd69bae1cace037cffbbf5cb435672320309cc82"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2265788,
+        "sha256": "8A7F15B687BAAD17B9A1713B758FF62E0B9C2570F99CF07B3D1C556B47B5E1A4",
+        "blob": "5cf82d209d3ed00d2860476fe951299fb088c04c"
+      }
+    ],
+    "note": "Exact minimumcc repair with resolver custody and twice-locked admission; AST source remains isolated. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

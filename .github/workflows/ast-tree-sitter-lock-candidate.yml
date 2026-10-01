@@ -118,18 +118,170 @@ jobs:
         with:
           toolchain: '1.91.0'
 
-      - name: Resolve only the candidate's missing Tree-sitter closure
+      - name: Resolve the reviewed Tree-sitter closure with the exact minimum cc update
         shell: bash
         run: |
           set -euo pipefail
           cp SRC/Cargo.lock "$RUNNER_TEMP/baseline-Cargo.lock"
           cp THIRD_PARTY_LICENSES "$RUNNER_TEMP/baseline-THIRD_PARTY_LICENSES"
-          # Cargo metadata may add only packages demanded by the two new direct
-          # pins while retaining the existing lock selections; no cargo update
-          # or generate-lockfile command is permitted here.
-          cargo metadata --manifest-path SRC/neothd/Cargo.toml --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          # tree-sitter 0.27.0 declares cc ^1.2.63.  Do not permit Cargo to
+          # choose the current cc release, which needlessly updates find-msvc-tools.
+          cargo update --manifest-path SRC/neothd/Cargo.toml -p cc --precise 1.2.63
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --format-version 1 > "$RUNNER_TEMP/metadata-pre-recomposition.json"
+          cp SRC/Cargo.lock "$RUNNER_TEMP/cargo-resolved-before-repair.lock"
+
+      - name: Seal initial non-importable resolver evidence before repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/ast-tree-sitter-lock-drift"
+          mkdir -p "$evidence"
+          printf '%s\n' "$BASELINE_HEAD" > "$evidence/baseline-head.txt"
+          printf '%s\n' "$CANDIDATE_HEAD" > "$evidence/candidate-head.txt"
+          printf '%s\n' 'DIAGNOSTIC ONLY: this contains Cargo output before raw-block recomposition and is not an importable accepted candidate.' > "$evidence/NOT_IMPORTABLE.txt"
+          git diff --binary --full-index "$BASELINE_HEAD" "$CANDIDATE_HEAD" -- SRC/neothd/Cargo.toml > "$evidence/manifest-input.patch"
+          git diff --binary --full-index -- SRC/Cargo.lock > "$evidence/cargo-resolved-before-repair.patch"
+          git diff --name-status "$BASELINE_HEAD" "$CANDIDATE_HEAD" > "$evidence/candidate-source-name-status.txt"
+          cp "$RUNNER_TEMP/baseline-Cargo.lock" "$RUNNER_TEMP/cargo-resolved-before-repair.lock" SRC/neothd/Cargo.toml "$RUNNER_TEMP/metadata-pre-recomposition.json" "$evidence/"
+          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt NOT_IMPORTABLE.txt manifest-input.patch cargo-resolved-before-repair.patch candidate-source-name-status.txt baseline-Cargo.lock cargo-resolved-before-repair.lock Cargo.toml metadata-pre-recomposition.json > SHA256SUMS)
+
+      - name: Recompose the candidate lock from Cargo-produced permitted blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json, os, tomllib
+
+          baseline_path = Path(os.environ["RUNNER_TEMP"], "baseline-Cargo.lock")
+          generated_path = Path(os.environ["RUNNER_TEMP"], "cargo-resolved-before-repair.lock")
+          output_path = Path("SRC/Cargo.lock")
+          metadata = json.loads(Path(os.environ["RUNNER_TEMP"], "metadata-pre-recomposition.json").read_text(encoding="utf-8"))
+
+          def split(content):
+              pieces = content.split("[[package]]\n")
+              if len(pieces) < 2:
+                  raise SystemExit("Cargo.lock has no package records")
+              records = []
+              for suffix in pieces[1:]:
+                  raw = "[[package]]\n" + suffix
+                  package = tomllib.loads(raw).get("package")
+                  if not isinstance(package, list) or len(package) != 1:
+                      raise SystemExit("Cargo.lock package block is not singular TOML")
+                  records.append((package[0], raw))
+              return pieces[0], records
+
+          old_header, old = split(baseline_path.read_text(encoding="utf-8"))
+          new_header, new = split(generated_path.read_text(encoding="utf-8"))
+          if old_header != new_header:
+              raise SystemExit("Cargo.lock header drifted")
+          def identity(package):
+              return (package.get("name"), package.get("version"), package.get("source"))
+          old_by_id = {identity(package): (package, raw) for package, raw in old}
+          new_by_id = {identity(package): (package, raw) for package, raw in new}
+          if len(old_by_id) != len(old) or len(new_by_id) != len(new):
+              raise SystemExit("Cargo.lock contains duplicate package identities")
+
+          def one(records, name, version=None):
+              matches = [(package, raw) for package, raw in records if package.get("name") == name and (version is None or package.get("version") == version)]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected exactly one {name} {version or ''} block, got {len(matches)}")
+              return matches[0]
+
+          # Prove the one required existing-edge exception from Cargo's actual
+          # resolver graph, before relying on its generated raw package blocks.
+          packages = {package["id"]: package for package in metadata["packages"]}
+          nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+          tree_ids = [package_id for package_id, package in packages.items() if (package["name"], package["version"]) == ("tree-sitter", "0.27.0")]
+          if len(tree_ids) != 1:
+              raise SystemExit("Cargo must resolve exactly one tree-sitter 0.27.0 package")
+          tree_id = tree_ids[0]
+          tree_deps = nodes[tree_id].get("deps", [])
+          tree_cc = [dep["pkg"] for dep in tree_deps if (packages.get(dep["pkg"], {}).get("name"), packages.get(dep["pkg"], {}).get("version")) == ("cc", "1.2.63")]
+          if len(tree_cc) != 1:
+              raise SystemExit("tree-sitter 0.27.0 must resolve exactly one cc 1.2.63 dependency")
+          serde_id = next((dep["pkg"] for dep in tree_deps if packages.get(dep["pkg"], {}).get("name") == "serde_json"), None)
+          if serde_id is None or "preserve_order" not in nodes[serde_id].get("features", []):
+              raise SystemExit("tree-sitter build dependency did not activate serde_json preserve_order")
+          if not any(packages.get(dep["pkg"], {}).get("name") == "indexmap" and packages[dep["pkg"]].get("version") == "2.14.0" for dep in nodes[serde_id].get("deps", [])):
+              raise SystemExit("activated serde_json preserve_order did not resolve indexmap 2.14.0")
+
+          old_cc, _ = one(old, "cc", "1.2.62")
+          new_cc, new_cc_raw = one(new, "cc", "1.2.63")
+          if old_cc.get("dependencies") != ["find-msvc-tools", "jobserver", "libc", "shlex"]:
+              raise SystemExit("baseline cc 1.2.62 dependency shape differs from the reviewed input")
+          if new_cc.get("dependencies") != ["find-msvc-tools", "jobserver", "libc", "shlex 2.0.1"]:
+              raise SystemExit("cc 1.2.63 did not retain find-msvc-tools and select shlex 2.0.1 exactly")
+          if any(package.get("name") == "find-msvc-tools" and package.get("version") != "0.1.9" for package, _ in new):
+              raise SystemExit("Cargo changed find-msvc-tools instead of retaining 0.1.9")
+
+          old_serde, _ = one(old, "serde_json", "1.0.150")
+          new_serde, new_serde_raw = one(new, "serde_json", "1.0.150")
+          if {key: value for key, value in old_serde.items() if key != "dependencies"} != {key: value for key, value in new_serde.items() if key != "dependencies"}:
+              raise SystemExit("serde_json identity, source, or checksum changed")
+          if [dep for dep in new_serde.get("dependencies", []) if dep != "indexmap 2.14.0"] != old_serde.get("dependencies", []) or new_serde.get("dependencies", []).count("indexmap 2.14.0") != 1:
+              raise SystemExit("serde_json changed more than the reviewed indexmap 2.14.0 edge")
+
+          old_bindgen, _ = one(old, "bindgen")
+          new_bindgen, new_bindgen_raw = one(new, "bindgen")
+          if {key: value for key, value in old_bindgen.items() if key != "dependencies"} != {key: value for key, value in new_bindgen.items() if key != "dependencies"}:
+              raise SystemExit("bindgen identity, source, or checksum changed")
+          expected_bindgen_deps = ["shlex 1.3.0" if dep == "shlex" else dep for dep in old_bindgen.get("dependencies", [])]
+          if new_bindgen.get("dependencies", []) != expected_bindgen_deps:
+              raise SystemExit("bindgen changed more than disambiguating its existing shlex 1.3.0 edge")
+
+          permitted_added = {
+              ("cc", "1.2.63"),
+              ("shlex", "2.0.1"),
+              ("streaming-iterator", "0.1.9"),
+              ("tree-sitter", "0.27.0"),
+              ("tree-sitter-language", "0.1.8"),
+              ("tree-sitter-rust", "0.24.2"),
+          }
+          added = {(package.get("name"), package.get("version")) for package, _ in new if identity(package) not in old_by_id}
+          if added != permitted_added:
+              raise SystemExit(f"Cargo produced an unreviewed added lock package: {added!r}")
+
+          replacements = {"neoth", "cc", "serde_json", "bindgen"}
+          records = []
+          for old_package, old_raw in old:
+              name = old_package.get("name")
+              if name not in replacements:
+                  records.append(old_raw)
+                  continue
+              if name == "cc":
+                  records.append(new_cc_raw)
+              elif name == "serde_json":
+                  records.append(new_serde_raw)
+              elif name == "bindgen":
+                  records.append(new_bindgen_raw)
+              else:
+                  root, root_raw = one(new, "neoth")
+                  if old_package.get("version") != root.get("version") or old_package.get("source") != root.get("source"):
+                      raise SystemExit("workspace root identity changed")
+                  root_deps = root.get("dependencies", [])
+                  direct_pins = ("tree-sitter", "tree-sitter-rust")
+                  if any(root_deps.count(dep) != 1 for dep in direct_pins) or [dep for dep in root_deps if dep not in direct_pins] != old_package.get("dependencies", []):
+                      raise SystemExit("workspace root differs beyond the two reviewed direct pins")
+                  records.append(root_raw)
+          for name, version in (("shlex", "2.0.1"), ("streaming-iterator", "0.1.9"), ("tree-sitter", "0.27.0"), ("tree-sitter-language", "0.1.8"), ("tree-sitter-rust", "0.24.2")):
+              _, raw = one(new, name, version)
+              records.append(raw)
+          output_path.write_text(old_header + "".join(records), encoding="utf-8")
+          PY
+          cp SRC/Cargo.lock "$RUNNER_TEMP/recomposed-Cargo.lock"
+          # Preserve the reconstructed candidate before either locked metadata
+          # verification can fail.  The artifact remains explicitly diagnostic.
+          evidence="$RUNNER_TEMP/ast-tree-sitter-lock-drift"
+          git diff --binary --full-index -- SRC/Cargo.lock > "$evidence/recomposed-Cargo.lock.patch"
+          cp SRC/Cargo.lock "$evidence/recomposed-Cargo.lock"
+          (cd "$evidence" && sha256sum recomposed-Cargo.lock.patch recomposed-Cargo.lock > recomposed-SHA256SUMS)
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          cmp SRC/Cargo.lock "$RUNNER_TEMP/recomposed-Cargo.lock"
           cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/metadata-locked.json"
           cmp "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/metadata-locked.json"
+          cmp SRC/Cargo.lock "$RUNNER_TEMP/recomposed-Cargo.lock"
 
       - name: Seal non-importable pre-admission lock-drift diagnostics
         shell: bash
@@ -146,7 +298,7 @@ jobs:
           git diff --name-status "$BASELINE_HEAD" "$CANDIDATE_HEAD" > "$evidence/candidate-source-name-status.txt"
           cp "$RUNNER_TEMP/baseline-Cargo.lock" "$evidence/baseline-Cargo.lock"
           cp SRC/Cargo.lock SRC/neothd/Cargo.toml "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/metadata-locked.json" "$evidence/"
-          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt NOT_IMPORTABLE.txt manifest-input.patch resolved-Cargo.lock.patch resolved-name-only.txt candidate-source-name-status.txt baseline-Cargo.lock Cargo.lock Cargo.toml metadata.json metadata-locked.json > SHA256SUMS)
+          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt NOT_IMPORTABLE.txt manifest-input.patch candidate-source-name-status.txt baseline-Cargo.lock Cargo.toml cargo-resolved-before-repair.patch cargo-resolved-before-repair.lock metadata-pre-recomposition.json recomposed-Cargo.lock.patch recomposed-Cargo.lock recomposed-SHA256SUMS resolved-Cargo.lock.patch resolved-name-only.txt Cargo.lock metadata.json metadata-locked.json > SHA256SUMS)
 
       - name: Enforce strict existing-lock and Tree-sitter-closure admission
         shell: bash
@@ -155,73 +307,63 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import json, os, tomllib
-
-          baseline = Path(os.environ["RUNNER_TEMP"], "baseline-Cargo.lock").read_text(encoding="utf-8")
-          updated = Path("SRC/Cargo.lock").read_text(encoding="utf-8")
-          metadata = json.loads(Path(os.environ["RUNNER_TEMP"], "metadata.json").read_text(encoding="utf-8"))
-
-          def split(content: str):
-              pieces = content.split("[[package]]\n")
-              if len(pieces) < 2:
-                  raise SystemExit("Cargo.lock has no package records")
-              records = []
-              for suffix in pieces[1:]:
-                  raw = "[[package]]\n" + suffix
-                  package = tomllib.loads(raw).get("package")
-                  if not isinstance(package, list) or len(package) != 1:
-                      raise SystemExit("Cargo.lock package block is not singular TOML")
-                  item = package[0]
-                  if not isinstance(item, dict):
-                      raise SystemExit("Cargo.lock package block is invalid")
-                  records.append((item, raw))
-              return pieces[0], records
-
-          old_header, old = split(baseline)
-          new_header, new = split(updated)
+          def split(path):
+              pieces = Path(path).read_text(encoding="utf-8").split("[[package]]\n")
+              return pieces[0], [(tomllib.loads("[[package]]\n" + tail)["package"][0], "[[package]]\n" + tail) for tail in pieces[1:]]
+          old_header, old = split(Path(os.environ["RUNNER_TEMP"], "baseline-Cargo.lock"))
+          new_header, new = split("SRC/Cargo.lock")
           if old_header != new_header:
               raise SystemExit("Cargo.lock header drifted")
-          def identity(package):
-              return (package.get("name"), package.get("version"), package.get("source"))
-          old_by_id = {identity(package): (package, raw) for package, raw in old}
-          new_by_id = {identity(package): (package, raw) for package, raw in new}
-          if len(old_by_id) != len(old) or len(new_by_id) != len(new):
-              raise SystemExit("Cargo.lock contains duplicate package identities")
-          for item_id, (package, raw) in old_by_id.items():
-              if package.get("name") == "neoth":
-                  continue
-              if item_id not in new_by_id or new_by_id[item_id][1] != raw:
-                  raise SystemExit(f"existing non-root lock selection drifted: {item_id!r}")
-          roots = [package for package, _ in new if package.get("name") == "neoth"]
-          if len(roots) != 1:
-              raise SystemExit("expected exactly one workspace root lock package")
-          root_deps = roots[0].get("dependencies", [])
-          if not all(any(str(dep).startswith(name + " ") or str(dep) == name for dep in root_deps) for name in ("tree-sitter", "tree-sitter-rust")):
-              raise SystemExit("workspace root lock package lacks both reviewed direct dependencies")
-          package_by_id = {package["id"]: package for package in metadata["packages"]}
-          nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-          direct_ids = {
-              package_id for package_id, package in package_by_id.items()
-              if (package["name"], package["version"]) in {("tree-sitter", "0.27.0"), ("tree-sitter-rust", "0.24.2")}
-          }
-          if len(direct_ids) != 2:
-              raise SystemExit("metadata did not resolve exactly the reviewed direct Tree-sitter pins")
-          reachable, pending = set(), list(direct_ids)
-          while pending:
-              package_id = pending.pop()
-              if package_id in reachable:
-                  continue
-              reachable.add(package_id)
-              node = nodes.get(package_id)
-              if node is None:
-                  raise SystemExit(f"metadata has no resolve node for {package_id}")
-              pending.extend(dep["pkg"] for dep in node.get("deps", []) if dep.get("pkg") not in reachable)
-          extras = [package for item_id, (package, _) in new_by_id.items() if item_id not in old_by_id]
-          if not extras:
-              raise SystemExit("resolution added no Tree-sitter closure packages")
-          for package in extras:
-              matches = [package_id for package_id, candidate in package_by_id.items() if candidate["name"] == package.get("name") and candidate["version"] == package.get("version")]
-              if len(matches) != 1 or matches[0] not in reachable:
-                  raise SystemExit(f"new lock package is outside the direct Tree-sitter closure: {identity(package)!r}")
+          def key(package): return (package.get("name"), package.get("version"), package.get("source"))
+          old_map = {key(package): (package, raw) for package, raw in old}
+          new_map = {key(package): (package, raw) for package, raw in new}
+          if len(old_map) != len(old) or len(new_map) != len(new):
+              raise SystemExit("Cargo.lock package identity is ambiguous")
+          unchanged = {"neoth", "cc", "serde_json", "bindgen"}
+          for item, (package, raw) in old_map.items():
+              if package["name"] not in unchanged and new_map.get(item, (None, None))[1] != raw:
+                  raise SystemExit(f"unreviewed baseline block or order drift: {item!r}")
+          allowed_added = {("cc", "1.2.63"), ("shlex", "2.0.1"), ("streaming-iterator", "0.1.9"), ("tree-sitter", "0.27.0"), ("tree-sitter-language", "0.1.8"), ("tree-sitter-rust", "0.24.2")}
+          actual_added = {(package["name"], package["version"]) for item, (package, _) in new_map.items() if item not in old_map}
+          if actual_added != allowed_added or any(item[0] == "cc" and item[1] == "1.2.62" for item in new_map):
+              raise SystemExit(f"lock selection set differs from the reviewed minimal closure: {actual_added!r}")
+          def one(records, name, version=None):
+              hits = [package for package, _ in records if package["name"] == name and (version is None or package["version"] == version)]
+              if len(hits) != 1: raise SystemExit(f"expected one {name} {version or ''} block")
+              return hits[0]
+          old_root, new_root = one(old, "neoth"), one(new, "neoth")
+          direct_pins = ("tree-sitter", "tree-sitter-rust")
+          root_deps = new_root.get("dependencies", [])
+          if {k:v for k,v in old_root.items() if k != "dependencies"} != {k:v for k,v in new_root.items() if k != "dependencies"} or any(root_deps.count(dep) != 1 for dep in direct_pins) or [dep for dep in root_deps if dep not in direct_pins] != old_root.get("dependencies", []):
+              raise SystemExit("workspace root differs beyond the two reviewed direct pins")
+          cc = one(new, "cc", "1.2.63")
+          if cc.get("dependencies") != ["find-msvc-tools", "jobserver", "libc", "shlex 2.0.1"]:
+              raise SystemExit("cc 1.2.63 closure is not the reviewed minimal shape")
+          if one(new, "find-msvc-tools", "0.1.9") != one(old, "find-msvc-tools", "0.1.9"):
+              raise SystemExit("find-msvc-tools 0.1.9 did not remain identical")
+          old_serde, new_serde = one(old, "serde_json", "1.0.150"), one(new, "serde_json", "1.0.150")
+          if {k:v for k,v in old_serde.items() if k != "dependencies"} != {k:v for k,v in new_serde.items() if k != "dependencies"} or [d for d in new_serde.get("dependencies", []) if d != "indexmap 2.14.0"] != old_serde.get("dependencies", []) or new_serde.get("dependencies", []).count("indexmap 2.14.0") != 1:
+              raise SystemExit("serde_json differs beyond the preserve_order indexmap edge")
+          old_bindgen, new_bindgen = one(old, "bindgen"), one(new, "bindgen")
+          if {k:v for k,v in old_bindgen.items() if k != "dependencies"} != {k:v for k,v in new_bindgen.items() if k != "dependencies"} or new_bindgen.get("dependencies", []) != ["shlex 1.3.0" if d == "shlex" else d for d in old_bindgen.get("dependencies", [])]:
+              raise SystemExit("bindgen differs beyond its shlex 1.3.0 disambiguation")
+          metadata = json.loads(Path(os.environ["RUNNER_TEMP"], "metadata.json").read_text(encoding="utf-8"))
+          packages = {p["id"]: p for p in metadata["packages"]}; nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
+          direct = {package_id for package_id, p in packages.items() if (p["name"],p["version"]) in {("tree-sitter","0.27.0"),("tree-sitter-rust","0.24.2")}}
+          if len(direct) != 2: raise SystemExit("metadata lacks the two exact direct pins")
+          tree_ids = [package_id for package_id in direct if (packages[package_id]["name"], packages[package_id]["version"]) == ("tree-sitter", "0.27.0")]
+          if len(tree_ids) != 1: raise SystemExit("metadata must contain exactly one tree-sitter 0.27.0 direct package")
+          tree_id = tree_ids[0]
+          if len([dep["pkg"] for dep in nodes[tree_id].get("deps", []) if (packages.get(dep["pkg"], {}).get("name"), packages.get(dep["pkg"], {}).get("version")) == ("cc", "1.2.63")]) != 1:
+              raise SystemExit("tree-sitter 0.27.0 must retain exactly one cc 1.2.63 edge")
+          reached, todo = set(), list(direct)
+          while todo:
+              package_id = todo.pop()
+              if package_id not in reached:
+                  reached.add(package_id); todo.extend(dep["pkg"] for dep in nodes[package_id].get("deps", []) if dep["pkg"] not in reached)
+          for name, version in allowed_added:
+              found = [package_id for package_id,p in packages.items() if (p["name"],p["version"]) == (name,version)]
+              if len(found) != 1 or found[0] not in reached: raise SystemExit(f"added {name} {version} is outside the direct Tree-sitter closure")
           PY
           test "$(git diff --name-only | LC_ALL=C sort)" = 'SRC/Cargo.lock'
 
@@ -264,7 +406,7 @@ jobs:
           cp packaging/generate_rust_notices.py "$evidence/generate_rust_notices.py"
           cp packaging/rust-license-snapshots.json "$evidence/rust-license-snapshots.json"
           (cd "$evidence" && sha256sum producer-workflow.yml generate_rust_notices.py rust-license-snapshots.json > notice-producer.SHA256SUMS)
-          printf '%s\n' 'Exact tree-sitter 0.27.0 and tree-sitter-rust 0.24.2 pins; metadata and repeated locked metadata agreed; existing non-root lock blocks were byte-preserved; each new block is reachable from a reviewed direct pin; locked Rust distribution notices were regenerated and --check passed; no compilation or tests ran.' > "$evidence/validation.txt"
+          printf '%s\n' 'Exact tree-sitter 0.27.0 and tree-sitter-rust 0.24.2 pins; cc was constrained to 1.2.63; metadata and repeated locked metadata agreed; baseline raw blocks and order were preserved except the reviewed cc replacement, serde_json preserve_order indexmap 2.14.0 edge, and bindgen shlex 1.3.0 disambiguation; each of five new blocks is reachable from a reviewed direct pin; locked Rust distribution notices were regenerated and --check passed; no compilation or tests ran.' > "$evidence/validation.txt"
           (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt manifest-input.patch Cargo.lock.patch THIRD_PARTY_LICENSES.patch candidate-source-name-status.txt baseline-Cargo.lock baseline-THIRD_PARTY_LICENSES Cargo.lock Cargo.toml THIRD_PARTY_LICENSES metadata.json producer-workflow.yml generate_rust_notices.py rust-license-snapshots.json notice-producer.SHA256SUMS validation.txt > SHA256SUMS)
 
       - name: Upload candidate for Root import review

@@ -1,5 +1,16 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2040 minimal AST dependency repair (2026-10-01):**
+The rejected W2038 resolver output remains diagnostic-only and unimported.
+A statically reviewed hosted repair now pins the required cc update to
+1.2.63, retains find-msvc-tools0.1.9 and preserves baseline package blocks
+and order except the exact root pins, cc replacement, serde_json/indexmap
+feature edge and bindgen/shlex disambiguation. Actual resolver metadata must
+prove the Tree-sitter-to-cc edge and all added package reachability. Two
+locked resolutions must agree without rewriting the recomposed lock.
+Raw and recomposed failures retain non-importable evidence. Lock, notices
+and AST execution are still pending; no local runtime or .slint edit ran.
+
 **W2032 focused product acceptance and W2038 AST lock diagnosis (2026-10-01):**
 Producer c9bd411 completed run 36878864062: Root independently admitted all
 266 focused cases, 20 guards, 61 contract tests and four actual CLI/daemon

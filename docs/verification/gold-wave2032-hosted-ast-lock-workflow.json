@@ -1,25 +1,25 @@
 {
   "schema": "neoth-gold-wave2032-hosted-ast-lock-workflow/v1",
-  "base": "ff703155d27bf1228c4aadbeaebaedc8fbf754f2",
+  "base": "3b7173b495cc93c7097e694a3e297ba33d0a1322",
   "status": "STATIC_REVIEWED_HOSTED_PENDING",
-  "capturedUtc": "2026-10-01T15:34:27.2505473Z",
+  "capturedUtc": "2026-10-01T15:55:12.2386504Z",
   "workflow": {
     "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
-    "sha256": "F5C5D7050FC2CC53BFF4CD0176485371477FD93D1B10DC14EE0BAD2125307C20",
+    "sha256": "1EF2EA51AB61BD1865A63899F6183F0DB6D0A716497BFB46B6D814BC0053A0EA",
     "trustedRef": "refs/heads/main",
     "baseline": "exact GITHUB_SHA",
     "candidate": "40 lowercase hex descendant commit; not a file SHA256",
     "allowedPaths": 13,
     "manifestDelta": "only tree-sitter = =0.27.0 and tree-sitter-rust = =0.24.2 direct pin lines",
-    "existingLockBlocks": "preserve every non-neoth package block byte-for-byte",
-    "newPackages": "only reviewed direct package dependency closure",
-    "resolution": "cargo metadata then identical --locked metadata",
+    "existingLockBlocks": "Preserve baseline raw blocks and order except neoth adds exactly two reviewed pins, cc1.2.62 becomes minimum1.2.63, serde_json gains only required indexmap2.14.0 edge, and bindgen qualifies existing shlex1.3.0 edge",
+    "newPackages": "Exactly shlex2.0.1, streaming-iterator0.1.9, tree-sitter0.27.0, tree-sitter-language0.1.8, tree-sitter-rust0.24.2; newcc1.2.63 and all additions proven in direct Tree-sitter closure",
+    "resolution": "Hosted targeted cc --precise1.2.63, exact raw-block recomposition, then two successful --locked metadata calls with identical metadata and unchanged lock bytes",
     "compilationOrTests": false,
     "permissions": "contents read",
     "output": "heads,manifest/lock/notice patches,baseline/resolved postimages,metadata,self-contained producer inputs,nested and outer checksums",
     "notices": "existing packaging/generate_rust_notices.py --write then --check; only lock and THIRD_PARTY_LICENSES may change"
   },
-  "review": "Independent workflow review approved non-importable rejected-resolution diagnostics; strict acceptance gate unchanged",
+  "review": "Independent execution review approved final exact workflow after newline, identity-set, cc-closure and exact root-dependency repairs",
   "astSourceCandidate": "STATIC_APPROVED separately as combined W2036 candidate; isolated, uncompiled, and not imported",
   "lockGenerated": false,
   "sourceOrEmbeddingAcceptance": false,
@@ -38,5 +38,18 @@
     ],
     "imported": false,
     "next": "capture actual rejected diff; preserve strict gate until evaluated"
+  },
+  "minimalRepair": {
+    "status": "STATIC_APPROVED_HOSTED_PENDING",
+    "rejectedRun": 36885998745,
+    "rejectedArtifact": 11174202356,
+    "rejectedArchiveSHA256": "27B5C6A1E9B4707626E4B0DABFF5B9B1BAB61FA7B4DA290C179E7DA31878BBED",
+    "diagnosticNotImported": true,
+    "observedReason": "Cargo unnecessarily rebound existing windows/syn/itertools edges and selected latestcc; minimumcc1.2.63 plus two demonstrated dependency-edge adjustments is sufficient candidate",
+    "retainedFindMsvc": "0.1.9",
+    "candidateWorkflowSHA256": "1EF2EA51AB61BD1865A63899F6183F0DB6D0A716497BFB46B6D814BC0053A0EA",
+    "rawResolutionDiagnostics": "sealed before reconstruction; NOT_IMPORTABLE",
+    "postRecompositionDiagnostics": "sealed before locked validation; NOT_IMPORTABLE",
+    "sourceCandidate": "STATIC_APPROVED, isolated, no compiler/runtime acceptance"
   }
 }
