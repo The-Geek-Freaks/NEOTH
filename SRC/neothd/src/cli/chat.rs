@@ -530,7 +530,7 @@ fn plan_verifiability_route(
             .is_some_and(|row| {
                 row.call_count >= crate::analytics::specialist_advisor::DEFAULT_MINIMUM_CALL_COUNT
             });
-    crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput {
+    Ok(crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput {
         enabled: policy.enabled,
         workflow_bound: true,
         changing_facts: args.changing_facts,

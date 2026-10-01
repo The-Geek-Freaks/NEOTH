@@ -1100,7 +1100,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     }
 
     let route_cap =
-        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home);
+        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home)?;
     let budgeted = match finalize_provider_request(
         budget_items,
         &final_prompt,

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T17:55:53.9602278Z",
-  "validationStatus": "STATIC_REVIEWED_325_FOCUSED_CASES_PENDING",
+  "capturedUtc": "2026-10-01T18:04:16.6284589Z",
+  "validationStatus": "HOSTED_SYNTAX_DIAGNOSTIC_REPAIRED_VALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5023,8 +5023,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 168911,
-      "sha256": "97AC7055C40003B907E10021EFD9BEEF20177B818B2238C03CA70C823061AEA9"
+      "bytes": 168912,
+      "sha256": "7EB4054F482F717551F9C26DC318416F57B69EFD58120E7A0BE2C371BD4F6922"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -5033,8 +5033,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1195285,
-      "sha256": "936AC917F86BE231206E51A4DE17AC0A7856DAB04F2871493D47653A79C49956"
+      "bytes": 1195288,
+      "sha256": "51B845ED957E5E314B7739599F183831096778647BD4450EB98D79FF6525158D"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -5378,8 +5378,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 537227,
-      "sha256": "1248125335CDDDE75C6D4F36CC0AC80D102B56EECDB3BCEDCAD2C6CA1271E8FE"
+      "bytes": 537228,
+      "sha256": "576EF64C3FDE7B97436E732E3F84FD4ACF285470ECB2D76D47A9A1C53820F293"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",

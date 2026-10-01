@@ -4580,7 +4580,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         provider.name(),
                         channel_effective_model.as_deref(),
                         &neoth_home,
-                    )),
+                    )?),
                     writer: &writer,
                 },
             )
