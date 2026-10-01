@@ -1052,7 +1052,10 @@ fn replace_chunks_in_transaction(
             chunk.language == Language::Rust
                 && !chunk.path.is_empty()
                 && chunk.source_sha256.len() == 64
-                && chunk.source_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && chunk
+                    .source_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
                 && chunk.start_byte < chunk.end_byte
                 && chunk.start_line > 0
                 && chunk.end_line >= chunk.start_line
@@ -1064,7 +1067,9 @@ fn replace_chunks_in_transaction(
             chunk.text.len() <= MAX_CODE_MAP_CHUNK_ROW_TEXT_BYTES,
             "code-map AST chunk exceeds per-row text cap"
         );
-        total = total.checked_add(chunk.text.len()).context("code-map AST chunk text overflow")?;
+        total = total
+            .checked_add(chunk.text.len())
+            .context("code-map AST chunk text overflow")?;
         ensure!(
             total <= MAX_CODE_MAP_CHUNK_TEXT_BYTES,
             "code-map AST chunk corpus exceeds aggregate text cap"
@@ -1072,7 +1077,8 @@ fn replace_chunks_in_transaction(
         if let Some((prior_path, prior_start, prior_end, prior_ordinal)) = previous {
             if prior_path == chunk.path {
                 ensure!(
-                    (chunk.start_byte, chunk.end_byte, chunk.ordinal) > (prior_start, prior_end, prior_ordinal),
+                    (chunk.start_byte, chunk.end_byte, chunk.ordinal)
+                        > (prior_start, prior_end, prior_ordinal),
                     "code-map AST chunks are not stable source order"
                 );
             }
@@ -1080,8 +1086,11 @@ fn replace_chunks_in_transaction(
         previous = Some((&chunk.path, chunk.start_byte, chunk.end_byte, chunk.ordinal));
     }
 
-    tx.execute("DELETE FROM code_map_chunks WHERE root = ?1", rusqlite::params![&map.root])
-        .context("replace root-local code-map AST chunks")?;
+    tx.execute(
+        "DELETE FROM code_map_chunks WHERE root = ?1",
+        rusqlite::params![&map.root],
+    )
+    .context("replace root-local code-map AST chunks")?;
     let mut statement = tx.prepare(
         "INSERT INTO code_map_chunks \
          (root, path, source_sha256, ordinal, language, start_byte, end_byte, start_line, end_line, text) \
@@ -1783,7 +1792,16 @@ pub(crate) fn persist_map_and_edges_bound(
     hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy,
     expected_root: &super::root_identity::CanonicalRepoRoot,
 ) -> Result<BoundPersistResult> {
-    persist_map_and_edges_bound_with_chunks(conn, map, edges, import_edges, hierarchy, &[], expected_root, || Ok(()))
+    persist_map_and_edges_bound_with_chunks(
+        conn,
+        map,
+        edges,
+        import_edges,
+        hierarchy,
+        &[],
+        expected_root,
+        || Ok(()),
+    )
 }
 
 /// Bound publication variant used by the AST text-recall builder. Chunks are
@@ -6271,10 +6289,17 @@ mod tests {
             root_cols.iter().any(|c| c == "chunk_generation"),
             "v13 must add chunk_generation to code_map_roots; got {root_cols:?}"
         );
-        let legacy_chunk_generation: i64 = conn.query_row(
-            "SELECT chunk_generation FROM code_map_roots WHERE root=?1", [&root], |row| row.get(0)
-        ).unwrap();
-        assert_eq!(legacy_chunk_generation, -1, "legacy snapshots must remain AST-unknown until rebuild");
+        let legacy_chunk_generation: i64 = conn
+            .query_row(
+                "SELECT chunk_generation FROM code_map_roots WHERE root=?1",
+                [&root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            legacy_chunk_generation, -1,
+            "legacy snapshots must remain AST-unknown until rebuild"
+        );
         let chunk_index: String = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_code_map_chunks_file'", [], |row| row.get(0)
         ).unwrap();

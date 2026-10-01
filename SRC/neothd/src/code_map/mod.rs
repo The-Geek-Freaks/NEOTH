@@ -16,8 +16,8 @@
 //! tree-sitter AST or a fully resolved cross-language graph. Callers must treat
 //! missing edges as unknown, never as proof that no relationship exists.
 
-pub mod co_change;
 pub(crate) mod chunk;
+pub mod co_change;
 pub mod diff;
 pub mod diff_git;
 // Compose with W43's proposal; that mirror supplies the module source.

@@ -665,7 +665,13 @@ fn resolve_active_root_snapshot_in_transaction(
         let (display, identity, index_generation, graph_generation, chunk_generation) =
             row.context("read active code-map root snapshot")?;
         if current_canonical.starts_with(Path::new(&display)) {
-            candidates.push((display, identity, index_generation, graph_generation, chunk_generation));
+            candidates.push((
+                display,
+                identity,
+                index_generation,
+                graph_generation,
+                chunk_generation,
+            ));
         }
     }
     candidates.sort_by(|a, b| {

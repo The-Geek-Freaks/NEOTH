@@ -718,7 +718,8 @@ impl CodeMapContextSource {
             self.index_generation > 0
                 && self.graph_generation > 0
                 && self.index_generation == self.graph_generation
-                && (self.selected_chunks.is_empty() || self.index_generation == self.chunk_generation),
+                && (self.selected_chunks.is_empty()
+                    || self.index_generation == self.chunk_generation),
             "code-map source must have matching positive map/graph/chunk generations"
         );
         ensure!(
@@ -1099,9 +1100,10 @@ fn source_contains_redaction_marker(source: &CodeMapContextSource) -> bool {
                     .iter()
                     .any(|symbol| symbol.contains("[REDACTED:"))
         })
-        || source.selected_chunks.iter().any(|chunk| {
-            chunk.path.contains("[REDACTED:") || chunk.language.contains("[REDACTED:")
-        })
+        || source
+            .selected_chunks
+            .iter()
+            .any(|chunk| chunk.path.contains("[REDACTED:") || chunk.language.contains("[REDACTED:"))
         || source.callers.iter().any(|caller| {
             caller.target_symbol.contains("[REDACTED:")
                 || caller.caller_symbol.contains("[REDACTED:")
@@ -1753,8 +1755,11 @@ mod tests {
             end_line: 1,
         });
         let raw_source = "fn visible() {}";
-        let prepared = PreparedCodeMapContext::new(raw_source.to_owned(), vec![provenance]).unwrap();
-        let receipt = prepared.receipt(KanbanSessionId(9), 1, "operator", raw_source, "provider").unwrap();
+        let prepared =
+            PreparedCodeMapContext::new(raw_source.to_owned(), vec![provenance]).unwrap();
+        let receipt = prepared
+            .receipt(KanbanSessionId(9), 1, "operator", raw_source, "provider")
+            .unwrap();
         let serialized = serde_json::to_string(&receipt).unwrap();
         assert!(serialized.contains("source_sha256"));
         assert!(!serialized.contains(raw_source));

@@ -88,5 +88,23 @@
     "nativeReleaseAccepted": false,
     "noSlintChanges": true,
     "originalPlanBacklogPreserved": true
+  },
+  "hostedFormatting": {
+    "producer": "860c802fb6469d1d1a76b96934a99ccf1de6492e",
+    "run": 36889186370,
+    "artifactId": 11176385845,
+    "archiveSHA256": "3987C8994AFD1DCAFDEF25BDA88840922C78FD605D8F7A5C979D2AC04C3CB586",
+    "patchSHA256": "905F223C8F13F133BB3E1132B122EA549961D76D4FD1B0E3960993794F311704",
+    "sourceFiles": [
+      "SRC/neothd/src/cli/code.rs",
+      "SRC/neothd/src/code_map/chunk.rs",
+      "SRC/neothd/src/code_map/mod.rs",
+      "SRC/neothd/src/code_map/persist.rs",
+      "SRC/neothd/src/code_map/recall.rs",
+      "SRC/neothd/src/code_map/snapshot.rs",
+      "SRC/neothd/src/coding/code_map_receipt.rs",
+      "SRC/neothd/src/coding/decomposer.rs"
+    ],
+    "localFormatterRan": false
   }
 }

@@ -88,7 +88,8 @@ pub(crate) fn rust_chunks_from_verified_source(
     let mut start_index = 0usize;
     let mut end_index = 0usize;
     for next_index in 1..declarations.len() {
-        let packed = source.get(declarations[start_index].0..declarations[next_index].1)
+        let packed = source
+            .get(declarations[start_index].0..declarations[next_index].1)
             .context("Tree-sitter packed chunk range was not UTF-8 aligned")?
             .chars()
             .count();
@@ -143,10 +144,17 @@ pub(crate) fn rust_chunks_from_verified_source(
             return Ok(Vec::new());
         }
         let ordinal = u32::try_from(ordinal).context("Rust AST chunk ordinal overflow")?;
-        let start_line = u32::try_from(source[..start].bytes().filter(|byte| *byte == b'\n').count() + 1)
-            .context("Rust AST chunk start line overflow")?;
-        let end_line = u32::try_from(source[..end].bytes().filter(|byte| *byte == b'\n').count() + 1)
-            .context("Rust AST chunk end line overflow")?;
+        let start_line = u32::try_from(
+            source[..start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1,
+        )
+        .context("Rust AST chunk start line overflow")?;
+        let end_line =
+            u32::try_from(source[..end].bytes().filter(|byte| *byte == b'\n').count() + 1)
+                .context("Rust AST chunk end line overflow")?;
         chunks.push(CodeChunk {
             path: path.to_owned(),
             source_sha256: source_sha256.to_ascii_lowercase(),
@@ -177,7 +185,10 @@ mod tests {
         assert!(!first.is_empty());
         for (ordinal, chunk) in first.iter().enumerate() {
             assert_eq!(chunk.ordinal, ordinal as u32);
-            assert_eq!(&source[chunk.start_byte as usize..chunk.end_byte as usize], chunk.text);
+            assert_eq!(
+                &source[chunk.start_byte as usize..chunk.end_byte as usize],
+                chunk.text
+            );
             assert!(source.is_char_boundary(chunk.start_byte as usize));
             assert!(source.is_char_boundary(chunk.end_byte as usize));
         }
@@ -195,7 +206,10 @@ mod tests {
             let overlap_start = pair[0].start_byte.max(pair[1].start_byte) as usize;
             let overlap_end = pair[0].end_byte.min(pair[1].end_byte) as usize;
             let overlap = &source[overlap_start..overlap_end];
-            assert!(!overlap.is_empty(), "small declarations should produce actual node overlap");
+            assert!(
+                !overlap.is_empty(),
+                "small declarations should produce actual node overlap"
+            );
             assert!(overlap.chars().count() <= RUST_CHUNK_MAX_OVERLAP_CHARS);
             assert!(source.is_char_boundary(overlap_start) && source.is_char_boundary(overlap_end));
         }
@@ -203,24 +217,43 @@ mod tests {
 
     #[test]
     fn unsupported_invalid_or_error_tree_keeps_existing_file_symbol_recall() {
-        assert!(rust_chunks_from_verified_source("src/lib.rs", SHA, "fn incomplete(").unwrap().is_empty());
-        assert!(rust_chunks_from_verified_source("", SHA, "fn ok() {}").unwrap().is_empty());
+        assert!(
+            rust_chunks_from_verified_source("src/lib.rs", SHA, "fn incomplete(")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            rust_chunks_from_verified_source("", SHA, "fn ok() {}")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn oversize_declaration_refuses_ast_text_without_changing_metadata_recall() {
         let source = format!("pub fn too_large() {{ {} }}", "x".repeat(MAX_CHUNK_BYTES));
-        assert!(rust_chunks_from_verified_source("src/lib.rs", SHA, &source).unwrap().is_empty());
+        assert!(
+            rust_chunks_from_verified_source("src/lib.rs", SHA, &source)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes() {
         let prefix = "pub fn overlap_seed() {}\n";
-        let declaration = format!("pub const NEAR_CAP: &str = \"{}\";\n", "x".repeat(MAX_CHUNK_BYTES - 128));
+        let declaration = format!(
+            "pub const NEAR_CAP: &str = \"{}\";\n",
+            "x".repeat(MAX_CHUNK_BYTES - 128)
+        );
         let source = format!("{prefix}{declaration}");
         let chunks = rust_chunks_from_verified_source("src/lib.rs", SHA, &source).unwrap();
         assert_eq!(chunks.len(), 2);
-        assert!(chunks.iter().all(|chunk| chunk.text.len() <= MAX_CHUNK_BYTES));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.text.len() <= MAX_CHUNK_BYTES)
+        );
         assert_eq!(chunks[1].start_byte as usize, prefix.len());
         assert!(chunks[1].text.starts_with("pub const NEAR_CAP"));
     }
