@@ -1,0 +1,227 @@
+name: AST Tree-sitter lock candidate
+
+# Publish this file to trusted main unchanged, then dispatch main with:
+#   baseline_head: the exact trusted-main commit that contains this workflow
+#   candidate_head: an isolated descendant containing only the allowlisted
+#                   E2-A source changes and the two manifest additions below.
+# It has read-only contents permission and emits an importable artifact; it
+# never pushes, commits, or compiles product code.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_head:
+        description: Exact trusted main workflow commit (40 lowercase hex)
+        required: true
+        type: string
+      candidate_head:
+        description: Exact isolated E2-A candidate commit (40 lowercase hex)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ast-tree-sitter-lock-${{ inputs.candidate_head }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    # The executable workflow is taken only from trusted main. The candidate is
+    # checked out as data after this guard, so its workflow contents are inert.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASELINE_HEAD: ${{ inputs.baseline_head }}
+      CANDIDATE_HEAD: ${{ inputs.candidate_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out the isolated candidate with trusted history available
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.candidate_head }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Admit exact workflow and candidate custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASELINE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$BASELINE_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+          git cat-file -e "$BASELINE_HEAD^{commit}"
+          git merge-base --is-ancestor "$BASELINE_HEAD" "$CANDIDATE_HEAD"
+          git diff --exit-code
+
+      - name: Admit AST-only candidate source and exact manifest delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r path; do
+            case "$path" in
+              SRC/neothd/Cargo.toml|\
+              SRC/neothd/src/code_map/mod.rs|\
+              SRC/neothd/src/code_map/chunk.rs|\
+              SRC/neothd/src/code_map/snapshot.rs|\
+              SRC/neothd/src/code_map/persist.rs|\
+              SRC/neothd/src/code_map/recall.rs|\
+              SRC/neothd/src/cli/code.rs|\
+              SRC/neothd/src/cli/kanban.rs|\
+              SRC/neothd/src/coding/code_map_receipt.rs|\
+              SRC/neothd/src/coding/provider_worker.rs|\
+              SRC/neothd/src/coding/decomposer.rs|\
+              SRC/neothd/src/coding/store.rs|\
+              SRC/neothd/src/coding/service.rs) ;;
+              *) echo "candidate changed non-E2-A path: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only "$BASELINE_HEAD" "$CANDIDATE_HEAD")
+          test -z "$(git diff --name-only "$BASELINE_HEAD" "$CANDIDATE_HEAD" -- SRC/Cargo.lock)"
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          path = "SRC/neothd/Cargo.toml"
+          baseline = subprocess.check_output(
+              ["git", "show", f"{__import__('os').environ['BASELINE_HEAD']}:{path}"], text=True
+          )
+          candidate = Path(path).read_text(encoding="utf-8")
+          expected = {"tree-sitter = \"=0.27.0\"", "tree-sitter-rust = \"=0.24.2\""}
+          if any(line in baseline for line in expected):
+              raise SystemExit("baseline already contains a selected Tree-sitter direct dependency")
+          added = {
+              line[1:]
+              for line in subprocess.check_output(
+                  ["git", "diff", "--unified=0", __import__('os').environ['BASELINE_HEAD'], __import__('os').environ['CANDIDATE_HEAD'], "--", path],
+                  text=True,
+              ).splitlines()
+              if line.startswith("+") and not line.startswith("+++")
+          }
+          removed = [
+              line[1:]
+              for line in subprocess.check_output(
+                  ["git", "diff", "--unified=0", __import__('os').environ['BASELINE_HEAD'], __import__('os').environ['CANDIDATE_HEAD'], "--", path],
+                  text=True,
+              ).splitlines()
+              if line.startswith("-") and not line.startswith("---")
+          ]
+          if added != expected or removed:
+              raise SystemExit(f"manifest delta must add only the two reviewed pins; added={added!r}, removed={removed!r}")
+          if any(candidate.count(line) != 1 for line in expected):
+              raise SystemExit("candidate does not contain each reviewed direct pin exactly once")
+          PY
+
+      - name: Set up Rust 1.91.0 for Cargo resolution only
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Resolve only the candidate's missing Tree-sitter closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp SRC/Cargo.lock "$RUNNER_TEMP/baseline-Cargo.lock"
+          # Cargo metadata may add only packages demanded by the two new direct
+          # pins while retaining the existing lock selections; no cargo update
+          # or generate-lockfile command is permitted here.
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/metadata-locked.json"
+          cmp "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/metadata-locked.json"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, tomllib
+
+          baseline = Path(os.environ["RUNNER_TEMP"], "baseline-Cargo.lock").read_text(encoding="utf-8")
+          updated = Path("SRC/Cargo.lock").read_text(encoding="utf-8")
+          metadata = json.loads(Path(os.environ["RUNNER_TEMP"], "metadata.json").read_text(encoding="utf-8"))
+
+          def split(content: str):
+              pieces = content.split("[[package]]\n")
+              if len(pieces) < 2:
+                  raise SystemExit("Cargo.lock has no package records")
+              records = []
+              for suffix in pieces[1:]:
+                  raw = "[[package]]\n" + suffix
+                  package = tomllib.loads(raw).get("package")
+                  if not isinstance(package, list) or len(package) != 1:
+                      raise SystemExit("Cargo.lock package block is not singular TOML")
+                  item = package[0]
+                  if not isinstance(item, dict):
+                      raise SystemExit("Cargo.lock package block is invalid")
+                  records.append((item, raw))
+              return pieces[0], records
+
+          old_header, old = split(baseline)
+          new_header, new = split(updated)
+          if old_header != new_header:
+              raise SystemExit("Cargo.lock header drifted")
+          def identity(package):
+              return (package.get("name"), package.get("version"), package.get("source"))
+          old_by_id = {identity(package): (package, raw) for package, raw in old}
+          new_by_id = {identity(package): (package, raw) for package, raw in new}
+          if len(old_by_id) != len(old) or len(new_by_id) != len(new):
+              raise SystemExit("Cargo.lock contains duplicate package identities")
+          for item_id, (package, raw) in old_by_id.items():
+              if package.get("name") == "neoth":
+                  continue
+              if item_id not in new_by_id or new_by_id[item_id][1] != raw:
+                  raise SystemExit(f"existing non-root lock selection drifted: {item_id!r}")
+          roots = [package for package, _ in new if package.get("name") == "neoth"]
+          if len(roots) != 1:
+              raise SystemExit("expected exactly one workspace root lock package")
+          root_deps = roots[0].get("dependencies", [])
+          if not all(any(str(dep).startswith(name + " ") or str(dep) == name for dep in root_deps) for name in ("tree-sitter", "tree-sitter-rust")):
+              raise SystemExit("workspace root lock package lacks both reviewed direct dependencies")
+          package_by_id = {package["id"]: package for package in metadata["packages"]}
+          nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+          direct_ids = {
+              package_id for package_id, package in package_by_id.items()
+              if (package["name"], package["version"]) in {("tree-sitter", "0.27.0"), ("tree-sitter-rust", "0.24.2")}
+          }
+          if len(direct_ids) != 2:
+              raise SystemExit("metadata did not resolve exactly the reviewed direct Tree-sitter pins")
+          reachable, pending = set(), list(direct_ids)
+          while pending:
+              package_id = pending.pop()
+              if package_id in reachable:
+                  continue
+              reachable.add(package_id)
+              node = nodes.get(package_id)
+              if node is None:
+                  raise SystemExit(f"metadata has no resolve node for {package_id}")
+              pending.extend(dep["pkg"] for dep in node.get("deps", []) if dep.get("pkg") not in reachable)
+          extras = [package for item_id, (package, _) in new_by_id.items() if item_id not in old_by_id]
+          if not extras:
+              raise SystemExit("resolution added no Tree-sitter closure packages")
+          for package in extras:
+              matches = [package_id for package_id, candidate in package_by_id.items() if candidate["name"] == package.get("name") and candidate["version"] == package.get("version")]
+              if len(matches) != 1 or matches[0] not in reachable:
+                  raise SystemExit(f"new lock package is outside the direct Tree-sitter closure: {identity(package)!r}")
+          PY
+          test "$(git diff --name-only | LC_ALL=C sort)" = 'SRC/Cargo.lock'
+
+      - name: Seal importable lock candidate and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/ast-tree-sitter-lock"
+          mkdir -p "$evidence"
+          printf '%s\n' "$BASELINE_HEAD" > "$evidence/baseline-head.txt"
+          printf '%s\n' "$CANDIDATE_HEAD" > "$evidence/candidate-head.txt"
+          git diff --binary --full-index "$BASELINE_HEAD" "$CANDIDATE_HEAD" -- SRC/neothd/Cargo.toml > "$evidence/manifest-input.patch"
+          git diff --binary --full-index -- SRC/Cargo.lock > "$evidence/Cargo.lock.patch"
+          git diff --name-status "$BASELINE_HEAD" "$CANDIDATE_HEAD" > "$evidence/candidate-source-name-status.txt"
+          cp "$RUNNER_TEMP/baseline-Cargo.lock" "$evidence/baseline-Cargo.lock"
+          cp SRC/Cargo.lock SRC/neothd/Cargo.toml "$RUNNER_TEMP/metadata.json" "$evidence/"
+          printf '%s\n' 'Exact tree-sitter 0.27.0 and tree-sitter-rust 0.24.2 pins; metadata and repeated locked metadata agreed; existing non-root lock blocks were byte-preserved; each new block is reachable from a reviewed direct pin; no compilation or tests ran.' > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt manifest-input.patch Cargo.lock.patch candidate-source-name-status.txt baseline-Cargo.lock Cargo.lock Cargo.toml metadata.json validation.txt > SHA256SUMS)
+
+      - name: Upload candidate for Root import review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ast-tree-sitter-lock-${{ inputs.candidate_head }}
+          path: ${{ runner.temp }}/ast-tree-sitter-lock
+          if-no-files-found: error
+          retention-days: 14

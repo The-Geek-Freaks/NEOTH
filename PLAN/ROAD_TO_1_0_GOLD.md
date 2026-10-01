@@ -1,5 +1,15 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2032 hosted AST dependency resolution preparation (2026-10-01):**
+A reviewed, main-only workflow can resolve the exact Rust Tree-sitter pins
+for an isolated descendant candidate and return a checksummed manifest/lock
+artifact. It admits only the 13 scoped source paths, preserves existing
+non-root lock records, and admits new packages only in the parser dependency
+closure. No local runtime, parser, compiler, or Cargo ran. The AST source
+candidate remains blocked on separate review repairs; neither its lockfile,
+AST recall behavior nor the open embedding leg is accepted by this workflow.
+Report: docs/verification/gold-wave2032-hosted-ast-lock-workflow.json.
+
 **W2017 CI repair, typed prompt boundaries and provider/process routing (2026-10-01):**
 The focused baseline executed 240 cases; 239 actual success logs and the sole
 source-drift WAL assertion failure were matched to sealed receipts. W2010

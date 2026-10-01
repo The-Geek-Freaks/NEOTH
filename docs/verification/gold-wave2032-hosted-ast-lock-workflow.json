@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-gold-wave2032-hosted-ast-lock-workflow/v1",
+  "base": "c9bd41136365e193081cc343c1247f1f3df76c9f",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T14:57:02.5200491Z",
+  "workflow": {
+    "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
+    "sha256": "127172E5854DF2EFC04755C24CE3D6556602E9970946E459D07FC3716398013A",
+    "trustedRef": "refs/heads/main",
+    "baseline": "exact GITHUB_SHA",
+    "candidate": "40 lowercase hex descendant commit; not a file SHA256",
+    "allowedPaths": 13,
+    "manifestDelta": "only tree-sitter = =0.27.0 and tree-sitter-rust = =0.24.2 direct pin lines",
+    "existingLockBlocks": "preserve every non-neoth package block byte-for-byte",
+    "newPackages": "only reviewed direct package dependency closure",
+    "resolution": "cargo metadata then identical --locked metadata",
+    "compilationOrTests": false,
+    "permissions": "contents read",
+    "output": "heads,manifest and lock patches,baseline/resolved postimages,metadata,checksums"
+  },
+  "review": "Independent workflow review approved initial gates and final five-path/name delta",
+  "astSourceCandidate": "BLOCKED pending separate Rust review repairs; not published or admitted",
+  "lockGenerated": false,
+  "sourceOrEmbeddingAcceptance": false,
+  "localExecutableValidationRan": false
+}

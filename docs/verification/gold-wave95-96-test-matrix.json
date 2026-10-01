@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 286696,
-    "sha256": "9ADFAC21F302DADB358F6829B89D36139C1F9D05F6374D8095F81955120711FA"
+    "bytes": 287080,
+    "sha256": "FB3E599CC4809F6F04ACAC803720F651E5DD7A238439BDFC68B994023C0866CD"
   },
-  "sourceInputs": 1594,
+  "sourceInputs": 1596,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -64694,6 +64694,32 @@
       }
     ],
     "note": "Imported API/digest/source-head verified hosted rustfmt patch from Preflight36874761649 on7fe65fde; no local formatter/runtime.266 cases and2491 portable registrations unchanged; final producer hosted checks pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2032HostedAstLockPreparation": {
+    "base": "c9bd41136365e193081cc343c1247f1f3df76c9f",
+    "sources": [
+      {
+        "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
+        "bytes": 11912,
+        "sha256": "127172E5854DF2EFC04755C24CE3D6556602E9970946E459D07FC3716398013A",
+        "blob": "c32cbab488cc2a7fef2d30b17a517e01a8828021"
+      },
+      {
+        "path": "docs/verification/gold-wave2032-hosted-ast-lock-workflow.json",
+        "bytes": 1345,
+        "sha256": "5AE0D8E0B9DF8D0640ED09554A626CF1CC700F6247922D2C4887E0E4B51014D1",
+        "blob": "88c131350658d3c98b888b5139072f56d512490e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2263604,
+        "sha256": "03CA8D6830A06C58A3877D2E2CF2FA1532A4A1448D44F91F56E4A37C03D53C7F",
+        "blob": "4b563203d171f3fd780859ee456a22cd7662136d"
+      }
+    ],
+    "note": "Reviewed trusted-main-only exact candidate lock resolver;13sourcepaths,two pins,oldnonrootpackageblockpreservation,newdependencyclosureandsealedartifact. Notdispatched; ASTsourcecandidateunapproved, lockandproductacceptancepending. Localruntimeholdintact.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
