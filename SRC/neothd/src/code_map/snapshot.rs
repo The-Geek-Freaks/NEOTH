@@ -737,6 +737,15 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
         },
         cancellation,
     )?;
+    let chunks = build_rust_chunks_from_scan_snapshot_controlled(
+        &prepared.map,
+        |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "delta AST source exceeded bound")
+            })
+        },
+        cancellation,
+    )?;
     let cycles = CallGraph::from_edges(all_edges.clone()).find_cycles(50)?;
     cancellation.checkpoint()?;
     let source_fingerprint_sha256 = source_fingerprint_digest(root, &prepared.map, &[], &[]);
@@ -751,6 +760,7 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
             replacement_edges: &replacement_edges,
             replacement_sources: &prepared.edge_sources,
             removed_paths: &prepared.removed_paths,
+            chunks: &chunks,
         },
         root,
         || incremental::validate_final_source_fence(root, &prepared, options, cancellation),
@@ -1018,6 +1028,7 @@ where
         build_import_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     let hierarchy =
         build_type_hierarchy_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
+    let chunks = build_rust_chunks_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     // A file validated early during graph construction can still change while
     // later files are read. Revalidate the complete corpus immediately before
     // entering the publication transaction.
@@ -1055,13 +1066,15 @@ where
     cancellation.checkpoint()?;
     let mut conn = super::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
-    let publication = super::persist::persist_map_and_edges_bound(
+    let publication = super::persist::persist_map_and_edges_bound_with_chunks(
         &mut conn,
         &map,
         graph.edges(),
         imports.edges(),
         &hierarchy,
+        &chunks,
         root,
+        || validate_scan_fingerprint_controlled(&map, &mut read_file, cancellation),
     )
     .context("atomically persist identity-bound code-map index, call graph, and import graph")?;
 
@@ -1076,6 +1089,59 @@ where
         cycles,
         scan_report: map.report,
     })
+}
+
+/// Read only admitted Rust files, prove their scanner byte/hash identity, and
+/// then permit the private parser helper to materialize declaration chunks.
+/// Invalid UTF-8 and parse/local-budget refusal leave the file metadata-only;
+/// an I/O or source identity mismatch still aborts the whole publication.
+fn build_rust_chunks_from_scan_snapshot_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<Vec<super::chunk::CodeChunk>>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let root_dir = PathBuf::from(&map.root);
+    let mut chunks = Vec::new();
+    let mut source_bytes = 0usize;
+    for file in &map.files {
+        cancellation.checkpoint()?;
+        if file.language != Language::Rust {
+            continue;
+        }
+        let absolute = root_dir.join(&file.path);
+        let raw = read_file(&absolute)
+            .with_context(|| format!("re-read scanned Rust AST source {}", absolute.display()))?;
+        ensure!(
+            raw.len() as u64 == file.bytes && hex::encode(Sha256::digest(&raw)) == file.sha256,
+            "code-map Rust AST source changed after scan: {}; no generation was published",
+            file.path
+        );
+        source_bytes = source_bytes.checked_add(raw.len()).context("Rust AST source-byte count overflow")?;
+        if source_bytes > super::persist::MAX_CODE_MAP_CHUNK_TEXT_BYTES {
+            // AST text is an optional enhancement. Refuse the complete AST
+            // corpus without degrading the independently bounded metadata map.
+            return Ok(Vec::new());
+        }
+        let Ok(source) = std::str::from_utf8(&raw) else {
+            continue;
+        };
+        let file_chunks = super::chunk::rust_chunks_from_verified_source(
+            &file.path,
+            &file.sha256,
+            source,
+        )?;
+        if chunks.len().saturating_add(file_chunks.len()) > super::persist::MAX_CODE_MAP_CHUNK_ROWS {
+            // A single file cannot be omitted after prior files have been
+            // retained: that would falsely stamp a complete corpus. Refuse
+            // chunks for this whole rebuild while retaining normal map recall.
+            return Ok(Vec::new());
+        }
+        chunks.extend(file_chunks);
+    }
+    Ok(chunks)
 }
 
 fn ensure_root_unchanged(expected: &CanonicalRepoRoot, map: &RepoMap) -> Result<()> {
@@ -1496,6 +1562,91 @@ mod tests {
     }
 
     #[test]
+    fn ast_source_change_after_materialization_before_commit_rolls_back_without_mixed_chunks() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("lib.rs");
+        std::fs::write(&source, "pub fn baseline() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let baseline = rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        let conn = super::super::persist::open(&db).unwrap();
+        let before_chunks: Vec<(String, String, i64, String)> = conn
+            .prepare("SELECT path, source_sha256, ordinal, text FROM code_map_chunks ORDER BY path, ordinal")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        drop(conn);
+
+        std::fs::write(&source, "pub fn scanned_next() {}\n").unwrap();
+        let mut reads = 0usize;
+        let changed_source = source.clone();
+        let error = rebuild_snapshot_with_reader(
+            &root, &db, RebuildOptions::default(), &[], &[], move |path| {
+                reads += 1;
+                let bytes = std::fs::read(path)?;
+                // Graph, imports, hierarchy, then AST materialization all read this
+                // one-file fixture. Mutate only after the AST reader returned its
+                // verified bytes, so the final source fence owns the rejection.
+                if reads == 4 {
+                    std::fs::write(&changed_source, "pub fn post_ast_mutation() {}\n")?;
+                }
+                Ok(bytes)
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("changed"), "{error:#}");
+        let conn = super::super::persist::open(&db).unwrap();
+        assert_eq!(super::super::persist::root_index_generation(&conn, root.display()).unwrap(), Some(baseline.index_generation));
+        assert_eq!(super::super::persist::root_graph_generation(&conn, root.display()).unwrap(), Some(baseline.graph_generation));
+        let after_chunks: Vec<(String, String, i64, String)> = conn
+            .prepare("SELECT path, source_sha256, ordinal, text FROM code_map_chunks ORDER BY path, ordinal")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(after_chunks, before_chunks, "failed rebuild must retain one prior chunk corpus");
+    }
+
+    #[test]
+    fn legal_near_row_cap_declaration_after_overlap_candidate_keeps_metadata_and_bounded_chunks() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("lib.rs");
+        let row_cap = super::super::persist::MAX_CODE_MAP_CHUNK_ROW_TEXT_BYTES;
+        let legal_body = "x".repeat(row_cap - 128);
+        std::fs::write(
+            &source,
+            format!(
+                "pub fn overlap_seed() {{}}\npub fn legal_near_cap() {{ /* {legal_body} */ }}\n"
+            ),
+        )
+        .unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let rebuilt = rebuild_snapshot(&root, &db, RebuildOptions::default())
+            .expect("a legal declaration must not make metadata publication fail");
+        assert_eq!(rebuilt.stats.files_inserted, 1);
+        let conn = super::super::persist::open(&db).unwrap();
+        assert_eq!(
+            super::super::persist::load_map(&conn, root.display()).unwrap().unwrap().files[0].path,
+            "lib.rs",
+            "AST overlap suppression must retain ordinary file metadata"
+        );
+        let row_lengths: Vec<i64> = conn
+            .prepare("SELECT length(CAST(text AS BLOB)) FROM code_map_chunks WHERE root=?1")
+            .unwrap()
+            .query_map([root.display()], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(row_lengths.iter().all(|length| *length <= row_cap as i64));
+    }
+
+    #[test]
     fn stable_fingerprint_matches_rebuild_and_tracks_source_changes() {
         let repo = tempdir().unwrap();
         let source = repo.path().join("lib.rs");
@@ -1554,6 +1705,44 @@ mod tests {
                 .collect::<Vec<_>>(),
             b_before
         );
+    }
+
+    #[test]
+    fn full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("old.rs"), "pub fn old_source() {}\n").unwrap();
+        std::fs::write(repo.path().join("stable.rs"), "pub fn stable_source() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        std::fs::rename(repo.path().join("old.rs"), repo.path().join("moved.rs")).unwrap();
+        let full = rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        let conn = super::super::persist::open(&db).unwrap();
+        let roots: (i64, i64, i64) = conn.query_row(
+            "SELECT index_generation, graph_generation, chunk_generation FROM code_map_roots WHERE root=?1", [root.display()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(roots, (full.index_generation, full.index_generation, full.index_generation));
+        let after_move: Vec<String> = conn.prepare("SELECT path FROM code_map_chunks WHERE root=?1 ORDER BY path")
+            .unwrap().query_map([root.display()], |row| row.get(0)).unwrap()
+            .collect::<rusqlite::Result<_>>().unwrap();
+        assert!(after_move.iter().any(|path| path == "moved.rs"));
+        assert!(after_move.iter().any(|path| path == "stable.rs"));
+        assert!(!after_move.iter().any(|path| path == "old.rs"));
+        drop(conn);
+        std::fs::remove_file(repo.path().join("moved.rs")).unwrap();
+        let delta = rebuild_snapshot_delta_cancellable(&root, &db, RebuildOptions::default(), &ScanCancellation::new()).unwrap();
+        let conn = super::super::persist::open(&db).unwrap();
+        let after_delete: Vec<String> = conn.prepare("SELECT path FROM code_map_chunks WHERE root=?1 ORDER BY path")
+            .unwrap().query_map([root.display()], |row| row.get(0)).unwrap()
+            .collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(after_delete, vec!["stable.rs"]);
+        let generations: (i64, i64, i64) = conn.query_row(
+            "SELECT index_generation, graph_generation, chunk_generation FROM code_map_roots WHERE root=?1", [root.display()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(generations, (delta.index_generation, delta.index_generation, delta.index_generation));
     }
 
     #[test]

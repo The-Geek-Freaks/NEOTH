@@ -19,7 +19,7 @@ use crate::cli::OutputFormat;
 #[cfg(test)]
 use crate::coding::classifier::{Complexity, classify_heuristic};
 use crate::coding::code_map_receipt::{
-    CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
+    CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedChunk, CodeMapSelectedFile,
     DiffImpactCitation, ImpactTestGapCitation, MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
 };
 #[cfg(test)]
@@ -369,6 +369,39 @@ fn prompt_recall_context_from_receipt(
     callers_per_symbol: usize,
     max_text_bytes: usize,
 ) -> Result<Option<BoundCodeMapContext>> {
+    prompt_recall_context_from_receipt_after_chunks(
+        conn, receipt, callers_per_symbol, max_text_bytes, || Ok(()),
+    )
+}
+
+/// Test-only callers inject a competing committed rebuild exactly after the
+/// chunk read. Production always supplies the no-op closure above.
+#[cfg(test)]
+fn prompt_recall_context_from_receipt_with_after_chunks_for_test<F>(
+    conn: &rusqlite::Connection,
+    receipt: &crate::code_map::recall::RecallReceipt,
+    callers_per_symbol: usize,
+    max_text_bytes: usize,
+    after_chunks: F,
+) -> Result<Option<BoundCodeMapContext>>
+where
+    F: FnOnce() -> Result<()>,
+{
+    prompt_recall_context_from_receipt_after_chunks(
+        conn, receipt, callers_per_symbol, max_text_bytes, after_chunks,
+    )
+}
+
+fn prompt_recall_context_from_receipt_after_chunks<F>(
+    conn: &rusqlite::Connection,
+    receipt: &crate::code_map::recall::RecallReceipt,
+    callers_per_symbol: usize,
+    max_text_bytes: usize,
+    after_chunks: F,
+) -> Result<Option<BoundCodeMapContext>>
+where
+    F: FnOnce() -> Result<()>,
+{
     if receipt.ranked_files.is_empty() {
         return Ok(None);
     }
@@ -405,9 +438,19 @@ fn prompt_recall_context_from_receipt(
         after == receipt.snapshot,
         "active code-map generation changed while targeted context was assembled; retry"
     );
+    let chunks = load_prompt_chunks(conn, &receipt.snapshot, &receipt.ranked_files)?;
+    after_chunks().context("run post-chunk-read test hook")?;
+    let after_chunks =
+        crate::code_map::recall::resolve_active_root_snapshot(conn, receipt.snapshot.root.path())?
+            .context("active code-map root disappeared while AST chunks were assembled")?;
+    anyhow::ensure!(
+        after_chunks == receipt.snapshot,
+        "active code-map generation changed while AST chunks were assembled; retry"
+    );
     let Some(rendered) = render_bounded_prompt_recall_context(
         &receipt.ranked_files,
         edges,
+        &chunks,
         callers_per_symbol,
         &receipt.snapshot,
         receipt.truncated,
@@ -458,6 +501,86 @@ struct BoundedRenderedRecallContext {
     source: CodeMapContextSource,
 }
 
+#[derive(Clone, Debug)]
+struct PromptChunk {
+    path: String,
+    source_sha256: String,
+    ordinal: u32,
+    language: String,
+    start_byte: u64,
+    end_byte: u64,
+    start_line: u32,
+    end_line: u32,
+    text: String,
+}
+
+/// Read chunks only after the ordinary file-first ranking is fixed. SQLite
+/// measures each text blob before Rust materializes it; one extra row makes a
+/// corpus that exceeds this prompt-local budget fail closed to metadata recall.
+fn load_prompt_chunks(
+    conn: &Connection,
+    snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+    files: &[crate::code_map::recall::RelevantFile],
+) -> Result<Vec<PromptChunk>> {
+    if snapshot.chunk_generation <= 0
+        || snapshot.chunk_generation != snapshot.index_generation
+        || snapshot.graph_generation != snapshot.index_generation {
+        return Ok(Vec::new());
+    }
+    const ROW_CAP: usize = 256;
+    const TEXT_CAP: usize = 512 * 1024;
+    const ROW_TEXT_CAP: usize = 16 * 1024;
+    let mut out = Vec::new();
+    let mut total = 0usize;
+    for file in files {
+        let mut symbols = conn.prepare(
+            "SELECT s.name, s.line FROM code_map_symbols s JOIN code_map_files f ON f.id=s.file_id WHERE f.root=?1 AND f.path=?2 ORDER BY s.line ASC",
+        )?;
+        let matched_lines = symbols.query_map(rusqlite::params![snapshot.root.display(), &file.path], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|(name, _)| file.matched_symbols.iter().any(|symbol| symbol == name))
+            .map(|(_, line)| {
+                let line = u32::try_from(line).context("persisted matched symbol line is negative or exceeds u32")?;
+                anyhow::ensure!(line > 0, "persisted matched symbol line must be positive");
+                Ok(line)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut file_chunks = Vec::new();
+        let mut stmt = conn.prepare(
+            "SELECT c.path, c.source_sha256, c.ordinal, c.language, c.start_byte, c.end_byte, c.start_line, c.end_line, length(CAST(c.text AS BLOB)) \
+             FROM code_map_chunks c JOIN code_map_files f ON f.root=c.root AND f.path=c.path AND f.sha256=c.source_sha256 \
+             WHERE c.root=?1 AND c.path=?2 ORDER BY c.ordinal ASC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![snapshot.root.display(), &file.path, i64::try_from(ROW_CAP + 1)?], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, i64>(6)?, row.get::<_, i64>(7)?, row.get::<_, i64>(8)?))
+        })?;
+        for row in rows {
+            let (path, sha, ordinal, language, start_byte, end_byte, start_line, end_line, measured) = row?;
+            let measured = usize::try_from(measured).context("negative persisted AST text length")?;
+            if measured > ROW_TEXT_CAP
+                || out.len().saturating_add(file_chunks.len()).saturating_add(1) > ROW_CAP
+                || total.saturating_add(measured) > TEXT_CAP {
+                return Ok(Vec::new());
+            }
+            total += measured;
+            let text: String = conn.query_row(
+                "SELECT text FROM code_map_chunks WHERE root=?1 AND path=?2 AND source_sha256=?3 AND ordinal=?4",
+                rusqlite::params![snapshot.root.display(), &path, &sha, ordinal],
+                |row| row.get(0),
+            )?;
+            anyhow::ensure!(text.len() == measured, "persisted AST chunk text length changed during bounded read");
+            file_chunks.push(PromptChunk { path, source_sha256: sha, ordinal: u32::try_from(ordinal)?, language, start_byte: u64::try_from(start_byte)?, end_byte: u64::try_from(end_byte)?, start_line: u32::try_from(start_line)?, end_line: u32::try_from(end_line)?, text });
+        }
+        file_chunks.sort_by_key(|chunk| {
+            let contains_match = matched_lines.iter().any(|line| *line >= chunk.start_line && *line <= chunk.end_line);
+            (!contains_match, chunk.ordinal)
+        });
+        out.extend(file_chunks);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 fn render_prompt_recall_context(
     files: &[crate::code_map::recall::RelevantFile],
@@ -487,6 +610,7 @@ fn render_prompt_recall_context(
 fn render_bounded_prompt_recall_context(
     files: &[crate::code_map::recall::RelevantFile],
     edges: Vec<crate::code_map::graph::CodeEdge>,
+    chunks: &[PromptChunk],
     callers_per_symbol: usize,
     snapshot: &crate::code_map::recall::RootGenerationSnapshot,
     receipt_truncated: bool,
@@ -512,6 +636,7 @@ fn render_bounded_prompt_recall_context(
             snapshot,
             &candidate_files,
             &retained_callers,
+            chunks,
             selection_truncated,
             max_text_bytes,
         )? {
@@ -531,6 +656,7 @@ fn render_bounded_prompt_recall_context(
                 snapshot,
                 &candidate_files,
                 &retained_callers,
+                chunks,
                 selection_truncated,
                 max_text_bytes,
             )? {
@@ -555,6 +681,7 @@ fn render_bounded_prompt_recall_context(
             snapshot,
             &retained_files,
             &candidate_callers,
+            chunks,
             selection_truncated,
             max_text_bytes,
         )? {
@@ -568,6 +695,7 @@ fn render_bounded_prompt_recall_context(
         snapshot,
         &retained_files,
         &retained_callers,
+        chunks,
         selection_truncated,
     )?
     .context("retained targeted code-map selection became empty")?;
@@ -578,11 +706,12 @@ fn targeted_selection_fits(
     snapshot: &crate::code_map::recall::RootGenerationSnapshot,
     files: &[crate::code_map::recall::RelevantFile],
     callers: &[crate::code_map::recall::SelectedCaller],
+    chunks: &[PromptChunk],
     selection_truncated: bool,
     max_text_bytes: usize,
 ) -> Result<bool> {
     Ok(
-        targeted_selection(snapshot, files, callers, selection_truncated)?
+        targeted_selection(snapshot, files, callers, chunks, selection_truncated)?
             .is_some_and(|(text, _source)| text.len() <= max_text_bytes),
     )
 }
@@ -591,6 +720,7 @@ fn targeted_selection(
     snapshot: &crate::code_map::recall::RootGenerationSnapshot,
     files: &[crate::code_map::recall::RelevantFile],
     callers: &[crate::code_map::recall::SelectedCaller],
+    chunks: &[PromptChunk],
     selection_truncated: bool,
 ) -> Result<Option<(String, CodeMapContextSource)>> {
     let files_block = crate::code_map::recall::render_context_block(files);
@@ -598,7 +728,7 @@ fn targeted_selection(
         return Ok(None);
     }
     let callers_block = crate::code_map::recall::render_selected_callers_block(callers);
-    let text = if callers_block.is_empty() {
+    let mut text = if callers_block.is_empty() {
         files_block
     } else {
         format!("{files_block}\n{callers_block}")
@@ -624,6 +754,26 @@ fn targeted_selection(
             .collect(),
         selection_truncated,
     );
+    for chunk in chunks {
+        if !files.iter().any(|file| file.path == chunk.path) {
+            continue;
+        }
+        let block = format!(
+            "\n<untrusted_rust_source origin=\"code-map\" path=\"{}\" sha256=\"{}\" ordinal=\"{}\" bytes=\"{}..{}\" lines=\"{}..{}\">\n{}\n</untrusted_rust_source>\n",
+            chunk.path, chunk.source_sha256, chunk.ordinal, chunk.start_byte, chunk.end_byte,
+            chunk.start_line, chunk.end_line, chunk.text
+        );
+        if text.len().saturating_add(block.len()) > MAX_PREPARED_CODE_MAP_CONTEXT_BYTES {
+            source.selection_truncated = true;
+            break;
+        }
+        text.push_str(&block);
+        source.selected_chunks.push(CodeMapSelectedChunk {
+            path: chunk.path.clone(), source_sha256: chunk.source_sha256.clone(), ordinal: chunk.ordinal,
+            language: chunk.language.clone(), start_byte: chunk.start_byte, end_byte: chunk.end_byte,
+            start_line: chunk.start_line, end_line: chunk.end_line,
+        });
+    }
     if !source_fits_receipt(&mut source)? {
         return Ok(None);
     }
@@ -643,11 +793,13 @@ fn source_from_snapshot(
         root_identity: snapshot.root.identity().as_str().to_owned(),
         index_generation: snapshot.index_generation,
         graph_generation: snapshot.graph_generation,
+        chunk_generation: snapshot.chunk_generation,
         stale: false,
         selection_truncated,
         metadata_redacted: false,
         diff_impact: None,
         selected_files,
+        selected_chunks: Vec::new(),
         callers,
     }
 }
@@ -772,6 +924,7 @@ fn diff_impact_context_at(
         root_identity: snapshot.root.identity().as_str().to_owned(),
         index_generation: snapshot.index_generation,
         graph_generation: snapshot.graph_generation,
+        chunk_generation: snapshot.chunk_generation,
         stale: false,
         selection_truncated: citation.impact_truncated
             || citation.budget_truncated
@@ -780,6 +933,7 @@ fn diff_impact_context_at(
         metadata_redacted,
         diff_impact: Some(citation),
         selected_files,
+        selected_chunks: Vec::new(),
         callers: Vec::new(),
     };
     anyhow::ensure!(
@@ -2216,6 +2370,56 @@ mod tests {
     }
 
     #[test]
+    fn prompt_chunk_loader_refuses_cap_plus_one_and_malformed_matched_symbol_line() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(&conn, &repo).unwrap().unwrap();
+        let (sha, file_id): (String, i64) = conn.query_row("SELECT sha256, id FROM code_map_files WHERE root=?1 AND path='src/auth.rs'", [root.display()], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        for ordinal in 1..=257_i64 {
+            conn.execute("INSERT INTO code_map_chunks (root,path,source_sha256,ordinal,language,start_byte,end_byte,start_line,end_line,text) VALUES (?1,'src/auth.rs',?2,?3,'rust',0,1,1,1,'x')", rusqlite::params![root.display(), &sha, ordinal]).unwrap();
+        }
+        let files = vec![crate::code_map::recall::RelevantFile { root: root.display().to_owned(), path: "src/auth.rs".to_owned(), identifier_hits: 1, matched_symbols: vec!["verify_token".to_owned()], path_keyword_overlap: 0 }];
+        assert!(load_prompt_chunks(&conn, &snapshot, &files).unwrap().is_empty());
+        conn.execute("DELETE FROM code_map_chunks WHERE root=?1", [root.display()]).unwrap();
+        conn.execute("INSERT INTO code_map_symbols (file_id,name,kind,line,line_end) VALUES (?1,'verify_token','function',-1,NULL)", [file_id]).unwrap();
+        assert!(load_prompt_chunks(&conn, &snapshot, &files).is_err());
+    }
+
+    #[test]
+    fn generation_change_after_actual_chunk_read_discards_context_at_second_snapshot_check() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let receipt = crate::code_map::recall::recall_receipt_for_prompt(&conn, &repo, "verify_token", 8, crate::code_map::recall::RecallStaleness::Skip).unwrap().unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let db = dir.path().join("code_map.db");
+        let hook_ran = std::cell::Cell::new(false);
+        let error = prompt_recall_context_from_receipt_with_after_chunks_for_test(
+            &conn, &receipt, 3, MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, || {
+                hook_ran.set(true);
+                crate::code_map::rebuild_snapshot(&root, &db, Default::default())?;
+                Ok(())
+            },
+        ).unwrap_err();
+        assert!(hook_ran.get(), "the competing rebuild must run after actual chunk loading");
+        assert!(error.to_string().contains("AST chunks were assembled"), "{error:#}");
+    }
+
+    #[test]
+    fn matched_symbol_line_priority_is_deterministic_before_ordinal_fallback() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(&conn, &repo).unwrap().unwrap();
+        let sha: String = conn.query_row("SELECT sha256 FROM code_map_files WHERE root=?1 AND path='src/auth.rs'", [root.display()], |row| row.get(0)).unwrap();
+        conn.execute("DELETE FROM code_map_chunks WHERE root=?1", [root.display()]).unwrap();
+        for (ordinal, start, end, text) in [(0_i64, 1_i64, 3_i64, "ordinal_zero"), (1, 10, 14, "matched_line")] {
+            conn.execute("INSERT INTO code_map_chunks (root,path,source_sha256,ordinal,language,start_byte,end_byte,start_line,end_line,text) VALUES (?1,'src/auth.rs',?2,?3,'rust',0,1,?4,?5,?6)", rusqlite::params![root.display(), &sha, ordinal, start, end, text]).unwrap();
+        }
+        conn.execute("UPDATE code_map_symbols SET line=12 WHERE file_id=(SELECT id FROM code_map_files WHERE root=?1 AND path='src/auth.rs') AND name='verify_token'", [root.display()]).unwrap();
+        let files = vec![crate::code_map::recall::RelevantFile { root: root.display().to_owned(), path: "src/auth.rs".to_owned(), identifier_hits: 1, matched_symbols: vec!["verify_token".to_owned()], path_keyword_overlap: 0 }];
+        let selected = load_prompt_chunks(&conn, &snapshot, &files).unwrap();
+        assert_eq!(selected.iter().map(|chunk| (chunk.ordinal, chunk.text.as_str())).collect::<Vec<_>>(), vec![(1, "matched_line"), (0, "ordinal_zero")]);
+    }
+
+    #[test]
     fn coding_code_map_stale_input_is_rejected_before_context_assembly() {
         let (_dir, repo, conn) = real_code_map_fixture();
         std::fs::write(repo.join("src/auth.rs"), "pub fn changed_token() {}\n").unwrap();
@@ -2665,6 +2869,7 @@ mod tests {
         render_bounded_prompt_recall_context(
             &files,
             edges,
+            &[],
             callers_per_target,
             snapshot,
             false,
