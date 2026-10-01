@@ -652,8 +652,8 @@ class CiCadenceContractTests(unittest.TestCase):
         workspace_clippy = steps["cargo clippy workspace"]
         self.assertIn("timeout-minutes: 45", workspace_clippy)
         self.assertEqual(
-            step_run_command(workspace_clippy),
-            'cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings',
+            re.findall(r"(?m)^        run: ([^\n]+)$", workspace_clippy),
+            ['cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings'],
         )
 
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:

@@ -37,5 +37,16 @@
   "validation": "Fast hosted cadence contract, then exact-producer full CI; a larger bound is not a passing Clippy result.",
   "localExecutableValidationRan": false,
   "hosted": "pending",
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "hostedContractCorrection": {
+    "run": 36832724923,
+    "producer": "fbd29a5a2d2af5ddbed2ca055d9eee45ecbf8ffa",
+    "rustFormatting": "passed",
+    "failure": "Cadence assertion called block-only step_run_command on the existing inline Clippy run command",
+    "correction": "Match exactly one complete inline run line and compare its command with the unchanged full Clippy command",
+    "source": "packaging/tests/test_ci_cadence_contract.py",
+    "resultSha256": "AB168B1AF9BAD1568BD55A1DB3E7EB0E61F086D3E36FA41FEB6D0D729483FD53",
+    "hostedRevalidation": "pending",
+    "localExecution": false
+  }
 }

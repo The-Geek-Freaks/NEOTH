@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1988_HOSTED_FORMAT_IMPORTED_FRESH_238_CASE_AND_FULL_CI_PENDING",
+  "status": "W1988_SKILL_PROBE_AND_W1989_INLINE_CI_CONTRACT_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 273632,
-    "sha256": "952B8DC10BC46D9A92B478CA73BFC0A6308E682C43F84FDFE7A1DB92346965AF"
+    "bytes": 273630,
+    "sha256": "613B874653C11164DAB789EDDAEADB906B7EF56A1D89B29BD977E84BE7BBC550"
   },
   "sourceInputs": 1517,
   "requiredNativeTests": [
@@ -63450,6 +63450,26 @@
       }
     ],
     "note": "Exact hosted rustfmt artifact11147561980 for source9ec1df49; API/archive/entry digests and allthree result Git blobs verified. No local formatter/compiler/runtime; fresh fast gates and238-case run required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1989InlineClippyContract": {
+    "base": "fbd29a5a2d2af5ddbed2ca055d9eee45ecbf8ffa",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1989-linux-ci-budget.json",
+        "bytes": 2483,
+        "sha256": "09551FE985CC92340C08D44B9501912BF62443C359B4CD8DA35DACC08ADE7EA0",
+        "blob": "ea9d4cbc40ded06a4360687616df85b85934ae60"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 47608,
+        "sha256": "AB168B1AF9BAD1568BD55A1DB3E7EB0E61F086D3E36FA41FEB6D0D729483FD53",
+        "blob": "2dfdfbee69220d7ae001211623869ad2c5369e19"
+      }
+    ],
+    "note": "Preflight36832724923 passed Rust format but block-only command helper rejected inline Clippy syntax. Two-line exact-singleton inline assertion correction reviewed; unchanged Clippy command. No local tests; fresh hosted preflight required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
