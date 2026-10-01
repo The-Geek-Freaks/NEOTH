@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Loopback contract coverage for weekly reflection Obsidian synchronization.
 
 use std::net::Ipv4Addr;

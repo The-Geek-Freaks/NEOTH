@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-30T11:29:19.4398856Z",
-  "validationStatus": "W1983_MACOS_UPGRADE_SOURCE_STATIC_APPROVED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T06:40:03.3194909Z",
+  "validationStatus": "W1986_PAPERLESS_CANONICAL_FIXTURES_STATIC_APPROVED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2882,6 +2882,16 @@
       "sha256": "3382197761404DD2C13EF7D3703DCD8BB922F681E3008DE9FD102CDA7899CE16"
     },
     {
+      "path": "docs/verification/gold-wave1985-hosted-integration.json",
+      "bytes": 3249,
+      "sha256": "AB1EF95179EC861B52A2AB1113C6DC74B2014615A68BCAF85FD3123E3F020D88"
+    },
+    {
+      "path": "docs/verification/gold-wave1986-ci-repair.json",
+      "bytes": 16599,
+      "sha256": "A88C28055C77CB4DF20E1CEFA3DF4B6EF73AD95A8A184C585715FFF9E1868154"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3943,18 +3953,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 592176,
-      "sha256": "F779BEFA096BD582CA962DD2FB8D4DCCF8D8F1A5F8B52A76FF5F062818F70D74"
+      "bytes": 594249,
+      "sha256": "F26BD77DC0FBFC3BC7739991B1C2F431AF9A813A855AE3742F4FB091D631BAAD"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1628606,
-      "sha256": "EE435BD204CF9FD9D18C383A65DF474DB80B8EE5077F6CF43E57FA3079EA3374"
+      "bytes": 1630679,
+      "sha256": "C796D53EDCD54F33C02BE8E481A54F5E6E8CEFD374983C807BB3D90FF77841F7"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2239616,
-      "sha256": "FD34A31CE1FAFFFC1C27E5723A2C21FA073E95C8E1B141D9A7C373CBBA385D59"
+      "bytes": 2241689,
+      "sha256": "FDE85F379FFEC47B37E5528C1CBCE5AC3F62CA8A6A788F567740FE8675268EEB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6093,8 +6103,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
-      "bytes": 7318,
-      "sha256": "1C9E97D2B51D01B07DC4B70143536A629D372429A77C0412E926426713C75B15"
+      "bytes": 7351,
+      "sha256": "C9A03367558EB7A352B9A6B0270D2BAFA62E4251F67AA2C0060C6EFE0DB4428D"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
@@ -6103,8 +6113,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
-      "bytes": 15213,
-      "sha256": "06125D840C0ED1EB1A812764CC09EFF2A93A0B97B339F00A3ED285A7B3F3E38E"
+      "bytes": 15229,
+      "sha256": "59E052E9CFBB2BE8EF7E38F0FA24727BC95BB477715F761C1F7203A7E378D72A"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
@@ -6113,18 +6123,18 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 143727,
-      "sha256": "44E4DEC778624060BF6687A5B6FE5B7F376E254B29416278E3CD8D88171AC34F"
+      "bytes": 143802,
+      "sha256": "26A46C0C131CE3A1BCC03122C857C384AF17B84B9F54E0FE49D64EDFAE5C2CF3"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
-      "bytes": 5775,
-      "sha256": "532925C1408AE87D1C88017FD754C617CA56B0C3CFD7814E9D02781BB86A4F78"
+      "bytes": 5791,
+      "sha256": "6BD2E7A74D53157E12F76BAC1622B2C79B548DD866479803DA2E12B4FA2DAC55"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
-      "bytes": 15453,
-      "sha256": "70B526414CE65E79C1A2EED83D20576CCA2A2B52BE8DE7093B0D6111DC97CB66"
+      "bytes": 15488,
+      "sha256": "AECC4089E0890E5B1DC7CF039FB797576A9587881102D1A115921FFA12570AB9"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_purge.rs",
@@ -6143,8 +6153,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "bytes": 25552,
-      "sha256": "50373746652D9302301C09027B884BF3A86D4F06BD117E3F3288D4BC46739804"
+      "bytes": 25568,
+      "sha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair.rs",
@@ -6173,8 +6183,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "bytes": 21648,
-      "sha256": "75D4EC7388700FDE4D86986241CCE8ED623D177FE5B8F3CD6B5BB35792FA6DF3"
+      "bytes": 21683,
+      "sha256": "1ADCF4CFD7F4D7B611513F05468C99478E20ED0E61B890A1746D121ECC341DB9"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",
@@ -6628,13 +6638,13 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
-      "bytes": 15908,
-      "sha256": "20BE8AE04F245B9A2A0CF0B5FFC2ACA4170006E23B4BF07C863E62F330F7F187"
+      "bytes": 15893,
+      "sha256": "7F3B0007D5FD385E8BA34D872E881EC54FFFC1C34A30031C524F508FAB8D916A"
     },
     {
       "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
-      "bytes": 10413,
-      "sha256": "7D1E6D8D2D1106AA2DC7BD2CAFDA25D0D9401321ACF5A03B07A6F72DDBD665CF"
+      "bytes": 10398,
+      "sha256": "143651419C62B9E9127D0F91846FFDB7C2369B6466F7CEEF670EB0F7B83FF793"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
@@ -6703,13 +6713,13 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "bytes": 11586,
-      "sha256": "1CCE3B891A706F524734EC35E648D5672D6FE18883E3699D6FD7E7CAD520637F"
+      "bytes": 11571,
+      "sha256": "56EC0A2F7C2FEE4EADD27EF736C1A7A243BC616989DBF1C6A46DCBFCB7885108"
     },
     {
       "path": "SRC/neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs",
-      "bytes": 14104,
-      "sha256": "1EF4C0442C5DCB6C69E40F806F2B0A6AE7DCC0039799AE7314A77FD7456060F6"
+      "bytes": 14089,
+      "sha256": "1C05D5B73D912DE0EFB6F5C71CE63D2CDFA5FB80ACB75B05F43E1BBA4AEC4F82"
     },
     {
       "path": "SRC/neothd/src/n8n_api/server.rs",

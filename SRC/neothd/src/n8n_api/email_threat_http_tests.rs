@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Loopback HTTP regressions for `/api/email/threat/scan`.
 //!
 //! Kept as a child of `server.rs` so it exercises the real TCP/auth/router

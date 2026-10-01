@@ -1,5 +1,35 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1985-W1986 full-run evidence and Paperless fixture repair (2026-10-01; hosted pending):**
+Full run36713548383 on16d007b5466e91df75548da042b7fa80523c324b completed with
+Windows success:18877/18877 tests passed,28 skipped and one Nextest leaky
+classification retained as an explicit limitation. All other substantive jobs
+passed except Linux Clippy and macOS tests; Gold CI therefore failed.
+MacOS ran18995 tests:18897 passed,98 failed,29 skipped. Linux stopped at four
+clippy::duplicated_attributes errors before its workspace tests ran.
+Root verified all nine original artifact ZIPs against API digest,size,run and
+producer bindings;24 archive entries are retained. Separately, the same source
+passed focused run36709256410:231 Rust cases,20 Google Chat guards,61 Python
+contracts and four actual CLI/daemon products, with494 entries and117 source
+bindings admitted. These are scoped successes, not full or release acceptance.
+
+All98 macOS failures are Paperless fixture descendants. The shared staged_home
+returned the OS alias while preparing only its canonical child; generation-auth
+had the same noncanonical fixture-root issue. Both now use the existing private
+canonical_tempdir helper, with its cross-platform guard type carried through
+fixture return signatures. Production path/ownership checks and negative
+symlink tests stay intact. Four redundant inner HTTP-test cfg(test) attributes
+are removed while direct parent test guards remain. No tests removed/ignored,
+no new lint suppression. Independent static review approves all11 Rust changes;
+Windows behavior and fresh Linux/macOS execution still require hosted proof.
+
+W1984 remains an approved separate candidate, not imported into this repair.
+Local BSOD hold, no-Slint rule, single Root CI stream and stopped Claude polling
+remain in force. Source/test inventories are rebound before publication; the
+raw backlog below is preserved. Signed historical upgrade/release gates remain
+open. Reports: docs/verification/gold-wave1985-hosted-integration.json and
+docs/verification/gold-wave1986-ci-repair.json.
+
 **W1983 macOS historical upgrade source (2026-09-30; hosted pending):**
 The macOS release smoke now supports an explicitly pinned signed predecessor
 PKG for x86_64 and arm64. A complete per-architecture tag/version/SHA256 set

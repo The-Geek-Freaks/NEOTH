@@ -189,7 +189,12 @@ fn custody_path(home: &Path) -> std::path::PathBuf {
         .join(UNINSTALL_RECEIPT_NAME)
 }
 
-async fn completed_custody_fixture() -> (tempfile::TempDir, Credentials, Vec<u8>, Vec<u8>) {
+async fn completed_custody_fixture() -> (
+    crate::test_env::CanonicalTempDir,
+    Credentials,
+    Vec<u8>,
+    Vec<u8>,
+) {
     let (home, credentials, original) = installed_home_for_uninstall_test().await;
     let mut fake = UninstallFake::from_receipt(&original);
     assert_eq!(

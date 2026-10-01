@@ -1,0 +1,182 @@
+{
+  "schema": "neoth-gold-wave1986-ci-repair/v1",
+  "base": "16d007b5466e91df75548da042b7fa80523c324b",
+  "status": "SOURCE_REPAIRED_STATIC_REVIEW_APPROVED_HOSTED_PENDING",
+  "failedRun": 36713548383,
+  "linux": {
+    "diagnostic": "clippy::duplicated_attributes",
+    "count": 4,
+    "fix": "Remove redundant inner cfg(test) in four HTTP test child modules; keep direct outer cfg(test) in server.rs",
+    "lintSuppressionAdded": false
+  },
+  "macOS": {
+    "failureCount": 98,
+    "failedTestIdentities": [
+      "installers::paperless_lifecycle::paperless_backup::tests::all_stopped_and_mixed_sources_are_returned_to_their_exact_original_state",
+      "installers::paperless_lifecycle::paperless_backup::tests::ambiguous_copy_is_durably_held_and_reentry_never_dispatches_a_second_copy",
+      "installers::paperless_lifecycle::paperless_backup::tests::arbitrary_complete_repair_json_rejects_before_backup_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::backup_readiness_waits_after_source_restart_and_committed_receipt_reentry",
+      "installers::paperless_lifecycle::paperless_backup::tests::completed_backup_accepts_changed_active_receipt_and_preserves_first_immutable_receipt",
+      "installers::paperless_lifecycle::paperless_backup::tests::completed_backup_rejects_missing_tampered_or_foreign_source_companion_before_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::coordinator_copies_the_exact_six_archives_and_restores_running_source",
+      "installers::paperless_lifecycle::paperless_backup::tests::corrupt_interrupted_source_companion_restores_then_holds_without_copy_replay",
+      "installers::paperless_lifecycle::paperless_backup::tests::corrupt_receipt_is_rejected_before_effects_and_readback_mismatch_restores_state",
+      "installers::paperless_lifecycle::paperless_backup::tests::corrupt_volume_set_snapshot_is_rejected_before_stop_copy_or_start",
+      "installers::paperless_lifecycle::paperless_backup::tests::custody_traversal_or_foreign_archive_binding_is_rejected_before_a_new_effect",
+      "installers::paperless_lifecycle::paperless_backup::tests::exact_restore_resolver_rejects_legacy_and_binding_or_archive_mutants_without_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::exit_zero_stop_or_start_that_did_not_change_state_blocks_copy_or_receipt",
+      "installers::paperless_lifecycle::paperless_backup::tests::historical_complete_repair_with_different_active_receipt_allows_backup",
+      "installers::paperless_lifecycle::paperless_backup::tests::legacy_completed_source_without_binding_allows_peer_check_then_fresh_schema_two_backup",
+      "installers::paperless_lifecycle::paperless_backup::tests::legacy_inflight_source_recovery_never_writes_schema_two_without_binding",
+      "installers::paperless_lifecycle::paperless_backup::tests::lock_and_failed_readiness_fence_receipt_and_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::pending_start_crash_is_observed_without_replaying_the_uncertain_start",
+      "installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_partial_archives_cannot_commit_a_receipt",
+      "installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_receipt_but_missing_source_companion_rejects_without_recreation_or_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::source_restored_with_six_archives_and_missing_receipt_commits_same_job_without_effect_replay",
+      "installers::paperless_lifecycle::paperless_backup::tests::tampered_committed_archive_and_incomplete_custody_hold_before_new_effects",
+      "installers::paperless_lifecycle::paperless_backup::tests::valid_complete_backup_uses_a_fresh_job_while_committed_receipt_reentry_does_not_recopy",
+      "installers::paperless_lifecycle::paperless_generation_auth::tests::file_cas_preserves_other_credentials_and_accepts_retry_after_reload",
+      "installers::paperless_lifecycle::paperless_generation_auth::tests::fresh_grant_accepts_reloaded_new_token_and_rejects_substitution",
+      "installers::paperless_lifecycle::paperless_generation_auth::tests::keychain_cas_requires_effective_store_agreement_and_rejects_third_value",
+      "installers::paperless_lifecycle::paperless_generation_auth::tests::malformed_completed_receipt_blocks_fresh_token_begin",
+      "installers::paperless_lifecycle::paperless_generation_auth::tests::receipt_crash_window_returns_false_before_receipt_and_absent_marker_is_noop",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::archive_snapshot_and_terminal_absence_substitutions_reject",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::archived_partial_live_removal_rechecks_old_container_and_volume_absence",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::install_uninstall_purge_fresh_install_rotates_and_archives_exact_old_receipts",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::normal_missing_volume_refuses_and_second_generation_can_rotate",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::resumes_all_phases_and_every_archive_or_removal_prefix",
+      "installers::paperless_lifecycle::paperless_generation_rotation::tests::substituted_new_snapshot_rejects_at_written_and_complete_crash_cuts",
+      "installers::paperless_lifecycle::paperless_operation_lock::tests::independent_owned_roots_do_not_share_operation_lock",
+      "installers::paperless_lifecycle::paperless_operation_lock::tests::malformed_state_entry_is_rejected",
+      "installers::paperless_lifecycle::paperless_operation_lock::tests::same_owned_root_is_busy_until_first_guard_drops",
+      "installers::paperless_lifecycle::paperless_operation_lock::tests::symlink_lock_leaf_is_rejected_without_touching_target",
+      "installers::paperless_lifecycle::paperless_purge::tests::dispatched_after_effect_reconciles_absence_without_second_remove",
+      "installers::paperless_lifecycle::paperless_purge::tests::happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials",
+      "installers::paperless_lifecycle::paperless_purge::tests::missing_or_substituted_generation_label_blocks_all_volume_removes",
+      "installers::paperless_lifecycle::paperless_purge::tests::owner_lock_blocks_confirmed_purge_without_docker_selection",
+      "installers::paperless_lifecycle::paperless_purge::tests::preview_is_read_only_and_uses_current_completed_receipt_chain",
+      "installers::paperless_lifecycle::paperless_purge::tests::repeat_completed_purge_reobserves_absence_but_never_removes_again",
+      "installers::paperless_lifecycle::paperless_purge::tests::wrong_confirmation_rejects_before_lock_custody_or_docker",
+      "installers::paperless_lifecycle::paperless_repair::tests::bound_before_receipt_write_replays_without_redispatch",
+      "installers::paperless_lifecycle::paperless_repair::tests::captured_complete_journal_recovers_exact_receipt_write_once",
+      "installers::paperless_lifecycle::paperless_repair::tests::commit_dispatched_after_write_and_complete_are_idempotent",
+      "installers::paperless_lifecycle::paperless_repair::tests::commit_dispatched_before_write_replays_the_cas_without_redispatch",
+      "installers::paperless_lifecycle::paperless_repair::tests::custody_or_missing_token_refuses_before_docker",
+      "installers::paperless_lifecycle::paperless_repair::tests::foreign_image_or_mount_refuse_pre_effect",
+      "installers::paperless_lifecycle::paperless_repair::tests::generation_authority_marker_refuses_before_effect",
+      "installers::paperless_lifecycle::paperless_repair::tests::healthy_auth_is_three_service_noop_and_keeps_bytes",
+      "installers::paperless_lifecycle::paperless_repair::tests::journal_mismatch_refuses_without_effect",
+      "installers::paperless_lifecycle::paperless_repair::tests::missing_owned_recreates_with_six_volumes_and_credentials",
+      "installers::paperless_lifecycle::paperless_repair::tests::stopped_container_waits_for_eventual_authenticated_readiness_without_repeat_start",
+      "installers::paperless_lifecycle::paperless_repair::tests::stopped_exact_id_is_started_and_reconciled",
+      "installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty",
+      "installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_with_invalid_configured_binding_refuses_before_effect",
+      "installers::paperless_lifecycle::paperless_repair::tests::unknown_create_is_held_without_redispatch_or_adoption",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_ambiguous_effect_never_replays_and_corrupt_inputs_have_no_effect",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_committed_pointer_reentry_survives_missing_mutable_journal_without_new_effect",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_create_dispatched_discovery_failure_holds_without_second_create",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_failed_generation_retirement_is_immutable_and_names_exactly_six_volumes",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_candidate_start",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_local_auth_loopback_cutover_and_known_failure_compensation",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_second_restore_uses_new_generation_and_keeps_first_generation_history",
+      "installers::paperless_lifecycle::paperless_restore::tests::restore_stateful_tampered_retired_custody_blocks_recovery_before_fresh_create",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_ambiguous_stop_holds_and_blocks_replay_or_peer_restore",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_base_restores_exact_prior_files_and_removes_absent_pointer",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_current_identity_port_and_mount_mutants_reject_before_effects",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_nested_restores_raw_prior_pointer_and_refuses_pre_effect_mutants",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_preserves_partial_or_stopped_old_runtime_without_readiness_claim",
+      "installers::paperless_lifecycle::paperless_restore::tests::rollback_stateful_readiness_failure_compensates_without_removing_retained_generations",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_does_not_apply_to_a_fresh_install_generation",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_tampering_rejects_before_docker_or_mutation",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::completed_uninstall_repeat_is_read_only_and_does_not_select_docker",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::install_is_blocked_while_uninstall_custody_is_pending",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::legacy_unlabelled_install_receipt_remains_safe_uninstall_compatible",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::prepared_custody_with_late_wrong_service_id_pair_rejects_before_any_remove",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::status_rejects_malformed_and_foreign_custody_without_rewriting_it",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_after_actual_absence_reopens_without_second_remove",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_with_present_container_holds_without_second_remove",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_foreign_original_id_rejects_before_any_remove",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_listing_error_is_not_treated_as_observed_absence",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_missing_original_id_rejects_before_any_remove",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_partial_sequence_recovery_does_not_redelete_earlier_container",
+      "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_success_removes_owned_stopped_containers_and_retains_six_volumes",
+      "installers::paperless_lifecycle::tests::completed_generation_with_lost_snapshot_rejects_before_compose",
+      "installers::paperless_lifecycle::tests::completed_generation_with_missing_volume_rejects_before_compose",
+      "installers::paperless_lifecycle::tests::corrupted_receipt_without_snapshot_rejects_before_compose",
+      "installers::paperless_lifecycle::tests::empty_or_absent_legacy_state_is_allowed",
+      "installers::paperless_lifecycle::tests::interrupted_fresh_generation_with_matching_partial_set_resumes",
+      "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt",
+      "installers::paperless_lifecycle::tests::legacy_unlabelled_set_remains_repeat_install_compatible",
+      "installers::paperless_lifecycle::tests::nonempty_legacy_state_aborts_before_docker_mutation",
+      "installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt",
+      "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes"
+    ],
+    "fix": "Use canonical_tempdir in shared staged_home and generation-auth fresh_root; return CanonicalTempDir across affected fixture helper signatures",
+    "rootCause": "macOS system /var alias was retained in returned TempDir despite staging a canonical child; independent generation-auth fixture also used the alias",
+    "productionPathAndOwnershipChecksChanged": false,
+    "intentionalSymlinkRejectionTestsPreserved": true,
+    "testCasesRemoved": 0,
+    "testCasesIgnored": 0
+  },
+  "review": {
+    "reviewer": "w1986_actual_review",
+    "result": "APPROVE",
+    "scope": "11 Rust source files; follow-up tuple-format hash confirmation",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
+        "sha256": "C9A03367558EB7A352B9A6B0270D2BAFA62E4251F67AA2C0060C6EFE0DB4428D"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+        "sha256": "59E052E9CFBB2BE8EF7E38F0FA24727BC95BB477715F761C1F7203A7E378D72A"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "sha256": "26A46C0C131CE3A1BCC03122C857C384AF17B84B9F54E0FE49D64EDFAE5C2CF3"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
+        "sha256": "6BD2E7A74D53157E12F76BAC1622B2C79B548DD866479803DA2E12B4FA2DAC55"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+        "sha256": "AECC4089E0890E5B1DC7CF039FB797576A9587881102D1A115921FFA12570AB9"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+        "sha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+        "sha256": "1ADCF4CFD7F4D7B611513F05468C99478E20ED0E61B890A1746D121ECC341DB9"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
+        "sha256": "7F3B0007D5FD385E8BA34D872E881EC54FFFC1C34A30031C524F508FAB8D916A"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "sha256": "143651419C62B9E9127D0F91846FFDB7C2369B6466F7CEEF670EB0F7B83FF793"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "sha256": "56EC0A2F7C2FEE4EADD27EF736C1A7A243BC616989DBF1C6A46DCBFCB7885108"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs",
+        "sha256": "1C05D5B73D912DE0EFB6F5C71CE63D2CDFA5FB80ACB75B05F43E1BBA4AEC4F82"
+      }
+    ]
+  },
+  "validation": {
+    "diffCheck": "PASS",
+    "localExecutableValidationRan": false,
+    "hosted": "pending",
+    "windowsRevalidationRequired": true
+  },
+  "sourceInputsBefore": 1511,
+  "registeredPortableTests": 2461,
+  "candidateW1984Imported": false,
+  "releaseAccepted": false
+}

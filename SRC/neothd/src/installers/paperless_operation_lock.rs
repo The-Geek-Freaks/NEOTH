@@ -99,7 +99,7 @@ pub(crate) fn acquire(
 mod tests {
     use super::*;
 
-    fn staged_owned_root() -> (tempfile::TempDir, OwnedPaperlessRoot) {
+    fn staged_owned_root() -> (crate::test_env::CanonicalTempDir, OwnedPaperlessRoot) {
         let (home, _) = super::super::staged_paperless_home_for_test();
         let root_path = crate::config::InstancePaths::for_home(home.path()).paperless_root;
         let owned = super::super::paperless_staging::open_owned_root_at(&root_path).unwrap();

@@ -1,0 +1,92 @@
+{
+  "schema": "neoth-gold-wave1985-hosted-integration/v1",
+  "producer": "16d007b5466e91df75548da042b7fa80523c324b",
+  "fullRun": {
+    "id": 36713548383,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36713548383",
+    "status": "completed",
+    "conclusion": "failure",
+    "successfulJobs": [
+      "Ubuntu beta compile + Clippy (advisory)",
+      "Isolated release signer",
+      "feature-flag compile / cluster-iroh",
+      "windows-2022 tests / Rust 1.91",
+      "gold-smoke eval suite",
+      "Exact distribution license notices",
+      "feature-flag compile / qwen-metal",
+      "W186 live-audio hosted validation / Select W186 live-audio platform",
+      "Keet companion / frozen standalone",
+      "feature-flag compile / channel-adapters",
+      "example WASM plugins build against ABI v1",
+      "feature-flag compile / qwen-cuda",
+      "feature-flag compile / ssh-tunnel",
+      "feature-flag compile / os-clipboard",
+      "W186 live-audio hosted validation / W186 live-audio / macOS",
+      "W186 live-audio hosted validation / W186 live-audio / Windows",
+      "W186 live-audio hosted validation / W186 live-audio / Linux"
+    ],
+    "failedJobs": [
+      {
+        "databaseId": 109880849610,
+        "name": "Linux quality / Rust 1.91"
+      },
+      {
+        "databaseId": 109880849800,
+        "name": "macos-14 tests / Rust 1.91"
+      },
+      {
+        "databaseId": 109944513007,
+        "name": "Gold CI"
+      }
+    ]
+  },
+  "windows": {
+    "job": 109880849671,
+    "conclusion": "success",
+    "profile": "ci-windows",
+    "executed": 18877,
+    "passed": 18877,
+    "leaky": 1,
+    "skipped": 28,
+    "evidence": "complete bound job log plus original API-digest-verified JUnit ZIP; XML not parsed locally",
+    "summarySha256": "99B6398C5C94873FCC78142F9C761ABEF4F19D0A4792D5BD837B3B8A8758BA81"
+  },
+  "macOS": {
+    "job": 109880849800,
+    "conclusion": "failure",
+    "executed": 18995,
+    "passed": 18897,
+    "failed": 98,
+    "skipped": 29,
+    "repairStatus": "root-cause grouping and candidate repair in progress; not accepted"
+  },
+  "linux": {
+    "job": 109880849610,
+    "conclusion": "failure",
+    "failure": "four duplicated cfg(test) attributes in HTTP test modules",
+    "subsequentWorkspaceTests": "skipped"
+  },
+  "archives": {
+    "count": 9,
+    "entries": 24,
+    "apiDigestSizeRunHeadVerified": true,
+    "manifestPath": "work/gold-20260906/wave1985-full-integration/admission/evidence-manifest.json",
+    "manifestSha256": "BD0706079BF9A23DB2789A56C230F19D871D17710DFA4A328B6223C0081760FA"
+  },
+  "focused": {
+    "run": 36709256410,
+    "producer": "16d007b5466e91df75548da042b7fa80523c324b",
+    "acceptedRustCases": 231,
+    "acceptedGchatGuards": 20,
+    "pythonContracts": 61,
+    "acceptedProducts": 4,
+    "verifiedArchives": 7,
+    "verifiedEntries": 494,
+    "producerSourceBindings": 117,
+    "rootChecksSha256": "B80AF35D896E36BDE94E68BC53FB725B31C87849A221340AE0AA6A033EF2F9CF"
+  },
+  "localExecutableValidationRan": false,
+  "fullIntegrationAccepted": false,
+  "releaseAccepted": false,
+  "remaining": "Repair Linux and all macOS failures, rerun hosted checks on the repaired producer; signed native historical-upgrade and release qualification remain open."
+}

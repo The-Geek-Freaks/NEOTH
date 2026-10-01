@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Real loopback HTTP regressions for the bounded Paperless consult route.
 
 use std::net::Ipv4Addr;

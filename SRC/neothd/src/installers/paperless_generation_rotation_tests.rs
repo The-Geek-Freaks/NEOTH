@@ -161,7 +161,7 @@ fn dir(h: &Path) -> std::path::PathBuf {
         .paperless_root
         .join(RECEIPT_DIR)
 }
-async fn purged() -> (tempfile::TempDir, Credentials, Fake) {
+async fn purged() -> (crate::test_env::CanonicalTempDir, Credentials, Fake) {
     let (h, c, b) = installed_home_for_uninstall_test().await;
     let mut f = Fake::receipt(&b);
     uninstall_at_with(h.path(), &c, &mut f).await.unwrap();

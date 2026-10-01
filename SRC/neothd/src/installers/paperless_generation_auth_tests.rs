@@ -1,11 +1,11 @@
 use super::*;
 
 fn fresh_root() -> (
-    tempfile::TempDir,
+    crate::test_env::CanonicalTempDir,
     OwnedPaperlessRoot,
     PaperlessVolumeSetSnapshot,
 ) {
-    let home = tempfile::tempdir().unwrap();
+    let home = crate::test_env::canonical_tempdir().unwrap();
     let root_path = crate::config::InstancePaths::for_home(home.path()).paperless_root;
     paperless_staging::prepare_at(&root_path).unwrap();
     // `state` is an allowed operator-owned child of a prepared root. The

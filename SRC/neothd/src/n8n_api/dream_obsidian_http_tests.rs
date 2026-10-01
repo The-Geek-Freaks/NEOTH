@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Real loopback HTTP regressions for the scoped Dream-to-Obsidian sync route.
 
 use std::net::Ipv4Addr;

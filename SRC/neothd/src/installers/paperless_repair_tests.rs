@@ -311,7 +311,7 @@ impl ReadinessVerifier for EventuallyReady {
         self.probes.fetch_add(1, Ordering::SeqCst) >= self.false_before_success
     }
 }
-async fn fix() -> (tempfile::TempDir, Credentials, Vec<u8>, Fake) {
+async fn fix() -> (crate::test_env::CanonicalTempDir, Credentials, Vec<u8>, Fake) {
     let (h, c, b) = installed_home_for_uninstall_test().await;
     let f = Fake::from(&b);
     (h, c, b, f)

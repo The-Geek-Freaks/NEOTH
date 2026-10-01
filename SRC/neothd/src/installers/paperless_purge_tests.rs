@@ -223,7 +223,12 @@ impl ComposeExecutor for PurgeFake {
     }
 }
 
-async fn completed_fixture() -> (tempfile::TempDir, Credentials, Vec<u8>, PurgeFake) {
+async fn completed_fixture() -> (
+    crate::test_env::CanonicalTempDir,
+    Credentials,
+    Vec<u8>,
+    PurgeFake,
+) {
     let (home, credentials, install) = installed_home_for_uninstall_test().await;
     let mut fake = PurgeFake::from_receipt(&install);
     assert_eq!(
