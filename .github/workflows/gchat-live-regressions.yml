@@ -185,6 +185,8 @@ jobs:
             .github/workflows/gchat-live-regressions.yml \
             SRC/neothd/src/code_map/mod.rs \
             SRC/neothd/src/code_map/chunk.rs \
+            SRC/neothd/src/cli/code_map.rs \
+            SRC/neothd/src/code_map/vector_embeddings.rs \
             SRC/neothd/src/code_map/persist.rs \
             SRC/neothd/src/code_map/recall.rs \
             SRC/neothd/src/code_map/snapshot.rs \
@@ -542,9 +544,24 @@ jobs:
           run_case 283 lib cli::chat::tests::invalid_automatic_context_policy_is_a_typed_unavailable_outcome cli::chat::tests::invalid_automatic_context_policy_is_a_typed_unavailable_outcome --lib
           run_case 284 lib config::reload::tests::code_map_tunables_reload_into_the_next_snapshot config::reload::tests::code_map_tunables_reload_into_the_next_snapshot --lib
           run_case 285 lib config::reload::tests::invalid_code_map_reload_never_publishes_a_candidate_snapshot config::reload::tests::invalid_code_map_reload_never_publishes_a_candidate_snapshot --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 285
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 285
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 285
+          run_case 286 lib code_map::vector_embeddings::tests::canonical_code_chunk_reference_round_trips_and_rejects_escape code_map::vector_embeddings::tests::canonical_code_chunk_reference_round_trips_and_rejects_escape --lib
+          run_case 287 lib code_map::vector_embeddings::tests::cosine_scoring_is_exact_and_rejects_a_zero_vector code_map::vector_embeddings::tests::cosine_scoring_is_exact_and_rejects_a_zero_vector --lib
+          run_case 288 lib code_map::vector_embeddings::tests::bounded_vector_decode_rejects_invalid_dimension_and_blob_before_materialization code_map::vector_embeddings::tests::bounded_vector_decode_rejects_invalid_dimension_and_blob_before_materialization --lib
+          run_case 289 lib code_map::vector_embeddings::tests::staging_corpus_is_invisible_until_complete_and_completion_can_retire_predecessor code_map::vector_embeddings::tests::staging_corpus_is_invisible_until_complete_and_completion_can_retire_predecessor --lib
+          run_case 290 lib code_map::vector_embeddings::tests::delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity code_map::vector_embeddings::tests::delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity --lib
+          run_case 291 lib code_map::vector_embeddings::tests::store_refuses_source_or_provider_generation_drift_before_vector_write code_map::vector_embeddings::tests::store_refuses_source_or_provider_generation_drift_before_vector_write --lib
+          run_case 292 lib code_map::vector_embeddings::tests::staging_vectors_remain_unpublished_and_nonqueryable code_map::vector_embeddings::tests::staging_vectors_remain_unpublished_and_nonqueryable --lib
+          run_case 293 lib code_map::vector_embeddings::tests::query_rejects_complete_corpus_after_root_generation_advances code_map::vector_embeddings::tests::query_rejects_complete_corpus_after_root_generation_advances --lib
+          run_case 294 lib code_map::vector_embeddings::tests::changed_actual_config_keeps_store_and_finalize_staging code_map::vector_embeddings::tests::changed_actual_config_keeps_store_and_finalize_staging --lib
+          run_case 295 lib code_map::vector_embeddings::tests::stale_empty_staging_corpus_cannot_complete_or_be_admitted code_map::vector_embeddings::tests::stale_empty_staging_corpus_cannot_complete_or_be_admitted --lib
+          run_case 296 lib code_map::vector_embeddings::tests::reindex_current_publishes_exhaustive_corpus_with_deterministic_local_provider code_map::vector_embeddings::tests::reindex_current_publishes_exhaustive_corpus_with_deterministic_local_provider --lib
+          run_case 297 lib cli::code::tests::semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors cli::code::tests::semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors --lib
+          run_case 298 lib cli::code::tests::semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome cli::code::tests::semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome --lib
+          run_case 299 lib cli::code::tests::stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call cli::code::tests::stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call --lib
+          run_case 300 lib coding::code_map_receipt::tests::prepared_receipt_records_content_free_semantic_fallback coding::code_map_receipt::tests::prepared_receipt_records_content_free_semantic_fallback --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 300
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 300
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 300
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

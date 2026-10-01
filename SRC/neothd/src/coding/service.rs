@@ -2722,7 +2722,10 @@ where
         &run_config.code_map,
         request.diff_impact_input.as_ref(),
         code_map_database_path,
-    )?;
+        &run_config,
+        &config.neoth_home,
+        &config.freedom_config_path,
+    ).await?;
     request.repository_root = repository_root;
     request = request.with_prepared_code_map_context(prepared_context);
     let dispatch_plan = if request.dispatch {
@@ -2742,20 +2745,26 @@ where
     service.start_local(request, worker).await
 }
 
-fn prepare_runtime_code_map_context_at_database(
+async fn prepare_runtime_code_map_context_at_database(
     prompt: &str,
     repository_root: &std::path::Path,
     config: &crate::config::CodeMapConfig,
     diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
     database_path: &std::path::Path,
+    runtime_config: &crate::config::FreedomConfig,
+    neoth_home: &std::path::Path,
+    freedom_config_path: &std::path::Path,
 ) -> Result<Option<PreparedCodeMapContext>> {
-    crate::cli::code::prepare_code_map_context_for_root_at_database(
+    crate::cli::code::prepare_code_map_context_for_root_at_database_with_vectors(
         prompt,
         repository_root,
         config,
         diff_impact_input,
         database_path,
-    )
+        runtime_config,
+        neoth_home,
+        freedom_config_path,
+    ).await
 }
 
 /// Observer handle. It contains no JoinHandle and cannot detach the run.

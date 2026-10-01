@@ -614,6 +614,20 @@ pub struct CodeMapCaller {
     pub caller_path: String,
 }
 
+/// Content-free outcome of the optional local code-vector refinement.  It is
+/// receipt metadata, never a provider response, prompt, path, or source text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeMapSemanticQueryOutcome {
+    Used,
+    NoEligibleCorpus,
+    ProviderUnavailable,
+    ProviderDrift,
+    ProviderError,
+    InvalidResponse,
+    QueryError,
+}
+
 /// Typed, freshness-bound provenance for one portion of the original context.
 ///
 /// This type intentionally contains names and paths only. It has no field for
@@ -793,6 +807,7 @@ impl CodeMapContextSource {
 pub struct PreparedCodeMapContext {
     text: String,
     sources: Vec<CodeMapContextSource>,
+    semantic_query_outcome: Option<CodeMapSemanticQueryOutcome>,
 }
 
 impl PreparedCodeMapContext {
@@ -811,7 +826,7 @@ impl PreparedCodeMapContext {
             source.sanitize_metadata_for_receipt()?;
         }
         validate_sources(&sources)?;
-        Ok(Self { text, sources })
+        Ok(Self { text, sources, semantic_query_outcome: None })
     }
 
     /// Original assembled code-map text, before decomposer truncation.
@@ -822,6 +837,14 @@ impl PreparedCodeMapContext {
     /// Immutable provenance for the original selection.
     pub fn sources(&self) -> &[CodeMapContextSource] {
         &self.sources
+    }
+
+    /// Record the content-free result of the optional local semantic lane on
+    /// the targeted source that it refined.  This remains receipt-only
+    /// metadata; source text and embeddings never enter the receipt.
+    pub fn with_semantic_query_outcome(mut self, outcome: CodeMapSemanticQueryOutcome) -> Result<Self> {
+        self.semantic_query_outcome = Some(outcome);
+        Ok(self)
     }
 
     /// Commit the exact strings used in a decomposition attempt without
@@ -850,6 +873,7 @@ impl PreparedCodeMapContext {
             context_truncated: submitted_context != self.text,
             provider_prompt_sha256: sha256_hex(provider_prompt),
             sources: self.sources.clone(),
+            semantic_query_outcome: self.semantic_query_outcome.clone(),
         };
         receipt.validate()?;
         Ok(receipt)
@@ -870,6 +894,9 @@ pub struct CodingCodeMapReceipt {
     pub context_truncated: bool,
     pub provider_prompt_sha256: String,
     pub sources: Vec<CodeMapContextSource>,
+    /// Content-free outcome of an optional local semantic query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_query_outcome: Option<CodeMapSemanticQueryOutcome>,
 }
 
 /// Bounded, content-free link from an accepted decomposition result to the
@@ -1715,6 +1742,19 @@ mod tests {
         assert!(!serialized.contains("operator 🔒"));
         assert!(!serialized.contains("provider 🔒"));
         assert!(!serialized.contains("é context"));
+    }
+
+    #[test]
+    fn prepared_receipt_records_content_free_semantic_fallback() {
+        let prepared = PreparedCodeMapContext::new("context".to_owned(), vec![source(CodeMapContextKind::TargetedRecall)])
+            .unwrap()
+            .with_semantic_query_outcome(CodeMapSemanticQueryOutcome::ProviderDrift)
+            .unwrap();
+        let receipt = prepared.receipt(KanbanSessionId(9), 1, "operator prompt", "context", "provider prompt").unwrap();
+        assert_eq!(receipt.semantic_query_outcome, Some(CodeMapSemanticQueryOutcome::ProviderDrift));
+        let serialized = serde_json::to_string(&receipt).unwrap();
+        assert!(!serialized.contains("operator prompt"));
+        assert!(!serialized.contains("provider prompt"));
     }
 
     #[test]

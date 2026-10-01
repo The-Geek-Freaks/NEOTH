@@ -19,7 +19,7 @@ use crate::cli::OutputFormat;
 #[cfg(test)]
 use crate::coding::classifier::{Complexity, classify_heuristic};
 use crate::coding::code_map_receipt::{
-    CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedChunk,
+    CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSemanticQueryOutcome, CodeMapSelectedChunk,
     CodeMapSelectedFile, DiffImpactCitation, ImpactTestGapCitation, MAX_CODE_MAP_SOURCE_BYTES,
     PreparedCodeMapContext,
 };
@@ -376,6 +376,7 @@ fn prompt_recall_context_from_receipt(
         callers_per_symbol,
         max_text_bytes,
         || Ok(()),
+        &[],
     )
 }
 
@@ -398,6 +399,7 @@ where
         callers_per_symbol,
         max_text_bytes,
         after_chunks,
+        &[],
     )
 }
 
@@ -407,6 +409,7 @@ fn prompt_recall_context_from_receipt_after_chunks<F>(
     callers_per_symbol: usize,
     max_text_bytes: usize,
     after_chunks: F,
+    semantic: &[crate::code_map::vector_embeddings::SemanticChunk],
 ) -> Result<Option<BoundCodeMapContext>>
 where
     F: FnOnce() -> Result<()>,
@@ -447,7 +450,8 @@ where
         after == receipt.snapshot,
         "active code-map generation changed while targeted context was assembled; retry"
     );
-    let chunks = load_prompt_chunks(conn, &receipt.snapshot, &receipt.ranked_files)?;
+    let mut chunks = load_prompt_chunks(conn, &receipt.snapshot, &receipt.ranked_files)?;
+    order_prompt_chunks_by_semantic_candidates(&mut chunks, semantic);
     after_chunks().context("run post-chunk-read test hook")?;
     let after_chunks =
         crate::code_map::recall::resolve_active_root_snapshot(conn, receipt.snapshot.root.path())?
@@ -473,6 +477,41 @@ where
         snapshot: receipt.snapshot.clone(),
         source: rendered.source,
     }))
+}
+
+/// Semantic candidates never introduce a file: they only order already-loaded
+/// current chunks in the recall receipt's file set.
+fn order_prompt_chunks_by_semantic_candidates(
+    chunks: &mut [PromptChunk],
+    semantic: &[crate::code_map::vector_embeddings::SemanticChunk],
+) {
+    if semantic.is_empty() { return; }
+    let mut ranks = std::collections::HashMap::new();
+    for (rank, candidate) in semantic.iter().enumerate() {
+        ranks.insert((candidate.path.as_str(), candidate.source_sha256.as_str(), candidate.ordinal), rank);
+    }
+    chunks.sort_by_key(|chunk| ranks.get(&(chunk.path.as_str(), chunk.source_sha256.as_str(), chunk.ordinal)).copied().unwrap_or(usize::MAX));
+}
+
+fn prompt_recall_context_at_bounded_with_semantic(
+    conn: &Connection,
+    cwd: &std::path::Path,
+    prompt: &str,
+    config: &crate::config::CodeMapConfig,
+    max_text_bytes: usize,
+    semantic: &[crate::code_map::vector_embeddings::SemanticChunk],
+) -> Result<Option<BoundCodeMapContext>> {
+    let policy = config.requested_context_policy()?;
+    let receipt = crate::code_map::recall::recall_receipt_for_prompt(
+        conn, cwd, prompt, policy.recall_max_files as usize,
+        crate::code_map::recall::RecallStaleness::Check,
+    )?;
+    let Some(receipt) = receipt else { return Ok(None); };
+    anyhow::ensure!(crate::code_map::persist::root_snapshot_complete(conn, receipt.snapshot.root.display())?, "active code-map root was published from a partial scan; rebuild it without custom limits");
+    anyhow::ensure!(receipt.stale == Some(false), "active code-map snapshot is stale or unverifiable; run `neoth code-map persist`");
+    prompt_recall_context_from_receipt_after_chunks(
+        conn, &receipt, policy.callers_per_symbol as usize, max_text_bytes, || Ok(()), semantic,
+    )
 }
 
 /// Testable core (mirrors [`repo_map_context_from`]). `root` is the canonical
@@ -1060,6 +1099,150 @@ pub(crate) fn prepare_code_map_context_for_root_at_database(
         .context("resolve explicit diff-impact coding context")?;
     assemble_code_map_context(recall, repo, diff_impact)
 }
+
+fn prepare_code_map_context_for_root_at_database_with_semantic(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
+    db_path: &std::path::Path,
+    semantic: &[crate::code_map::vector_embeddings::SemanticChunk],
+) -> Result<Option<PreparedCodeMapContext>> {
+    config.validate()?;
+    let conn = crate::code_map::persist::open(db_path)
+        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
+    let recall = prompt_recall_context_at_bounded_with_semantic(
+        &conn, repository_root, prompt, config, MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, semantic,
+    ).context("resolve targeted code-map context")?;
+    let remaining_repo_bytes = recall.as_ref().map_or(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, |context| {
+        MAX_PREPARED_CODE_MAP_CONTEXT_BYTES.saturating_sub(context.text.len().saturating_add(2))
+    });
+    let repo = if remaining_repo_bytes < 4 { None } else {
+        repo_map_context_at_bounded(&conn, repository_root, config, remaining_repo_bytes)
+            .context("resolve repo-map context")?
+    };
+    let diff_impact = diff_impact_input.map(|input| diff_impact_context_at(&conn, repository_root, input))
+        .transpose().context("resolve explicit diff-impact coding context")?;
+    assemble_code_map_context(recall, repo, diff_impact)
+}
+
+/// The single production semantic consumer. It observes a complete corpus
+/// before constructing a local provider, embeds only the operator prompt once,
+/// and performs no vector write or fallback provider attempt.
+pub(crate) async fn prepare_code_map_context_for_root_at_database_with_vectors(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
+    db_path: &std::path::Path,
+    runtime_config: &crate::config::FreedomConfig,
+    neoth_home: &std::path::Path,
+    freedom_config_path: &std::path::Path,
+) -> Result<Option<PreparedCodeMapContext>> {
+    if !semantic_corpus_is_available(prompt, repository_root, config, db_path) {
+        let prepared = prepare_code_map_context_for_root_at_database_with_semantic(
+            prompt, repository_root, config, diff_impact_input, db_path, &[],
+        )?;
+        return prepared.map(|context| context.with_semantic_query_outcome(CodeMapSemanticQueryOutcome::NoEligibleCorpus)).transpose();
+    }
+    let provider = crate::providers::local_embedding_provider_from_config_at_path(
+        runtime_config, neoth_home, freedom_config_path,
+    ).await;
+    let (semantic, outcome) = match provider {
+        Ok(Some(provider)) => return prepare_code_map_context_for_root_at_database_with_sealed_provider(
+            prompt, repository_root, config, diff_impact_input, db_path, &provider,
+        ).await,
+        Ok(None) => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderUnavailable),
+        Err(_) => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderError),
+    };
+    let prepared = prepare_code_map_context_for_root_at_database_with_semantic(
+        prompt, repository_root, config, diff_impact_input, db_path, &semantic,
+    )?;
+    prepared.map(|context| context.with_semantic_query_outcome(outcome)).transpose()
+}
+
+fn semantic_corpus_is_available(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    db_path: &std::path::Path,
+) -> bool {
+    (|| -> Result<bool> {
+        let conn = crate::code_map::persist::open(db_path)?;
+        let policy = config.requested_context_policy()?;
+        let Some(receipt) = crate::code_map::recall::recall_receipt_for_prompt(
+            &conn, repository_root, prompt, policy.recall_max_files as usize,
+            crate::code_map::recall::RecallStaleness::Check,
+        )? else { return Ok(false); };
+        Ok(receipt.stale == Some(false)
+            && crate::code_map::persist::root_snapshot_complete(&conn, receipt.snapshot.root.display())?
+            && crate::code_map::vector_embeddings::has_complete_corpus_for_snapshot(&conn, &receipt.snapshot)?)
+    })().unwrap_or(false)
+}
+
+async fn prepare_code_map_context_for_root_at_database_with_sealed_provider(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
+    db_path: &std::path::Path,
+    provider: &crate::providers::LocalEmbeddingProvider,
+) -> Result<Option<PreparedCodeMapContext>> {
+    let (semantic, outcome) = semantic_candidates_for_prompt_with_provider(
+        prompt, repository_root, config, db_path, provider,
+    ).await;
+    prepare_code_map_context_for_root_at_database_with_semantic(
+        prompt, repository_root, config, diff_impact_input, db_path, &semantic,
+    )?.map(|context| context.with_semantic_query_outcome(outcome)).transpose()
+}
+
+async fn semantic_candidates_for_prompt_with_provider(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    db_path: &std::path::Path,
+    provider: &crate::providers::LocalEmbeddingProvider,
+) -> (Vec<crate::code_map::vector_embeddings::SemanticChunk>, CodeMapSemanticQueryOutcome) {
+    let receipt = (|| -> Result<Option<crate::code_map::recall::RecallReceipt>> {
+        let conn = crate::code_map::persist::open(db_path)?;
+        let policy = config.requested_context_policy()?;
+        let receipt = crate::code_map::recall::recall_receipt_for_prompt(
+            &conn, repository_root, prompt, policy.recall_max_files as usize,
+            crate::code_map::recall::RecallStaleness::Check,
+        )?;
+        let Some(receipt) = receipt else { return Ok(None); };
+        if receipt.stale != Some(false)
+            || !crate::code_map::persist::root_snapshot_complete(&conn, receipt.snapshot.root.display())?
+            || !crate::code_map::vector_embeddings::has_complete_corpus_for_snapshot(&conn, &receipt.snapshot)? {
+            return Ok(None);
+        }
+        Ok(Some(receipt))
+    })();
+    let Ok(Some(receipt)) = receipt else { return (Vec::new(), CodeMapSemanticQueryOutcome::NoEligibleCorpus); };
+    match provider.with_current_config(|| Ok(())) {
+        Ok(Some(())) => {}
+        Ok(None) => return (Vec::new(), CodeMapSemanticQueryOutcome::ProviderDrift),
+        Err(_) => return (Vec::new(), CodeMapSemanticQueryOutcome::ProviderError),
+    }
+    let Some(query) = tokio::time::timeout(
+        std::time::Duration::from_secs(5), crate::memory::embeddings::embed_one(prompt, &provider),
+    ).await.ok().flatten() else { return (Vec::new(), CodeMapSemanticQueryOutcome::InvalidResponse); };
+    let queried = provider.with_current_config(|| -> Result<Vec<crate::code_map::vector_embeddings::SemanticChunk>> {
+        let conn = crate::code_map::persist::open(db_path)?;
+        let Some(current) = crate::code_map::recall::resolve_active_root_snapshot(&conn, repository_root)? else { return Ok(Vec::new()); };
+        if current != receipt.snapshot { return Ok(Vec::new()); }
+        crate::code_map::vector_embeddings::query_pre_ranked_files(
+            &conn, &receipt.snapshot, &provider, &query, &receipt.ranked_files,
+        )
+    });
+    match queried {
+        Ok(Some(chunks)) if !chunks.is_empty() => (chunks, CodeMapSemanticQueryOutcome::Used),
+        Ok(Some(_)) => (Vec::new(), CodeMapSemanticQueryOutcome::QueryError),
+        Ok(None) => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderDrift),
+        Err(_) => (Vec::new(), CodeMapSemanticQueryOutcome::QueryError),
+    }
+}
+
 
 /// Start one fresh coding run through the shared native service.  The CLI has
 /// no provider, receipt, SQLite, dispatch, apply, or cancellation loop of its
@@ -1772,6 +1955,7 @@ mod tests {
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::permissions::AutonomyLevel;
     use crate::providers::{Completion, Provider, Request};
+    use crate::providers::embed::{EmbedProvider, EmbedRequest, EmbedResponse};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
@@ -1879,6 +2063,136 @@ mod tests {
         crate::code_map::rebuild_snapshot(&root, &db, Default::default()).unwrap();
         let conn = crate::code_map::persist::open(&db).unwrap();
         (dir, repo, conn)
+    }
+
+    struct CountingSemanticEmbed {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbedProvider for CountingSemanticEmbed {
+        fn name(&self) -> &'static str { "counting-semantic-test" }
+        fn default_dim(&self) -> usize { 2 }
+        async fn embed(&self, _request: EmbedRequest) -> Result<EmbedResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            anyhow::ensure!(!self.fail, "test local provider failure");
+            Ok(EmbedResponse {
+                vector: vec![1.0, 0.0],
+                model: self.name().to_owned(),
+                latency: std::time::Duration::ZERO,
+            })
+        }
+    }
+
+    fn seed_complete_semantic_corpus(
+        conn: &Connection,
+        repo: &std::path::Path,
+        provider: &crate::providers::LocalEmbeddingProvider,
+    ) {
+        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(conn, repo).unwrap().unwrap();
+        crate::code_map::vector_embeddings::ensure_schema(conn).unwrap();
+        let generation = provider.generation();
+        let corpus_id = "test-semantic-corpus";
+        conn.execute(
+            "INSERT INTO code_map_vector_corpora VALUES (?1,?2,?3,?4,?4,?5,?6,?7,'complete')",
+            rusqlite::params![corpus_id, snapshot.root.display(), snapshot.root.identity().as_str(), snapshot.index_generation, generation.id(), generation.expected_model(), generation.dimension() as i64],
+        ).unwrap();
+        let (path, sha, ordinal): (String, String, i64) = conn.query_row(
+            "SELECT path,source_sha256,ordinal FROM code_map_chunks WHERE root=?1 AND path='src/auth.rs' ORDER BY ordinal LIMIT 1",
+            [snapshot.root.display()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        let source_ref = crate::code_map::vector_embeddings::CodeChunkRef {
+            corpus_id: corpus_id.to_owned(), root_identity: snapshot.root.identity().as_str().to_owned(),
+            index_generation: snapshot.index_generation, path: path.clone(), source_sha256: sha.clone(), ordinal: ordinal as u32,
+        }.encode();
+        let embedding = [1.0_f32, 0.0].into_iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>();
+        conn.execute(
+            "INSERT INTO code_map_chunk_vectors VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![corpus_id, source_ref, path, sha, ordinal, embedding],
+        ).unwrap();
+    }
+
+    #[tokio::test]
+    async fn semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::LocalEmbeddingProvider::for_test(Arc::new(CountingSemanticEmbed { calls: Arc::clone(&calls), fail: false }));
+        seed_complete_semantic_corpus(&conn, &repo, &provider);
+        let observer = crate::code_map::persist::open(&dir.path().join("code_map.db")).unwrap();
+        let data_version_before: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0)).unwrap();
+        let vector_snapshot_before: (i64, i64, String) = observer.query_row(
+            "SELECT COUNT(*),COALESCE(SUM(length(embedding)),0),COALESCE(group_concat(source_ref,'|'),'') FROM (SELECT source_ref,embedding FROM code_map_chunk_vectors ORDER BY source_ref)",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        let corpus_snapshot_before: (i64, String) = observer.query_row(
+            "SELECT COUNT(*),COALESCE(group_concat(corpus_id || ':' || state,'|'),'') FROM (SELECT corpus_id,state FROM code_map_vector_corpora ORDER BY corpus_id)",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        let database_bytes_before = std::fs::read(dir.path().join("code_map.db")).unwrap();
+        let prepared = prepare_code_map_context_for_root_at_database_with_sealed_provider(
+            "repair verify_token", &repo, &Default::default(), None, &dir.path().join("code_map.db"), &provider,
+        ).await.unwrap().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(prepared.text().contains("verify_token"));
+        let receipt = prepared.receipt(KanbanSessionId(1), 1, "repair verify_token", prepared.text(), "provider").unwrap();
+        assert_eq!(receipt.semantic_query_outcome, Some(CodeMapSemanticQueryOutcome::Used));
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session = store::insert_session(&views, 1, "repair verify_token", "h", "test", None).unwrap();
+        store::record_code_map_receipt(&views, session, &receipt).unwrap();
+        let persisted = store::load_code_map_receipts(&views, session).unwrap();
+        assert_eq!(persisted, vec![receipt]);
+        let data_version_after: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0)).unwrap();
+        let vector_snapshot_after: (i64, i64, String) = observer.query_row(
+            "SELECT COUNT(*),COALESCE(SUM(length(embedding)),0),COALESCE(group_concat(source_ref,'|'),'') FROM (SELECT source_ref,embedding FROM code_map_chunk_vectors ORDER BY source_ref)",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        let corpus_snapshot_after: (i64, String) = observer.query_row(
+            "SELECT COUNT(*),COALESCE(group_concat(corpus_id || ':' || state,'|'),'') FROM (SELECT corpus_id,state FROM code_map_vector_corpora ORDER BY corpus_id)",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(data_version_after, data_version_before, "semantic query must not commit code-map writes, including WAL writes");
+        assert_eq!(vector_snapshot_after, vector_snapshot_before);
+        assert_eq!(corpus_snapshot_after, corpus_snapshot_before);
+        assert_eq!(std::fs::read(dir.path().join("code_map.db")).unwrap(), database_bytes_before);
+    }
+
+    #[tokio::test]
+    async fn semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let legacy = prepare_code_map_context_for_root_at_database(
+            "repair verify_token", &repo, &Default::default(), None, &dir.path().join("code_map.db"),
+        ).unwrap().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::LocalEmbeddingProvider::for_test(Arc::new(CountingSemanticEmbed { calls: Arc::clone(&calls), fail: true }));
+        seed_complete_semantic_corpus(&conn, &repo, &provider);
+        let prepared = prepare_code_map_context_for_root_at_database_with_sealed_provider(
+            "repair verify_token", &repo, &Default::default(), None, &dir.path().join("code_map.db"), &provider,
+        ).await.unwrap().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(prepared.text(), legacy.text());
+        let receipt = prepared.receipt(KanbanSessionId(1), 1, "repair verify_token", prepared.text(), "provider").unwrap();
+        assert_eq!(receipt.semantic_query_outcome, Some(CodeMapSemanticQueryOutcome::InvalidResponse));
+    }
+
+    #[tokio::test]
+    async fn stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let legacy = prepare_code_map_context_for_root_at_database(
+            "repair verify_token", &repo, &Default::default(), None, &dir.path().join("code_map.db"),
+        ).unwrap().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::LocalEmbeddingProvider::for_test(Arc::new(CountingSemanticEmbed { calls: Arc::clone(&calls), fail: false }));
+        seed_complete_semantic_corpus(&conn, &repo, &provider);
+        conn.execute("UPDATE code_map_vector_corpora SET index_generation=index_generation+1", []).unwrap();
+        let prepared = prepare_code_map_context_for_root_at_database_with_sealed_provider(
+            "repair verify_token", &repo, &Default::default(), None, &dir.path().join("code_map.db"), &provider,
+        ).await.unwrap().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(prepared.text(), legacy.text());
+        let receipt = prepared.receipt(KanbanSessionId(1), 1, "repair verify_token", prepared.text(), "provider").unwrap();
+        assert_eq!(receipt.semantic_query_outcome, Some(CodeMapSemanticQueryOutcome::NoEligibleCorpus));
     }
 
     #[tokio::test]

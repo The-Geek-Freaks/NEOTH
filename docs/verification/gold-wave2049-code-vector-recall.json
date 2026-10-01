@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-gold-wave2049-local-code-vector-recall/v1",
+  "status": "STATIC_REVIEWED_HOSTED_EXECUTION_PENDING",
+  "baseline": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+  "capturedUtc": "2026-10-01T16:49:54.0514122Z",
+  "behavior": {
+    "producer": "Explicit code-map reindex-embeddings [PATH] [--full]",
+    "storage": "code_map.db, isolated from memory idx_embedding",
+    "query": "One local prompt embedding only after complete corpus preflight; exact cosine limited to already-ranked files",
+    "fallback": "Typed content-free outcome retains existing AST/metadata context",
+    "publication": "Active root/index/chunk and sealed provider generation match inside configuration authority and SQLite immediate transaction",
+    "delta": "Paginated reuse of matching current path/source hash/ordinal only; changed and deleted identities excluded",
+    "sourceSupport": "Existing Rust AST chunks; no general multilingual parser claim"
+  },
+  "bounds": {
+    "producerBatch": 64,
+    "queryCandidates": 128,
+    "providerAwaitSeconds": 5,
+    "vectorDimensionCeiling": 16384
+  },
+  "staticReview": {
+    "reviewer": "/root/w2031_rust_review",
+    "manifestSHA256": "2C1400228931358E993BE99F0B8001CCD0FC735ADA27776065CFB4E84DC8E8BE",
+    "patchSHA256": "419231A38591FF317502170F7C265DB18FA59CABDAEFBE82B252E25A46B18F7A",
+    "files": 8,
+    "import": "Clean base Git blobs and exact candidate postimages verified; original candidate bytes copied preserving reviewed content"
+  },
+  "regressions": [
+    "code_map::vector_embeddings::tests::canonical_code_chunk_reference_round_trips_and_rejects_escape",
+    "code_map::vector_embeddings::tests::cosine_scoring_is_exact_and_rejects_a_zero_vector",
+    "code_map::vector_embeddings::tests::bounded_vector_decode_rejects_invalid_dimension_and_blob_before_materialization",
+    "code_map::vector_embeddings::tests::staging_corpus_is_invisible_until_complete_and_completion_can_retire_predecessor",
+    "code_map::vector_embeddings::tests::delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity",
+    "code_map::vector_embeddings::tests::store_refuses_source_or_provider_generation_drift_before_vector_write",
+    "code_map::vector_embeddings::tests::staging_vectors_remain_unpublished_and_nonqueryable",
+    "code_map::vector_embeddings::tests::query_rejects_complete_corpus_after_root_generation_advances",
+    "code_map::vector_embeddings::tests::changed_actual_config_keeps_store_and_finalize_staging",
+    "code_map::vector_embeddings::tests::stale_empty_staging_corpus_cannot_complete_or_be_admitted",
+    "code_map::vector_embeddings::tests::reindex_current_publishes_exhaustive_corpus_with_deterministic_local_provider",
+    "cli::code::tests::semantic_prepared_context_embeds_prompt_once_renders_current_chunk_and_writes_no_vectors",
+    "cli::code::tests::semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome",
+    "cli::code::tests::stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call",
+    "coding::code_map_receipt::tests::prepared_receipt_records_content_free_semantic_fallback"
+  ],
+  "registrations": {
+    "newPortable": 15,
+    "portable": 2523,
+    "focused": 300,
+    "guards": 20
+  },
+  "resolvedDefects": [
+    "Stale zero-vector staging cannot publish when its active root generation advanced",
+    "Configuration authority spans durable vector store and complete transaction",
+    "Read-only query regression observes WAL-aware data_version and durable coding receipt roundtrip"
+  ],
+  "precedingValidation": {
+    "producer": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+    "preflightRun": 36892840128,
+    "preflight": "success",
+    "qualityRun": 36892839549,
+    "quality": "success",
+    "focused285Run": 36893505482,
+    "focused285": "in_progress_at_integration",
+    "securityRun": 36893509824,
+    "security": "failure",
+    "securityFailure": "Rust runner received shutdown signal; eight other checks passed; no OOM or source-defect attribution"
+  },
+  "localExecutableValidationRan": false,
+  "hostedProductAcceptance": false,
+  "nativeReleaseAccepted": false,
+  "noSlintChanges": true,
+  "priorPlanBytesPreserved": true
+}

@@ -1117,6 +1117,26 @@ Create the first complete snapshot for PATH or refresh it when the current gener
 - `--force` — Rebuild even when the current snapshot is fresh
 - `--repair-corrupt` — Explicitly preserve a corrupt database and create a replacement. Normal status and refresh calls never alter a corrupt store
 
+### `neoth code-map reindex-embeddings`
+
+Explicitly build a local code-vector corpus for the current complete AST chunk
+generation. Run `neoth code-map refresh <PATH>` first: this command requires a
+published complete snapshot with matching index and chunk generations, then
+uses the configured local-only embedding provider. It does not infer a hosted
+provider or create a map snapshot.
+
+- `<PATH>` — Root directory whose current published snapshot is embedded. Defaults to the current working directory
+- `--full` — Re-embed every current chunk. Without it, delta mode reuses only byte-identical current chunks from the last complete corpus made with the same local provider
+
+The command is an explicit rebuild. It reports the bound root and identity,
+index and chunk generations, `delta` or `full` mode, number of embedded chunks,
+and whether the new corpus is complete. Incomplete staging corpora are not
+queryable. A coding request only reads an eligible complete corpus and records a
+typed semantic-query outcome; no eligible corpus, provider unavailability or
+drift, query failure, and invalid responses preserve the existing bounded
+metadata-recall behavior without writing vectors or attempting a fallback
+provider.
+
 ### `neoth code-map relevant`
 
 Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted code map for files that look relevant. Ranks by identifier-symbol matches first, path-keyword overlap second. Use this to inspect what chat would inject as a `<repo-context>` block without firing a provider call

@@ -12,9 +12,11 @@
 //! decomposer; and the in-process codegraph MCP server reads the same persisted
 //! data.
 //!
-//! Current symbol and call-edge extraction is deliberately heuristic, not a
-//! tree-sitter AST or a fully resolved cross-language graph. Callers must treat
-//! missing edges as unknown, never as proof that no relationship exists.
+//! Current symbol and call-edge extraction remains deliberately heuristic, not
+//! a fully resolved cross-language graph. Rust source chunks are separately
+//! AST-node-bound; an explicit local vector corpus may refine chunk ordering
+//! only inside the existing ranked files. Callers must treat missing edges as
+//! unknown, never as proof that no relationship exists.
 
 pub(crate) mod chunk;
 pub mod co_change;
@@ -45,6 +47,7 @@ pub mod snapshot;
 pub mod symbols;
 pub mod test_coverage;
 pub mod type_hierarchy;
+pub(crate) mod vector_embeddings;
 pub mod walker;
 
 // Re-exports kept under `allow(unused_imports)` because the CLI

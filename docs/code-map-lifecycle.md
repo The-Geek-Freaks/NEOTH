@@ -72,6 +72,36 @@ Ctrl-C requests cooperative cancellation and waits for the blocking refresh to
 finish before the command returns. A cancelled or failed refresh does not claim
 that a new generation was published.
 
+## Build a local code-vector corpus
+
+`reindex-embeddings` is an explicit operator action. It builds local embeddings
+for the current complete AST chunk generation; normal coding recall never
+creates or backfills a corpus.
+
+```text
+neoth code-map reindex-embeddings C:\work\my-repository
+neoth code-map reindex-embeddings C:\work\my-repository --full
+```
+
+Run `neoth code-map refresh` first. The command requires an already-published,
+complete snapshot whose index and AST chunk generations match. It then resolves
+the configured local-only embedding provider. If the snapshot is absent,
+partial, stale for its chunk generation, or the local provider is unavailable
+or not ready, the command stops without publishing a usable corpus.
+
+Without `--full`, delta mode reuses only byte-identical current chunks from the
+last complete corpus made by the same local provider; changed chunks are
+embedded again. `--full` re-embeds every current chunk. A staging corpus remains
+invisible to queries until every expected current chunk is stored and the
+generation is published complete.
+
+Coding may use a complete matching corpus only as a read-only semantic
+supplement to its existing bounded code-map recall. It never rebuilds or writes
+the corpus during a coding request, and it does not try another provider when
+the local semantic query is unavailable, drifts, fails, or returns an invalid
+response. The coding receipt records the typed semantic-query outcome while the
+normal metadata recall path remains available.
+
 ## Edge confidence
 
 Each graph edge retains an evidence tier and its corresponding ordinal:

@@ -20,5 +20,35 @@
   "localRuntimeRan": false,
   "workflowSHA256": "47B0D50BB762FF0B468397D7ABED666F1E14D0A6D784E9C6DDC4E3C9CD5B246F",
   "reviewer": "/root/w2032_lock_workflow_review",
-  "precedenceTraceSHA256": "1DC79763F83E2E1617B9302AC6FA8A303A7B409EA5F463880D214DD5D7B9FF0F"
+  "precedenceTraceSHA256": "1DC79763F83E2E1617B9302AC6FA8A303A7B409EA5F463880D214DD5D7B9FF0F",
+  "hostedCheckpointOutcome": {
+    "run": 36893509824,
+    "producer": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+    "rustJob": 110474702418,
+    "conclusion": "failure",
+    "terminal": "The runner has received a shutdown signal",
+    "checkpoint": {
+      "run": 36893509824,
+      "attempt": 1,
+      "artifactId": 11177981042,
+      "producer": "f7ca9075f2007279f33dfb8456badfadabad5f85",
+      "archiveSHA256": "26090C57994CBE2A57B66734826542296A0D49F7D618E1E9A1F26FD2CB1CE11B",
+      "entries": 3,
+      "members": [
+        {
+          "path": "source-head.txt",
+          "sha256": "0942BBC3F64793B5708E79CE1797EBE8656A4B15F92AFA71E270C2295FF8E75B"
+        },
+        {
+          "path": "checkpoint.txt",
+          "sha256": "5343CEC8F14D7B7CB40FA4E05CAC71914D7A1DCF9A5E228CBDF6B0728170A814"
+        }
+      ],
+      "status": "PREANALYSIS_CHECKPOINT_VERIFIED_NOT_SECURITY_ACCEPTANCE"
+    },
+    "checkpointVerified": true,
+    "securityAccepted": false,
+    "oomEstablished": false,
+    "diagnosis": "Separate bounded infrastructure diagnosis continues; no coverage reduction"
+  }
 }

@@ -1,5 +1,23 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2049 explicit local code-vector recall (2026-10-01):**
+A statically reviewed explicit reindex-embeddings command now produces bounded
+local code-chunk corpora. Delta reuse requires matching current source identity;
+full mode re-embeds current chunks. Only complete matching corpora refine coding
+recall, which embeds the prompt once and keeps existing context on typed failure.
+Active root generations and sealed configuration authority protect durable
+publication, including empty stale staging. The actual consumer regression checks
+WAL-aware no-write evidence and a persisted/reloaded coding receipt. Fifteen
+new tests are registered: 2523 portable and 300 focused; execution is pending.
+The shared Chat/Channel/generated-MCP generation/citation chain was traced as
+already implemented with distinct prepared-request/reply/tool-result semantics;
+R3-13 GUI/Buddy and clean-install/package acceptance remain open.
+Baseline f7ca9075 fast checks passed. Its focused285 run36893505482 is pending.
+Security36893509824 retained verified pre-analysis evidence but its Rust runner
+received a shutdown signal; eight other checks passed. This does not establish
+OOM or a source defect. Fresh native/Security/release acceptance remains open.
+Local BSOD hold, no-.slint rule and every prior PLAN byte remain preserved.
+
 **W2044-2046 shared file caps, AST compile repair and CodeQL checkpoint (2026-10-01):**
 Automatic Chat/Channel code context now uses the existing validated requested
 recall cap while retaining its separate opt-in switch. Invalid policy has a

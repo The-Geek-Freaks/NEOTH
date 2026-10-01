@@ -151,6 +151,19 @@ pub enum CodeMapAction {
         repair_corrupt: bool,
     },
 
+    /// Explicitly build local embeddings for the current complete AST chunk
+    /// generation. Normal coding recall never creates or backfills this corpus.
+    ReindexEmbeddings {
+        /// Root directory whose already-published code map is embedded.
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Re-embed every chunk; default delta mode reuses byte-identical
+        /// chunks from the last complete corpus with the same local provider.
+        #[arg(long)]
+        full: bool,
+    },
+
     /// Phase 3a — read a previously persisted snapshot back from
     /// `~/.neoth/code_map.db`. PATH is the canonical scan root that
     /// `Persist` recorded. Useful for inspection without re-scanning.
@@ -359,6 +372,9 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             force,
             repair_corrupt,
         } => run_lifecycle_refresh(path, force, repair_corrupt, args.output).await,
+        CodeMapAction::ReindexEmbeddings { path, full } => {
+            run_reindex_embeddings(path, full, args.output).await
+        }
         CodeMapAction::Load { path, full } => run_load(path, full, args.output),
         CodeMapAction::Search { name } => run_search(name, args.output),
         CodeMapAction::Relevant {
@@ -589,6 +605,55 @@ async fn run_lifecycle_refresh(
 ) -> Result<()> {
     run_lifecycle_refresh_with_signal(path, force, repair_corrupt, output, tokio::signal::ctrl_c())
         .await
+}
+
+async fn run_reindex_embeddings(
+    path: Option<PathBuf>,
+    full: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let requested_root = lifecycle_root(path)?;
+    let root = crate::code_map::CanonicalRepoRoot::discover(&requested_root)
+        .context("canonicalize code-map root for explicit embedding reindex")?;
+    let db_path = crate::code_map::persist::default_path();
+    let snapshot = {
+        let conn = crate::code_map::persist::open(&db_path)
+            .with_context(|| format!("open code-map database at {}", db_path.display()))?;
+        crate::code_map::vector_embeddings::ensure_schema(&conn)?;
+        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(&conn, root.path())?
+            .context("no active code-map snapshot; run `neoth code-map refresh` first")?;
+        anyhow::ensure!(
+            crate::code_map::persist::root_snapshot_complete(&conn, snapshot.root.display())?,
+            "active code-map root was published from a partial scan; rebuild it without custom limits"
+        );
+        anyhow::ensure!(
+            snapshot.index_generation > 0 && snapshot.index_generation == snapshot.chunk_generation,
+            "active code-map AST chunks are incomplete; run `neoth code-map refresh` first"
+        );
+        snapshot
+    };
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let config_path = crate::config::FreedomConfig::default_path();
+    let provider = crate::providers::local_embedding_provider_from_config_at_path(
+        &config, &home, &config_path,
+    ).await.context("initialize sealed local embedding provider")?
+        .context("local embedding provider is unavailable or not ready")?;
+    let stored = crate::code_map::vector_embeddings::reindex_current(
+        &db_path, &snapshot, &provider, full,
+    ).await?;
+    let complete = crate::code_map::vector_embeddings::complete_corpus_for_snapshot(
+        &crate::code_map::persist::open(&db_path)?, &snapshot, &provider,
+    )?.is_some();
+    render_lifecycle_value("code-map embedding reindex", &json!({
+        "root": snapshot.root.display(),
+        "root_identity": snapshot.root.identity().as_str(),
+        "index_generation": snapshot.index_generation,
+        "chunk_generation": snapshot.chunk_generation,
+        "mode": if full { "full" } else { "delta" },
+        "embedded_chunks": stored,
+        "complete": complete,
+    }), output)
 }
 
 async fn run_lifecycle_refresh_with_signal<S>(
