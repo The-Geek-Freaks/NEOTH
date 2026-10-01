@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1991_EXACT_RUSSH_PIN_HOSTED_RESOLUTION_PENDING",
+  "status": "W1992_EXACT_HOSTED_SSH_LOCK_AND_REVIEWED_CERTIFICATE_REFUSAL_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 273997,
-    "sha256": "AD7608E18EE792270951F9CA5E75EF87F2EE7DD3D0B0C12C43E4608F7BFCFBA3"
+    "bytes": 274385,
+    "sha256": "4ACE6B63EDB228EF05951305EBC7A386390A356BC4706FCEC89B32051D501D2A"
   },
-  "sourceInputs": 1519,
+  "sourceInputs": 1521,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -63528,6 +63528,56 @@
       }
     ],
     "note": "Metadata run36834313054 correctly rejected unexpected Russh0.63.3 after subsequent Pageant resolution. Prepared manifest now requires=0.63.2, matching the reviewed source candidate; no dependency artifact was accepted from the failed run.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1992ExactRusshUpgrade": {
+    "base": "11d9345b1d60aeda8f97ca2b58e70b7c548073ad",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1992-russh-upgrade.json",
+        "bytes": 2283,
+        "sha256": "7D0128F61966B9E8F2CDA9D8531C87312DE64A71867AA3B0C0091979CFF6391A",
+        "blob": "649c688b7636f338ddf5b01987ff7d16f5581c66"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 599311,
+        "sha256": "A786B826024234FC2097720E9DE0F409DE723B5504D166E717233241F422348D",
+        "blob": "ce1e105ff1c09418f4154ce7020b454e5b1f32cc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1635741,
+        "sha256": "8085250B528C8AFB9447D5031E3697C29D37FE34A1E38B1E90335C3A7EA70EF2",
+        "blob": "b03c78d5ee270e3a9908a4636b1d6f399e94dbe3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2246751,
+        "sha256": "2C6B61280525563B62B918B72EDCB08480C224C9B573A376E073206DE820C8B1",
+        "blob": "99ea69dbf1115ba2fc8313e724cf93c67f728d8a"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 390166,
+        "sha256": "A158A550A8A56735A4D41BBEB2029CBF40B6C8E27A31893270A5A788DEC9FEFF",
+        "blob": "e2050fb78217f1364397af86282604f3040b649e"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46581,
+        "sha256": "963C03B6A0D991B92F72A6769E5C842A9BB7FBF79448D0746B8A797E733079C1",
+        "blob": "5b5e5c4d61ddd6dcb90de9b26db3b55225e1daef"
+      },
+      {
+        "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
+        "bytes": 29668,
+        "sha256": "35ACD3189540178916290A3D2D37B4990BCFA8B70F107FAD6C2CD07BAFD8D211",
+        "blob": "b8de81606d54cb87dbdeca4e0d2ff734f0d5fb55"
+      }
+    ],
+    "note": "Hosted36834754950 exact Russh0.63.2/Pageant0.2.3 lock admitted; callback adaptation rejects certificates before TOFU and regression asserts no mutation. New test requires ssh-tunnel, not unconditional portable selection. No local tests; feature/full/native/security pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

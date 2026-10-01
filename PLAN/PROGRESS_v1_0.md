@@ -1,5 +1,30 @@
 # PROGRESS — v1.0 working backlog
 
+**W1992 exact SSH dependency and callback update (2026-10-01; runtime pending):**
+Hosted metadata run36834754950 on11d9345b resolved exact Russh0.63.2 and
+Pageant0.2.3 and passed --locked ssh-tunnel metadata. Root verified the original
+artifact11148970795,API ZIP digest,size,producer and all five entry digests,
+then imported only the manifest/lock postimages. The earlier run36834313054
+was rejected because a caret requirement admitted0.63.3; no failed-run artifact
+was accepted. The manifest now pins=0.63.2 with ring and optional SSH preserved.
+
+The new Russh callback receives PublicKeyOrCertificate. Plain host keys retain
+the existing TOFU path; certificates are rejected before reading or changing
+TOFU because no CA trust is configured. The signed-certificate regression
+checks both false and an unchanged empty shared store. The existing production
+password refusal remains. Independent review approved the strengthened case,
+API compatibility and exact hosted lock. Resolver changes include the required
+num-bigint replacement and references to already-present dependency versions;
+no unrelated package release was introduced by this candidate.
+
+The added regression is feature-gated and covered by the existing exact SSH
+feature job prefix; it is not counted as an unconditional portable test.
+Portable registration stays2468 and focused selection238. Hosted format,
+SSH feature tests,release-notice consistency,full native CI and exact-head
+Security remain required; metadata is not compilation or runtime acceptance.
+No local executable validation,Slint change,Claude polling or release acceptance.
+Report: docs/verification/gold-wave1992-russh-upgrade.json.
+
 **W1991 SSH dependency reconciliation (2026-10-01; candidate only):**
 The current GitHub dependency metadata reports patched Russh/Pageant releases
 for dependencies used by ssh-tunnel. This does not itself prove an audit-gate

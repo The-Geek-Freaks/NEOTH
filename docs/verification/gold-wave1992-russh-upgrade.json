@@ -1,0 +1,51 @@
+{
+  "schema": "neoth-gold-wave1992-russh-upgrade/v1",
+  "base": "11d9345b1d60aeda8f97ca2b58e70b7c548073ad",
+  "status": "EXACT_HOSTED_LOCK_AND_REVIEWED_SOURCE_IMPORTED_RUNTIME_PENDING",
+  "versions": {
+    "russhBefore": "0.62.5",
+    "russhAfter": "=0.63.2",
+    "pageantBefore": "0.2.1",
+    "pageantAfter": "0.2.3",
+    "backend": "ring",
+    "defaultFeatures": false,
+    "stockReleaseCapabilityAdded": false
+  },
+  "hostedLock": {
+    "run": 36834754950,
+    "producer": "11d9345b1d60aeda8f97ca2b58e70b7c548073ad",
+    "artifact": 11148970795,
+    "archiveSha256": "D975390395E2EFBD0AF1AB9E096D1E89B62934BD0593E1BEFA8D40B92DC9C67B",
+    "lockSha256": "A158A550A8A56735A4D41BBEB2029CBF40B6C8E27A31893270A5A788DEC9FEFF",
+    "manifestSha256": "963C03B6A0D991B92F72A6769E5C842A9BB7FBF79448D0746B8A797E733079C1",
+    "result": "Exact versions and --locked ssh-tunnel metadata passed; no compilation or tests ran",
+    "reviewedGraphChanges": "Russh/Pageant versions; internal-russh-num-bigint replaced by num-bigint0.5.1; resolver retargeted references among existing dependency versions"
+  },
+  "source": {
+    "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
+    "sha256": "35ACD3189540178916290A3D2D37B4990BCFA8B70F107FAD6C2CD07BAFD8D211",
+    "newCallbackType": "russh::keys::PublicKeyOrCertificate",
+    "rawKeyTofuPreserved": true,
+    "certificateRejectedBeforeTofu": true,
+    "productionPasswordGatePreserved": true
+  },
+  "regression": {
+    "test": "transport::ssh_tunnel::tests::host_certificates_are_rejected_without_certificate_trust_configuration",
+    "feature": "ssh-tunnel",
+    "scope": "Signed host certificate rejected and shared in-memory TOFU stays empty",
+    "existingHostedCommand": "cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1",
+    "unconditionalPortableRegistration": false,
+    "hostedPassed": false
+  },
+  "review": {
+    "reviewer": "w1986_actual_review",
+    "result": "APPROVE after added TOFU nonmutation assertion and hosted lock custody review"
+  },
+  "remaining": [
+    "Hosted format and metadata/contract preflight",
+    "Exact feature test and full native CI",
+    "Refreshed release notices and exact-head Security gate"
+  ],
+  "localExecutableValidationRan": false,
+  "releaseAccepted": false
+}

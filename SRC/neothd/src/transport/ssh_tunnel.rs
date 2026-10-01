@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use russh::client;
-use russh::keys::ssh_key;
+use russh::keys::{PublicKeyOrCertificate, ssh_key};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
@@ -114,8 +114,18 @@ impl client::Handler for SshHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let server_public_key = match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            PublicKeyOrCertificate::Certificate(_) => {
+                tracing::error!(
+                    host = %self.host_key,
+                    "SSH host certificate presented — refusing because certificate trust is not configured",
+                );
+                return Ok(false);
+            }
+        };
         let algo = server_public_key.algorithm().to_string();
         // The OpenSSH textual form (algo + base64) is a stable host-key identity.
         let repr = server_public_key
@@ -739,6 +749,45 @@ mod tests {
             is_fatal_ssh_configuration(&fatal),
             "private-key loader failures must suppress reconnect"
         );
+    }
+
+    #[tokio::test]
+    async fn host_certificates_are_rejected_without_certificate_trust_configuration() {
+        use russh::keys::{
+            PrivateKey,
+            ssh_key::{Algorithm, certificate::{Builder, CertType}},
+        };
+
+        let subject = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
+            .expect("create certificate subject key");
+        let signing_ca = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
+            .expect("create certificate signing key");
+        let mut builder = Builder::new_with_random_nonce(
+            &mut rand::rng(),
+            subject.public_key().clone(),
+            0,
+            u64::MAX,
+        )
+        .expect("create host certificate builder");
+        builder.cert_type(CertType::Host).expect("mark host certificate");
+        let certificate = builder.sign(&signing_ca).expect("sign host certificate");
+        let tofu = Arc::new(Mutex::new(
+            TofuStore::in_memory().expect("open test TOFU store"),
+        ));
+        let mut handler = SshHandler::new(
+            Arc::clone(&tofu),
+            "certificate-test:22".to_owned(),
+        );
+
+        assert!(!handler
+            .check_server_key(&PublicKeyOrCertificate::Certificate(certificate))
+            .await
+            .expect("certificate rejection returns a handler result"));
+        assert!(tofu
+            .lock()
+            .await
+            .is_empty()
+            .expect("query test TOFU store"));
     }
 
     #[test]
