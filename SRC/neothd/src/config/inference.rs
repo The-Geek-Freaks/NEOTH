@@ -434,22 +434,14 @@ pub struct InferenceTopology {
     /// operator might want OpenAI for chat but local Qwen for embeddings.
     #[serde(default)]
     pub embedding_provider: Option<InferenceProvider>,
-    /// V10-07 H3 privacy posture: which provider runs the profile-
-    /// extraction LLM call (`profile/runner.rs::run_pipeline` stage 3).
-    /// The extractor sees the operator's full conversation window — the
-    /// most private surface in the daemon. Defaulting this to
-    /// `local_qwen` keeps that text on-device.
+    /// Explicit typed provider for profile extraction. When set, it wins for
+    /// chat, channel, and manual profile extraction. Construction failure skips
+    /// the optional extraction instead of falling back to the main provider.
     ///
-    /// Resolution order at call time:
-    ///   1. `profile_provider` here, if set.
-    ///   2. `embedding_provider` (already local-by-default per the same
-    ///      privacy logic), if set.
-    ///   3. `LocalQwen` as the hard fallback.
-    ///
-    /// Operators on hardware without local inference (no GPU + no
-    /// CPU budget for Qwen3-4B) can explicitly set this to a cloud
-    /// provider; `profile/runner.rs` fires a fire-once WARN in that
-    /// case so the privacy posture stays auditable.
+    /// When absent, each caller retains its historical route: chat uses
+    /// `profile.learn_provider`, the manual profile command uses Left-role
+    /// routing, and channels use their already-selected main provider. This
+    /// field deliberately does not inherit `embedding_provider`.
     #[serde(default)]
     pub profile_provider: Option<InferenceProvider>,
     /// GOLD-ADOPT-21 — fast/cheap "utility" provider for low-stakes internal
@@ -1303,22 +1295,7 @@ impl InferenceTopology {
         self.slot_for(inner_role)
     }
 
-    /// V10-07 H3 privacy resolution. Returns the provider that should
-    /// run profile extraction. Operators see the resolution chain in
-    /// `neoth doctor --explain v10-07`; per-call WARN in
-    /// `profile/runner.rs` surfaces the same answer at runtime.
-    ///
-    /// Order:
-    ///   1. `profile_provider` if explicitly set.
-    ///   2. `embedding_provider` if explicitly set (embeddings are
-    ///      already local-by-default for the same privacy reasoning).
-    ///   3. `InferenceProvider::LocalQwen` as the hard fallback -
-    ///      "Gemini never sees raw conversation" per v1.0 GA blocker.
-    pub fn resolved_profile_provider(&self) -> InferenceProvider {
-        self.profile_provider
-            .or(self.embedding_provider)
-            .unwrap_or(InferenceProvider::LocalQwen)
-    }
+
 }
 
 fn slot_or_default<'a>(
@@ -2100,54 +2077,7 @@ model: claude-opus-4-7
         );
     }
 
-    // ── V10-07 H3 profile_provider resolution ─────────────────────────
 
-    #[test]
-    fn resolved_profile_provider_defaults_to_local_qwen() {
-        let topo = InferenceTopology::default();
-        assert_eq!(
-            topo.resolved_profile_provider(),
-            InferenceProvider::LocalQwen
-        );
-    }
-
-    #[test]
-    fn resolved_profile_provider_honours_explicit_field() {
-        let topo = InferenceTopology {
-            profile_provider: Some(InferenceProvider::Gemini),
-            ..InferenceTopology::default()
-        };
-        // Operator opted in — resolver returns their override; the
-        // runner's WARN still fires because Gemini is cloud.
-        assert_eq!(topo.resolved_profile_provider(), InferenceProvider::Gemini);
-    }
-
-    #[test]
-    fn resolved_profile_provider_falls_through_to_embedding_provider() {
-        let topo = InferenceTopology {
-            profile_provider: None,
-            embedding_provider: Some(InferenceProvider::LocalQwen),
-            ..InferenceTopology::default()
-        };
-        assert_eq!(
-            topo.resolved_profile_provider(),
-            InferenceProvider::LocalQwen
-        );
-    }
-
-    #[test]
-    fn resolved_profile_provider_profile_field_beats_embedding_field() {
-        let topo = InferenceTopology {
-            profile_provider: Some(InferenceProvider::LocalQwen),
-            embedding_provider: Some(InferenceProvider::OpenAi),
-            ..InferenceTopology::default()
-        };
-        // profile_provider wins per the resolution chain.
-        assert_eq!(
-            topo.resolved_profile_provider(),
-            InferenceProvider::LocalQwen
-        );
-    }
 
     #[test]
     fn profile_provider_serialises_as_snake_case_provider_id() {

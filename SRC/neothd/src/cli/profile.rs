@@ -3076,19 +3076,23 @@ async fn run_pipeline_cli_batch(
     // surfaces them).
     let config = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
-    // CH-04: profile extraction is structured-fact extraction from
-    // operator history — Left hemisphere (analytic/deductive). In Single
-    // mode this is identical to `from_config`; in Triplet/Custom modes
-    // the operator's per-role Left provider wins.
+    // An explicit inference.profile_provider wins. Without one this explicit
+    // command retains its historical Left-role route.
     let neoth_home = FreedomConfig::default_neoth_home();
     ensure_no_live_daemon_writer(&neoth_home, "profile run")?;
-    let provider = crate::providers::from_config_for_role_at(
-        &config,
-        crate::config::inference::HemisphereRole::Left,
-        &neoth_home,
-    )
-    .await
-    .context("build provider for profile.extract")?;
+    let provider = match crate::providers::from_config_for_explicit_profile_at(&config, &neoth_home)
+        .await
+        .context("build explicit provider for profile.extract")?
+    {
+        Some(provider) => provider,
+        None => crate::providers::from_config_for_role_at(
+            &config,
+            crate::config::inference::HemisphereRole::Left,
+            &neoth_home,
+        )
+        .await
+        .context("build Left-role provider for profile.extract")?,
+    };
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
     let mut conn = store::open(db_path).context("reopen views.db for pipeline")?;
 

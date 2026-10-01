@@ -1,5 +1,63 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2017 CI repair, typed prompt boundaries and provider/process routing (2026-10-01):**
+The focused baseline executed 240 cases; 239 actual success logs and the sole
+source-drift WAL assertion failure were matched to sealed receipts. W2010
+checks both the extended event type and leaf-result subtype. W2014 applies
+Clippy's equivalent test-only let-chain. W2011 replaces incompatible random
+SSH fixture keys with distinct fixed Ed25519 keys, preserving signed host
+certificate rejection and empty TOFU state without a dependency/lock change.
+Rust CodeQL next requests 6144 MiB and 2 threads as a controlled runner-resource
+hypothesis; its complete Rust/security-extended surface remains required.
+
+R3-14 remains OPEN. Two concrete source gaps are now addressed: profile
+extraction carries one canonical ProfileClaim envelope with whole-segment
+character/byte bounds and exact root/payload lineage; CLI session guidance
+stays typed Memory through primary and delegated-agent Block D composition.
+The trusted extraction instruction stays outside the data envelope. Quoted
+content, incognito, empty-state and redaction guards remain intact. Budget
+pressure removes guidance as a whole item and preserves the operator request.
+Current source tracing found attachments, $ARGUMENTS, repo/recall and coding
+retry/compaction already typed; no redundant changes were made to those paths.
+
+W2021 also corrects a reachable R4-14 routing defect: an explicit Cron role
+selects its complete effective slot rather than the first slot with the same
+provider enum. A declared provider mismatch fails before consent and adapter
+construction. Actual resolver regressions grant only the Right endpoint and
+check the selected adapter and final wire model; model-only and role-only
+intent preserve that same binding. Legacy jobs without a role and fallback
+ordering remain unchanged. R4-14 remains OPEN; no provider-registry or catalog
+capacity expansion is claimed.
+
+W2026 addresses the actual Windows verifier descendant leak by reusing the
+existing process containment primitive. An absolute deadline begins before
+the worker; timeout and normal leader exit terminate the descendant tree,
+reap the leader and drain captured output. Headless stdin is explicit EOF.
+A ready marker proves the delayed-child cleanup regression actually starts.
+
+W2024 wires explicit inference.profile_provider into chat, manual profile
+extraction and passive channel extraction. An explicit error never silently
+falls back to the main provider. Absent selection preserves each caller's
+legacy behavior, including the channel effective model. Cross-vendor fields
+are cleared. Deterministic real-factory success and failure tests protect the
+selection contract; obsolete unwired resolver claims were removed.
+
+The focused catalog retains all 240 cases and adds 13 new or replacement
+regressions plus 13 existing protective cases: 266 focused cases and 2491
+portable registrations. Fifteen more source bindings cover these paths.
+Fresh hosted format, focused product, Security and native acceptance on this
+producer remain pending; prior-producer passes do not supply that acceptance.
+No local runtime or .slint change occurred. Native signing and historical
+upgrade proof remain separate release requirements. Original roadmap backlog
+is preserved below.
+Read-only frontier recovery keeps ADOPT31-B6 open: there is no reachable
+staged-document GUI consumer under the current .slint hold. ADOPT31-E2 also
+remains open: CRG-01 already feeds the decomposer, but code-map AST chunk
+persistence and a repository code-vector producer/query lifecycle are absent.
+The next implementation must reach actual bounded recall consumers; a parser
+or an unused bridge alone does not close either item.
+Report: docs/verification/gold-wave2017-ci-and-prompt-boundaries.json.
+
 **W2008 focused runtime follow-through and accepted Obsidian repair (2026-10-01):**
 Run36848832578 compiled and executed all239 focused cases on01f6c397;
 Root matched237 passed receipts to their actual successful test logs. The two

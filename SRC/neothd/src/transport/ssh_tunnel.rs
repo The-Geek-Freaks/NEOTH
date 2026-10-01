@@ -753,20 +753,28 @@ mod tests {
 
     #[tokio::test]
     async fn host_certificates_are_rejected_without_certificate_trust_configuration() {
+        use russh::client::Handler as _;
         use russh::keys::{
             PrivateKey,
             ssh_key::{
-                Algorithm,
                 certificate::{Builder, CertType},
+                private::{Ed25519Keypair, Ed25519PrivateKey},
             },
         };
 
-        let subject = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
-            .expect("create certificate subject key");
-        let signing_ca = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
-            .expect("create certificate signing key");
-        let mut builder = Builder::new_with_random_nonce(
-            &mut rand::rng(),
+        let subject = PrivateKey::from(Ed25519Keypair::from(Ed25519PrivateKey::from_bytes(
+            &[1; 32],
+        )));
+        let signing_ca = PrivateKey::from(Ed25519Keypair::from(Ed25519PrivateKey::from_bytes(
+            &[2; 32],
+        )));
+        assert_ne!(
+            subject.public_key(),
+            signing_ca.public_key(),
+            "certificate fixture subject and signing CA must remain distinct"
+        );
+        let mut builder = Builder::new(
+            [3; Builder::RECOMMENDED_NONCE_SIZE],
             subject.public_key().clone(),
             0,
             u64::MAX,

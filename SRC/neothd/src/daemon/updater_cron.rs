@@ -2374,17 +2374,16 @@ async fn run_authorized_skill_git_probe(
                 2 * 1024 * 1024,
                 move || async move {
                     #[cfg(test)]
-                    if let Some(fixture) = fixture {
-                        if let Some(result) = run_skill_git_probe_fixture(
+                    if let Some(fixture) = fixture
+                        && let Some(result) = run_skill_git_probe_fixture(
                             &home,
                             fixture.runner,
                             &effect_control,
                             effect_clock.deadline(UpdaterDeadlinePhase::Effect),
                         )
                         .await
-                        {
-                            return result;
-                        }
+                    {
+                        return result;
                     }
                     let current_source =
                         crate::updater::probes::revalidate_authorized_skill_source_for_cron(
@@ -5055,8 +5054,10 @@ mod tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|(event, subtype, _)| *event
-                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8)
+                .filter(
+                    |(event, subtype, _)| *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+                )
                 .count(),
             1
         );

@@ -1,0 +1,367 @@
+{
+  "schema": "neoth-gold-wave2017-ci-and-prompt-boundaries/v1",
+  "base": "9ce94547ed694298433bdd634e6dbef22d57cda3",
+  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T14:11:14.7196518Z",
+  "baseline": {
+    "focused": {
+      "run": 36852651110,
+      "producer": "9ce94547ed694298433bdd634e6dbef22d57cda3",
+      "conclusion": "failure",
+      "executed": 240,
+      "passed": 239,
+      "failed": [
+        "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch"
+      ],
+      "productsExecuted": false,
+      "proof": "work/gold-20260906/wave2009-validation/focused-partial-admission/PARTIAL_ADMISSION.md",
+      "proofSha256": "64F03806D16BF64290013304EE54AF1BC6BAAE85F6F03F0A005266A995207FB5"
+    },
+    "native": {
+      "run": 36852836332,
+      "statusAtCapture": "completed",
+      "knownFailedJobs": [
+        110338321726,
+        110338321860,
+        110338321880,
+        110338322091,
+        110401564200
+      ],
+      "linuxDiagnostics": [
+        "unused subtype covered by W2010",
+        "test-only collapsible_if covered by W2014"
+      ],
+      "sshDiagnostics": [
+        "test fixture rand 0.9 and ssh-key rand_core 0.10 mismatch",
+        "missing test-local Handler trait import"
+      ],
+      "windows": "Compile succeeded; nextest 18883 run, 18882 passed including 1 leaky, 1 known W2010 assertion failure, 28 skipped",
+      "macos": "Compile and GUI discovery succeeded; nextest 19001 run,19000 passed,1 known W2010 assertion failed,29 skipped",
+      "windowsProof": {
+        "path": "work/gold-20260906/wave2023-windows-native-triage/SUMMARY.md",
+        "sha256": "A1597479134DBA62AA0B3B3A327BA96BF8087CA37AD449BEC2A169B508B3F3C4",
+        "logSha256": "2D8CF5C55E620D06E1D682D103808FD4B4EAF6E82777A0263279D01A40C26575",
+        "onlyFailedTest": "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch",
+        "leakyTest": "cli::eval::tests::verify_command_timeout_kills_long_child",
+        "newWindowsSpecificFailure": false,
+        "archiveProof": {
+          "artifact": 11162233805,
+          "path": "work/gold-20260906/wave2023-windows-native-triage/archive-verification.json",
+          "sha256": "3DF2DB2472175F4BC596262330A0CB3944C4BC0FB45EC4BD6A5D5AEA2F64BA41",
+          "zipSha256": "CD9F626DF3A53A43B0D28EE64FDC170922751211DA887CA52AC841F09A6E9AA8",
+          "xmlParsedLocally": false
+        }
+      },
+      "conclusion": "failure",
+      "macosProof": {
+        "path": "work/gold-20260906/wave2027-macos-native-triage/MACOS_TERMINAL_TRIAGE.md",
+        "sha256": "92025AAF9584CE08CC61F9131184B9492D8F6E2F3F2FF21E95EDCCB3B5C33929",
+        "rawLogSha256": "8F2F6A064087D724D211DE0BBE491D9DD69064CBE1DB02771DCF9FA9AA4E7E71",
+        "onlyFailedTest": "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch",
+        "newPlatformSpecificFailure": false
+      },
+      "successfulJobs": 15
+    },
+    "security": {
+      "run": 36852655815,
+      "conclusion": "failure",
+      "passedJobs": 8,
+      "failedJobs": 1,
+      "skippedJobs": 1,
+      "rustJob": 110337730048,
+      "failedStep": "Analyze Rust",
+      "terminalLogAvailable": false,
+      "cause": "GitHub reports hosted runner lost communication; underlying cause remains unknown, no OOM diagnosis",
+      "priorRunnerShutdowns": 2,
+      "terminalAnnotationProof": {
+        "path": "work/gold-20260906/wave2029-codeql-terminal-evidence/check-run-annotations.json",
+        "sha256": "6271D8674623F0955096B936967CBE997B4319972244F63399F856CB34F163EF",
+        "message": "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.",
+        "jobBindingVerified": true,
+        "readmeSha256": "C3516FBD41133DB19B99516D7AC669C1B461DBB4224757995D347BAAD0813D25"
+      }
+    }
+  },
+  "repairs": [
+    {
+      "wave": 2010,
+      "change": "Require extended event type AND UpdaterLeafResult subtype in the exactly-one WAL result assertion; production unchanged"
+    },
+    {
+      "wave": 2011,
+      "change": "Use distinct fixed Ed25519 fixture keys and fixed recommended nonce; import Handler in test scope; signed certificate rejection and empty TOFU assertions retained",
+      "dependencyOrLockChange": false
+    },
+    {
+      "wave": 2014,
+      "change": "Equivalent cfg(test) let-chain preserves fixture await and early return; no runtime policy change"
+    },
+    {
+      "wave": 2012,
+      "change": "Request Rust CodeQL init ram 6144 and threads 2",
+      "hypothesisOnly": true,
+      "oomDiagnosed": false,
+      "language": "rust",
+      "buildMode": "none",
+      "queries": "security-extended",
+      "sourceCoverageReduced": false
+    }
+  ],
+  "promptBoundaries": [
+    {
+      "wave": 2015,
+      "path": "SRC/neothd/src/profile/extract.rs",
+      "class": "ProfileClaim",
+      "sourceId": "profile:attributed-window",
+      "change": "Keep static extraction instruction outside canonical conversation data; retain newest whole segments within character and byte budgets with exact root/payload lineage",
+      "quotedContentNoProviderGatePreserved": true,
+      "serializedEnvelopeSliced": false
+    },
+    {
+      "wave": 2016,
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "class": "Memory",
+      "sourceId": "memory:cli-session-guidance",
+      "change": "Keep guidance typed until shared primary and agent Block D insertion; whole-item budget removal preserves Block E",
+      "incognitoEmptyRedactionPreserved": true,
+      "serializedEnvelopeSliced": false
+    }
+  ],
+  "coverage": {
+    "priorFocused": 240,
+    "focused": 266,
+    "newlyAuthoredTests": 13,
+    "addedExistingProtectiveCases": 13,
+    "priorPortable": 2469,
+    "portable": 2491,
+    "addedCases": [
+      "profile::extract::tests::extract_emits_one_canonical_profile_claim_envelope_for_hostile_quoted_data",
+      "profile::extract::tests::extract_multibyte_window_keeps_newest_whole_segment_with_typed_lineage",
+      "profile::extract::tests::extract_short_circuits_when_eligible_segment_is_quoted",
+      "profile::extract::tests::oversized_transcript_prompt_stays_under_budget",
+      "profile::extract::tests::extract_skips_llm_when_no_eligible_segments",
+      "cli::chat::tests::session_guidance_hostile_card_is_canonical_memory_for_primary_and_agent",
+      "cli::chat::tests::maybe_guidance_block_at_counts_pending_contradictions",
+      "cli::chat::tests::maybe_guidance_block_at_empty_home_is_none",
+      "cron::runner::workstream_c_tests::role_scoped_primary_keeps_the_declared_compatible_slot_atomic",
+      "cron::runner::workstream_c_tests::explicit_role_scoped_provider_uses_only_the_declared_role_consent_and_leaf",
+      "cron::runner::workstream_c_tests::role_scoped_primary_provider_mismatch_stops_before_consent_or_adapter_build",
+      "cron::runner::workstream_c_tests::model_only_and_role_only_cron_intent_select_the_declared_role_slot",
+      "cron::runner::workstream_c_tests::per_job_provider_never_borrows_another_vendors_credentials",
+      "cron::runner::workstream_c_tests::per_job_provider_reuses_only_its_explicit_matching_slot",
+      "cron::runner::workstream_c_tests::per_job_cloud_provider_requires_consent_before_adapter_build",
+      "cron::runner::workstream_c_tests::w289_cron_override_requires_explicit_origin_when_policy_active",
+      "cron::runner::workstream_c_tests::w289_cron_model_only_override_requires_explicit_origin_when_policy_active",
+      "cron::runner::workstream_c_tests::w289_cron_override_role_binding_admits_exact_leaf_once",
+      "cron::runner::workstream_c_tests::w289_cron_override_role_binding_denies_disallowed_model_before_effect",
+      "cli::eval::tests::verify_command_containment_preserves_normal_output_and_exit_status",
+      "cli::eval::tests::verify_command_timeout_kills_long_child",
+      "providers::tests::explicit_profile_provider_wins_and_strips_cross_vendor_main_binding",
+      "providers::tests::absent_typed_profile_provider_leaves_legacy_dispatch_in_control",
+      "providers::tests::explicit_profile_provider_factory_selects_claude_cli",
+      "providers::tests::explicit_profile_provider_failure_never_falls_back_to_main_provider",
+      "models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route"
+    ],
+    "addedSourceBindings": [
+      "SRC/neothd/src/profile/extract.rs",
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/pipeline/untrusted_context.rs",
+      "SRC/neothd/src/tokens/budget.rs",
+      "SRC/neothd/src/pipeline/enriched_request.rs",
+      "SRC/neothd/src/memory/hindsight.rs",
+      "SRC/neothd/src/config/inference.rs",
+      "SRC/neothd/src/config/role_policy.rs",
+      "SRC/neothd/src/providers/mod.rs",
+      "SRC/neothd/src/providers/cost_authorization.rs",
+      "SRC/neothd/src/cron/schema.rs",
+      "SRC/neothd/src/cli/eval.rs",
+      "SRC/neothd/src/cli/profile.rs",
+      "SRC/neothd/src/cli/serve_pipeline.rs",
+      "SRC/neothd/src/models/discovery.rs"
+    ],
+    "priorCasesPreserved": true
+  },
+  "reviewedFiles": [
+    {
+      "path": "SRC/neothd/src/daemon/updater_cron.rs",
+      "baseBlob": "dfee76f99069f26288da5784d2fcb5414e899864",
+      "baseSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
+      "candidateBlob": "5076c3498609cbbc04fcbf3b0dcedcd781ffc59c",
+      "candidateSha256": "ED41B4323C0B404EC1CCE1BA8E3FABE425EDF74FF6F007D28E6CC2D24875332D"
+    },
+    {
+      "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
+      "baseBlob": "83d2dc0f12ce915abcc3a4c305582c34f5ff09d9",
+      "baseSha256": "DC24A7CCABACBF45D0D0987343107F14CF68E7C98BB22F666307358B7BB9684B",
+      "candidateBlob": "6a82bad23448e51151867752f7d5b4e5fb91528e",
+      "candidateSha256": "36A9D92098B44E9967F3D6B24BE1971282B6DED7222654B8350507353FF014ED"
+    },
+    {
+      "path": ".github/workflows/security.yml",
+      "baseBlob": "28d0053ef185d8ba463ac03353ba4bb1111ab99c",
+      "baseSha256": "A0088AE20830EF0A31FCFCD3626AE76957C6FFD44B60180A1D8424E9346AABA7",
+      "candidateBlob": "8c924a1037371df9692bc574046a8f9da260eb49",
+      "candidateSha256": "3A4BAE23DF173A0CF1F3C5612531FC2926E1AA70A1313DE96994E8738004D3DB"
+    },
+    {
+      "path": "SRC/neothd/src/profile/extract.rs",
+      "baseBlob": "293561d2ca42788442ff13272727bfeaeadb1b4d",
+      "baseSha256": "CBA86E7930AE86B85E29EC0EC027095901083A68F2CE27111AFC5F49D380ABBF",
+      "candidateBlob": "a43e4b1eca295b0bb3fdec76f89ccaed21265dea",
+      "candidateSha256": "1E48A48A1545E85317413A8AB03FBE5CC68BD2898C01CDB5BE533BF13DC296B7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "baseBlob": "df5839e49fd65fff749fa6ccc0ae45b8bfee78ea",
+      "baseSha256": "025A2222C14853553F7749488CFC69F7905DF4F924C6A4F84017367DC6033055",
+      "candidateBlob": "0e4f50b376201147832cd3dea874db6034ffe330",
+      "candidateSha256": "2AD78A6EEA5D04A69156EAF7A68225C0AED16798A9C11ECD52CAFF6C35FC1781"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "baseBlob": "dcdd1c28248dbd2415958dd9564ec5907a8b3c04",
+      "baseSha256": "B0211925D93B201F95C4E2F431FD4A4CE15F9A1F7899535D06A1349B2A0C944C",
+      "candidateBlob": "67c837bb1935260c5f89f0c406b46de05aefeeb1",
+      "candidateSha256": "942932AF07845E592E42493859FAA6B06008C6D211BF90F8FEBFCB58D852D9CB"
+    },
+    {
+      "path": "SRC/neothd/src/cron/runner.rs",
+      "baseBlob": "5c654fadf6273741847d1ff76ce44f7b8f7135a8",
+      "baseSha256": "346366616551B7DDB49A3413BBD6E5AB5F1ABD2509B994CB0F42DB7C731B2FEE",
+      "candidateBlob": "395f6d9906d8d998bfd7820cdb4d945b4d90b525",
+      "candidateSha256": "187971012DFA79CD7811B0402ECE7A93E832EBF1B79AB84FAEFBE6D66FCA7139"
+    },
+    {
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "baseBlob": "77c3a603e1202efe4cb5e60b50e97c8bbf9bd71d",
+      "baseSha256": "323A1FACE38C868758074E5CB2210674DACD00AF228FCE4CCF6BBFE51033FA1A",
+      "candidateBlob": "5730b040e99ccc371f61c1156d51023e361a80f1",
+      "candidateSha256": "F78D6F01BA60CC47458D2BFB809B9D2DC43F7DB4702DC9FFD69F2337CF695B29"
+    },
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "baseBlob": "d431e1a679963853c0a204752619d1323ebb5924",
+      "baseSha256": "A6834A5D095E33E6515BA38AD13493C1C4A8F1038E7E917B65EA238DC42B6FB1",
+      "candidateBlob": "defbf6ebcca0a8146d5e07913225fd47bd17be44",
+      "candidateSha256": "C10F6FC9454FD74EA6E357807A1D28469EEBACEA78746FF8D4730C90B03D227E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile.rs",
+      "baseBlob": "fdf245645fe5e1389e0925078ce9ad536065083f",
+      "baseSha256": "67D8C75C1C72515EF5CB31007AFB3011AEA75D1EB63F5CAC7DBC7515CEB76154",
+      "candidateBlob": "564630e96608803a42d01a7152362181752ad806",
+      "candidateSha256": "B7D2FC46758B0317D546B143AF70F2F783FE48FA441BFB7B5AE7E25DA1CBF84C"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "baseBlob": "60d5cd315472eb9b6d04538d535494ecaccd88b1",
+      "baseSha256": "9B8A3C751A07DF2B1DDF934E22B1A3F4C1948C58DBA3EBB3D440772DE97A7E5B",
+      "candidateBlob": "837b93fbdd333b15531e7b4219af17bfc12b7ce8",
+      "candidateSha256": "9D4DEBD581EACE32F5DFE473405FF95DA6921F5CE27BF465429441C95B3AA2C5"
+    },
+    {
+      "path": "SRC/neothd/src/models/discovery.rs",
+      "baseBlob": "3323cb66adced5b6ae3c5c1f7e384d41de29dcc4",
+      "baseSha256": "A3B0E7A8CB7D2BFC92626892ECB00B1FE74C3D1A9F6BDA13FAAE46FC983BB78E",
+      "candidateBlob": "c7b81c38ac851355a25ae9326da0041a9cfe986d",
+      "candidateSha256": "1FCD1A474C936505DD5E153872E1E06E4D40369D0BCC43F9BC3293256658927F"
+    },
+    {
+      "path": "SRC/neothd/src/config/inference.rs",
+      "baseBlob": "534f6c2dac679df0ab299b8a9e67085323bfe23a",
+      "baseSha256": "AAF151D743104955B10D51B2563B2380AD0D64EE5610557BFD9B272E7D94C3DD",
+      "candidateBlob": "a30654814df9a6451721fcd09a81241d9932162c",
+      "candidateSha256": "B0EC9E25C5D2A2D67519E0227FD254E32A4EC7A0F190D084F692A08DEE9E8CE7"
+    }
+  ],
+  "reviewedPatches": [
+    {
+      "path": "work/gold-20260906/wave2010-skill-wal-fixture-repair/repair.patch",
+      "sha256": "1F885A852D6CF2E7675F89459CD3B4C441EC2DB0ED3FCF89512B82F71CD92943"
+    },
+    {
+      "path": "work/gold-20260906/wave2014-linux-clippy-repair/candidate/updater_cron_collapsible_if.patch",
+      "sha256": "2AED3B3DFA0566974DD7C999C4A43069C29F94BB816EF1B7350342F25E6EAA7B"
+    },
+    {
+      "path": "work/gold-20260906/wave2011-ssh-contract-repair/repair.patch",
+      "sha256": "FA6301B3CB28A79A50C2B78B2861C0EA0FA84DE2EF04C35B0B271C2093D989F0"
+    },
+    {
+      "path": "work/gold-20260906/wave2012-codeql-resource-repair/candidate.patch",
+      "sha256": "0061F9E710B08021C7186C0F2DCB5CA6FE8CF5FC503E73C5509F2979334A33DB"
+    },
+    {
+      "path": "work/gold-20260906/wave2015-profile-context-leaf/profile-context-leaf.patch",
+      "sha256": "2507ACCA48D6B720C94E6220CBC2BF9AA09AC3C0919B9929215D18E306FE4D48"
+    },
+    {
+      "path": "work/gold-20260906/wave2016-session-guidance-leaf/session-guidance-memory-envelope.patch",
+      "sha256": "DC9CF09CFC6E388F92216670A21B7B18035745B4D69EADEF99C47FE3869B39EA"
+    },
+    {
+      "path": "work/gold-20260906/wave2021-cron-role-binding/cron-role-binding.patch",
+      "sha256": "00F3D83EB04375AE41D51A27697309B5A156DB7E7322269EB1B07FF5A106B176"
+    },
+    {
+      "path": "work/gold-20260906/wave2026-eval-process-containment/repair.patch",
+      "sha256": "F8BEE87F5B9286AEC1CA1E86F7005E2F462FA918B31CB1F50803AD77E98236CD"
+    },
+    {
+      "path": "work/gold-20260906/wave2024-profile-provider-binding/profile-provider-binding.patch",
+      "sha256": "785AAAFCA19E03D91FECE17A6320A31DAE098184E3C90D0B4A485723958FC1C5"
+    }
+  ],
+  "review": "Independent W1994 review and Root integration review; corrected contradictory guard assertion, test-only helper scope, exact lossy-root checks, patch paths and guidance budget/data proof before acceptance; W2021 independent review requires actual Right-only consent and actual resolved wire-model regressions; final revision approved; W2026 independent final review approved absolute deadline and descendant cleanup regression; W2024 independent final review approved actual factory success/failure, caller selection, and cross-vendor field separation",
+  "statusBoundary": {
+    "localExecutableValidationRan": false,
+    "hostedAcceptanceOnCandidate": "pending",
+    "R3_14Umbrella": "OPEN",
+    "originalRoadmapBacklogPreserved": true,
+    "nativeReleaseAccepted": false,
+    "nativeSigningAndHistoricalPredecessorProof": "separate outstanding release frontier",
+    "R4_14Umbrella": "OPEN"
+  },
+  "cronRoleBinding": {
+    "wave": 2021,
+    "path": "SRC/neothd/src/cron/runner.rs",
+    "change": "Explicit Cron role selects its effective slot atomically; explicit provider mismatch fails before consent and adapter construction",
+    "legacyNoRoleAndFallbackPreserved": true,
+    "actualResolverRegression": "Only Right endpoint consent is granted; real resolver must produce Right adapter and exact requested wire model",
+    "modelOnlyAndRoleOnlyWireModelsAsserted": true,
+    "registryExpansionClaimed": false
+  },
+  "evalProcessContainment": {
+    "wave": 2026,
+    "path": "SRC/neothd/src/cli/eval.rs",
+    "change": "Reuse contained child with absolute pre-worker deadline; terminate descendant tree and reap leader before pipe drain on timeout and normal leader exit",
+    "basis": "Actual Windows nextest LEAK on verify_command_timeout_kills_long_child",
+    "headlessStdin": "explicit EOF",
+    "newRegression": "normal output and exit status",
+    "strengthenedRegression": "ready marker proves descendant start; delayed marker absent after return",
+    "hostedPending": true
+  },
+  "profileProviderBinding": {
+    "wave": 2024,
+    "change": "Explicit inference.profile_provider takes precedence in chat, manual profile extraction, and channel extraction",
+    "absentBehavior": "Preserve each existing caller selection and channel effective model",
+    "crossVendorStrip": [
+      "api key",
+      "endpoint",
+      "model",
+      "provider_binary"
+    ],
+    "explicitFailureFallsBack": false,
+    "realFactorySuccess": "ClaudeCli adapter identity and default wire model without binary execution",
+    "realFactoryFailure": "OpenAI compatible missing endpoint despite allow_cloud_fallback=true",
+    "staleResolverRemoved": true,
+    "hostedPending": true
+  },
+  "nextFrontier": {
+    "guiDocumentPreflight": "B6 remains open: no reachable existing staged-document GUI consumer under .slint hold",
+    "astChunks": "E2 remains open: decomposer context is live but persisted AST chunks and repository code-vector producer/query lifecycle are absent",
+    "blueprint": "work/gold-20260906/wave2028-next-frontier/E2-BLUEPRINT.md",
+    "blueprintSha256": "663B4AB4B8714E4D3807F9E5D89D8E809670585F4FE08408D3EF11B65CE5F859",
+    "implementationClaimed": false
+  }
+}

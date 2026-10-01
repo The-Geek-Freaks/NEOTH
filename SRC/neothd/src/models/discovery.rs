@@ -686,17 +686,30 @@ fn effective_route_bindings(
         }
         None => push_top_level_binding(&mut bindings, config, home),
     }
-    match config.profile.learn_provider.as_deref() {
-        Some(raw) => match serde_yaml::from_str::<ProviderKind>(raw) {
-            Ok(kind) => {
-                push_auxiliary_binding(&mut bindings, config, kind, false, home);
-                if config.profile.allow_cloud_fallback {
-                    push_top_level_binding(&mut bindings, config, home);
+    match config.inference.profile_provider {
+        Some(provider) => {
+            // An explicit typed choice is the actual profile-extraction route.
+            // It does not inherit legacy profile.learn_provider fallback.
+            push_auxiliary_binding(
+                &mut bindings,
+                config,
+                provider.to_provider_kind(),
+                false,
+                home,
+            );
+        }
+        None => match config.profile.learn_provider.as_deref() {
+            Some(raw) => match serde_yaml::from_str::<ProviderKind>(raw) {
+                Ok(kind) => {
+                    push_auxiliary_binding(&mut bindings, config, kind, false, home);
+                    if config.profile.allow_cloud_fallback {
+                        push_top_level_binding(&mut bindings, config, home);
+                    }
                 }
-            }
-            Err(_) => invalid_auxiliary = true,
+                Err(_) => invalid_auxiliary = true,
+            },
+            None => push_top_level_binding(&mut bindings, config, home),
         },
-        None => push_top_level_binding(&mut bindings, config, home),
     }
 
     // A max_hops=0 chain is unreachable. Production inventory uses the exact
@@ -1686,11 +1699,12 @@ mod tests {
     }
 
     #[test]
-    fn unwired_profile_provider_does_not_claim_an_effective_catalog_route() {
+    fn explicit_profile_provider_registers_its_effective_catalog_route() {
         let mut config = base_config();
         config.inference.profile_provider = Some(InferenceProvider::Gemini);
-        let plan = build_sources_from_config(&config);
-        assert!(plan.is_empty());
+        config.profile.learn_provider = Some("local_qwen".into());
+        let (report, _) = build_sources_from_config(&config).into_execution();
+        assert_eq!(report.configured, vec![GEMINI_CATALOG_PROVIDER]);
     }
 
     #[test]

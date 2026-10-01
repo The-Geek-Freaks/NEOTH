@@ -165,6 +165,21 @@ jobs:
             SRC/neothd/src/updater/process_containment.rs \
             SRC/neothd/src/updater/budget.rs \
             SRC/neothd/src/updater/authority.rs \
+            SRC/neothd/src/profile/extract.rs \
+            SRC/neothd/src/cli/chat.rs \
+            SRC/neothd/src/pipeline/untrusted_context.rs \
+            SRC/neothd/src/tokens/budget.rs \
+            SRC/neothd/src/pipeline/enriched_request.rs \
+            SRC/neothd/src/memory/hindsight.rs \
+            SRC/neothd/src/cli/eval.rs \
+            SRC/neothd/src/models/discovery.rs \
+            SRC/neothd/src/cli/serve_pipeline.rs \
+            SRC/neothd/src/cli/profile.rs \
+            SRC/neothd/src/config/inference.rs \
+            SRC/neothd/src/config/role_policy.rs \
+            SRC/neothd/src/providers/mod.rs \
+            SRC/neothd/src/providers/cost_authorization.rs \
+            SRC/neothd/src/cron/schema.rs \
             SRC/neothd/Cargo.toml \
             SRC/Cargo.lock \
             .github/workflows/gchat-live-regressions.yml \
@@ -467,9 +482,35 @@ jobs:
           run_case 238 lib updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free --lib
           run_case 239 lib cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect --lib
           run_case 240 lib updater::authority::tests::panic_is_converted_to_one_durable_terminal_failure updater::authority::tests::panic_is_converted_to_one_durable_terminal_failure --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 240
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 240
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 240
+          run_case 241 lib profile::extract::tests::extract_emits_one_canonical_profile_claim_envelope_for_hostile_quoted_data profile::extract::tests::extract_emits_one_canonical_profile_claim_envelope_for_hostile_quoted_data --lib
+          run_case 242 lib profile::extract::tests::extract_multibyte_window_keeps_newest_whole_segment_with_typed_lineage profile::extract::tests::extract_multibyte_window_keeps_newest_whole_segment_with_typed_lineage --lib
+          run_case 243 lib profile::extract::tests::extract_short_circuits_when_eligible_segment_is_quoted profile::extract::tests::extract_short_circuits_when_eligible_segment_is_quoted --lib
+          run_case 244 lib profile::extract::tests::oversized_transcript_prompt_stays_under_budget profile::extract::tests::oversized_transcript_prompt_stays_under_budget --lib
+          run_case 245 lib profile::extract::tests::extract_skips_llm_when_no_eligible_segments profile::extract::tests::extract_skips_llm_when_no_eligible_segments --lib
+          run_case 246 lib cli::chat::tests::session_guidance_hostile_card_is_canonical_memory_for_primary_and_agent cli::chat::tests::session_guidance_hostile_card_is_canonical_memory_for_primary_and_agent --lib
+          run_case 247 lib cli::chat::tests::maybe_guidance_block_at_counts_pending_contradictions cli::chat::tests::maybe_guidance_block_at_counts_pending_contradictions --lib
+          run_case 248 lib cli::chat::tests::maybe_guidance_block_at_empty_home_is_none cli::chat::tests::maybe_guidance_block_at_empty_home_is_none --lib
+          run_case 249 lib cron::runner::workstream_c_tests::role_scoped_primary_keeps_the_declared_compatible_slot_atomic cron::runner::workstream_c_tests::role_scoped_primary_keeps_the_declared_compatible_slot_atomic --lib
+          run_case 250 lib cron::runner::workstream_c_tests::explicit_role_scoped_provider_uses_only_the_declared_role_consent_and_leaf cron::runner::workstream_c_tests::explicit_role_scoped_provider_uses_only_the_declared_role_consent_and_leaf --lib
+          run_case 251 lib cron::runner::workstream_c_tests::role_scoped_primary_provider_mismatch_stops_before_consent_or_adapter_build cron::runner::workstream_c_tests::role_scoped_primary_provider_mismatch_stops_before_consent_or_adapter_build --lib
+          run_case 252 lib cron::runner::workstream_c_tests::model_only_and_role_only_cron_intent_select_the_declared_role_slot cron::runner::workstream_c_tests::model_only_and_role_only_cron_intent_select_the_declared_role_slot --lib
+          run_case 253 lib cron::runner::workstream_c_tests::per_job_provider_never_borrows_another_vendors_credentials cron::runner::workstream_c_tests::per_job_provider_never_borrows_another_vendors_credentials --lib
+          run_case 254 lib cron::runner::workstream_c_tests::per_job_provider_reuses_only_its_explicit_matching_slot cron::runner::workstream_c_tests::per_job_provider_reuses_only_its_explicit_matching_slot --lib
+          run_case 255 lib cron::runner::workstream_c_tests::per_job_cloud_provider_requires_consent_before_adapter_build cron::runner::workstream_c_tests::per_job_cloud_provider_requires_consent_before_adapter_build --lib
+          run_case 256 lib cron::runner::workstream_c_tests::w289_cron_override_requires_explicit_origin_when_policy_active cron::runner::workstream_c_tests::w289_cron_override_requires_explicit_origin_when_policy_active --lib
+          run_case 257 lib cron::runner::workstream_c_tests::w289_cron_model_only_override_requires_explicit_origin_when_policy_active cron::runner::workstream_c_tests::w289_cron_model_only_override_requires_explicit_origin_when_policy_active --lib
+          run_case 258 lib cron::runner::workstream_c_tests::w289_cron_override_role_binding_admits_exact_leaf_once cron::runner::workstream_c_tests::w289_cron_override_role_binding_admits_exact_leaf_once --lib
+          run_case 259 lib cron::runner::workstream_c_tests::w289_cron_override_role_binding_denies_disallowed_model_before_effect cron::runner::workstream_c_tests::w289_cron_override_role_binding_denies_disallowed_model_before_effect --lib
+          run_case 260 lib cli::eval::tests::verify_command_containment_preserves_normal_output_and_exit_status cli::eval::tests::verify_command_containment_preserves_normal_output_and_exit_status --lib
+          run_case 261 lib cli::eval::tests::verify_command_timeout_kills_long_child cli::eval::tests::verify_command_timeout_kills_long_child --lib
+          run_case 262 lib providers::tests::explicit_profile_provider_wins_and_strips_cross_vendor_main_binding providers::tests::explicit_profile_provider_wins_and_strips_cross_vendor_main_binding --lib
+          run_case 263 lib providers::tests::absent_typed_profile_provider_leaves_legacy_dispatch_in_control providers::tests::absent_typed_profile_provider_leaves_legacy_dispatch_in_control --lib
+          run_case 264 lib providers::tests::explicit_profile_provider_factory_selects_claude_cli providers::tests::explicit_profile_provider_factory_selects_claude_cli --lib
+          run_case 265 lib providers::tests::explicit_profile_provider_failure_never_falls_back_to_main_provider providers::tests::explicit_profile_provider_failure_never_falls_back_to_main_provider --lib
+          run_case 266 lib models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 266
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 266
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 266
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

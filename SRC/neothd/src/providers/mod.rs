@@ -3748,6 +3748,59 @@ pub async fn from_config_for_learn_at(
     from_config_for_learn_inner(config, Some(home)).await
 }
 
+/// Build the provider for profile extraction. An explicit typed
+/// `inference.profile_provider` wins over the legacy `profile.learn_provider`;
+/// when absent, the legacy builder retains its local-Qwen/null-to-main and
+/// allow-cloud-fallback behavior unchanged. An explicit typed choice never
+/// falls back to the main provider on build failure.
+pub async fn from_config_for_profile_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_profile_inner(config, Some(home)).await
+}
+
+/// Construct only an explicitly configured typed profile provider. `None`
+/// means callers must retain their own historical fallback route.
+pub async fn from_config_for_explicit_profile_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Result<Option<Box<dyn Provider>>> {
+    let Some(synthetic) = build_explicit_profile_config(config) else {
+        return Ok(None);
+    };
+    from_config_with_optional_home(&synthetic, Some(home))
+        .await
+        .map(Some)
+}
+
+async fn from_config_for_profile_inner(
+    config: &FreedomConfig,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
+    match build_explicit_profile_config(config) {
+        Some(synthetic) => from_config_with_optional_home(&synthetic, home).await,
+        None => from_config_for_learn_inner(config, home).await,
+    }
+}
+
+fn build_explicit_profile_config(config: &FreedomConfig) -> Option<FreedomConfig> {
+    let provider = config.inference.profile_provider?;
+    let kind = provider.to_provider_kind();
+    let mut synthetic = config.clone();
+    // A typed profile provider can be a different vendor from the main chat
+    // provider. Never reuse the main vendor's credentials, endpoint, model, or
+    // CLI binary for that distinct provider.
+    if config.provider_kind != Some(kind) {
+        synthetic.provider_key = None;
+        synthetic.provider_endpoint = None;
+        synthetic.provider_model = None;
+        synthetic.provider_binary = None;
+    }
+    synthetic.provider_kind = Some(kind);
+    Some(synthetic)
+}
+
 async fn from_config_for_learn_inner(
     config: &FreedomConfig,
     home: Option<&Path>,
@@ -6435,6 +6488,61 @@ mod tests {
         assert_eq!(s3.provider_model.as_deref(), Some("gpt-4o-mini"));
     }
 
+    #[test]
+    fn explicit_profile_provider_wins_and_strips_cross_vendor_main_binding() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("sk-main"));
+        cfg.provider_endpoint = Some("https://api.openai.com/v1".into());
+        cfg.provider_model = Some("gpt-main".into());
+        cfg.provider_binary = Some("custom-main-provider".into());
+        cfg.inference.profile_provider = Some(InferenceProvider::Gemini);
+
+        let selected = build_explicit_profile_config(&cfg).expect("typed choice selects provider");
+        assert_eq!(selected.provider_kind, Some(ProviderKind::GeminiApi));
+        assert!(selected.provider_key.is_none());
+        assert!(selected.provider_endpoint.is_none());
+        assert!(selected.provider_model.is_none());
+        assert!(selected.provider_binary.is_none());
+    }
+
+    #[test]
+    fn absent_typed_profile_provider_leaves_legacy_dispatch_in_control() {
+        let mut cfg = base_config();
+        cfg.inference.profile_provider = None;
+        cfg.profile.learn_provider = None;
+        assert!(build_explicit_profile_config(&cfg).is_none());
+    }
+
+    #[tokio::test]
+    async fn explicit_profile_provider_factory_selects_claude_cli() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiApi);
+        cfg.inference.profile_provider = Some(InferenceProvider::ClaudeCli);
+        let provider = from_config_for_profile_at(&cfg, Path::new("."))
+            .await
+            .expect("explicit ClaudeCli profile provider constructs without a main API key");
+        assert_eq!(provider.name(), "claude_cli");
+        assert!(
+            provider_default_wire_model(provider.as_ref()).is_some(),
+            "the selected explicit provider supplies the wire model used by callers"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_profile_provider_failure_never_falls_back_to_main_provider() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::ClaudeCli);
+        cfg.profile.allow_cloud_fallback = true;
+        // OpenAI-compatible routing requires an endpoint. The selected
+        // cross-vendor synthetic config clears the main endpoint, making this
+        // failure deterministic regardless of keys or environment state.
+        cfg.inference.profile_provider = Some(InferenceProvider::OpenAiCompat);
+        assert!(
+            from_config_for_profile_at(&cfg, Path::new(".")).await.is_err(),
+            "an explicit typed provider build failure must not reach the legacy/main fallback"
+        );
+    }
     #[tokio::test]
     async fn from_config_for_learn_none_falls_through_to_main_provider() {
         // Operator hasn't set a learn_provider → uses main provider.

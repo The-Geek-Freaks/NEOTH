@@ -251,58 +251,66 @@ fn evaluate_case(case: &EvalCase) -> (CaseOutcome, Option<String>) {
 /// A child that does not exit within this window is killed.
 const VERIFY_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Execute a shell command and return `Ok(true)` iff exit code is 0.
+/// Execute a shell command and return `Ok(true)` iff its leader exits 0.
 ///
-/// Spawns the child with piped stdout/stderr; two background threads drain
-/// both pipes to prevent pipe-buffer deadlock when the child emits a large
-/// amount of output before it exits.  The main thread polls `try_wait` until
-/// the child exits or `timeout` elapses.  On timeout the child is killed,
-/// reaped, and an error is returned — the drain threads detach and finish
-/// on their own once the OS closes the pipes.
+/// The synchronous eval surface uses a dedicated current-thread Tokio runtime
+/// because callers may already be executing inside the CLI runtime. The owned
+/// child is the shared updater containment primitive: its Windows Job Object
+/// or Unix process group is terminated on deadline *and* after normal leader
+/// exit, then its leader and pipe tasks are reaped before this function returns.
 fn run_verify_command(cmd: &str, timeout: std::time::Duration) -> Result<bool> {
-    use std::io::Read;
-    use std::process::Stdio;
-
-    let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
-        .args(if cfg!(windows) {
-            vec!["/C", cmd]
-        } else {
-            vec!["-c", cmd]
+    let command = cmd.to_owned();
+    let deadline = Instant::now() + timeout;
+    let worker = std::thread::Builder::new()
+        .name("neoth-eval-verify-command".to_owned())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build verify_command containment runtime")?;
+            runtime.block_on(run_verify_command_contained(&command, timeout, deadline))
         })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .with_context(|| format!("spawn verify_command containment worker: {cmd}"))?;
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("verify_command containment worker panicked: {cmd}"))?
+}
+
+async fn run_verify_command_contained(
+    cmd: &str,
+    timeout: std::time::Duration,
+    deadline: Instant,
+) -> Result<bool> {
+    use crate::updater::process_containment::{ContainedChild, ContainedChildError};
+    use std::{ffi::OsString, path::Path};
+
+    let program = if cfg!(windows) { "cmd" } else { "sh" };
+    let argv = if cfg!(windows) {
+        vec![OsString::from("/C"), OsString::from(cmd)]
+    } else {
+        vec![OsString::from("-c"), OsString::from(cmd)]
+    };
+    // Eval verifiers are headless exit-code gates: they intentionally receive
+    // EOF rather than inherited CLI stdin. `run_verify_command` historically
+    // drained without an output limit, so preserve that result contract while
+    // moving pipe ownership and terminal cleanup to the shared lifecycle.
+    let mut child = ContainedChild::spawn(Path::new(program), &argv, b"", usize::MAX)
+        .await
+        .map_err(anyhow::Error::new)
         .with_context(|| format!("spawn verify_command: {cmd}"))?;
-
-    // Drain stdout/stderr in background threads to avoid pipe-buffer deadlock.
-    // We do not need the output — only the exit code — so the handles are
-    // intentionally detached (not joined).  They finish once the pipes close.
-    let mut out_pipe = child.stdout.take().expect("stdout piped");
-    let mut err_pipe = child.stderr.take().expect("stderr piped");
-    std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-    });
-    std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-    });
-
-    // Poll until the child exits or the wall-clock deadline is reached.
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait(); // reap to avoid a zombie process
-            anyhow::bail!("verify_command timed out after {timeout:?} and was killed: {cmd}");
-        }
-        match child
-            .try_wait()
-            .with_context(|| format!("poll verify_command: {cmd}"))?
-        {
-            Some(status) => return Ok(status.success()),
-            None => std::thread::sleep(std::time::Duration::from_millis(50)),
-        }
+    match child.wait_until(deadline).await {
+        Ok(output) => Ok(output.status.success()),
+        Err(ContainedChildError::DeadlineElapsed) => match child.terminate_and_reap().await {
+            Ok(_) => anyhow::bail!("verify_command timed out after {timeout:?} and was killed: {cmd}"),
+            Err(error) => Err(anyhow::Error::new(error)).with_context(|| {
+                format!(
+                    "verify_command timed out after {timeout:?}; contained tree cleanup failed: {cmd}"
+                )
+            }),
+        },
+        Err(error) => Err(anyhow::Error::new(error)).with_context(|| {
+            format!("poll verify_command: {cmd}")
+        }),
     }
 }
 
@@ -808,6 +816,16 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    fn quote_powershell_literal(path: &std::path::Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "''"))
+    }
+
+    #[cfg(not(windows))]
+    fn quote_posix_shell_literal(path: &std::path::Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"))
+    }
+
     // ── Case-level ────────────────────────────────────────────────────────
 
     #[test]
@@ -1044,25 +1062,67 @@ mod tests {
 
     // ── Hardening: timeout + max_steps hard cap ───────────────────────────
 
+    #[test]
+    fn verify_command_containment_preserves_normal_output_and_exit_status() {
+        #[cfg(windows)]
+        let success = "echo eval_containment_smoke";
+        #[cfg(not(windows))]
+        let success = "printf eval_containment_smoke";
+        #[cfg(windows)]
+        let failure = "exit /b 7";
+        #[cfg(not(windows))]
+        let failure = "exit 7";
+
+        let timeout = std::time::Duration::from_secs(2);
+        assert!(
+            run_verify_command(success, timeout).expect("normal verifier must run"),
+            "normal exit-0 verifier with output must pass"
+        );
+        assert!(
+            !run_verify_command(failure, timeout).expect("non-zero verifier must run"),
+            "normal non-zero verifier must remain a Fail result, not an execution error"
+        );
+    }
+
     /// NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01 (a) — a verify_command that runs
-    /// longer than the supplied timeout must be killed and return an Err.
+    /// longer than the supplied timeout must terminate its entire descendant
+    /// tree and return an Err.
     #[test]
     fn verify_command_timeout_kills_long_child() {
-        // A command that blocks for ~30 s — well beyond the 1-second test
-        // timeout.  On Windows `ping -n 30 127.0.0.1 > nul` gives ~29 s of
-        // wait; on Unix `sleep 30` does the same.
+        let tmp = tempfile::tempdir().expect("create descendant marker directory");
+        let ready = tmp.path().join("ready.txt");
+        let marker = tmp.path().join("escaped.txt");
+
+        // Start a delayed marker writer below the verifier shell and keep the
+        // shell alive. Killing only cmd.exe/sh would leave that writer running;
+        // contained tree cleanup must make the marker impossible after return.
+        // The ready marker proves the descendant began before that assertion.
         #[cfg(windows)]
-        let long_cmd = "ping -n 30 127.0.0.1 > nul";
+        let long_cmd = format!(
+            "powershell -NoProfile -Command \"[System.IO.File]::WriteAllText({}, 'ready'); Start-Sleep -Seconds 2; [System.IO.File]::WriteAllText({}, 'escaped')\" & ping -n 30 127.0.0.1 > nul",
+            quote_powershell_literal(&ready),
+            quote_powershell_literal(&marker)
+        );
         #[cfg(not(windows))]
-        let long_cmd = "sleep 30";
+        let long_cmd = format!(
+            "sh -c \"printf ready > {}; sleep 2; printf escaped > {}\" & sleep 30",
+            quote_posix_shell_literal(&ready),
+            quote_posix_shell_literal(&marker)
+        );
 
         let short = std::time::Duration::from_secs(1);
-        let result = run_verify_command(long_cmd, short);
+        let result = run_verify_command(&long_cmd, short);
         assert!(result.is_err(), "expected Err on timeout, got Ok");
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("timed out"),
             "error must mention 'timed out', got: {msg}"
+        );
+        assert!(ready.exists(), "timeout descendant never started");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        assert!(
+            !marker.exists(),
+            "a timeout descendant escaped eval verify_command containment"
         );
     }
 

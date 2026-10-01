@@ -284,6 +284,11 @@ jobs:
           languages: rust
           build-mode: none
           queries: security-extended
+          # Controlled hosted-runner resource hypothesis: preserve the full
+          # Rust extraction and security-extended query surface while bounding
+          # extractor and inherited analyze concurrency/memory.
+          ram: 6144
+          threads: 2
 
       - name: Analyze Rust
         uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5

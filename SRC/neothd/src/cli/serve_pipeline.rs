@@ -5807,6 +5807,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .unwrap_or(false);
             let learn_on = !env_disable && (env_force || profile_config.learn_enabled);
             if learn_on {
+                match crate::providers::from_config_for_explicit_profile_at(
+                    config_for_handler.as_ref(),
+                    &neoth_home,
+                )
+                .await
+                {
+                    Ok(explicit_profile_provider) => {
                 let timeout = std::time::Duration::from_secs(profile_config.timeout_secs.max(1));
                 let views_path = neoth_home.join("views.db");
                 // K-Wire-3 v3 Send-escape: `rusqlite::Transaction` is
@@ -5820,9 +5827,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // on other channel messages because the blocking task
                 // is moved off the worker pool.
                 let writer_for_pipeline = writer.clone();
-                let provider_for_pipeline = Arc::clone(&provider);
+                let (provider_for_pipeline, model_for_pipeline): (Arc<dyn Provider>, Option<String>) =
+                    match explicit_profile_provider {
+                        Some(explicit_provider) => {
+                            let provider: Arc<dyn Provider> = Arc::from(explicit_provider);
+                            let model = crate::providers::provider_default_wire_model(provider.as_ref());
+                            (provider, model)
+                        }
+                        None => (Arc::clone(&provider), channel_effective_model.clone()),
+                    };
                 let authorizer_for_pipeline = provider_call_authorizer.clone();
-                let model_for_pipeline = channel_effective_model.clone();
                 let segment_path_for_pipeline = segment_path.clone();
                 let channel_str_for_pipeline = channel_str.to_string();
                 let sender_id_for_pipeline = inbound.sender_id.clone();
@@ -5976,6 +5990,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         }
                     });
                 });
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "explicit profile_provider build failed; skipping channel profile learning"
+                        );
+                    }
+                }
             }
 
             // GOLD-ADAPT-ODY-26 — persist the raw agent turn under the exact

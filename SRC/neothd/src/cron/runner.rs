@@ -315,7 +315,10 @@ async fn resolve_job_provider<'a>(
     let mut scoped = config.clone();
     if let Some(primary) = job.execution.provider {
         let provider_kind = primary.to_provider_kind();
-        let mut primary_slot = configured_provider_slot(config, primary);
+        let mut primary_slot = match job.execution.hemisphere_role {
+            Some(role) => configured_provider_slot_for_role(config, role, primary)?,
+            None => configured_provider_slot(config, primary),
+        };
         primary_slot.provider = Some(primary);
         primary_slot.model = job.execution.model.clone().or(primary_slot.model);
         let route =
@@ -337,16 +340,25 @@ async fn resolve_job_provider<'a>(
     } else if let Some(model) = job.execution.model.clone() {
         // A model-only Cron override retains the configured provider topology
         // but must build a job-local provider so the final leaf sees the
-        // requested model and its role authority. A concrete Left slot wins
-        // over top-level provider_model during provider construction, so carry
-        // the model into that selected slot as well.
+        // requested model and its declared role authority. A legacy job with
+        // no role retains the existing Left-primary selection.
         scoped.provider_model = Some(model.clone());
-        let mut primary_slot = config
-            .inference
-            .slot_for(crate::config::inference::HemisphereRole::Left)
-            .clone();
+        let role = job
+            .execution
+            .hemisphere_role
+            .unwrap_or(crate::config::inference::HemisphereRole::Left);
+        let mut primary_slot = configured_role_slot(config, role);
         if primary_slot.provider.is_some() {
             primary_slot.model = Some(model);
+            scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
+            scoped.inference.left = primary_slot;
+        }
+    } else if let Some(role) = job.execution.hemisphere_role {
+        // A role-only job also builds its primary from that actual configured
+        // binding. The final factory always reads Left from the job-local
+        // topology, so copy the selected role atomically into that position.
+        let primary_slot = configured_role_slot(config, role);
+        if primary_slot.provider.is_some() {
             scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
             scoped.inference.left = primary_slot;
         }
@@ -433,6 +445,66 @@ fn cron_role_authorizer(
     Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
 
+/// Materialize the legacy top-level binding as a complete slot. This keeps a
+/// role-selected job on the same endpoint, credential, region and API version
+/// when the topology has no explicit per-role provider.
+fn top_level_provider_slot(
+    config: &crate::config::FreedomConfig,
+    provider: crate::config::inference::InferenceProvider,
+) -> crate::config::inference::HemisphereSlot {
+    crate::config::inference::HemisphereSlot {
+        provider: Some(provider),
+        model: config.provider_model.clone(),
+        key: config.provider_key.clone(),
+        endpoint: config.provider_endpoint.clone(),
+        openai_compat_profile: config.inference.openai_compat_profile,
+        region: config.provider_region.clone(),
+        api_version: config.provider_api_version.clone(),
+        voice: None,
+    }
+}
+
+/// Resolve the effective binding for a declared Cron role. An explicit role is
+/// an instance selector: it must not silently search another role that happens
+/// to share the same coarse provider enum.
+fn configured_role_slot(
+    config: &crate::config::FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+) -> crate::config::inference::HemisphereSlot {
+    let slot = config.inference.slot_for(role);
+    match slot.provider {
+        Some(_) => slot.clone(),
+        None => config
+            .provider_kind
+            .map(|kind| top_level_provider_slot(config, kind.to_inference()))
+            .unwrap_or_else(|| slot.clone()),
+    }
+}
+
+/// Resolve a declared provider from its declared Cron role. The provider must
+/// agree with the role's effective binding before consent or adapter creation.
+fn configured_provider_slot_for_role(
+    config: &crate::config::FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+    provider: crate::config::inference::InferenceProvider,
+) -> Result<crate::config::inference::HemisphereSlot> {
+    let slot = configured_role_slot(config, role);
+    match slot.provider {
+        Some(actual) if actual == provider => Ok(slot),
+        Some(actual) => anyhow::bail!(
+            "Cron role `{}` resolves to provider `{}`, not declared provider `{}`",
+            role.as_str(),
+            actual.as_str(),
+            provider.as_str()
+        ),
+        None => anyhow::bail!(
+            "Cron role `{}` has no configured provider binding for declared provider `{}`",
+            role.as_str(),
+            provider.as_str()
+        ),
+    }
+}
+
 /// Resolve credentials only from a slot that explicitly names `provider`.
 ///
 /// `FreedomConfig` contains several provider-shaped records. Cloning the
@@ -479,16 +551,7 @@ fn configured_provider_slot(
         return slot.clone();
     }
     if config.provider_kind == Some(provider.to_provider_kind()) {
-        return HemisphereSlot {
-            provider: Some(provider),
-            model: config.provider_model.clone(),
-            key: config.provider_key.clone(),
-            endpoint: config.provider_endpoint.clone(),
-            openai_compat_profile: config.inference.openai_compat_profile,
-            region: config.provider_region.clone(),
-            api_version: config.provider_api_version.clone(),
-            voice: None,
-        };
+        return top_level_provider_slot(config, provider);
     }
 
     HemisphereSlot {
@@ -1881,6 +1944,254 @@ channel_accounts:
         assert_eq!(slot.api_version.as_deref(), Some("v2"));
     }
 
+    #[test]
+    fn role_scoped_primary_keeps_the_declared_compatible_slot_atomic() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, OpenAiCompatibleProfile,
+            TopologyMode,
+        };
+
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
+        config.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("left-model".into()),
+            key: Some(crate::secret::SecretString::from("left-secret")),
+            endpoint: Some("https://openrouter.ai/api/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::OpenRouter),
+            region: Some("left-region".into()),
+            api_version: Some("left-version".into()),
+            voice: None,
+        };
+        config.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("right-model".into()),
+            key: Some(crate::secret::SecretString::from("right-secret")),
+            endpoint: Some("https://api.deepseek.com".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::DeepSeek),
+            region: Some("right-region".into()),
+            api_version: Some("right-version".into()),
+            voice: None,
+        };
+
+        let slot = configured_provider_slot_for_role(
+            &config,
+            HemisphereRole::Right,
+            InferenceProvider::OpenAiCompat,
+        )
+        .expect("Right provider identity matches its configured compatible slot");
+        assert_eq!(slot.model.as_deref(), Some("right-model"));
+        assert_eq!(
+            slot.key.as_ref().map(crate::secret::SecretString::expose),
+            Some("right-secret")
+        );
+        assert_eq!(slot.endpoint.as_deref(), Some("https://api.deepseek.com"));
+        assert_eq!(slot.openai_compat_profile, Some(OpenAiCompatibleProfile::DeepSeek));
+        assert_eq!(slot.region.as_deref(), Some("right-region"));
+        assert_eq!(slot.api_version.as_deref(), Some("right-version"));
+    }
+
+    #[tokio::test]
+    async fn explicit_role_scoped_provider_uses_only_the_declared_role_consent_and_leaf() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, OpenAiCompatibleProfile,
+            TopologyMode,
+        };
+
+        let home = tempdir().expect("temporary explicit-role home");
+        let (writer, join) = crate::wal::spawn(home.path().join("cron-explicit-role.wal"))
+            .expect("start explicit-role WAL writer");
+        let default_provider = authorized(CountingProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
+        config.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("left-model".into()),
+            key: Some(crate::secret::SecretString::from("left-secret")),
+            endpoint: Some("https://openrouter.ai/api/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::OpenRouter),
+            ..Default::default()
+        };
+        config.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("right-model".into()),
+            key: Some(crate::secret::SecretString::from("right-secret")),
+            endpoint: Some("https://api.deepseek.com".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::DeepSeek),
+            ..Default::default()
+        };
+        let right_route = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::OpenaiCompat,
+            Some("https://api.deepseek.com"),
+        );
+        crate::consent::grant_route(home.path(), &right_route)
+            .expect("grant only the declared Right endpoint");
+        assert!(crate::consent::is_route_granted(home.path(), &right_route));
+        assert!(
+            !crate::consent::is_route_granted(
+                home.path(),
+                &crate::consent::ConsentRoute::new(
+                    crate::cli::init::ProviderKind::OpenaiCompat,
+                    Some("https://openrouter.ai/api/v1"),
+                ),
+            ),
+            "the Left endpoint must remain ungranted"
+        );
+
+        let mut job = briefing_job();
+        job.execution.provider = Some(InferenceProvider::OpenAiCompat);
+        job.execution.model = Some("right-provider-override".into());
+        job.execution.hemisphere_role = Some(HemisphereRole::Right);
+        let provider = resolve_job_provider(
+            home.path(),
+            &job,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        .expect("Right-only consent admits the declared Right provider leaf");
+        assert_eq!(provider.get().name(), "deepseek_api");
+        assert_eq!(
+            crate::providers::provider_default_wire_model(provider.get()).as_deref(),
+            Some("right-provider-override")
+        );
+
+        drop(provider);
+        drop(default_provider);
+        drop(writer);
+        join.await.expect("explicit-role WAL writer drained");
+    }
+    #[tokio::test]
+    async fn role_scoped_primary_provider_mismatch_stops_before_consent_or_adapter_build() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, TopologyMode,
+        };
+
+        let home = tempdir().expect("temporary role-mismatch home");
+        let (writer, join) = crate::wal::spawn(home.path().join("cron-role-mismatch.wal"))
+            .expect("start role-mismatch WAL writer");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let default_provider = authorized(CountingProvider { calls: calls.clone() });
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
+        config.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            endpoint: Some("https://openrouter.ai/api/v1".into()),
+            ..Default::default()
+        };
+        config.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::Gemini),
+            endpoint: Some("https://gemini.example".into()),
+            ..Default::default()
+        };
+        let mut job = briefing_job();
+        job.execution.provider = Some(InferenceProvider::OpenAiCompat);
+        job.execution.hemisphere_role = Some(HemisphereRole::Right);
+
+        let error = match resolve_job_provider(
+            home.path(),
+            &job,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        {
+            Ok(_) => panic!(
+                "a role/provider mismatch must fail before the selected route is consented or built"
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("resolves to provider `gemini_api`"),
+            "unexpected role mismatch: {error:#}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(default_provider);
+        drop(writer);
+        join.await.expect("role-mismatch WAL writer drained");
+    }
+
+    #[tokio::test]
+    async fn model_only_and_role_only_cron_intent_select_the_declared_role_slot() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, OpenAiCompatibleProfile,
+            TopologyMode,
+        };
+
+        let home = tempdir().expect("temporary role-selection home");
+        let (writer, join) = crate::wal::spawn(home.path().join("cron-role-selection.wal"))
+            .expect("start role-selection WAL writer");
+        let default_provider = authorized(CountingProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
+        config.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("left-model".into()),
+            key: Some(crate::secret::SecretString::from("left-secret")),
+            endpoint: Some("https://openrouter.ai/api/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::OpenRouter),
+            ..Default::default()
+        };
+        config.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("right-model".into()),
+            key: Some(crate::secret::SecretString::from("right-secret")),
+            endpoint: Some("https://api.deepseek.com".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::DeepSeek),
+            ..Default::default()
+        };
+
+        let mut model_only = briefing_job();
+        model_only.execution.model = Some("right-model-override".into());
+        model_only.execution.hemisphere_role = Some(HemisphereRole::Right);
+        let model_provider = resolve_job_provider(
+            home.path(),
+            &model_only,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        .expect("model-only role selection builds the Right compatible provider");
+        assert_eq!(model_provider.get().name(), "deepseek_api");
+        assert_eq!(
+            crate::providers::provider_default_wire_model(model_provider.get()).as_deref(),
+            Some("right-model-override")
+        );
+
+        let mut role_only = briefing_job();
+        role_only.execution.hemisphere_role = Some(HemisphereRole::Right);
+        let role_provider = resolve_job_provider(
+            home.path(),
+            &role_only,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        .expect("role-only selection builds the Right compatible provider");
+        assert_eq!(role_provider.get().name(), "deepseek_api");
+        assert_eq!(
+            crate::providers::provider_default_wire_model(role_provider.get()).as_deref(),
+            Some("right-model")
+        );
+
+        drop(model_provider);
+        drop(role_provider);
+        drop(default_provider);
+        drop(writer);
+        join.await.expect("role-selection WAL writer drained");
+    }
     #[tokio::test]
     async fn per_job_cloud_provider_requires_consent_before_adapter_build() {
         let home = tempfile::tempdir().unwrap();
