@@ -1,5 +1,23 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2004 exact Obsidian development dependency repair (2026-10-01):**
+Dependabot29 identified Moment2.29.4 through the retained Obsidian1.8.7
+TypeScript SDK. GHSA-4p3w-j4w9-5jqw is fixed in2.31.0. The reviewed change
+adds an exact npm override and replaces only Moment's version, registry URL
+and integrity in the existing lock. Every other lock byte, Obsidian version
+and upstream parent declaration remains unchanged. Root matched the selected
+record against the official registry metadata; no workflow was added or changed.
+The existing bridge artifact lane must now prove locked npm ci, TypeScript,
+bundle identity and plugin contracts. Alert closure and runtime proof are pending.
+
+W2002 Preflight36848790911 and CodeQuality36848791519 succeeded on01f6c397.
+Focused239 run36848832578 remains bound to that producer and the unchanged
+Rust inputs while this independent npm-only slice is integrated. Security's
+short gates passed; Rust CodeQL again ended with a hosted-runner shutdown,
+without an explicit OOM, timeout, query or SARIF failure. No scanner weakening.
+No local executable validation, .slint change or release acceptance occurred.
+Report: docs/verification/gold-wave2004-obsidian-moment.json.
+
 **W2002 hosted updater compilation repair (2026-10-01):**
 The frozen eb554009 focused and native runs exposed one inherited deadline
 conversion error, an unreachable exhaustive-match fallback, and three test

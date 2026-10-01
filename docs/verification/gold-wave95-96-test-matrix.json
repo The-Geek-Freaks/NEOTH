@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 285780,
-    "sha256": "0FCE6FA448FDCDF4476058D8E0288F6F8C5F540CDC52C5569C634F256DAFE7E9"
+    "bytes": 285967,
+    "sha256": "7D54B0C663204CBE92F3327681FBDE12D5AB6E09DCD82180C81DF95784DEC677"
   },
-  "sourceInputs": 1589,
+  "sourceInputs": 1590,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -64326,6 +64326,38 @@
       }
     ],
     "note": "Exact reviewed W2002 deadline boundary and test-controller ownership repair; prior full CI terminal failure preserved; no local runtime; focused239/Security/native proof pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2004ObsidianMoment": {
+    "base": "01f6c397bd724a8335f068806d40b2097e2b325f",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2004-obsidian-moment.json",
+        "bytes": 2239,
+        "sha256": "70D8F69A0011D4425A3C4DF60208632A4C5032AEB5C4A4F9166675D3A23747BE",
+        "blob": "fc538e15dc6d871fb1a18b11f09c282070f39e8e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2257545,
+        "sha256": "7564292743E0F1A2CBE1335346FC3B44C7FA3120D76668553F5023D78F7BE5E0",
+        "blob": "857626f5005e3b5784645d2cbc97757f5b76742b"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+        "bytes": 19256,
+        "sha256": "7834AED410A2C82ECE27F0E3F158574E4D680D3EBD0AFDF442EAFFD89BC9E3A6",
+        "blob": "c9d7c1a5ca28d008d42e6fe28704fcba464715aa"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
+        "bytes": 534,
+        "sha256": "C55125740A8B850B8B92EF48540038680CFDA36E75A6F5E9DCEB8FDCF5A16C02",
+        "blob": "a77a38a95b578af7a06814deee690287d0b101d8"
+      }
+    ],
+    "note": "Exact Moment2.31.0 override/lock repair only; existing hosted bridge acceptance pending; focused239 remains on unchanged Rust sources at01f6c397.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

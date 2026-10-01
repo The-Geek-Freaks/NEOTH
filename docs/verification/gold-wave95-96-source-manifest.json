@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T10:20:14.5656268Z",
+  "capturedUtc": "2026-10-01T10:43:55.1345964Z",
   "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -2962,6 +2962,11 @@
       "sha256": "41472DE8D4DBA241BF327F857092F095F16A921AA4F858F7F01F6253A3EC9E3F"
     },
     {
+      "path": "docs/verification/gold-wave2004-obsidian-moment.json",
+      "bytes": 2239,
+      "sha256": "70D8F69A0011D4425A3C4DF60208632A4C5032AEB5C4A4F9166675D3A23747BE"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4063,8 +4068,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2256336,
-      "sha256": "E5F247576CE0164CF7333511C09316235CE3A518473B898A14882D1FD0F8B134"
+      "bytes": 2257545,
+      "sha256": "7564292743E0F1A2CBE1335346FC3B44C7FA3120D76668553F5023D78F7BE5E0"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4549,12 +4554,12 @@
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
       "bytes": 19256,
-      "sha256": "BCA0336CFB5A60B2EB8AF1A0625FDC4FD4B63FC0603340702FA7A73D3C6D999B"
+      "sha256": "7834AED410A2C82ECE27F0E3F158574E4D680D3EBD0AFDF442EAFFD89BC9E3A6"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
-      "bytes": 489,
-      "sha256": "2FCF474FBE8CEDE9B3C005C195D7E82C02ECD6C71D31406D1452E819282EB211"
+      "bytes": 534,
+      "sha256": "C55125740A8B850B8B92EF48540038680CFDA36E75A6F5E9DCEB8FDCF5A16C02"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.0/main.js",
