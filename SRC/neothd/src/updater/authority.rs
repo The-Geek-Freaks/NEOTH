@@ -1385,14 +1385,16 @@ pub(crate) enum UpdaterLeafExecutionError {
 }
 
 impl UpdaterLeafExecutionError {
-    /// A normal policy refusal is an honest skipped recurring pass. Audit
-    /// unavailability, epoch drift, permit mismatches, effect failures and
-    /// terminal WAL failures remain operational errors and must reach the
-    /// reload-owned supervisor.
+    /// A normal policy refusal is an honest skipped recurring pass, whether it
+    /// is denied before intent or safely rejected by post-intent revalidation.
+    /// Audit unavailability, epoch drift, permit mismatches, other effect
+    /// failures and terminal WAL failures remain operational errors and must
+    /// reach the reload-owned supervisor.
     pub(crate) fn is_policy_refusal(&self) -> bool {
         matches!(
             self,
             Self::Permission(GateError::Denied(_) | GateError::Aborted(_))
+                | Self::Effect { kind: "policy", .. }
         )
     }
 
@@ -3910,10 +3912,19 @@ mod tests {
             )
             .await;
 
+        let error = result.unwrap_err();
         assert!(matches!(
-            result,
-            Err(UpdaterLeafExecutionError::Effect { kind: "panic", .. })
+            &error,
+            UpdaterLeafExecutionError::Effect { kind: "panic", .. }
         ));
+        assert!(
+            !error.is_policy_refusal(),
+            "operational worker failures must remain outside skipped-by-gate handling"
+        );
+        assert!(
+            error.terminal_receipt().is_some(),
+            "operational failure must retain its durable terminal receipt"
+        );
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, ExtendedSubtype::UpdaterLeafIntent);

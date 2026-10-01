@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2004-obsidian-moment/v1",
   "base": "01f6c397bd724a8335f068806d40b2097e2b325f",
-  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "status": "HOSTED_BRIDGE_ADMITTED_DEPENDABOT_FIXED",
   "advisory": {
     "dependabot": 29,
     "github": "GHSA-4p3w-j4w9-5jqw",
@@ -53,9 +53,31 @@
       "tracked bundle drift",
       "plugin contract tests"
     ],
-    "hosted": "pending",
+    "hosted": "run36851215853 SUCCESS on f105243b4ea69d780fee8b5204dd3b7492c18906; immutable npm ci, typecheck, bundle, drift and12 plugin tests passed",
     "localExecutableValidationRan": false,
     "alertDismissed": false,
     "releaseAccepted": false
+  },
+  "admission": {
+    "run": 36851215853,
+    "producer": "f105243b4ea69d780fee8b5204dd3b7492c18906",
+    "artifacts": [
+      11155846383,
+      11155486826,
+      11155172631
+    ],
+    "safeEntries": 20,
+    "expandedBytes": 41900,
+    "sourceBindings": 6,
+    "bundleBindings": 3,
+    "pluginPassed": 12,
+    "pluginFailed": 0,
+    "allStageExitCodes": 0,
+    "bundleUnchanged": true,
+    "lockMatchesProducer": true,
+    "dependabotState": "fixed",
+    "dependabotFixedAt": "2026-10-01T10:46:31Z",
+    "checks": "work/gold-20260906/wave2004-bridge-admission/admission-checks.json",
+    "checksSha256": "44BCFACC1E3AF58CFBA97BBC0144CA77C3B8C3B1B55DFAE1D33A6BC6E98580F4"
   }
 }

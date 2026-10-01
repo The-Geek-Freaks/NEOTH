@@ -310,19 +310,17 @@ pub struct InitArgs {
     #[arg(long, value_name = "VERSION")]
     pub provider_api_version: Option<String>,
 
-    /// Arm the recurring release-check supervisor and status. The current v1
-    /// safety boundary keeps every unattended network, process, staging, and
-    /// replacement effect `SkippedByGate`; no GitHub/npm/Git probe runs until
-    /// request-bound transport authorization and mandatory intent/result WAL
-    /// are wired. Manual `neoth update` remains available.
+    /// Enable recurring NEOTH release checks under the updater master switch
+    /// and accepted autonomy policy. Admitted probes use request-bound
+    /// authorization and durable intent/result WAL; denied checks remain
+    /// visible as skipped. Manual `neoth update` remains available.
     #[arg(long, conflicts_with_all = ["auto_update_apply", "no_auto_update"])]
     pub auto_update: bool,
 
-    /// Arm the recurring supervisor and record future verified-staging intent.
-    /// The current v1 boundary still performs no unattended probe, process,
-    /// staging, handoff, or replacement until request-bound authorization,
-    /// mandatory WAL, and finite kill/reap lifecycle are complete. Binary
-    /// replacement remains an explicit `neoth update --self --apply`.
+    /// Enable policy-admitted, verified self-update staging through the
+    /// contained helper. Staging uses finite deadlines, retained recovery and
+    /// bound WAL receipts. Binary replacement remains an explicit `neoth update
+    /// --self --apply`; recurring CLI auto-apply remains denied.
     #[arg(long, conflicts_with = "no_auto_update")]
     pub auto_update_apply: bool,
 

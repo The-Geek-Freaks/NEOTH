@@ -1,5 +1,28 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2008 focused runtime follow-through and accepted Obsidian repair (2026-10-01):**
+Run36848832578 compiled and executed all239 focused cases on01f6c397;
+Root matched237 passed receipts to their actual successful test logs. The two
+remaining failures were generated CLI help drift and post-Intent Skill policy
+result classification. W2006 changes only two stale Clap descriptions to match
+the already-tracked reference. W2007 reports a genuine pre-launch policy denial
+as skipped and separately maps a failed revalidation worker join to operational
+Panic, preserving its terminal receipt. Independent review caught and resolved
+the initially broad classification. No denial or zero-launch assertion is weakened.
+
+The existing panic regression now asserts that operational failure is not a
+policy refusal and retains its terminal receipt. It gains one portable/focused
+registration:2469 portable identities,240 focused cases, no newly authored test.
+CLI/daemon scenarios were not reached in the failed baseline. Fresh focused240,
+Security and native runtime acceptance remain pending on the corrected producer.
+
+The independent Moment repair is admitted from bridge run36851215853 onf105243b:
+three original archives,20 safe entries,6 source and3 bundle bindings checked.
+All six stages passed;12/12 plugin tests passed; generated main.js and the lock
+match their producer blobs. Dependabot29 is fixed since2026-10-01T10:46:31Z.
+No local runtime, .slint modification or native/release acceptance occurred.
+Report: docs/verification/gold-wave2008-runtime-followthrough.json.
+
 **W2004 exact Obsidian development dependency repair (2026-10-01):**
 Dependabot29 identified Moment2.29.4 through the retained Obsidian1.8.7
 TypeScript SDK. GHSA-4p3w-j4w9-5jqw is fixed in2.31.0. The reviewed change

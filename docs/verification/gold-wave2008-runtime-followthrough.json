@@ -1,0 +1,61 @@
+{
+  "schema": "neoth-gold-wave2008-runtime-followthrough/v1",
+  "base": "f105243b4ea69d780fee8b5204dd3b7492c18906",
+  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "baseline": {
+    "run": 36848832578,
+    "producer": "01f6c397bd724a8335f068806d40b2097e2b325f",
+    "compiled": true,
+    "executed": 239,
+    "passed": 237,
+    "independentlyMatchedPassLogs": 237,
+    "failed": [
+      "cli::docgen::tests::cli_commands_md_is_up_to_date",
+      "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch"
+    ],
+    "cliDaemonProductScenariosExecuted": false,
+    "proof": "work/gold-20260906/wave2003-updater-validation/PARTIAL_CHECKS.json",
+    "proofSha256": "41CEA6F401DEC5EF6E121AF4BE6F67FA25AECB4B322E3923AFC438F4B12AB6D2"
+  },
+  "repairs": [
+    {
+      "wave": 2006,
+      "path": "SRC/neothd/src/cli/init/types.rs",
+      "change": "Update exactly two Clap help descriptions to match the existing reference and admitted policy-bound updater behavior; generator equality test unchanged",
+      "sha256": "F0B4D74397BB06AB8BFC6F4202D45B8A16C7F99F3A158909C803A2CFE6AD34D0"
+    },
+    {
+      "wave": 2007,
+      "paths": [
+        "SRC/neothd/src/updater/authority.rs",
+        "SRC/neothd/src/updater/probes.rs"
+      ],
+      "change": "Treat genuine terminal post-Intent policy denial as skipped while revalidation worker JoinError is WorkerFailed -> Panic and remains operational; terminal receipt retained",
+      "patchSha256": "A4D532D95A56A1B6245CD651618C4901B37F8BA3FEEC3BF476B786D78DDCDDEC"
+    }
+  ],
+  "review": "w1994_repair_review approved exact W2006 and narrowed W2007 after identifying and fixing the worker-failure misclassification",
+  "coverage": {
+    "newlyAuthoredTests": 0,
+    "strengthenedExistingTest": "updater::authority::tests::panic_is_converted_to_one_durable_terminal_failure",
+    "addedPortableRegistrations": 1,
+    "portableRegistrations": 2469,
+    "focusedCases": 240,
+    "prior239CasesPreserved": true,
+    "sourceDriftZeroLaunchAndReceiptAssertionsPreserved": true,
+    "helper": "work/gold-20260906/wave2007-skill-drift-repair/focused-registration/Root-Admit.ps1",
+    "helperSha256": "BEA1171853ABBFCCC3FAC7F2DA8E4D9F07AEF5AD3EB24776567632824F8993D2"
+  },
+  "independentBridgeProof": {
+    "run": 36851215853,
+    "producer": "f105243b4ea69d780fee8b5204dd3b7492c18906",
+    "accepted": true,
+    "tests": 12,
+    "bundleChanged": false,
+    "dependabot29": "fixed",
+    "report": "docs/verification/gold-wave2004-obsidian-moment.json"
+  },
+  "hosted": "Focused240, CLI/daemon, full native CI and Security pending on corrected producer",
+  "localExecutableValidationRan": false,
+  "releaseAccepted": false
+}

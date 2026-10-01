@@ -474,6 +474,9 @@ pub(crate) struct AuthorizedSkillCronScan {
 
 pub(crate) enum CronSkillRevalidationError {
     Policy(String),
+    /// The owned blocking revalidation task did not join. This is operational,
+    /// never a policy refusal.
+    WorkerFailed,
     Cancelled,
     TimedOut,
 }
@@ -485,6 +488,10 @@ impl CronSkillRevalidationError {
             Self::Policy(reason) => {
                 UpdaterLeafFailure::new(UpdaterLeafFailureKind::Policy, anyhow::anyhow!(reason))
             }
+            Self::WorkerFailed => UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Panic,
+                anyhow::anyhow!("authorized Skill source revalidation worker failed"),
+            ),
             Self::Cancelled => UpdaterLeafFailure::new(
                 UpdaterLeafFailureKind::Cancelled,
                 anyhow::anyhow!("accepted updater generation retired during Skill revalidation"),
@@ -1317,7 +1324,7 @@ pub(crate) async fn revalidate_authorized_skill_source_for_cron(
         _ = control.cancelled() => return Err(CronSkillRevalidationError::Cancelled),
         result = tokio::time::timeout_at(effect_deadline, revalidation) => {
             result.map_err(|_| CronSkillRevalidationError::TimedOut)?
-                .map_err(|_| CronSkillRevalidationError::Policy("authorized Skill source revalidation worker failed".to_string()))?
+                .map_err(|_| CronSkillRevalidationError::WorkerFailed)?
                 .map_err(CronSkillRevalidationError::Policy)?
         }
     };
