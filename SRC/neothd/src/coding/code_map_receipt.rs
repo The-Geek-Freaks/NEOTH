@@ -590,6 +590,21 @@ pub struct CodeMapSelectedFile {
     pub symbols: Vec<String>,
 }
 
+/// Content-free identity of one AST excerpt retained in prepared context.
+/// Source text deliberately remains only in the in-memory prepared prompt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeMapSelectedChunk {
+    pub path: String,
+    pub source_sha256: String,
+    pub ordinal: u32,
+    pub language: String,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
 /// A depth-one caller retained with the original context selection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -611,6 +626,8 @@ pub struct CodeMapContextSource {
     pub root_identity: String,
     pub index_generation: i64,
     pub graph_generation: i64,
+    #[serde(default)]
+    pub chunk_generation: i64,
     pub stale: bool,
     pub selection_truncated: bool,
     /// True when source metadata was redacted at the prepared-context boundary.
@@ -622,6 +639,8 @@ pub struct CodeMapContextSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_impact: Option<DiffImpactCitation>,
     pub selected_files: Vec<CodeMapSelectedFile>,
+    #[serde(default)]
+    pub selected_chunks: Vec<CodeMapSelectedChunk>,
     pub callers: Vec<CodeMapCaller>,
 }
 
@@ -668,6 +687,10 @@ impl CodeMapContextSource {
                 sanitize_metadata_field(symbol, &mut metadata_redacted);
             }
         }
+        for chunk in &mut self.selected_chunks {
+            sanitize_metadata_field(&mut chunk.path, &mut metadata_redacted);
+            sanitize_metadata_field(&mut chunk.language, &mut metadata_redacted);
+        }
         for caller in &mut self.callers {
             sanitize_metadata_field(&mut caller.target_symbol, &mut metadata_redacted);
             sanitize_metadata_field(&mut caller.caller_symbol, &mut metadata_redacted);
@@ -694,8 +717,9 @@ impl CodeMapContextSource {
         ensure!(
             self.index_generation > 0
                 && self.graph_generation > 0
-                && self.index_generation == self.graph_generation,
-            "code-map source must have matching positive index and graph generations"
+                && self.index_generation == self.graph_generation
+                && (self.selected_chunks.is_empty() || self.index_generation == self.chunk_generation),
+            "code-map source must have matching positive map/graph/chunk generations"
         );
         ensure!(
             !self.stale,
@@ -732,6 +756,18 @@ impl CodeMapContextSource {
             for symbol in &file.symbols {
                 bounded_nonempty("code-map selected symbol", symbol, MAX_SYMBOL_BYTES)?;
             }
+        }
+        for chunk in &self.selected_chunks {
+            relative_contained_path("code-map selected-chunk path", &chunk.path)?;
+            bounded_nonempty("code-map selected-chunk language", &chunk.language, 32)?;
+            ensure!(
+                chunk.language == "rust"
+                    && is_lowercase_sha256(&chunk.source_sha256)
+                    && chunk.start_byte < chunk.end_byte
+                    && chunk.start_line > 0
+                    && chunk.end_line >= chunk.start_line,
+                "code-map selected chunk has invalid identity or source range"
+            );
         }
         for caller in &self.callers {
             bounded_nonempty(
@@ -947,7 +983,8 @@ fn validate_sources(sources: &[CodeMapContextSource]) -> Result<()> {
             source.root == first.root
                 && source.root_identity == first.root_identity
                 && source.index_generation == first.index_generation
-                && source.graph_generation == first.graph_generation,
+                && source.graph_generation == first.graph_generation
+                && source.chunk_generation == first.chunk_generation,
             "all code-map context sources must describe the same snapshot"
         );
         ensure!(
@@ -1062,6 +1099,9 @@ fn source_contains_redaction_marker(source: &CodeMapContextSource) -> bool {
                     .iter()
                     .any(|symbol| symbol.contains("[REDACTED:"))
         })
+        || source.selected_chunks.iter().any(|chunk| {
+            chunk.path.contains("[REDACTED:") || chunk.language.contains("[REDACTED:")
+        })
         || source.callers.iter().any(|caller| {
             caller.target_symbol.contains("[REDACTED:")
                 || caller.caller_symbol.contains("[REDACTED:")
@@ -1081,6 +1121,10 @@ fn source_metadata_is_sanitized(source: &CodeMapContextSource) -> bool {
                     .symbols
                     .iter()
                     .all(|symbol| sanitize_metadata_value(symbol) == symbol.as_str())
+        })
+        && source.selected_chunks.iter().all(|chunk| {
+            sanitize_metadata_value(&chunk.path) == chunk.path
+                && sanitize_metadata_value(&chunk.language) == chunk.language
         })
         && source.callers.iter().all(|caller| {
             sanitize_metadata_value(&caller.target_symbol) == caller.target_symbol.as_str()
@@ -1255,6 +1299,7 @@ mod tests {
             root_identity: "volume-serial:repo-id".to_owned(),
             index_generation: 7,
             graph_generation: 7,
+            chunk_generation: 0,
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
@@ -1263,6 +1308,7 @@ mod tests {
                 path: "src/lib.rs".to_owned(),
                 symbols: vec!["entrypoint".to_owned()],
             }],
+            selected_chunks: Vec::new(),
             callers: vec![CodeMapCaller {
                 target_symbol: "entrypoint".to_owned(),
                 caller_symbol: "main".to_owned(),
@@ -1690,5 +1736,27 @@ mod tests {
         .unwrap();
         let injected = json.replacen('}', ",\"raw_context\":\"leak\"}", 1);
         assert!(serde_json::from_str::<CodingCodeMapReceipt>(&injected).is_err());
+    }
+
+    #[test]
+    fn selected_chunk_receipt_binds_identity_without_raw_source_text() {
+        let mut provenance = source(CodeMapContextKind::TargetedRecall);
+        provenance.chunk_generation = 7;
+        provenance.selected_chunks.push(CodeMapSelectedChunk {
+            path: "src/lib.rs".to_owned(),
+            source_sha256: "a".repeat(64),
+            ordinal: 0,
+            language: "rust".to_owned(),
+            start_byte: 0,
+            end_byte: 12,
+            start_line: 1,
+            end_line: 1,
+        });
+        let raw_source = "fn visible() {}";
+        let prepared = PreparedCodeMapContext::new(raw_source.to_owned(), vec![provenance]).unwrap();
+        let receipt = prepared.receipt(KanbanSessionId(9), 1, "operator", raw_source, "provider").unwrap();
+        let serialized = serde_json::to_string(&receipt).unwrap();
+        assert!(serialized.contains("source_sha256"));
+        assert!(!serialized.contains(raw_source));
     }
 }

@@ -3544,6 +3544,7 @@ mod tests {
                 root_identity: "fixture-root-identity".to_owned(),
                 index_generation: 1,
                 graph_generation: 1,
+                chunk_generation: 0,
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
@@ -3552,6 +3553,7 @@ mod tests {
                     path: "src/lib.rs".to_owned(),
                     symbols: vec!["fixture".to_owned()],
                 }],
+                selected_chunks: Vec::new(),
                 callers: Vec::new(),
             }],
         )

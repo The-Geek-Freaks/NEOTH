@@ -1,0 +1,92 @@
+{
+  "schema": "neoth-gold-wave2036-ast-code-recall/v1",
+  "status": "SOURCE_AND_HOSTED_LOCK_IMPORTED_AST_EXECUTION_PENDING",
+  "purpose": "Rust AST chunks persist with code-map generations and reach actual bounded decomposer context",
+  "source": {
+    "reviewedManifestSHA256": "AF58C9B2802B026E77D703F1DBE0B1461057098EC597D247627118C448113AF5",
+    "reviewedPatchSHA256": "165DAA47630BE7BAF63553F3DA5A3BD8D3A877DB4A6B78D64A1A712D2EBBDC0B",
+    "paths": [
+      "SRC/neothd/Cargo.toml",
+      "SRC/neothd/src/code_map/mod.rs",
+      "SRC/neothd/src/code_map/chunk.rs",
+      "SRC/neothd/src/code_map/persist.rs",
+      "SRC/neothd/src/code_map/recall.rs",
+      "SRC/neothd/src/code_map/snapshot.rs",
+      "SRC/neothd/src/cli/code.rs",
+      "SRC/neothd/src/coding/code_map_receipt.rs",
+      "SRC/neothd/src/coding/provider_worker.rs",
+      "SRC/neothd/src/coding/decomposer.rs",
+      "SRC/neothd/src/coding/store.rs",
+      "SRC/neothd/src/coding/service.rs",
+      "SRC/neothd/src/cli/kanban.rs"
+    ],
+    "newSourceFile": "SRC/neothd/src/code_map/chunk.rs",
+    "initialRuntimePin": "tree-sitter0.27.0",
+    "grammarPin": "tree-sitter-rust0.24.2"
+  },
+  "behavior": [
+    "node-bound Rust chunks target2500characters and reuse whole trailing nodes within300characters",
+    "optional overlap never pushes a legal declaration over16KiB row ceiling",
+    "schema13 and transactional root-wide chunk replacement bind index/graph/chunk generations",
+    "full and delta rebuilds preserve metadata-only fallback for unsupported or refused AST inputs",
+    "source fence inside publication transaction rejects drift with prior corpus retained",
+    "actual post-chunk-read generation check discards raced context",
+    "file-first recall then matched-symbol-line priority selects bounded source excerpts",
+    "actual decomposer canonical untrusted envelope escapes hostile source delimiters",
+    "durable receipt keeps selected path/SHA/ranges and excludes raw source"
+  ],
+  "regressionTests": [
+    "code_map::chunk::tests::rust_ast_chunks_are_deterministic_node_bounded_and_utf8_safe",
+    "code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap",
+    "code_map::chunk::tests::unsupported_invalid_or_error_tree_keeps_existing_file_symbol_recall",
+    "code_map::chunk::tests::oversize_declaration_refuses_ast_text_without_changing_metadata_recall",
+    "code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes",
+    "code_map::snapshot::tests::ast_source_change_after_materialization_before_commit_rolls_back_without_mixed_chunks",
+    "code_map::snapshot::tests::legal_near_row_cap_declaration_after_overlap_candidate_keeps_metadata_and_bounded_chunks",
+    "code_map::snapshot::tests::full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files",
+    "cli::code::tests::prompt_chunk_loader_refuses_cap_plus_one_and_malformed_matched_symbol_line",
+    "cli::code::tests::generation_change_after_actual_chunk_read_discards_context_at_second_snapshot_check",
+    "cli::code::tests::matched_symbol_line_priority_is_deterministic_before_ordinal_fallback",
+    "coding::code_map_receipt::tests::selected_chunk_receipt_binds_identity_without_raw_source_text",
+    "coding::decomposer::tests::ast_excerpt_reaches_actual_provider_envelope_while_receipt_keeps_only_chunk_identity"
+  ],
+  "registrations": {
+    "priorPortable": 2491,
+    "newPortable": 13,
+    "nextPortable": 2504,
+    "priorFocused": 266,
+    "nextFocused": 279,
+    "nextGuards": 20,
+    "status": "registered; hosted execution pending"
+  },
+  "review": {
+    "reviewer": "/root/w2031_rust_review",
+    "status": "STATIC_APPROVED",
+    "evidence": "work/gold-20260906/wave2036-ast-integration/metadata/ROOT_STATIC_REVIEW.json",
+    "localCompilerOrTests": false
+  },
+  "dependencyAdmission": {
+    "status": "HOSTED_LOCK_AND_NOTICES_ADMITTED",
+    "run": 36888598149,
+    "baseline": "7acece4f7ff821fe9145b6dff436994e6097fb25",
+    "candidate": "7fc944b9084c7c4101dca44e5d4ebc7df9ffa7cf",
+    "artifactId": 11175970709,
+    "archiveSHA256": "AE0EFB5F678F723A76B5C58B20DCDF463C2FC6AE7275A3727BBB34DF6955E2EF",
+    "verifiedEntries": 18,
+    "rawGitBindings": 6,
+    "rootChecksSHA256": "F2F33B8CF8F36586F70A65FB14CE554A2A9E564A65C5EBD7988303A8E86EB437",
+    "receipt": "work/gold-20260906/wave2040-minimal-ast-lock/admission/ROOT_CHECKS.json",
+    "lockFormattingOnly": "Removed exactly one trailing empty line from admitted postimage",
+    "publishedLockSHA256": "39AADE8CE7F031265A1B8A6FBC6AF2234F23706467E52146F87C28FFD6924095"
+  },
+  "boundaries": {
+    "localExecutableValidationRan": false,
+    "sourceImported": true,
+    "hostedSourceCompiled": false,
+    "astRuntimeAccepted": false,
+    "codeVectorRecall": "OPEN",
+    "nativeReleaseAccepted": false,
+    "noSlintChanges": true,
+    "originalPlanBacklogPreserved": true
+  }
+}

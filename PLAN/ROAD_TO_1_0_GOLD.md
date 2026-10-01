@@ -1,5 +1,19 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2036/W2042 Rust AST context integration (2026-10-01):**
+The reviewed Rust AST source is now integrated: node-bound chunks target
+2500 characters, bounded whole-node overlap stays within the 16 KiB row cap,
+and generation/source fences protect atomic publication and actual prompt
+recall. Selected excerpts reach the decomposer's existing untrusted envelope;
+durable receipts retain identity/ranges without source text. Thirteen new
+regressions are registered: 2504 portable tests and 279 focused cases.
+Hosted lock run36888598149 passed exact minimal dependency resolution twice
+under --locked and regenerated/checked license notices. Root verified the
+original archive, all 18 entries, six producer Git bindings and exact patch
+postimages; publication removes only one trailing empty lockfile line.
+AST compilation/runtime proof, code-vector recall, fresh full native and
+release qualification remain pending. No local runtime or .slint edit ran.
+
 **W2040 minimal AST dependency repair (2026-10-01):**
 The rejected W2038 resolver output remains diagnostic-only and unimported.
 A statically reviewed hosted repair now pins the required cc update to

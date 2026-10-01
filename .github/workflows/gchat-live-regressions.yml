@@ -183,6 +183,18 @@ jobs:
             SRC/neothd/Cargo.toml \
             SRC/Cargo.lock \
             .github/workflows/gchat-live-regressions.yml \
+            SRC/neothd/src/code_map/mod.rs \
+            SRC/neothd/src/code_map/chunk.rs \
+            SRC/neothd/src/code_map/persist.rs \
+            SRC/neothd/src/code_map/recall.rs \
+            SRC/neothd/src/code_map/snapshot.rs \
+            SRC/neothd/src/cli/code.rs \
+            SRC/neothd/src/coding/code_map_receipt.rs \
+            SRC/neothd/src/coding/provider_worker.rs \
+            SRC/neothd/src/coding/decomposer.rs \
+            SRC/neothd/src/coding/store.rs \
+            SRC/neothd/src/coding/service.rs \
+            SRC/neothd/src/cli/kanban.rs \
             > "$W548_ROOT/source/SHA256SUMS.txt"
           : > "$W548_ROOT/receipt/started.txt"
           : > "$W548_ROOT/receipt/passed.txt"
@@ -508,9 +520,22 @@ jobs:
           run_case 264 lib providers::tests::explicit_profile_provider_factory_selects_claude_cli providers::tests::explicit_profile_provider_factory_selects_claude_cli --lib
           run_case 265 lib providers::tests::explicit_profile_provider_failure_never_falls_back_to_main_provider providers::tests::explicit_profile_provider_failure_never_falls_back_to_main_provider --lib
           run_case 266 lib models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 266
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 266
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 266
+          run_case 267 lib code_map::chunk::tests::rust_ast_chunks_are_deterministic_node_bounded_and_utf8_safe code_map::chunk::tests::rust_ast_chunks_are_deterministic_node_bounded_and_utf8_safe --lib
+          run_case 268 lib code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap code_map::chunk::tests::rust_ast_chunks_target_2500_chars_and_cap_300_char_overlap --lib
+          run_case 269 lib code_map::chunk::tests::unsupported_invalid_or_error_tree_keeps_existing_file_symbol_recall code_map::chunk::tests::unsupported_invalid_or_error_tree_keeps_existing_file_symbol_recall --lib
+          run_case 270 lib code_map::chunk::tests::oversize_declaration_refuses_ast_text_without_changing_metadata_recall code_map::chunk::tests::oversize_declaration_refuses_ast_text_without_changing_metadata_recall --lib
+          run_case 271 lib code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes code_map::chunk::tests::overlap_is_suppressed_when_a_legal_near_cap_node_would_exceed_persistence_bytes --lib
+          run_case 272 lib code_map::snapshot::tests::ast_source_change_after_materialization_before_commit_rolls_back_without_mixed_chunks code_map::snapshot::tests::ast_source_change_after_materialization_before_commit_rolls_back_without_mixed_chunks --lib
+          run_case 273 lib code_map::snapshot::tests::legal_near_row_cap_declaration_after_overlap_candidate_keeps_metadata_and_bounded_chunks code_map::snapshot::tests::legal_near_row_cap_declaration_after_overlap_candidate_keeps_metadata_and_bounded_chunks --lib
+          run_case 274 lib code_map::snapshot::tests::full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files code_map::snapshot::tests::full_and_delta_rebuild_replace_root_chunks_for_move_delete_and_unchanged_files --lib
+          run_case 275 lib cli::code::tests::prompt_chunk_loader_refuses_cap_plus_one_and_malformed_matched_symbol_line cli::code::tests::prompt_chunk_loader_refuses_cap_plus_one_and_malformed_matched_symbol_line --lib
+          run_case 276 lib cli::code::tests::generation_change_after_actual_chunk_read_discards_context_at_second_snapshot_check cli::code::tests::generation_change_after_actual_chunk_read_discards_context_at_second_snapshot_check --lib
+          run_case 277 lib cli::code::tests::matched_symbol_line_priority_is_deterministic_before_ordinal_fallback cli::code::tests::matched_symbol_line_priority_is_deterministic_before_ordinal_fallback --lib
+          run_case 278 lib coding::code_map_receipt::tests::selected_chunk_receipt_binds_identity_without_raw_source_text coding::code_map_receipt::tests::selected_chunk_receipt_binds_identity_without_raw_source_text --lib
+          run_case 279 lib coding::decomposer::tests::ast_excerpt_reaches_actual_provider_envelope_while_receipt_keeps_only_chunk_identity coding::decomposer::tests::ast_excerpt_reaches_actual_provider_envelope_while_receipt_keeps_only_chunk_identity --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 279
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 279
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 279
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2032-hosted-ast-lock-workflow/v1",
   "base": "3b7173b495cc93c7097e694a3e297ba33d0a1322",
-  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "HOSTED_LOCK_AND_NOTICES_ACCEPTED_AST_EXECUTION_PENDING",
   "capturedUtc": "2026-10-01T15:55:12.2386504Z",
   "workflow": {
     "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -21,10 +21,10 @@
   },
   "review": "Independent execution review approved final exact workflow after newline, identity-set, cc-closure and exact root-dependency repairs",
   "astSourceCandidate": "STATIC_APPROVED separately as combined W2036 candidate; isolated, uncompiled, and not imported",
-  "lockGenerated": false,
+  "lockGenerated": true,
   "sourceOrEmbeddingAcceptance": false,
   "localExecutableValidationRan": false,
-  "noticesGenerated": false,
+  "noticesGenerated": true,
   "firstHostedAttempt": {
     "run": 36884451803,
     "baseline": "ff703155d27bf1228c4aadbeaebaedc8fbf754f2",
@@ -40,7 +40,7 @@
     "next": "capture actual rejected diff; preserve strict gate until evaluated"
   },
   "minimalRepair": {
-    "status": "STATIC_APPROVED_HOSTED_PENDING",
+    "status": "HOSTED_ADMITTED",
     "rejectedRun": 36885998745,
     "rejectedArtifact": 11174202356,
     "rejectedArchiveSHA256": "27B5C6A1E9B4707626E4B0DABFF5B9B1BAB61FA7B4DA290C179E7DA31878BBED",
@@ -51,5 +51,19 @@
     "rawResolutionDiagnostics": "sealed before reconstruction; NOT_IMPORTABLE",
     "postRecompositionDiagnostics": "sealed before locked validation; NOT_IMPORTABLE",
     "sourceCandidate": "STATIC_APPROVED, isolated, no compiler/runtime acceptance"
+  },
+  "acceptedLock": {
+    "status": "HOSTED_LOCK_AND_NOTICES_ADMITTED",
+    "run": 36888598149,
+    "baseline": "7acece4f7ff821fe9145b6dff436994e6097fb25",
+    "candidate": "7fc944b9084c7c4101dca44e5d4ebc7df9ffa7cf",
+    "artifactId": 11175970709,
+    "archiveSHA256": "AE0EFB5F678F723A76B5C58B20DCDF463C2FC6AE7275A3727BBB34DF6955E2EF",
+    "verifiedEntries": 18,
+    "rawGitBindings": 6,
+    "rootChecksSHA256": "F2F33B8CF8F36586F70A65FB14CE554A2A9E564A65C5EBD7988303A8E86EB437",
+    "receipt": "work/gold-20260906/wave2040-minimal-ast-lock/admission/ROOT_CHECKS.json",
+    "lockFormattingOnly": "Removed exactly one trailing empty line from admitted postimage",
+    "publishedLockSHA256": "39AADE8CE7F031265A1B8A6FBC6AF2234F23706467E52146F87C28FFD6924095"
   }
 }

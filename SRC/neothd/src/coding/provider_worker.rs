@@ -747,6 +747,7 @@ mod tests {
                 root_identity: "fixture-root-identity".to_owned(),
                 index_generation: 1,
                 graph_generation: 1,
+                chunk_generation: 0,
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
@@ -755,6 +756,7 @@ mod tests {
                     path: "src/leaf.rs".to_owned(),
                     symbols: vec!["leaf".to_owned()],
                 }],
+                selected_chunks: Vec::new(),
                 callers: vec![crate::coding::CodeMapCaller {
                     target_symbol: "leaf".to_owned(),
                     caller_symbol: "root".to_owned(),

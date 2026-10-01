@@ -104,6 +104,9 @@ pub struct RootGenerationSnapshot {
     pub root: CanonicalRepoRoot,
     pub index_generation: i64,
     pub graph_generation: i64,
+    /// AST text is admissible only when it was atomically published with the
+    /// persisted file/map and graph generation.
+    pub chunk_generation: i64,
 }
 
 /// Filesystem freshness is expensive and therefore explicit at each call site.
@@ -642,7 +645,7 @@ fn resolve_active_root_snapshot_in_transaction(
 ) -> Result<Option<RootGenerationSnapshot>> {
     let mut stmt = tx
         .prepare(
-            "SELECT root, root_identity, index_generation, graph_generation \
+            "SELECT root, root_identity, index_generation, graph_generation, chunk_generation \
              FROM code_map_roots WHERE root_identity IS NOT NULL ORDER BY root ASC",
         )
         .context("prepare active code-map root snapshot query")?;
@@ -653,15 +656,16 @@ fn resolve_active_root_snapshot_in_transaction(
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })
         .context("query active code-map root snapshots")?;
     let mut candidates = Vec::new();
     for row in rows {
-        let (display, identity, index_generation, graph_generation) =
+        let (display, identity, index_generation, graph_generation, chunk_generation) =
             row.context("read active code-map root snapshot")?;
         if current_canonical.starts_with(Path::new(&display)) {
-            candidates.push((display, identity, index_generation, graph_generation));
+            candidates.push((display, identity, index_generation, graph_generation, chunk_generation));
         }
     }
     candidates.sort_by(|a, b| {
@@ -671,7 +675,7 @@ fn resolve_active_root_snapshot_in_transaction(
             .cmp(&Path::new(&a.0).components().count())
             .then_with(|| a.0.cmp(&b.0))
     });
-    let Some((display, identity, index_generation, graph_generation)) =
+    let Some((display, identity, index_generation, graph_generation, chunk_generation)) =
         candidates.into_iter().next()
     else {
         return Ok(None);
@@ -682,6 +686,7 @@ fn resolve_active_root_snapshot_in_transaction(
         root,
         index_generation,
         graph_generation,
+        chunk_generation,
     }))
 }
 
@@ -729,10 +734,10 @@ pub fn sole_persisted_root_snapshot(conn: &Connection) -> Result<Option<RootGene
     let tx = conn
         .unchecked_transaction()
         .context("begin sole code-map root snapshot transaction")?;
-    let rows: Vec<(String, Option<String>, i64, i64)> = {
+    let rows: Vec<(String, Option<String>, i64, i64, i64)> = {
         let mut stmt = tx
             .prepare(
-                "SELECT root, root_identity, index_generation, graph_generation \
+                "SELECT root, root_identity, index_generation, graph_generation, chunk_generation \
                  FROM code_map_roots ORDER BY root ASC LIMIT 2",
             )
             .context("prepare sole code-map root snapshot query")?;
@@ -744,13 +749,14 @@ pub fn sole_persisted_root_snapshot(conn: &Connection) -> Result<Option<RootGene
         .context("collect sole code-map root snapshot")?
     };
     let snapshot = match rows.as_slice() {
-        [(display, Some(identity), index_generation, graph_generation)] => {
+        [(display, Some(identity), index_generation, graph_generation, chunk_generation)] => {
             let root = CanonicalRepoRoot::from_persisted(display, identity)
                 .with_context(|| format!("verify sole persisted code-map root {display:?}"))?;
             Some(RootGenerationSnapshot {
                 root,
                 index_generation: *index_generation,
                 graph_generation: *graph_generation,
+                chunk_generation: *chunk_generation,
             })
         }
         _ => None,
@@ -1100,10 +1106,10 @@ pub fn architecture_findings_for_skill(
         );
     }
     let edges_scanned = edges.len();
-    let (index_generation, graph_generation, import_generation, type_generation, complete): (i64, i64, i64, i64, bool) = snapshot.query_row(
-        "SELECT index_generation, graph_generation, import_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
+    let (index_generation, graph_generation, import_generation, type_generation, chunk_generation, complete): (i64, i64, i64, i64, i64, bool) = snapshot.query_row(
+        "SELECT index_generation, graph_generation, import_generation, type_generation, chunk_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
         [root],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
     )?;
     anyhow::ensure!(
         complete
