@@ -110,7 +110,14 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// v10 adds nullable exact target-file identity; legacy NULL rows are never
 /// exact TestedBy evidence. v11 adds a separate generation-bound import graph.
 /// v12 adds a separate generation-bound type hierarchy including known leaves.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 12;
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 13;
+
+/// Whole-root replacement keeps stale source text from surviving a move or
+/// deletion. These are independent of scanner bounds so AST work cannot turn
+/// the valid 1-GiB scanner corpus into an unbounded SQLite write.
+pub(crate) const MAX_CODE_MAP_CHUNK_ROWS: usize = 100_000;
+pub(crate) const MAX_CODE_MAP_CHUNK_TEXT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_CODE_MAP_CHUNK_ROW_TEXT_BYTES: usize = 16 * 1024;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -212,7 +219,7 @@ mod v10_migration_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "12");
+        assert_eq!(version, "13");
         let import_generation: i64 = conn
             .query_row(
                 "SELECT import_generation FROM code_map_roots WHERE root = '/r'",
@@ -640,6 +647,30 @@ where
         .context("v11→v12: stamp schema_version=12")?;
     }
 
+    // Legacy maps did not retain a source-text corpus. `-1` is deliberately
+    // unknown, never an asserted empty current corpus.
+    if v < 13 {
+        tx.execute_batch(
+            "ALTER TABLE code_map_roots ADD COLUMN chunk_generation INTEGER NOT NULL DEFAULT -1; \
+             CREATE TABLE code_map_chunks ( \
+                 root TEXT NOT NULL, path TEXT NOT NULL, source_sha256 TEXT NOT NULL, \
+                 ordinal INTEGER NOT NULL, language TEXT NOT NULL, start_byte INTEGER NOT NULL, \
+                 end_byte INTEGER NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, \
+                 text TEXT NOT NULL, \
+                 PRIMARY KEY(root, path, source_sha256, ordinal), \
+                 FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE \
+             ); \
+             CREATE INDEX idx_code_map_chunks_file \
+                 ON code_map_chunks(root, path, source_sha256, ordinal);",
+        )
+        .context("v12→v13: add generation-bound code-map chunks")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '13')",
+            [],
+        )
+        .context("v12→v13: stamp schema_version=13")?;
+    }
+
     tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
@@ -775,6 +806,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             graph_generation INTEGER NOT NULL DEFAULT 0,
             import_generation INTEGER NOT NULL DEFAULT 0,
             type_generation INTEGER NOT NULL DEFAULT 0,
+            chunk_generation INTEGER NOT NULL DEFAULT 0,
             root_identity    TEXT
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_code_map_roots_identity
@@ -806,6 +838,23 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON code_map_symbols(name);
         CREATE INDEX IF NOT EXISTS idx_code_map_files_path
             ON code_map_files(root, path);
+
+        CREATE TABLE IF NOT EXISTS code_map_chunks (
+            root TEXT NOT NULL,
+            path TEXT NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            language TEXT NOT NULL,
+            start_byte INTEGER NOT NULL,
+            end_byte INTEGER NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            PRIMARY KEY(root, path, source_sha256, ordinal),
+            FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_map_chunks_file
+            ON code_map_chunks(root, path, source_sha256, ordinal);
 
         -- QM-2 Phase 2 (2026-05-22) — call-graph edges. One row per
         -- (from_file, from_symbol) → to_name edge produced by the
@@ -972,6 +1021,87 @@ pub(crate) struct DeltaGraphPublication<'a> {
     pub(crate) replacement_edges: &'a [crate::code_map::graph::CodeEdge],
     pub(crate) replacement_sources: &'a std::collections::BTreeSet<String>,
     pub(crate) removed_paths: &'a std::collections::BTreeSet<String>,
+    pub(crate) chunks: &'a [crate::code_map::chunk::CodeChunk],
+}
+
+fn replace_chunks_in_transaction(
+    tx: &Transaction<'_>,
+    map: &RepoMap,
+    chunks: &[crate::code_map::chunk::CodeChunk],
+) -> Result<()> {
+    ensure!(
+        chunks.len() <= MAX_CODE_MAP_CHUNK_ROWS,
+        "code-map AST chunk row count exceeds bounded publish cap"
+    );
+    let known_files: BTreeMap<&str, (&str, Language)> = map
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), (file.sha256.as_str(), file.language)))
+        .collect();
+    let mut total = 0usize;
+    let mut previous: Option<(&str, u64, u64, u32)> = None;
+    for chunk in chunks {
+        let Some((sha256, language)) = known_files.get(chunk.path.as_str()) else {
+            bail!("code-map AST chunk path is not a persisted map file");
+        };
+        ensure!(
+            *sha256 == chunk.source_sha256 && *language == chunk.language,
+            "code-map AST chunk source identity does not match map file"
+        );
+        ensure!(
+            chunk.language == Language::Rust
+                && !chunk.path.is_empty()
+                && chunk.source_sha256.len() == 64
+                && chunk.source_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && chunk.start_byte < chunk.end_byte
+                && chunk.start_line > 0
+                && chunk.end_line >= chunk.start_line
+                && !chunk.text.is_empty()
+                && chunk.text.is_char_boundary(chunk.text.len()),
+            "code-map AST chunk has an invalid source-bound range"
+        );
+        ensure!(
+            chunk.text.len() <= MAX_CODE_MAP_CHUNK_ROW_TEXT_BYTES,
+            "code-map AST chunk exceeds per-row text cap"
+        );
+        total = total.checked_add(chunk.text.len()).context("code-map AST chunk text overflow")?;
+        ensure!(
+            total <= MAX_CODE_MAP_CHUNK_TEXT_BYTES,
+            "code-map AST chunk corpus exceeds aggregate text cap"
+        );
+        if let Some((prior_path, prior_start, prior_end, prior_ordinal)) = previous {
+            if prior_path == chunk.path {
+                ensure!(
+                    (chunk.start_byte, chunk.end_byte, chunk.ordinal) > (prior_start, prior_end, prior_ordinal),
+                    "code-map AST chunks are not stable source order"
+                );
+            }
+        }
+        previous = Some((&chunk.path, chunk.start_byte, chunk.end_byte, chunk.ordinal));
+    }
+
+    tx.execute("DELETE FROM code_map_chunks WHERE root = ?1", rusqlite::params![&map.root])
+        .context("replace root-local code-map AST chunks")?;
+    let mut statement = tx.prepare(
+        "INSERT INTO code_map_chunks \
+         (root, path, source_sha256, ordinal, language, start_byte, end_byte, start_line, end_line, text) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    for chunk in chunks {
+        statement.execute(rusqlite::params![
+            &map.root,
+            &chunk.path,
+            &chunk.source_sha256,
+            i64::from(chunk.ordinal),
+            chunk.language.label(),
+            i64::try_from(chunk.start_byte).context("convert AST chunk start byte")?,
+            i64::try_from(chunk.end_byte).context("convert AST chunk end byte")?,
+            i64::from(chunk.start_line),
+            i64::from(chunk.end_line),
+            &chunk.text,
+        ])?;
+    }
+    Ok(())
 }
 
 /// Incrementally replace the snapshot for `map.root` (CBM-04).
@@ -1653,6 +1783,26 @@ pub(crate) fn persist_map_and_edges_bound(
     hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy,
     expected_root: &super::root_identity::CanonicalRepoRoot,
 ) -> Result<BoundPersistResult> {
+    persist_map_and_edges_bound_with_chunks(conn, map, edges, import_edges, hierarchy, &[], expected_root, || Ok(()))
+}
+
+/// Bound publication variant used by the AST text-recall builder. Chunks are
+/// replaced as one root-local corpus in the same IMMEDIATE transaction as the
+/// map and graph generations; callers must have re-read and hash-verified all
+/// chunk sources before entering this function.
+pub(crate) fn persist_map_and_edges_bound_with_chunks<PreCommitFence>(
+    conn: &mut Connection,
+    map: &RepoMap,
+    edges: &[crate::code_map::graph::CodeEdge],
+    import_edges: &[crate::code_map::imports::ImportEdge],
+    hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy,
+    chunks: &[crate::code_map::chunk::CodeChunk],
+    expected_root: &super::root_identity::CanonicalRepoRoot,
+    pre_commit_fence: PreCommitFence,
+) -> Result<BoundPersistResult>
+where
+    PreCommitFence: FnOnce() -> Result<()>,
+{
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin bound atomic code-map snapshot transaction")?;
@@ -1665,14 +1815,16 @@ pub(crate) fn persist_map_and_edges_bound(
     let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
     replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
     replace_type_hierarchy_in_transaction(&tx, &map.root, hierarchy)?;
+    replace_chunks_in_transaction(&tx, map, chunks)?;
+    pre_commit_fence().context("validate full snapshot source fence under writer transaction")?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
         observed == *expected_root,
         "code-map repository root was replaced before bound snapshot commit"
     );
-    let (stored_identity, index_generation, graph_generation, import_generation, type_generation) = tx
+    let (stored_identity, index_generation, graph_generation, import_generation, type_generation, chunk_generation) = tx
         .query_row(
-            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation \
+            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation, chunk_generation \
              FROM code_map_roots WHERE root = ?1",
             rusqlite::params![&map.root],
             |row| {
@@ -1682,6 +1834,7 @@ pub(crate) fn persist_map_and_edges_bound(
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
@@ -1697,6 +1850,11 @@ pub(crate) fn persist_map_and_edges_bound(
             && index_generation == type_generation,
         "bound code-map snapshot published mismatched index/graph/import/type generations"
     );
+    let updated = tx.execute(
+        "UPDATE code_map_roots SET chunk_generation = ?2 WHERE root = ?1",
+        rusqlite::params![&map.root, index_generation],
+    )?;
+    ensure!(updated == 1, "bind bound AST chunk generation");
     tx.commit()
         .context("commit bound atomic code-map snapshot transaction")?;
     Ok(BoundPersistResult {
@@ -1727,6 +1885,7 @@ where
         replacement_edges,
         replacement_sources,
         removed_paths,
+        chunks,
     } = delta;
     enforce_incoming_edge_bounds(&map.root, published_edges)?;
     for edge in replacement_edges {
@@ -1815,6 +1974,7 @@ where
     // graph in this same transaction instead of retaining selected sources.
     replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
     replace_type_hierarchy_in_transaction(&tx, &map.root, hierarchy)?;
+    replace_chunks_in_transaction(&tx, map, chunks)?;
     pre_commit_fence().context("validate delta source fence under writer transaction")?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
@@ -1831,7 +1991,7 @@ where
         "bound delta snapshot persisted a different physical root identity"
     );
     let updated = tx.execute(
-        "UPDATE code_map_roots SET graph_generation = ?2, import_generation = ?2, type_generation = ?2 WHERE root = ?1",
+        "UPDATE code_map_roots SET graph_generation = ?2, import_generation = ?2, type_generation = ?2, chunk_generation = ?2 WHERE root = ?1",
         rusqlite::params![&map.root, index_generation],
     )?;
     ensure!(updated == 1, "bind delta graph generation");
@@ -5020,6 +5180,7 @@ mod tests {
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::new(),
+                chunks: &[],
             },
             &root,
             || anyhow::bail!("test final source fence rejected changed bytes"),
@@ -5222,6 +5383,7 @@ mod tests {
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["a.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::from(["b.rs".to_owned()]),
+                chunks: &[],
             },
             &root,
             || Ok(()),
@@ -5342,6 +5504,7 @@ mod tests {
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["types.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::new(),
+                chunks: &[],
             },
             &root,
             || Ok(()),
@@ -6070,7 +6233,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "12" (v1→…→v11→v12 chain).
+        // schema_version must now be "13" (v1→…→v11→v12→v13 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -6079,8 +6242,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "12",
-            "schema_version must advance to 12 after migration"
+            version, "13",
+            "schema_version must advance to 13 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated
@@ -6104,6 +6267,18 @@ mod tests {
             root_cols.iter().any(|c| c == "root_identity"),
             "v5 must add root_identity to code_map_roots; got {root_cols:?}"
         );
+        assert!(
+            root_cols.iter().any(|c| c == "chunk_generation"),
+            "v13 must add chunk_generation to code_map_roots; got {root_cols:?}"
+        );
+        let legacy_chunk_generation: i64 = conn.query_row(
+            "SELECT chunk_generation FROM code_map_roots WHERE root=?1", [&root], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(legacy_chunk_generation, -1, "legacy snapshots must remain AST-unknown until rebuild");
+        let chunk_index: String = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_code_map_chunks_file'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(chunk_index, "idx_code_map_chunks_file");
         let edge_cols: Vec<String> = {
             let mut stmt = conn.prepare("PRAGMA table_info(code_map_edges)").unwrap();
             stmt.query_map([], |row| row.get::<_, String>(1))

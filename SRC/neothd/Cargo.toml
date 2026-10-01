@@ -256,6 +256,8 @@ cpal = { version = "=0.18.2", optional = true }
 
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }
+tree-sitter = "=0.27.0"
+tree-sitter-rust = "=0.24.2"
 # GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.
 # Optional, default-OFF; never present in a release binary. Pulled only when
 # the `hash-bench` feature is active. Its 1.88 MSRV remains below NEOTH's 1.91
