@@ -1,5 +1,19 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1991 SSH dependency reconciliation (2026-10-01; candidate only):**
+The current GitHub dependency metadata reports patched Russh/Pageant releases
+for dependencies used by ssh-tunnel. This does not itself prove an audit-gate
+failure or attribute the alerts to the latest formatter commit. A reviewed,
+manual,exact-main,read-only-permission hosted workflow will resolve Russh0.63.2
+and Pageant0.2.3, verify locked ssh-tunnel metadata and upload only a two-file
+manifest/lock patch with source/postimage hashes. It does not compile,test,
+commit,push or import the dependency. Root separately reviews the required
+Russh callback API adaptation while retaining host-key and password policy.
+This metadata-only task does not supersede the ongoing baseline native matrix.
+Preflight36833364217 and CodeQuality36833364371 passed e725c0e3, including the
+corrected inline Clippy assertion. Fresh238-case and full native proof remain
+pending. Report: docs/verification/gold-wave1991-ssh-dependency-frontier.json.
+
 **W1988-W1989 installed-Skill probe integration and Linux CI budget (2026-10-01; hosted pending):**
 The independently reviewed W1984 Installed-Skill Git leaf is now integrated.
 Recurring probes admit only activated installed Skills, bind normalized source,

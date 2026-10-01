@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1988_SKILL_PROBE_AND_W1989_INLINE_CI_CONTRACT_HOSTED_PENDING",
+  "status": "W1991_HOSTED_SSH_LOCK_RECONCILIATION_PREPARED_RUNTIME_GATES_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 273630,
-    "sha256": "613B874653C11164DAB789EDDAEADB906B7EF56A1D89B29BD977E84BE7BBC550"
+    "bytes": 274017,
+    "sha256": "20864065F0F87AAABCE2149CE06932680B02CB445A234972158CF90FC9D0AD1C"
   },
-  "sourceInputs": 1517,
+  "sourceInputs": 1519,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -63470,6 +63470,44 @@
       }
     ],
     "note": "Preflight36832724923 passed Rust format but block-only command helper rejected inline Clippy syntax. Two-line exact-singleton inline assertion correction reviewed; unchanged Clippy command. No local tests; fresh hosted preflight required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1991SshLockReconciliation": {
+    "base": "e725c0e37a767476c85d492741bf59be28c24cff",
+    "sources": [
+      {
+        "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+        "bytes": 4126,
+        "sha256": "70C578C8E2F30BE0B30D3A2C24639E170E651633942BC5E31317CD4A0EAC10C9",
+        "blob": "1fe24c6ea3dc3d0f1884149ca3232a6f0ee74195"
+      },
+      {
+        "path": "docs/verification/gold-wave1991-ssh-dependency-frontier.json",
+        "bytes": 1687,
+        "sha256": "3A6A2D212809040313F03CD05A0871A1E434659FEE1DD6DE438D5029DA0244BC",
+        "blob": "366871ba1752ab6982e57b80f1d1667481e3eeed"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 597636,
+        "sha256": "70885F925FA4ED1E453E28085726BA85D7F1F3F380F1CD4C13C3D6F494B11DEB",
+        "blob": "5bd5197cf4350f2dd55dc36c314782aeb3d48954"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1634066,
+        "sha256": "47F3D1DA7CA8A41AD98E3266016CD9D49328DD9665E26E6675AC84787654BC1A",
+        "blob": "68e6bd100ade8ba737250142401f726345dbd47a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2245076,
+        "sha256": "B953D27C85FB8B70396B9020DBCBF159DA3E71332A348AAEB6F15CBE3D7702C9",
+        "blob": "7094707a06ea81eb91429047d99bd46d0e4b7571"
+      }
+    ],
+    "note": "Reviewed exact-main metadata-only hosted Russh0.63.2/Pageant0.2.3 reconciliation; no dependency imported and no local runtime. Existing baseline CI not superseded. e725c0e3 fast gates passed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

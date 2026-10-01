@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T07:55:11.6213714Z",
-  "validationStatus": "W1988_SKILL_PROBE_AND_W1989_INLINE_CI_CONTRACT_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T08:03:56.0620423Z",
+  "validationStatus": "W1991_HOSTED_SSH_LOCK_RECONCILIATION_PREPARED_RUNTIME_GATES_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -180,6 +180,11 @@
       "path": ".github/workflows/silero-specialize.yml",
       "bytes": 2721,
       "sha256": "431F995729421456C46ED6F72E7592B0351E1F9B1D710FE1F0AA8D5F5BCBAF26"
+    },
+    {
+      "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+      "bytes": 4126,
+      "sha256": "70C578C8E2F30BE0B30D3A2C24639E170E651633942BC5E31317CD4A0EAC10C9"
     },
     {
       "path": ".github/workflows/webchat-browser.yml",
@@ -2907,6 +2912,11 @@
       "sha256": "09551FE985CC92340C08D44B9501912BF62443C359B4CD8DA35DACC08ADE7EA0"
     },
     {
+      "path": "docs/verification/gold-wave1991-ssh-dependency-frontier.json",
+      "bytes": 1687,
+      "sha256": "3A6A2D212809040313F03CD05A0871A1E434659FEE1DD6DE438D5029DA0244BC"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3968,18 +3978,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 596632,
-      "sha256": "B2896DCA0B4E6F5440CEDFC6D89D54B367D743574C1C4855E1B2F3FAB7B8ECBF"
+      "bytes": 597636,
+      "sha256": "70885F925FA4ED1E453E28085726BA85D7F1F3F380F1CD4C13C3D6F494B11DEB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1633062,
-      "sha256": "919F28C8CC764770FA49235A35CABE58A103CB9B709771D8D1EEB7F2F06A8E8F"
+      "bytes": 1634066,
+      "sha256": "47F3D1DA7CA8A41AD98E3266016CD9D49328DD9665E26E6675AC84787654BC1A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2244072,
-      "sha256": "3EC2671B8A479D424AEA726A8287F0D3993A238D7DF361DF012A9054996BBC6F"
+      "bytes": 2245076,
+      "sha256": "B953D27C85FB8B70396B9020DBCBF159DA3E71332A348AAEB6F15CBE3D7702C9"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-gold-wave1991-ssh-dependency-frontier/v1",
+  "base": "e725c0e37a767476c85d492741bf59be28c24cff",
+  "status": "HOSTED_METADATA_RECONCILIATION_PREPARED_DEPENDENCY_SOURCE_NOT_IMPORTED",
+  "observed": {
+    "apiSnapshotUtc": "2026-10-01T07:52:22Z",
+    "openDependabotRecords": 11,
+    "highRecords": 2,
+    "uniqueHighAdvisories": 1,
+    "lockedRussh": "0.62.5",
+    "lockedPageant": "0.2.1",
+    "scannerFailureProven": false,
+    "lastCommitIntroducedAlertsClaimed": false
+  },
+  "candidate": {
+    "russh": "0.63.2",
+    "pageant": "0.2.3",
+    "optionalFeature": "ssh-tunnel",
+    "backend": "ring",
+    "hostKeyPolicy": "Preserve TOFU/pinning; new certificate variant must fail closed",
+    "productionPasswordPolicy": "Retain existing disabled gate"
+  },
+  "reconciliation": {
+    "workflow": ".github/workflows/ssh-dependency-lock-reconcile.yml",
+    "workflowSha256": "70C578C8E2F30BE0B30D3A2C24639E170E651633942BC5E31317CD4A0EAC10C9",
+    "reviewer": "w1986_actual_review",
+    "review": "APPROVE",
+    "producer": "Required exact current main SHA",
+    "scope": [
+      "SRC/Cargo.lock",
+      "SRC/neothd/Cargo.toml"
+    ],
+    "artifactOnly": true,
+    "compilersOrTestsRun": false,
+    "lockedFeatureMetadata": true
+  },
+  "nonblockingDevelopmentMoment": "Separate medium development alert, outside the existing bridge audit scope; no bundled runtime remediation claim",
+  "priorFastGates": {
+    "producer": "e725c0e37a767476c85d492741bf59be28c24cff",
+    "preflight": 36833364217,
+    "codeQuality": 36833364371,
+    "conclusion": "success"
+  },
+  "localExecutableValidationRan": false,
+  "dependencyUpgradeAccepted": false,
+  "releaseAccepted": false
+}
