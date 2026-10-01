@@ -3461,9 +3461,11 @@ fn synthetic_config_for_slot(
     synthetic.inference.openai_compat_profile = slot.openai_compat_profile;
     if named_instance {
         // An instance owns its entire transport authority. In particular, a
-        // named Azure/Bedrock route must not inherit a stale global setting.
+        // named Azure/Bedrock/Claude route must not inherit stale global
+        // transport settings from the main provider.
         synthetic.provider_region = slot.region.clone();
         synthetic.provider_api_version = slot.api_version.clone();
+        synthetic.provider_binary = None;
     } else {
         if let Some(slot_region) = slot.region.clone() {
             synthetic.provider_region = Some(slot_region);
@@ -3473,6 +3475,19 @@ fn synthetic_config_for_slot(
         }
     }
     synthetic
+}
+
+fn reject_missing_named_bedrock_region(
+    slot: &crate::config::inference::HemisphereSlot,
+    provider_kind: ProviderKind,
+    is_named_instance: bool,
+) -> Result<()> {
+    if is_named_instance && provider_kind == ProviderKind::AwsBedrock && slot.region.is_none() {
+        anyhow::bail!(
+            "named aws_bedrock provider instance requires an explicit region before construction"
+        );
+    }
+    Ok(())
 }
 
 pub async fn from_config_for_role(
@@ -3510,13 +3525,15 @@ async fn from_config_for_role_inner(
         }
         return from_config_for_instance(&selected, home).await;
     };
+    let provider_kind = provider_kind.to_provider_kind();
+    reject_missing_named_bedrock_region(slot, provider_kind, binding.is_named_instance)?;
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
     let mut synthetic = synthetic_config_for_slot(
         config,
         slot,
-        provider_kind.to_provider_kind(),
+        provider_kind,
         binding.is_named_instance,
     );
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
@@ -3529,6 +3546,33 @@ async fn from_config_for_role_inner(
         apply_instance_catalog_default(&mut synthetic, home);
     }
     from_config_for_instance(&synthetic, home).await
+}
+
+/// Build exactly one already-resolved topology binding.  This is the common
+/// bridge for turn-scoped selections (including admitted Skills); it does not
+/// consult a role, fall back to the main provider, or add a fallback chain.
+pub async fn from_config_for_resolved_binding_at(
+    config: &FreedomConfig,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    let provider_kind = binding
+        .slot
+        .provider
+        .ok_or_else(|| anyhow::anyhow!("resolved provider binding has no provider"))?;
+    reject_missing_named_bedrock_region(
+        &binding.slot,
+        provider_kind.to_provider_kind(),
+        binding.is_named_instance,
+    )?;
+    let mut synthetic = synthetic_config_for_slot(
+        config,
+        &binding.slot,
+        provider_kind.to_provider_kind(),
+        binding.is_named_instance,
+    );
+    apply_instance_catalog_default(&mut synthetic, home);
+    from_config_for_instance(&synthetic, Some(home)).await
 }
 
 /// SPEC-03b — build the chat provider WITH its 429 fallback chain. The
@@ -3659,10 +3703,11 @@ fn resolved_fallback_slots_allowed(
             .slot
             .provider
             .ok_or_else(|| anyhow::anyhow!("fallback slot has no provider configured"))?;
-        let route = crate::consent::route_for_provider_config(
+        let route = crate::consent::route_for_resolved_provider_config(
             provider.to_provider_kind(),
             binding.slot.endpoint.as_deref(),
             fallback_consent_region(config, &binding),
+            binding.is_named_instance,
         );
         let durable = crate::consent::is_route_granted(home, &route);
         let ephemeral = ephemeral_consent
@@ -3731,6 +3776,11 @@ async fn fallback_chain_from_config_inner(
     // tested seam rather than an inline branch.
     for resolved in resolved_fallback_slots_allowed(home, config, ephemeral_consent)? {
         let kind = resolved.provider.to_provider_kind();
+        reject_missing_named_bedrock_region(
+            &resolved.slot,
+            kind,
+            resolved.binding.is_named_instance,
+        )?;
         let mut synthetic = synthetic_config_for_slot(
             config,
             &resolved.slot,
@@ -3822,10 +3872,12 @@ async fn from_config_for_sub_role_inner(
             None => from_config_for_role(config, inner_role).await,
         };
     };
+    let provider_kind = provider_kind.to_provider_kind();
+    reject_missing_named_bedrock_region(slot, provider_kind, binding.is_named_instance)?;
     let mut synthetic = synthetic_config_for_slot(
         config,
         slot,
-        provider_kind.to_provider_kind(),
+        provider_kind,
         binding.is_named_instance,
     );
     if let Some(home) = home {
@@ -3885,7 +3937,7 @@ pub async fn from_config_for_explicit_profile_at(
     config: &FreedomConfig,
     home: &Path,
 ) -> Result<Option<Box<dyn Provider>>> {
-    let Some(synthetic) = build_explicit_profile_config(config) else {
+    let Some(synthetic) = build_explicit_profile_config(config)? else {
         return Ok(None);
     };
     from_config_with_optional_home(&synthetic, Some(home))
@@ -3897,14 +3949,29 @@ async fn from_config_for_profile_inner(
     config: &FreedomConfig,
     home: Option<&Path>,
 ) -> Result<Box<dyn Provider>> {
-    match build_explicit_profile_config(config) {
+    match build_explicit_profile_config(config)? {
         Some(synthetic) => from_config_with_optional_home(&synthetic, home).await,
         None => from_config_for_learn_inner(config, home).await,
     }
 }
 
-fn build_explicit_profile_config(config: &FreedomConfig) -> Option<FreedomConfig> {
-    let provider = config.inference.profile_provider?;
+fn build_explicit_profile_config(config: &FreedomConfig) -> Result<Option<FreedomConfig>> {
+    let Some(binding) = config.inference.resolve_profile_provider_binding()? else {
+        return Ok(None);
+    };
+    if binding.is_named_instance {
+        let provider = binding.slot.provider.ok_or_else(|| {
+            anyhow::anyhow!("named profile_provider_instance_id has no configured provider")
+        })?;
+        reject_missing_named_bedrock_region(&binding.slot, provider.to_provider_kind(), true)?;
+        return Ok(Some(synthetic_config_for_slot(
+            config,
+            &binding.slot,
+            provider.to_provider_kind(),
+            true,
+        )));
+    }
+    let provider = binding.slot.provider.expect("legacy profile binding has a provider");
     let kind = provider.to_provider_kind();
     let mut synthetic = config.clone();
     // A typed profile provider can be a different vendor from the main chat
@@ -3917,7 +3984,7 @@ fn build_explicit_profile_config(config: &FreedomConfig) -> Option<FreedomConfig
         synthetic.provider_binary = None;
     }
     synthetic.provider_kind = Some(kind);
-    Some(synthetic)
+    Ok(Some(synthetic))
 }
 
 async fn from_config_for_learn_inner(
@@ -6617,7 +6684,9 @@ mod tests {
         cfg.provider_binary = Some("custom-main-provider".into());
         cfg.inference.profile_provider = Some(InferenceProvider::Gemini);
 
-        let selected = build_explicit_profile_config(&cfg).expect("typed choice selects provider");
+        let selected = build_explicit_profile_config(&cfg)
+            .expect("resolve typed choice")
+            .expect("typed choice selects provider");
         assert_eq!(selected.provider_kind, Some(ProviderKind::GeminiApi));
         assert!(selected.provider_key.is_none());
         assert!(selected.provider_endpoint.is_none());
@@ -6630,7 +6699,7 @@ mod tests {
         let mut cfg = base_config();
         cfg.inference.profile_provider = None;
         cfg.profile.learn_provider = None;
-        assert!(build_explicit_profile_config(&cfg).is_none());
+        assert!(build_explicit_profile_config(&cfg).unwrap().is_none());
     }
 
     #[tokio::test]
@@ -6996,7 +7065,7 @@ mod tests {
         let mut config = FreedomConfig::default();
         config.inference = serde_yaml::from_str(
             &format!(
-                "mode: custom\nprovider_instances:\n  - id: compat_primary\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: primary-model\n    key: primary-secret\n    openai_compat_profile: deepseek\n  - id: compat_fallback\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: fallback-model\n    key: fallback-secret\n    openai_compat_profile: moonshot\nleft: {{ provider_instance_id: compat_primary }}\n",
+                "mode: custom\nprovider_instances:\n  - id: compat_primary\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: primary-model\n    key: primary-secret\n    openai_compat_profile: generic\n  - id: compat_fallback\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: fallback-model\n    key: fallback-secret\n    openai_compat_profile: generic\nleft: {{ provider_instance_id: compat_primary }}\n",
                 primary_server.uri(),
                 fallback_server.uri(),
             ),
@@ -7113,6 +7182,238 @@ mod tests {
         assert_eq!(completion.identity.dispatch_route, vec![1]);
         primary_server.verify().await;
         fallback_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound() {
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut config = FreedomConfig::default();
+        config.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: profile_compat_2061\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: gpt-4o-mini\n    key: profile-secret-2061\nprofile_provider_instance_id: profile_compat_2061\n",
+            server.uri(),
+        ))
+        .expect("parse named explicit profile provider");
+        config.provider_model = Some("main-model-must-not-reach-profile-wire".into());
+        config.provider_key = Some("main-secret-must-not-reach-profile-wire".into());
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer profile-secret-2061"))
+            .and(body_partial_json(serde_json::json!({ "model": "gpt-4o-mini" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{ "message": { "content": "profile instance success" } }],
+                "model": "gpt-4o-mini",
+                "usage": { "prompt_tokens": 3, "completion_tokens": 2 }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let binding = config
+            .inference
+            .resolve_profile_provider_binding()
+            .expect("resolve named profile binding")
+            .expect("explicit profile selector is present");
+        assert!(binding.is_named_instance);
+        assert_eq!(binding.provider_instance_id.as_deref(), Some("profile_compat_2061"));
+        assert_eq!(binding.provider_descriptor_id, "openai_compat");
+        let expected_endpoint = format!("{}/v1", server.uri());
+        assert_eq!(binding.slot.endpoint.as_deref(), Some(expected_endpoint.as_str()));
+        assert_eq!(binding.slot.model.as_deref(), Some("gpt-4o-mini"));
+
+        let home = tempfile::tempdir().expect("create profile factory home");
+        let provider = from_config_for_explicit_profile_at(&config, home.path())
+            .await
+            .expect("build named explicit profile leaf")
+            .expect("explicit selector returns a provider");
+        let default_model = provider_default_wire_model(provider.as_ref());
+        assert_eq!(default_model.as_deref(), Some("gpt-4o-mini"));
+
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create profile lifecycle WAL directory");
+        let segment = wal_dir.join("00000000000000000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn home-bound lifecycle WAL writer");
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            config.tokens.max_per_request,
+        )
+        .with_provider_binding(
+            binding.provider_instance_id.clone(),
+            binding.provider_descriptor_id.clone(),
+        );
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            authorizer,
+            default_model,
+            "profile.cli_batch",
+        );
+        let completion = provider
+            .complete(Request {
+                prompt: "prove exact named profile wire identity".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("named profile provider completes through lifecycle boundary");
+        assert_eq!(completion.text, "profile instance success");
+        assert_eq!(completion.identity.wire_model, "gpt-4o-mini");
+
+        drop(provider);
+        drop(writer);
+        join.await.expect("lifecycle WAL writer joins");
+
+        let bytes = std::fs::read(&segment).expect("read lifecycle WAL segment");
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse lifecycle WAL header");
+        let mut cursor = segment_header.header_len();
+        let mut lifecycle_payloads = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("decode lifecycle WAL frame");
+            if matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+            ) {
+                lifecycle_payloads.push(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("decode provider lifecycle receipt"),
+                );
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(lifecycle_payloads.len(), 2, "one request and one terminal receipt");
+        for payload in lifecycle_payloads {
+            assert_eq!(payload["provider_instance_id"], "profile_compat_2061");
+            assert_eq!(payload["provider_descriptor_id"], "openai_compat");
+            assert_eq!(payload["wire_model"], "gpt-4o-mini");
+            assert_eq!(payload["call_scope"], "profile.cli_batch");
+        }
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().expect("create rejected-profile home");
+
+        let mut unknown = FreedomConfig::default();
+        unknown.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: configured_profile_2061\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: gpt-4o-mini\n    key: profile-secret-2061\nprofile_provider_instance_id: missing_profile_2061\n",
+            server.uri(),
+        ))
+        .expect("parse unknown named profile selector");
+        let unknown_error = from_config_for_explicit_profile_at(&unknown, home.path())
+            .await
+            .err()
+            .expect("unknown selector must reject before leaf factory construction");
+        assert!(unknown_error.to_string().contains("missing_profile_2061"));
+
+        let mut conflicting = FreedomConfig::default();
+        conflicting.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: configured_profile_2061\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: gpt-4o-mini\n    key: profile-secret-2061\nprofile_provider: openai_compat\nprofile_provider_instance_id: configured_profile_2061\n",
+            server.uri(),
+        ))
+        .expect("parse conflicting named profile selector");
+        let conflicting_error = from_config_for_explicit_profile_at(&conflicting, home.path())
+            .await
+            .err()
+            .expect("conflicting selector must reject before leaf factory construction");
+        assert!(conflicting_error.to_string().contains("cannot combine"));
+        server.verify().await;
+    }
+
+    #[test]
+    fn named_profile_claude_factory_drops_unrelated_global_binary() {
+        let mut config = FreedomConfig::default();
+        config.provider_binary = Some("main-provider-binary-must-not-leak".into());
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: profile_claude_2061\n    descriptor: claude_cli\n    model: profile-claude-model\nprofile_provider_instance_id: profile_claude_2061\n",
+        )
+        .expect("parse named Claude profile instance");
+
+        let synthetic = build_explicit_profile_config(&config)
+            .expect("resolve named Claude profile factory")
+            .expect("explicit profile factory config");
+        assert_eq!(synthetic.provider_kind, Some(ProviderKind::ClaudeCli));
+        assert_eq!(synthetic.provider_model.as_deref(), Some("profile-claude-model"));
+        assert!(synthetic.provider_binary.is_none());
+    }
+
+    #[tokio::test]
+    async fn explicit_named_binding_factory_keeps_selected_compat_wire_authority() {
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let selected = MockServer::start().await;
+        let mut config = FreedomConfig::default();
+        config.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: skill-wire-model\n    key: skill-secret\n    openai_compat_profile: generic\n",
+            selected.uri(),
+        )).expect("parse selected skill instance");
+        let selector: HemisphereSlot = serde_yaml::from_str("provider_instance_id: skill_compat")
+            .expect("parse selected skill selector");
+        let binding = config.inference.resolve_explicit_slot_binding(&selector)
+            .expect("resolve selected skill binding");
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer skill-secret"))
+            .and(body_partial_json(serde_json::json!({ "model": "skill-wire-model" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{ "message": { "content": "selected instance" } }],
+                "model": "skill-wire-model",
+                "usage": { "prompt_tokens": 1, "completion_tokens": 1 }
+            })))
+            .expect(1)
+            .mount(&selected)
+            .await;
+
+        let provider = from_config_for_resolved_binding_at(&config, &binding, std::path::Path::new("."))
+            .await.expect("construct only selected named instance");
+        let completion = provider.complete(Request { prompt: "exact skill endpoint".into(), ..Default::default() })
+            .await.expect("dispatch selected named provider");
+        assert_eq!(completion.text, "selected instance");
+        selected.verify().await;
+    }
+
+    #[tokio::test]
+    async fn named_profile_and_explicit_factories_reject_missing_bedrock_region() {
+        let home = tempfile::tempdir().expect("create missing-region factory fixture");
+        let mut config = FreedomConfig::default();
+        config.provider_region = Some("us-east-1".into());
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: named_bedrock, descriptor: aws_bedrock }\nprofile_provider_instance_id: named_bedrock\n",
+        )
+        .expect("parse named Bedrock without its own region");
+        let binding = config.inference.resolve_profile_provider_binding()
+            .expect("resolve profile selector")
+            .expect("explicit profile binding");
+        let profile_error = from_config_for_explicit_profile_at(&config, home.path())
+            .await.err().expect("missing profile region must reject before adapter construction");
+        assert!(profile_error.to_string().contains("requires an explicit region"));
+        let explicit_error = from_config_for_resolved_binding_at(&config, &binding, home.path())
+            .await.err().expect("missing selected region must reject before adapter construction");
+        assert!(explicit_error.to_string().contains("requires an explicit region"));
+        let routes = crate::consent::required_consent_routes(&config)
+            .expect("inventory preserves an invalid named profile route");
+        assert!(routes.iter().any(|route| route.kind == ProviderKind::AwsBedrock
+            && route.endpoint.as_deref() == Some("invalid://aws-bedrock-region")));
     }
 
     #[test]

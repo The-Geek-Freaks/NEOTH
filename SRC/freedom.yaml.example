@@ -98,6 +98,12 @@ provider_kind: claude_cli
 #              cannot be weakened. Cron and auto-update remain fail-closed.
 autonomy: standard
 
+# Profile extraction can select one named provider instance. It owns the
+# endpoint, credential, model, compatibility profile, and region together.
+# Do not set this together with inference.profile_provider.
+# inference:
+#   profile_provider_instance_id: profile_compat
+
 # Used only when `autonomy: custom`. Stable action names are listed by
 # `neoth permissions show`; edit atomically with:
 #   neoth permissions set external_http_request confirm

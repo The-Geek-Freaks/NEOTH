@@ -3303,6 +3303,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 used_skill_id,
                 channel_skill_allowlist,
                 channel_skill_model,
+                channel_skill_provider_instance_id,
                 channel_skill_effort,
                 channel_skill_delegate_to,
                 skill_loop_trigger,
@@ -3310,6 +3311,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Option<String>,
                 Option<String>,
                 Option<Vec<String>>,
+                Option<String>,
                 Option<String>,
                 Option<crate::providers::effort_override::EffortBudget>,
                 Option<String>,
@@ -3329,12 +3331,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     Some(skill.id().to_owned()),
                     channel_skill_allowlist(Some(skill)),
                     skill.manifest.model.clone(),
+                    route.provider_instance_id().map(str::to_owned),
                     skill.manifest.effort,
                     skill.manifest.delegate_to.clone(),
                     crate::cli::chat::routed_skill_loop_trigger(Some(skill)),
                 )
             } else {
-                (None, None, None, None, None, None, false)
+                (None, None, None, None, None, None, None, false)
             };
 
             crate::analytics::babel::signals::emit(if eval_suppress {
@@ -4237,8 +4240,44 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // but not the output-preset wrapper added by the finalizer below.
             // Otherwise the next answer turn would apply that wrapper twice.
             let clarification_source_prompt = final_prompt.clone();
-            let channel_requested_model =
-                channel_skill_model.or_else(|| config_for_handler.provider_model.clone());
+            // Resolve a retained Skill selector before model selection, budget,
+            // authorization, and every completion/MCP leaf.  Channel turns
+            // cannot prompt, so the exact durable route is required here.
+            let channel_skill_provider_binding = if let Some(instance_id) = channel_skill_provider_instance_id.as_deref() {
+                anyhow::ensure!(
+                    channel_skill_delegate_to.is_none(),
+                    "skill provider_instance_id cannot be combined with delegate_to"
+                );
+                let selector = crate::config::inference::HemisphereSlot {
+                    provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(instance_id)?),
+                    ..Default::default()
+                };
+                let binding = config_for_handler.inference.resolve_explicit_slot_binding(&selector)?;
+                anyhow::ensure!(binding.is_named_instance, "skill provider selector must resolve to a named instance");
+                let route = crate::consent::route_for_resolved_binding(config_for_handler.as_ref(), &binding)?;
+                crate::consent::ensure_route_still_granted(&neoth_home, &route)?;
+                Some(binding)
+            } else {
+                None
+            };
+            let provider: Arc<dyn Provider> = match channel_skill_provider_binding.as_ref() {
+                Some(binding) => Arc::from(crate::providers::from_config_for_resolved_binding_at(
+                    config_for_handler.as_ref(), binding, &neoth_home,
+                ).await?),
+                None => provider,
+            };
+            if let Some(binding) = channel_skill_provider_binding.as_ref() {
+                provider_call_authorizer = provider_call_authorizer.with_audit_context(
+                    crate::providers::cost_authorization::ProviderCallAuditContext {
+                        provider_instance_id: binding.provider_instance_id.clone(),
+                        provider_descriptor_id: Some(binding.provider_descriptor_id.clone()),
+                        ..Default::default()
+                    }.with_wal_session(channel_wal_session),
+                );
+            }
+            let channel_requested_model = channel_skill_model
+                .or_else(|| channel_skill_provider_binding.as_ref().and_then(|binding| binding.slot.model.clone()))
+                .or_else(|| config_for_handler.provider_model.clone());
             let channel_effective_model = match crate::cli::chat::resolve_provider_call_wire_model(
                 config_for_handler.as_ref(),
                 provider.as_ref(),
@@ -5841,7 +5880,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             }
                             None => (Arc::clone(&provider), channel_effective_model.clone()),
                         };
-                        let authorizer_for_pipeline = provider_call_authorizer.clone();
+                        let authorizer_for_pipeline = match config_for_handler
+                            .inference
+                            .resolve_profile_provider_binding()?
+                        {
+                            Some(binding) if binding.is_named_instance => provider_call_authorizer
+                                .clone()
+                                .with_provider_binding(
+                                    binding.provider_instance_id,
+                                    binding.provider_descriptor_id,
+                                ),
+                            _ => provider_call_authorizer.clone(),
+                        };
                         let segment_path_for_pipeline = segment_path.clone();
                         let channel_str_for_pipeline = channel_str.to_string();
                         let sender_id_for_pipeline = inbound.sender_id.clone();
@@ -11636,6 +11686,266 @@ mod tests {
                 assert_eq!(calls.len(), 1, "only the shared skill-and-agent tool reaches the child");
                 assert_eq!(calls[0]["name"].as_str(), Some("codegraph_recall_v1"));
                 assert_eq!(calls[0]["arguments"], serde_json::json!({"prompt":"delegated","limit":1}));
+            });
+    }
+
+    #[test]
+    fn channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W2062 named channel current-thread runtime")
+            .block_on(async {
+                use wiremock::matchers::{header, method, path};
+                use wiremock::{Mock, MockServer, ResponseTemplate};
+
+                const SKILL_ID: &str = "w2062_channel_named";
+                const INSTANCE_ID: &str = "w2062_compat";
+                const WIRE_MODEL: &str = "w2062-wire-model";
+                let selected = MockServer::start().await;
+                let home = crate::test_env::canonical_tempdir()
+                    .expect("create isolated W2062 named channel home");
+                let db = home.path().join("code_map.db");
+                let root = home.path().join("w2062-mapped-root");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(
+                    &db,
+                    &root,
+                    "w2062",
+                );
+                let db = db.canonicalize().expect("canonical W2062 code-map DB");
+                let descriptor = crate::mcp::config::McpServerConfig {
+                    id: "neoth-codegraph".into(),
+                    description: None,
+                    command: std::env::current_exe()
+                        .expect("W2062 test executable")
+                        .canonicalize()
+                        .expect("canonical W2062 test executable")
+                        .display()
+                        .to_string(),
+                    args: vec![
+                        "mcp".into(),
+                        "codegraph-serve".into(),
+                        "--db".into(),
+                        db.display().to_string(),
+                    ],
+                    env: std::collections::HashMap::new(),
+                    enabled: true,
+                    allow_tools: Some(vec!["codegraph_recall_v1".into()]),
+                    trust_all_tools: false,
+                    smart_approve: true,
+                    autonomy_gate: None,
+                };
+                std::fs::write(
+                    home.path().join("mcp_servers.yaml"),
+                    serde_yaml::to_string(&crate::mcp::McpServers {
+                        servers: vec![descriptor],
+                        smart_loading: true,
+                    })
+                    .expect("serialize W2062 MCP config"),
+                )
+                .expect("write W2062 MCP config");
+                let skill_dir = home.path().join("skills").join(SKILL_ID);
+                std::fs::create_dir_all(&skill_dir).expect("create W2062 installed Skill");
+                std::fs::write(
+                    skill_dir.join("skill.yaml"),
+                    "id: w2062_channel_named\n\
+                     description: W2062 authorized named channel Skill\n\
+                     trigger_keywords: [w2062_channel_named]\n\
+                     system_prompt: W2062 selected skill body\n\
+                     provider_instance_id: w2062_compat\n\
+                     tool_allowlist: [codegraph_recall_v1]\n\
+                     enabled: true\n",
+                )
+                .expect("write W2062 installed Skill manifest");
+
+                let mut config = FreedomConfig::default();
+                config.autonomy = crate::permissions::AutonomyLevel::Full;
+                config.council.disabled = Some(true);
+                config.security.smart_approve = true;
+                config.memory.recall_shortcut = false;
+                config.skills.enabled.push(SKILL_ID.to_owned());
+                config.inference = serde_yaml::from_str(&format!(
+                    "mode: custom\nprovider_instances:\n  - id: {INSTANCE_ID}\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: {WIRE_MODEL}\n    key: w2062-secret\n",
+                    selected.uri(),
+                ))
+                .expect("parse W2062 named compat topology");
+                let config_path = home.path().join("freedom.yaml");
+                std::fs::write(
+                    &config_path,
+                    serde_yaml::to_string(&config).expect("serialize W2062 config"),
+                )
+                .expect("write W2062 config");
+                let reload = Arc::new(crate::config::reload::ReloadController::new(
+                    config.clone(),
+                    config_path,
+                ));
+                crate::skills::authority::initialize_authority_key_for_test(home.path())
+                    .expect("initialize W2062 Skill authority key");
+                let wal_dir = home.path().join("wal");
+                std::fs::create_dir_all(&wal_dir).expect("create W2062 WAL directory");
+                std::fs::write(wal_dir.join("hmac.key"), [6_u8; 32])
+                    .expect("seed W2062 SmartApprove HMAC identity");
+                w137_record_channel_install_incarnation(home.path(), SKILL_ID);
+                w137_publish_channel_authority(home.path(), SKILL_ID, reload.as_ref());
+                let binding = config
+                    .inference
+                    .resolve_explicit_slot_binding(
+                        &serde_yaml::from_str("provider_instance_id: w2062_compat")
+                            .expect("parse W2062 named selector"),
+                    )
+                    .expect("resolve W2062 selected named binding");
+                let selected_route = crate::consent::route_for_resolved_binding(&config, &binding)
+                    .expect("derive W2062 selected exact consent route");
+                let wrong_route = crate::consent::route_for_provider_config(
+                    crate::cli::init::ProviderKind::OpenaiCompat,
+                    Some("https://wrong-w2062.example/v1"),
+                    None,
+                );
+                crate::consent::grant_route(home.path(), &wrong_route)
+                    .expect("grant only W2062 wrong consent route");
+
+                let replies = Arc::new(std::sync::Mutex::new(
+                    std::collections::VecDeque::from([
+                        serde_json::json!({
+                            "choices": [{"message": {"content": "```mcp-tool-call\\n{\\\"server\\\":\\\"neoth-codegraph\\\",\\\"tool\\\":\\\"codegraph_recall_v1\\\",\\\"arguments\\\":{\\\"prompt\\\":\\\"leaf_w2062\\\",\\\"limit\\\":1}}\\n```"}}],
+                            "model": WIRE_MODEL,
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                        }),
+                        serde_json::json!({
+                            "choices": [{"message": {"content": "W2062 named selected channel final"}}],
+                            "model": WIRE_MODEL,
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                        }),
+                    ]),
+                ));
+                Mock::given(method("POST"))
+                    .and(path("/v1/chat/completions"))
+                    .and(header("authorization", "Bearer w2062-secret"))
+                    .respond_with({
+                        let replies = Arc::clone(&replies);
+                        move |_| {
+                            let body = replies
+                                .lock()
+                                .expect("pop W2062 selected wire response")
+                                .pop_front()
+                                .expect("W2062 wire received unexpected provider round");
+                            ResponseTemplate::new(200).set_body_json(body)
+                        }
+                    })
+                    .expect(2)
+                    .mount(&selected)
+                    .await;
+
+                let wal_path = wal_dir.join("000001.wal");
+                let (writer, writer_join) = crate::wal::spawn_for_home(
+                    wal_path.clone(),
+                    home.path().to_path_buf(),
+                )
+                .expect("spawn W2062 channel WAL");
+                let prior_autoroute = std::env::var_os("NEOTH_MCP_AUTOROUTE");
+                let prior_child_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe { std::env::set_var("NEOTH_MCP_AUTOROUTE", "1") };
+                unsafe { std::env::set_var("NEOTH_W59_CHILD_CWD", &root) };
+                struct RestoreW2062ProcessState {
+                    autoroute: Option<std::ffi::OsString>,
+                    child_cwd: Option<std::ffi::OsString>,
+                }
+                impl Drop for RestoreW2062ProcessState {
+                    fn drop(&mut self) {
+                        unsafe {
+                            match self.autoroute.take() {
+                                Some(value) => std::env::set_var("NEOTH_MCP_AUTOROUTE", value),
+                                None => std::env::remove_var("NEOTH_MCP_AUTOROUTE"),
+                            }
+                            match self.child_cwd.take() {
+                                Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                                None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                            }
+                        }
+                    }
+                }
+                let _restore_process_state = RestoreW2062ProcessState {
+                    autoroute: prior_autoroute,
+                    child_cwd: prior_child_cwd,
+                };
+                let upstream = Arc::new(FinalBindingFailureChannelProvider {
+                    calls: AtomicUsize::new(0),
+                });
+                let handler = build_pipeline_handler(PipelineHandlerDeps {
+                    inbound_binding: AuthenticatedInboundBinding::for_account(
+                        ChannelRef::default_account(ChannelId::Telegram),
+                    ),
+                    provider: upstream.clone(),
+                    live_channel: None,
+                    writer: writer.clone(),
+                    operator_id: None,
+                    goal_max_turns: 2,
+                    meter: crate::providers::meter::Meter::with_default_window(),
+                    rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+                    segment_path: wal_path.clone(),
+                    neoth_home: home.path().to_path_buf(),
+                    profile_config: crate::config::ProfileConfig::default(),
+                    reload_controller: reload,
+                    views_conn: None,
+                    views_executor: None,
+                    confirm_bus: None,
+                    abliterated_loader: None,
+                });
+                let command = "/w2062_channel_named leaf_w2062";
+                let denied = handler(inbound(Some(command), None))
+                    .await
+                    .expect_err("W2062 wrong route must block before selected provider construction");
+                assert!(denied.to_string().contains("consent"));
+                assert_eq!(
+                    upstream.calls.load(Ordering::SeqCst),
+                    0,
+                    "wrong consent route cannot reach the captured upstream provider"
+                );
+                assert!(
+                    selected.received_requests().await.is_empty(),
+                    "the selected named endpoint receives zero requests while only a wrong route is granted"
+                );
+
+                crate::consent::grant_route(home.path(), &selected_route)
+                    .expect("grant exact W2062 selected route");
+                let reply = handler(inbound(Some(command), None))
+                    .await
+                    .expect("authorized W2062 named channel route completes")
+                    .expect("authorized W2062 named channel emits reply");
+                assert_eq!(reply.text, "W2062 named selected channel final");
+                assert_eq!(upstream.calls.load(Ordering::SeqCst), 0);
+                selected.verify().await;
+                assert!(
+                    replies.lock().expect("inspect W2062 response queue").is_empty(),
+                    "two MCP completion rounds must use the selected named endpoint"
+                );
+
+                drop(handler);
+                drop(writer);
+                writer_join.await.expect("drain W2062 channel WAL");
+                let mut selected_leaf_receipts = 0;
+                let mut mcp_calls = 0;
+                crate::wal::scan::for_each_frame(
+                    &std::fs::read(&wal_path).expect("read W2062 channel WAL"),
+                    |_, frame| {
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED {
+                            mcp_calls += 1;
+                        }
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                            let receipt: serde_json::Value = serde_json::from_slice(frame.payload)
+                                .expect("decode W2062 selected provider leaf receipt");
+                            assert_eq!(receipt["provider_instance_id"], INSTANCE_ID);
+                            assert_eq!(receipt["provider_descriptor_id"], "openai_compat");
+                            assert_eq!(receipt["wire_model"], WIRE_MODEL);
+                            selected_leaf_receipts += 1;
+                        }
+                        Ok(())
+                    },
+                )
+                .expect("scan W2062 channel WAL");
+                assert_eq!(selected_leaf_receipts, 2, "both MCP provider leaves retain selected identity");
+                assert_eq!(mcp_calls, 1, "only the Skill-allowed MCP tool reaches the real MCP dispatch path");
             });
     }
 }

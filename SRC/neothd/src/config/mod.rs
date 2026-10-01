@@ -3710,6 +3710,12 @@ impl FreedomConfig {
     }
 
     fn validate_public_sections(&self) -> Result<()> {
+        self.inference
+            .validate_provider_instances()
+            .context("invalid inference provider_instances config")?;
+        self.inference
+            .resolve_profile_provider_binding()
+            .context("invalid inference profile provider selector")?;
         self.custom_autonomy
             .validate()
             .context("invalid custom_autonomy config")?;
@@ -4240,5 +4246,24 @@ mod provider_instance_credential_tests {
         assert!(!public.contains("named-secret"));
         assert!(!public.contains("legacy-left"));
         assert!(public.contains("provider_instance_id: compat_a"));
+    }
+}
+
+#[cfg(test)]
+mod profile_provider_selector_load_tests {
+    use super::parse_public_freedom_yaml;
+    use std::path::Path;
+
+    #[test]
+    fn public_config_load_rejects_unknown_or_conflicting_profile_instance_selector() {
+        for source in [
+            "inference:\n  profile_provider_instance_id: absent_profile_2061\n",
+            "inference:\n  profile_provider: openai_compat\n  profile_provider_instance_id: profile_2061\n  provider_instances:\n    - id: profile_2061\n      descriptor: openai_compat\n",
+        ] {
+            assert!(
+                parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes()).is_err(),
+                "invalid profile selector unexpectedly passed public config validation: {source}"
+            );
+        }
     }
 }

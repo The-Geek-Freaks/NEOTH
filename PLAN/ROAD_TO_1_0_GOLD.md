@@ -17598,3 +17598,11 @@ hit the similar retention guard, leaving the yearly guard unchanged. The
 retention parameter is already &str and now compares directly; the yearly
 String uses as_str(). Both exact sites are corrected. E0658/E0277 were
 compile errors only; fresh Hosted compilation and behavior remain required.
+
+## W2072 - Named Profile and Skill provider selection (2026-10-01)
+
+Implemented optional named Profile selection and installed-Skill provider_instance_id through public Chat, Channel/MCP and post-reply requests. Public Chat retains one admitted Skill route, prompts for its exact consent before constructing the selected leaf, and carries AllowOnce consent without a persistent grant. Selector-free routing keeps its existing behavior. Unknown/conflicting Profile selectors reject during config loading. Named Bedrock requires its own region at consent and every affected factory before legacy environment/default-region resolution.
+
+Static review accepted the merged implementation and fourteen new regression registrations: 2562 portable identities, 339 focused cases, 20 guards, 169 focused raw-source bindings. Prior focused run 36906842773 on 394aef54 executed 325 cases: 321 passed and four failed. Three original archives, 656 entries and 159 raw source bindings were verified. This batch repairs the two missing-region failures and the invalid WAL/vendor-profile fixtures. Fresh hosted execution is pending; no local executable validation was run under the absolute BSOD hold.
+
+Security run 36907725035 has eight successful jobs but failed when its Rust CodeQL runner received a shutdown signal at 18:47:02Z. The pre-Analyze cgroup checkpoint does not prove the later cause. Full native qualification, successful exact-producer Security and signed historical Windows/macOS package qualification remain open. This entry does not mark NEOTH or release acceptance complete. Existing backlog text is preserved verbatim. See docs/verification/gold-wave2072-profile-skill-selection.json.

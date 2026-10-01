@@ -306,6 +306,7 @@ fn skill_with_allowlist(id: &str, kws: &[&str], allow: &[&str]) -> crate::skills
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths: vec![],
             effort: None,
             loop_trigger: false,

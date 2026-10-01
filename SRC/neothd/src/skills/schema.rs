@@ -76,6 +76,10 @@ pub struct SkillManifest {
     /// (e.g. `"claude-haiku-4-5"`, `"gpt-4o-mini"`). `None` = use default.
     #[serde(default)]
     pub model: Option<String>,
+    /// Stable named provider selector retained by the admitted skill route.
+    /// Transport authority remains exclusively in `freedom.yaml`.
+    #[serde(default)]
+    pub provider_instance_id: Option<String>,
     /// GOLD-CCPARITY-PATHS-01 — file-path gating. When non-empty, the skill
     /// auto-activates ONLY when at least one of the operator's active files
     /// matches one of these gitignore-style glob patterns (e.g. `"**/*.rs"`,
@@ -765,6 +769,7 @@ system_prompt: "do stuff"
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths: vec![],
             effort: None,
             loop_trigger: false,
@@ -807,6 +812,26 @@ system_prompt: "use default model"
 "#;
         let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
         assert!(m.model.is_none(), "model field should default to None");
+    }
+
+    #[test]
+    fn provider_instance_id_parses_and_defaults_to_none() {
+        let selected: SkillManifest = serde_yaml::from_str(r#"
+id: named-provider-skill
+description: exact named binding
+trigger_keywords: ["named"]
+system_prompt: "use admitted instance"
+provider_instance_id: compat_a
+"#).expect("parse selected provider instance");
+        assert_eq!(selected.provider_instance_id.as_deref(), Some("compat_a"));
+
+        let legacy: SkillManifest = serde_yaml::from_str(r#"
+id: legacy-skill
+description: legacy
+trigger_keywords: ["legacy"]
+system_prompt: "default route"
+"#).expect("parse legacy skill");
+        assert!(legacy.provider_instance_id.is_none());
     }
 
     // ── GOLD-CCPARITY-PATHS-01 schema tests ──────────────────────────────────
@@ -855,6 +880,7 @@ system_prompt: "do stuff"
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths: vec!["**/*.rs".into()],
             effort: None,
             loop_trigger: false,
@@ -885,6 +911,7 @@ system_prompt: "do stuff"
             enabled: true,
             delegate_to: None,
             model: Some("claude-opus-4-7".into()),
+            provider_instance_id: None,
             paths: vec![],
             effort: None,
             loop_trigger: false,
@@ -975,6 +1002,7 @@ visibility: "off"
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths: vec![],
             effort: None,
             loop_trigger: false,
@@ -1036,6 +1064,7 @@ system_prompt: "be quick"
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths: vec![],
             effort: Some(EffortBudget::Max),
             loop_trigger: false,

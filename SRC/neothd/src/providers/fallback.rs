@@ -1011,7 +1011,9 @@ mod tests {
     #[tokio::test]
     async fn authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("fallback-instance-identity-000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("00000000000000000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let fallback = FallbackProvider::new_with_models_and_bindings_at(

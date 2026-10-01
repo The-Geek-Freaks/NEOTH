@@ -31,6 +31,30 @@ endpoints, tool configuration, loops, or scoring overrides.
 Run replay only with a corpus the operator deliberately prepared. Corpus text,
 replies, report JSON, and report Markdown are private local artifacts.
 
+## Skill-selected provider instances
+
+A skill manifest can select one configured named provider instance with its
+validated underscore ID. The instance is defined in `freedom.yaml`; the skill
+only keeps the selector, for example:
+
+```yaml
+id: vendor_review
+description: Review through the configured vendor route.
+provider_instance_id: compat_a
+model: review-model
+```
+
+`compat_a` must be a valid configured instance ID. Its exact route receives the
+normal consent check before provider construction. A manifest that sets both
+`provider_instance_id` and `delegate_to` is rejected, because delegation and a
+selected provider use different execution routes.
+
+Without `provider_instance_id`, the established legacy provider selection
+remains in use. With it, the selected skill uses that instance and does not
+automatically fall back to the Left role. Model selection remains ordered as
+Dispatch model, then the skill manifest's `model`, then the CLI model; the
+selected instance model is the provider-default value below those overrides.
+
 ## What `run` does
 
 `run` validates the whole corpus before it loads configuration, requests

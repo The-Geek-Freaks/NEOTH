@@ -130,6 +130,7 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
         enabled: false,
         delegate_to: None,
         model: None,
+        provider_instance_id: None,
         paths: vec![],
         effort: None,
         loop_trigger: false,

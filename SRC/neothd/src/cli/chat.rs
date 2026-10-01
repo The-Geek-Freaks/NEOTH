@@ -655,6 +655,13 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     if !args.incognito && dispatch_pre_runtime_local_action(&mut args, &mut output).await? {
         return Ok(());
     }
+    // Resolve a normal interactive prompt before provider admission too. This
+    // lets the retained Skill route govern consent/factory selection for argv,
+    // stdin and editor input alike.
+    if args.message.is_none() || args.edit {
+        args.message = Some(resolve_prompt_base(&args).await?);
+        args.edit = false;
+    }
 
     let neoth_home = chat_neoth_home(args.config.as_deref());
     if daemon_plain_chat_eligible(&args, gui_launch.is_some()) {
@@ -674,7 +681,42 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         .config
         .clone()
         .unwrap_or_else(FreedomConfig::default_path);
-    // V03-08 + A-2 preflight: gate every cloud provider the chat invocation
+    // Resolve the authority-bound Skill route before the interactive consent
+    // or provider factory. A selected named route is its own exact capability;
+    // it must not be blocked by an unrelated dormant Left/fallback route.
+    let config_before_consent = match &args.config {
+        Some(path) => FreedomConfig::load_from_path(path)?,
+        None => FreedomConfig::load_from_default_path()?,
+    };
+    let retained_skill_admission = admit_skill_route_before_provider(
+        &config_before_consent,
+        &args,
+        &neoth_home,
+        &config_path,
+        args.message.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("resolve normal chat prompt before Skill admission")
+        })?,
+    )
+    .await?;
+    let selected_skill_binding = if let Some(route) = retained_skill_admission.route.as_ref()
+        && let Some(instance_id) = route.provider_instance_id()
+    {
+            anyhow::ensure!(
+                route.skill().manifest.delegate_to.is_none(),
+                "skill provider_instance_id cannot be combined with delegate_to"
+            );
+            let selector = crate::config::inference::HemisphereSlot {
+                provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(instance_id)?),
+                ..Default::default()
+            };
+            let binding = config_before_consent.inference.resolve_explicit_slot_binding(&selector)?;
+            anyhow::ensure!(binding.is_named_instance, "skill provider selector must resolve to a named instance");
+            Some(binding)
+    } else {
+        None
+    };
+
+    // V03-08 + A-2 preflight: selector-free turns retain aggregate consent.
     // could reach behind first-run consent. Covers the legacy single-mode
     // `provider_kind` AND the per-hemisphere providers in
     // `inference.{left,right,cerebellum}` (A-2 closes the bypass where
@@ -693,17 +735,23 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         )?;
         (consumed.config, consumed.ephemeral)
     } else {
-        let config = match &args.config {
-            Some(path) => FreedomConfig::load_from_path(path)?,
-            None => FreedomConfig::load_from_default_path()?,
+        let ephemeral = match selected_skill_binding.as_ref() {
+            Some(binding) => {
+                let route = crate::consent::route_for_resolved_binding(&config_before_consent, binding)?;
+                crate::cli::consent::ensure_route_granted_or_prompt_at(
+                    &neoth_home,
+                    &route,
+                    &config_before_consent,
+                    crate::cli::consent::ConsentMutationSource::Tty,
+                ).await?
+            }
+            None => crate::cli::consent::ensure_all_granted_or_prompt_at(
+                &neoth_home,
+                &config_before_consent,
+                crate::cli::consent::ConsentMutationSource::Tty,
+            ).await?,
         };
-        let ephemeral = crate::cli::consent::ensure_all_granted_or_prompt_at(
-            &neoth_home,
-            &config,
-            crate::cli::consent::ConsentMutationSource::Tty,
-        )
-        .await?;
-        (config, ephemeral)
+        (config_before_consent, ephemeral)
     };
     let d7_route = plan_verifiability_route(&config, &args, &neoth_home)?;
     let config = match d7_route {
@@ -734,18 +782,22 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     // below this provider build), and the operator is present to see a 429
     // failover in the logs. The daemon path threads its writer for the
     // durable `0x25 PROVIDER_FALLBACK_ATTEMPTED` audit frame.
-    let provider = providers::fallback_chain_from_config_interactive(
-        &config,
-        &neoth_home,
-        None,
-        &ephemeral_consent,
-    )
-    .await?;
+    let provider = match selected_skill_binding.as_ref() {
+        Some(binding) => crate::providers::from_config_for_resolved_binding_at(&config, binding, &neoth_home).await?,
+        None => providers::fallback_chain_from_config_interactive(
+            &config,
+            &neoth_home,
+            None,
+            &ephemeral_consent,
+        ).await?,
+    };
     // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
     // CLI path has no WAL writer yet (writer is opened inside run_chat_with),
     // so WAL audit frames are skipped here (wal=None). The inner provider retains
     // the same identity for callers — only the prompt is modified in-place.
-    let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled {
+    let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled
+        && selected_skill_binding.is_none()
+    {
         let utility = providers::from_config_for_utility_at(&config, &neoth_home)
             .await
             .ok();
@@ -768,6 +820,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         config,
         provider.as_ref(),
         ephemeral_consent,
+        Some(retained_skill_admission),
         stream_control_token,
         crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
     )
@@ -905,6 +958,8 @@ pub(super) struct PromptBundle {
     /// matched skill carries no per-skill model override.
     /// Priority chain: Dispatch.model > skill.manifest.model > args.model.
     pub(super) resolved_model: Option<String>,
+    /// Stable selector held by the admitted route until the provider leaf.
+    pub(super) provider_instance_id: Option<String>,
     /// GOLD-CCPARITY-EFFORT-03 — per-skill effort/reasoning-budget resolved
     /// from the matched skill's `manifest.effort` field. `None` = provider
     /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
@@ -2409,7 +2464,7 @@ pub(super) struct AgentRawLayers {
     recall_block: Option<crate::pipeline::RenderedUntrustedContext>,
     /// Recent-session guidance has the same untrusted-data boundary as recall.
     guidance_block: Option<crate::pipeline::RenderedUntrustedContext>,
-    skill_delegate_to: Option<String>,
+    pub(super) skill_delegate_to: Option<String>,
     /// GOLD-ADAPT-JV-MODE-01 — full loyal-buddy skill YAML body when active.
     /// `'static` because it's sourced from `include_str!` in bundled.rs.
     identity_anchor: Option<&'static str>,
@@ -2532,9 +2587,100 @@ pub(super) struct PromptBuildContext<'a> {
 pub(super) struct PromptBuildOptions {
     pub(super) slash_skill_name: Option<String>,
     pub(super) persona_override_from_tweaks: Option<String>,
+    /// A route admitted at the public ingress before consent/provider construction.
+    /// It owns the authority snapshot and must be consumed instead of resolving
+    /// the mutable registry again later in the turn.
+    pub(super) retained_skill_admission: Option<RetainedSkillAdmission>,
     /// D5 replay reads the current installed registry without making it part
     /// of the contained conversation home.
     pub(super) replay_skill_registry: Option<(PathBuf, PathBuf)>,
+}
+
+/// Route decision admitted before an interactive provider is constructed.
+/// Keeping the route, rather than a skill id/manifest projection, preserves
+/// the authority-bound snapshot through the eventual prompt/provider leaf.
+#[derive(Clone)]
+pub(super) struct RetainedSkillAdmission {
+    pub(super) route: Option<crate::skills::resolver::ResolvedSkillRoute>,
+    pub(super) report: crate::skills::resolver::SkillRouteReport,
+}
+
+/// Resolve the normal chat Skill route before consent and provider construction.
+/// This mirrors the existing registry/pin/eval/visibility admission policy and
+/// hands the owning route to prompt assembly so the route is never re-read.
+async fn admit_skill_route_before_provider(
+    config: &FreedomConfig,
+    args: &ChatArgs,
+    home: &std::path::Path,
+    config_path: &std::path::Path,
+    prompt: &str,
+) -> Result<RetainedSkillAdmission> {
+    let skills_dir = home.join("skills");
+    let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        config_path.to_path_buf(),
+    ));
+    let epoch = reload.accepted_snapshot().epoch();
+    let registry = crate::skills::SkillRegistry::load_with_reload_controller(&skills_dir, reload)
+        .await
+        .with_context(|| format!("load skill registry from {}", skills_dir.display()))?;
+    let snapshot = registry
+        .authority_bound_snapshot_for_epoch(epoch)
+        .context("acquire authority-bound chat Skill snapshot")?;
+    let raw = snapshot.skills();
+    let mut blocked = std::collections::BTreeSet::new();
+    if !config.skills.pinned_hashes.is_empty() {
+        for (skill, verdict) in raw.iter().zip(
+            crate::skills::versioning::check_pinned_hashes(
+                raw.iter().map(|skill| (skill.id(), skill.content_hash.as_str())),
+                &config.skills.pinned_hashes,
+            )
+            .iter(),
+        ) {
+            if matches!(verdict.verdict, crate::skills::versioning::PinnedHashOutcome::Mismatch) {
+                blocked.insert(skill.id().to_owned());
+            }
+        }
+    }
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    let slash_skill_name = slash_invocation_name(prompt);
+    let explicit_slash = (!eval_suppress)
+        .then_some(slash_skill_name.as_deref())
+        .flatten()
+        .filter(|name| raw.iter().any(|skill| skill.id().eq_ignore_ascii_case(name)));
+    let explicit = args.skill.as_deref().or(explicit_slash);
+    let resolver = crate::skills::resolver::SkillRouteResolver::new(snapshot)
+        .retaining(|skill| !eval_suppress && !blocked.contains(skill.id()));
+    let active_files = crate::skills::resolver::active_files_from_env();
+    let floor = if config.skills.enable_all_bundled {
+        crate::skills::router::FULL_AUTO_MIN_WEIGHT
+    } else {
+        crate::skills::router::DEFAULT_MIN_WEIGHT
+    };
+    // An explicit CLI/slash selection is decided by the literal admission
+    // stages. Do not construct an embedding provider before its named leaf.
+    let embed = if explicit.is_none() && !eval_suppress && config.skills.always_embed_route {
+        crate::providers::embed_provider_from_config(config).await
+    } else {
+        None
+    };
+    let decision = resolver
+        .resolve(
+            crate::skills::resolver::SkillRouteRequest::automatic(prompt, floor, &active_files)
+                .with_explicit_skill(explicit),
+            embed.as_deref(),
+        )
+        .await;
+    let report = decision.report().clone();
+    let route = match decision {
+        crate::skills::resolver::SkillRouteDecision::Match(route) => Some(route),
+        crate::skills::resolver::SkillRouteDecision::NoMatch(_) => None,
+        crate::skills::resolver::SkillRouteDecision::Conflict(_)
+        | crate::skills::resolver::SkillRouteDecision::Rejected(_) => {
+            anyhow::bail!("Explicit Skill selection rejected: {:?}", report.rejection)
+        }
+    };
+    Ok(RetainedSkillAdmission { route, report })
 }
 
 pub(super) async fn build_prompt_bundle(
@@ -2560,6 +2706,7 @@ pub(super) async fn build_prompt_bundle(
         slash_skill_name,
         // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
         persona_override_from_tweaks,
+        retained_skill_admission,
         replay_skill_registry,
     } = options;
 
@@ -2651,6 +2798,7 @@ pub(super) async fn build_prompt_bundle(
                     identity_locked: false,
                 },
                 resolved_model: None,
+                provider_instance_id: None,
                 resolved_effort: None,
                 skill_loop_trigger: false,
                 repo_recall_audit: None,
@@ -2956,23 +3104,35 @@ pub(super) async fn build_prompt_bundle(
     // Compatibility field, corrected semantics: `true` enables semantic
     // fallback after literal NoMatch. It can no longer override a literal or
     // mode decision.
-    let embed_provider = if !eval_suppress && config.skills.always_embed_route {
+    let embed_provider = if retained_skill_admission.is_none()
+        && !eval_suppress
+        && config.skills.always_embed_route
+    {
         crate::providers::embed_provider_from_config(&config).await
     } else {
         None
     };
-    let route_request =
-        crate::skills::resolver::SkillRouteRequest::automatic(&prompt, stage1_floor, &active_files)
+    let (skill_route_report, selected_skill_route) = match retained_skill_admission {
+        Some(admission) => (admission.report, admission.route),
+        None => {
+            let route_request = crate::skills::resolver::SkillRouteRequest::automatic(
+                &prompt,
+                stage1_floor,
+                &active_files,
+            )
             .with_explicit_skill(explicit_skill_id);
-    let route_decision = skill_resolver
-        .resolve(route_request, embed_provider.as_deref())
-        .await;
-    let skill_route_report = route_decision.report().clone();
-    let selected_skill_route = match route_decision {
-        crate::skills::resolver::SkillRouteDecision::Match(route) => Some(route),
-        crate::skills::resolver::SkillRouteDecision::NoMatch(_) => None,
-        crate::skills::resolver::SkillRouteDecision::Conflict(_)
-        | crate::skills::resolver::SkillRouteDecision::Rejected(_) => None,
+            let route_decision = skill_resolver
+                .resolve(route_request, embed_provider.as_deref())
+                .await;
+            let report = route_decision.report().clone();
+            let route = match route_decision {
+                crate::skills::resolver::SkillRouteDecision::Match(route) => Some(route),
+                crate::skills::resolver::SkillRouteDecision::NoMatch(_) => None,
+                crate::skills::resolver::SkillRouteDecision::Conflict(_)
+                | crate::skills::resolver::SkillRouteDecision::Rejected(_) => None,
+            };
+            (report, route)
+        }
     };
 
     if eval_suppress {
@@ -3013,9 +3173,11 @@ pub(super) async fn build_prompt_bundle(
         used_skill_id,
         skill_delegate_to,
         skill_model,
+        skill_provider_instance_id,
         skill_effort,
         skill_loop_trigger,
     ): (
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -3029,11 +3191,12 @@ pub(super) async fn build_prompt_bundle(
             Some(skill.id().to_owned()),
             skill.manifest.delegate_to.clone(),
             skill.manifest.model.clone(),
+            route.provider_instance_id().map(str::to_owned),
             skill.manifest.effort,
             routed_skill_loop_trigger(Some(skill)),
         )
     } else {
-        (None, None, None, None, None, false)
+        (None, None, None, None, None, None, false)
     };
     let skill_tool_allowlist =
         routed_skill_tool_allowlist(selected_skill_route.as_ref().map(|route| route.skill()));
@@ -3383,6 +3546,7 @@ pub(super) async fn build_prompt_bundle(
             plan_attest_hash,
             agent_raw_layers,
             resolved_model: skill_model,
+            provider_instance_id: skill_provider_instance_id,
             // GOLD-CCPARITY-EFFORT-03: thread the per-skill effort to dispatch_provider.
             resolved_effort: skill_effort,
             skill_loop_trigger,
@@ -7719,6 +7883,7 @@ pub(super) async fn run_post_reply_pipelines(
     canary_token: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    selected_skill_binding: Option<&crate::config::inference::ResolvedProviderBinding>,
     normal_chat_role: Option<&crate::cli::chat_turn_pipeline::NormalChatRoleBinding>,
     #[cfg(test)] abliterated_loader: Option<
         &dyn crate::security::refusal_abliterated::AbliteratedProviderLoader,
@@ -7799,6 +7964,10 @@ pub(super) async fn run_post_reply_pipelines(
                 target: Some(
                     crate::profile::runner::extract_target_label(provider.name()).to_owned(),
                 ),
+                provider_instance_id: selected_skill_binding
+                    .and_then(|binding| binding.provider_instance_id.clone()),
+                provider_descriptor_id: selected_skill_binding
+                    .map(|binding| binding.provider_descriptor_id.clone()),
                 ..Default::default()
             }
             .with_wal_session(wal_session),
@@ -8731,17 +8900,23 @@ pub(super) async fn run_post_reply_pipelines(
                 "profile learn pass skipped: selected provider build failed"
             );
         } else if let Some(learn_provider_ref) = learn_dispatch {
+            let profile_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                config.autonomy_policy(),
+                Some(writer.clone()),
+                config.tokens.max_per_request,
+            )
+            .with_usage_home(first_tour_home.clone())
+            .with_turn_effect_gate(turn_effect_gate.clone())
+            .with_ephemeral_consent(ephemeral_consent.clone());
+            let profile_authorizer = match config.inference.resolve_profile_provider_binding()? {
+                Some(binding) if binding.is_named_instance => profile_authorizer
+                    .with_provider_binding(binding.provider_instance_id, binding.provider_descriptor_id),
+                _ => profile_authorizer,
+            };
             let authorized_learn_provider =
                 crate::providers::cost_authorization::CostAuthorizingProvider::new(
                     learn_provider_ref,
-                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                        config.autonomy_policy(),
-                        Some(writer.clone()),
-                        config.tokens.max_per_request,
-                    )
-                    .with_usage_home(first_tour_home.clone())
-                    .with_turn_effect_gate(turn_effect_gate.clone())
-                    .with_ephemeral_consent(ephemeral_consent.clone()),
+                    profile_authorizer,
                     None,
                     "profile_learning_round",
                 );
@@ -9253,6 +9428,7 @@ pub(crate) async fn run_chat_with_to(
         provider,
         crate::consent::EphemeralConsent::default(),
         None,
+        None,
         crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
         output,
     )
@@ -9334,6 +9510,7 @@ pub(crate) async fn run_workflow_replay_turn_at(
         replay_config,
         provider,
         ephemeral_consent,
+        None,
         None,
         false,
         None,
@@ -9443,6 +9620,7 @@ async fn run_chat_with_consent(
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    retained_skill_admission: Option<RetainedSkillAdmission>,
     stream_control_token: Option<Zeroizing<String>>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
 ) -> Result<()> {
@@ -9452,6 +9630,7 @@ async fn run_chat_with_consent(
         config,
         provider,
         ephemeral_consent,
+        retained_skill_admission,
         stream_control_token,
         cancellation,
         &mut output,
@@ -9464,6 +9643,7 @@ async fn run_chat_with_consent_to(
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    retained_skill_admission: Option<RetainedSkillAdmission>,
     stream_control_token: Option<Zeroizing<String>>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
@@ -9474,6 +9654,7 @@ async fn run_chat_with_consent_to(
         config,
         provider,
         ephemeral_consent,
+        retained_skill_admission,
         stream_control_token,
         cancellation,
         output,
@@ -9708,6 +9889,7 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
         provider,
         crate::consent::EphemeralConsent::default(),
         None,
+        None,
         false,
         Some(role_policy_reload),
         None,
@@ -9779,6 +9961,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         provider,
         ephemeral_consent,
         None,
+        None,
         true,
         Some(role_policy_reload),
         None,
@@ -9804,6 +9987,7 @@ struct ChatTurnPreparationInput {
     args: ChatArgs,
     config: FreedomConfig,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    retained_skill_admission: Option<RetainedSkillAdmission>,
     stream_control_token: Option<Zeroizing<String>>,
     typed_gui_controls: bool,
     replay_context: Option<ReplayTurnContext>,
@@ -9878,6 +10062,7 @@ async fn prepare_cli_chat_turn(
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    retained_skill_admission: Option<RetainedSkillAdmission>,
     stream_control_token: Option<Zeroizing<String>>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
@@ -9887,6 +10072,7 @@ async fn prepare_cli_chat_turn(
         config,
         provider,
         ephemeral_consent,
+        retained_skill_admission,
         stream_control_token,
         false,
         None,
@@ -9910,6 +10096,7 @@ async fn prepare_chat_turn_input(
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    retained_skill_admission: Option<RetainedSkillAdmission>,
     stream_control_token: Option<Zeroizing<String>>,
     typed_gui_controls: bool,
     role_policy_reload: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
@@ -10121,12 +10308,24 @@ async fn prepare_chat_turn_input(
     let slash_skill_name = slash_invocation_name(&prompt);
     let explicit_route_requested = args.skill.is_some() || slash_skill_name.is_some();
     let high_confidence_auto_dispatch = crate::coding::intent::should_auto_dispatch(&prompt);
-    let normal_chat_role = normal_chat_role_binding(&config, role_policy_reload)?;
+    // An ingress-admitted named Skill owns its provider route. Do not resolve
+    // the ordinary Left role merely to mint unused normal-chat policy state.
+    let normal_chat_role = if retained_skill_admission
+        .as_ref()
+        .and_then(|admission| admission.route.as_ref())
+        .and_then(|route| route.provider_instance_id())
+        .is_some()
+    {
+        None
+    } else {
+        normal_chat_role_binding(&config, role_policy_reload)?
+    };
 
     Ok(ChatTurnPreparationInput {
         args,
         config,
         ephemeral_consent,
+        retained_skill_admission,
         stream_control_token,
         typed_gui_controls,
         replay_context,
@@ -10274,6 +10473,7 @@ async fn finish_chat_turn_preparation(
         args,
         config,
         ephemeral_consent,
+        retained_skill_admission,
         stream_control_token,
         typed_gui_controls,
         replay_context,
@@ -10391,6 +10591,7 @@ async fn finish_chat_turn_preparation(
             preparation: chat_turn_pipeline::ChatTurnPreparation {
                 config,
                 ephemeral_consent,
+                retained_skill_admission,
                 stream_control_token,
                 typed_gui_controls,
                 replay_context,
@@ -19707,6 +19908,93 @@ modes:
     }
 
     #[tokio::test]
+    async fn public_chat_admits_named_skill_before_unconfigured_left_factory() {
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let selected = MockServer::start().await;
+        let fixture = tempfile::tempdir().expect("create named skill CLI fixture");
+        let home = fixture.path().join("home");
+        let skills_dir = home.join("skills");
+        let config_path = home.join("freedom.yaml");
+        let wal_path = home.join("wal").join("00000000000000000001.wal");
+        let skill_id = "named-skill-cli";
+        std::fs::create_dir_all(skills_dir.join(skill_id)).expect("create named skill directory");
+        std::fs::write(skills_dir.join(skill_id).join("skill.yaml"), format!(
+            "id: {skill_id}\ndescription: selected named instance\ntrigger_keywords: [named-skill]\nsystem_prompt: named skill body\nprovider_instance_id: skill_compat\nenabled: true\n"
+        )).expect("write named skill manifest");
+        install_direct_cli_registry_authority_key(&home);
+        record_direct_cli_registry_install_incarnation(&home, skill_id);
+
+        let mut config = FreedomConfig::default();
+        config.autonomy = UNPRICED_TEST_PROVIDER_AUTONOMY;
+        config.memory.recall_shortcut = false;
+        config.chat_onboarding_completed = true;
+        config.skills.enabled.push(skill_id.to_owned());
+        config.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: skill-wire-model\n    key: skill-secret\n",
+            selected.uri(),
+        )).expect("parse named skill provider topology");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).expect("serialize named skill config"))
+            .expect("write named skill config");
+        let reload = Arc::new(crate::config::reload::ReloadController::new(config.clone(), config_path.clone()));
+        activate_direct_cli_registry_skill(&home, skill_id, reload.as_ref());
+        let binding = config.inference.resolve_explicit_slot_binding(
+            &serde_yaml::from_str("provider_instance_id: skill_compat").expect("parse named selector"),
+        ).expect("resolve named skill binding");
+        let route = crate::consent::route_for_resolved_binding(&config, &binding)
+            .expect("derive exact selected consent route");
+        // Exercise the same first-use AllowOnce branch that the TTY prompt
+        // returns, without creating a persistent marker. The public ingress
+        // must carry that ephemeral exact-route grant to the selected leaf.
+        let _env = crate::test_env::lock();
+        struct ConsentBypassRestore;
+        impl Drop for ConsentBypassRestore {
+            fn drop(&mut self) {
+                unsafe { std::env::remove_var("NEOTH_CONSENT_BYPASS") };
+            }
+        }
+        let _bypass_restore = ConsentBypassRestore;
+        unsafe { std::env::set_var("NEOTH_CONSENT_BYPASS", "1") };
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer skill-secret"))
+            .and(body_partial_json(serde_json::json!({"model":"skill-wire-model"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices":[{"message":{"content":"named skill complete"}}],
+                "model":"skill-wire-model",
+                "usage":{"prompt_tokens":1,"completion_tokens":1}
+            })))
+            .expect(1)
+            .mount(&selected)
+            .await;
+        let args = ChatArgs {
+            attach: Vec::new(), repository_root: None, message: Some("named-skill".into()), workflow: None,
+            changing_facts: false, model: None, skill: Some(skill_id.into()), system: None, edit: false,
+            config: Some(config_path), wal_segment: Some(wal_path), stream: false, show_reasoning: false,
+            gui_consent_token_stdin: false, temperature: None, top_p: None, sampling_seed: None,
+            resume_from: None, incognito: false, loop_mode: false, iterations: None, until: vec![],
+        };
+        let result = run_chat(args).await;
+        result.expect("public chat must construct only the admitted named Skill leaf");
+        assert!(
+            !crate::consent::is_route_granted(&home, &route),
+            "AllowOnce must remain ephemeral for the selected named route"
+        );
+        selected.verify().await;
+        let wal = std::fs::read(home.join("wal").join("00000000000000000001.wal"))
+            .expect("read named skill provider leaf receipt");
+        assert!(
+            String::from_utf8_lossy(&wal).contains("skill_compat"),
+            "the durable provider-leaf receipt carries the exact selected instance identity"
+        );
+        let receipt = String::from_utf8_lossy(&wal);
+        assert!(receipt.contains("openai_compat"), "provider receipt retains selected descriptor");
+        assert!(receipt.contains("skill-wire-model"), "provider receipt retains final selected wire model");
+    }
+
+    #[tokio::test]
     async fn direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b() {
         let fixture = tempfile::tempdir().expect("create direct CLI registry fixture");
         let home = fixture.path().join("home");
@@ -22097,6 +22385,7 @@ reason = "synthetic secret"
             config.clone(),
             &MockStreamProvider,
             crate::consent::EphemeralConsent::default(),
+            None,
             Some(Zeroizing::new("w458-control-token".to_owned())),
             crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &mut blocked_output,
@@ -22169,6 +22458,7 @@ template = "[REDACTED]"
             config,
             &MockStreamProvider,
             crate::consent::EphemeralConsent::default(),
+            None,
             Some(Zeroizing::new("w458-control-token".to_owned())),
             crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &mut output,
@@ -25212,6 +25502,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                retained_skill_admission: None,
                 replay_skill_registry: None,
             },
         )
@@ -25302,6 +25593,7 @@ template = "[REDACTED]"
                 PromptBuildOptions {
                     slash_skill_name: None,
                     persona_override_from_tweaks: None,
+                    retained_skill_admission: None,
                     replay_skill_registry: None,
                 },
             )
@@ -25383,6 +25675,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                retained_skill_admission: None,
                 replay_skill_registry: None,
             },
         )
@@ -26022,6 +26315,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                retained_skill_admission: None,
                 replay_skill_registry: None,
             },
         )
@@ -27746,6 +28040,7 @@ template = "[REDACTED]"
                 enabled,
                 delegate_to: None,
                 model: None,
+                provider_instance_id: None,
                 paths: Vec::new(),
                 effort: None,
                 loop_trigger: false,

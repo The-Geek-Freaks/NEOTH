@@ -175,6 +175,7 @@ mod tests {
                 enabled: true,
                 delegate_to: None,
                 model: None,
+                provider_instance_id: None,
                 paths: vec![],
                 effort: None,
                 loop_trigger: false,

@@ -213,6 +213,16 @@ jobs:
             SRC/neothd/src/config/keychain.rs \
             SRC/neothd/src/providers/cost.rs \
             SRC/neothd/src/providers/fallback.rs \
+            docs/gold-wave787-workflow-replay.md \
+            SRC/neothd/src/cli/chat_turn_pipeline.rs \
+            SRC/neothd/src/skills/creator.rs \
+            SRC/neothd/src/skills/mode_registry.rs \
+            SRC/neothd/src/skills/resolver.rs \
+            SRC/neothd/src/skills/route_ownership.rs \
+            SRC/neothd/src/skills/router.rs \
+            SRC/neothd/src/skills/schema.rs \
+            SRC/neothd/src/skills/teacher.rs \
+            SRC/neothd/src/skills/test_harness.rs \
             > "$W548_ROOT/source/SHA256SUMS.txt"
           : > "$W548_ROOT/receipt/started.txt"
           : > "$W548_ROOT/receipt/passed.txt"
@@ -597,9 +607,23 @@ jobs:
           run_case 323 lib providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf --lib
           run_case 324 lib providers::tests::named_bedrock_fallback_does_not_inherit_global_region_for_consent providers::tests::named_bedrock_fallback_does_not_inherit_global_region_for_consent --lib
           run_case 325 lib providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 325
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 325
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 325
+          run_case 326 lib config::inference::tests::profile_provider_instance_resolves_exact_named_binding_and_rejects_ambiguity config::inference::tests::profile_provider_instance_resolves_exact_named_binding_and_rejects_ambiguity --lib
+          run_case 327 lib providers::tests::explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound providers::tests::explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound --lib
+          run_case 328 lib providers::tests::explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io providers::tests::explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io --lib
+          run_case 329 lib providers::tests::named_profile_claude_factory_drops_unrelated_global_binary providers::tests::named_profile_claude_factory_drops_unrelated_global_binary --lib
+          run_case 330 lib cli::profile::tests::explicit_named_profile_authorizer_uses_profile_leaf_not_conflicting_left_policy cli::profile::tests::explicit_named_profile_authorizer_uses_profile_leaf_not_conflicting_left_policy --lib
+          run_case 331 lib consent::tests::required_routes_include_exact_named_profile_instance_endpoint consent::tests::required_routes_include_exact_named_profile_instance_endpoint --lib
+          run_case 332 lib config::profile_provider_selector_load_tests::public_config_load_rejects_unknown_or_conflicting_profile_instance_selector config::profile_provider_selector_load_tests::public_config_load_rejects_unknown_or_conflicting_profile_instance_selector --lib
+          run_case 333 lib skills::schema::tests::provider_instance_id_parses_and_defaults_to_none skills::schema::tests::provider_instance_id_parses_and_defaults_to_none --lib
+          run_case 334 lib consent::tests::named_explicit_bedrock_binding_without_region_is_rejected_before_factory consent::tests::named_explicit_bedrock_binding_without_region_is_rejected_before_factory --lib
+          run_case 335 lib providers::tests::explicit_named_binding_factory_keeps_selected_compat_wire_authority providers::tests::explicit_named_binding_factory_keeps_selected_compat_wire_authority --lib
+          run_case 336 lib cli::chat::tests::public_chat_admits_named_skill_before_unconfigured_left_factory cli::chat::tests::public_chat_admits_named_skill_before_unconfigured_left_factory --lib
+          run_case 337 lib cli::chat_turn_pipeline::tests::selected_skill_binding_suppresses_left_authority_for_post_reply_recovery cli::chat_turn_pipeline::tests::selected_skill_binding_suppresses_left_authority_for_post_reply_recovery --lib
+          run_case 338 lib cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds --lib
+          run_case 339 lib providers::tests::named_profile_and_explicit_factories_reject_missing_bedrock_region providers::tests::named_profile_and_explicit_factories_reject_missing_bedrock_region --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 339
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 339
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 339
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

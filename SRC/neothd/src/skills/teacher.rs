@@ -410,6 +410,7 @@ fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &st
         enabled: false,
         delegate_to: None,
         model: None,
+        provider_instance_id: None,
         paths: vec![],
         effort: None,
         loop_trigger: false,

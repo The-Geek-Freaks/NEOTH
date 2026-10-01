@@ -200,6 +200,11 @@ impl ResolvedSkillRoute {
         self.body.as_skill()
     }
 
+    /// Returns the named provider selector captured in this immutable route.
+    pub fn provider_instance_id(&self) -> Option<&str> {
+        self.body.as_skill().manifest.provider_instance_id.as_deref()
+    }
+
     pub fn mode(&self) -> Option<&ModeEntry> {
         self.mode_index
             .and_then(|index| self.skill().manifest.modes.get(index))
@@ -293,6 +298,7 @@ pub(crate) fn test_invocation_policy_for_skill_id(
         enabled: true,
         delegate_to: None,
         model: None,
+        provider_instance_id: None,
         paths: Vec::new(),
         effort: None,
         loop_trigger: false,
@@ -999,6 +1005,7 @@ mod tests {
             enabled: true,
             delegate_to: None,
             model: None,
+            provider_instance_id: None,
             paths,
             effort: None,
             loop_trigger: false,
@@ -1034,6 +1041,7 @@ mod tests {
             enabled,
             delegate_to: None,
             model: Some("private-model-authority".to_owned()),
+            provider_instance_id: None,
             paths,
             effort: None,
             loop_trigger: false,

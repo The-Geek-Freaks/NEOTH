@@ -1,0 +1,145 @@
+{
+  "schema": "neoth-gold-wave2072-named-profile-skill/v1",
+  "capturedUtc": "2026-10-01T19:06:47.5575320Z",
+  "baseline": "394aef54b4af9e47e747b06f112c44158083a7ee",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "behavior": [
+    "Explicit profile provider_instance_id resolves exact endpoint, key, model, profile and audit identity",
+    "Installed Skills retain one admitted route through public Chat and Channel/MCP requests",
+    "Named Skill public entry obtains exact AllowOnce/Always/Deny consent before selected provider construction; no unrelated Left factory",
+    "Selected Skill post-reply calls retain exact audit binding without ordinary Left authority",
+    "Named Bedrock missing-region routes and factories reject before legacy environment/default region resolution"
+  ],
+  "compatibility": [
+    "Selector-free routing retains aggregate consent and existing fallback behavior",
+    "Named Profile rejects unknown or conflicting selectors on public config load",
+    "Official vendor endpoint validation remains intact; loopback fixtures use generic compatibility",
+    "Local BSOD hold and no Slint changes retained"
+  ],
+  "staticReview": {
+    "reviewer": "/root/w2031_rust_review",
+    "status": "APPROVED",
+    "candidatePaths": 23,
+    "manifestSHA256": "01D8DE30D30FD01242DD57076944DA7B299FFBB9CB85DBF1221A0CFF872D6226"
+  },
+  "regressions": [
+    {
+      "test": "config::inference::tests::profile_provider_instance_resolves_exact_named_binding_and_rejects_ambiguity",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth",
+      "coverage": "named selector resolves one exact binding; unknown and conflicting selectors reject"
+    },
+    {
+      "test": "providers::tests::explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth",
+      "coverage": "named profile factory sends its endpoint/key/model and records instance plus descriptor in request and response WAL receipts"
+    },
+    {
+      "test": "providers::tests::explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth",
+      "coverage": "unknown and conflicting named selectors fail before factory dispatch; the wiremock endpoint accepts zero requests"
+    },
+    {
+      "test": "providers::tests::named_profile_claude_factory_drops_unrelated_global_binary",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth",
+      "coverage": "named Claude profile factory retains the named model and clears a global provider binary"
+    },
+    {
+      "test": "cli::profile::tests::explicit_named_profile_authorizer_uses_profile_leaf_not_conflicting_left_policy",
+      "sourcePath": "SRC/neothd/src/cli/profile.rs",
+      "junitClass": "neoth",
+      "coverage": "named profile dispatch succeeds through its exact leaf despite a conflicting Left role policy and records named receipt identity"
+    },
+    {
+      "test": "consent::tests::required_routes_include_exact_named_profile_instance_endpoint",
+      "sourcePath": "SRC/neothd/src/consent.rs",
+      "junitClass": "neoth",
+      "coverage": "startup consent inventory includes the named profile endpoint instead of the main endpoint"
+    },
+    {
+      "test": "config::profile_provider_selector_load_tests::public_config_load_rejects_unknown_or_conflicting_profile_instance_selector",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "junitClass": "neoth",
+      "coverage": "public config load rejects unknown and ambiguous profile selectors before runtime factory construction"
+    },
+    {
+      "test": "skills::schema::tests::provider_instance_id_parses_and_defaults_to_none",
+      "sourcePath": "SRC/neothd/src/skills/schema.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "consent::tests::named_explicit_bedrock_binding_without_region_is_rejected_before_factory",
+      "sourcePath": "SRC/neothd/src/consent.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::tests::explicit_named_binding_factory_keeps_selected_compat_wire_authority",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat::tests::public_chat_admits_named_skill_before_unconfigured_left_factory",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::selected_skill_binding_suppresses_left_authority_for_post_reply_recovery",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::tests::named_profile_and_explicit_factories_reject_missing_bedrock_region",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth"
+    }
+  ],
+  "registrations": {
+    "portable": 2562,
+    "focused": 339,
+    "focusedSourceBindings": 169,
+    "newPortable": 14,
+    "guards": 20
+  },
+  "precedingHosted": {
+    "run": 36906842773,
+    "producer": "394aef54b4af9e47e747b06f112c44158083a7ee",
+    "conclusion": "failure",
+    "executed": 325,
+    "passed": 321,
+    "failed": 4,
+    "originalArchives": 3,
+    "verifiedEntries": 656,
+    "rawSourceBindings": 159,
+    "partialChecksSHA256": "12968DA7C67969516F955DD423E1867B150121686A5D6A7299BD14094FCCC35D",
+    "repairs": [
+      "Named Bedrock consent and factory guard before ambient defaults",
+      "Canonical home-bound WAL fixture",
+      "Generic OpenAI-compatible profile for local Wiremock fixtures"
+    ],
+    "productAndGuardAcceptance": false
+  },
+  "security": {
+    "run": 36907725035,
+    "producer": "394aef54b4af9e47e747b06f112c44158083a7ee",
+    "conclusion": "failure",
+    "successfulJobs": 8,
+    "rustJob": 110522417261,
+    "terminal": "Hosted runner received shutdown signal",
+    "terminalUtc": "2026-10-01T18:47:02.4828608Z",
+    "cause": "Unproven; pre-Analyze cgroup snapshot cannot establish later shutdown cause",
+    "releaseAcceptance": false
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "priorPlanBytesPreserved": true
+}

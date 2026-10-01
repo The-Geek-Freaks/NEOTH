@@ -3102,7 +3102,7 @@ async fn run_pipeline_cli_batch(
     let (writer, writer_completion) =
         crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.clone())
             .context("spawn home-bound profile-run WAL writer")?;
-    let authorizer = profile_cli_left_role_authorizer(
+    let authorizer = profile_cli_authorizer(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
@@ -3198,8 +3198,26 @@ async fn run_pipeline_cli_batch(
     Ok(())
 }
 
-/// Profile extraction has a fixed analytic origin: Left. Retain the selected
-/// slot and immutable CLI configuration at the one provider wrapper.
+/// Profile extraction retains the historical Left-role policy only without an
+/// explicit profile selector. An explicit profile provider is its own purpose
+/// route: its concrete factory leaf supplies the provider/model policy, and a
+/// named selector also stamps its durable instance identity into each receipt.
+fn profile_cli_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    match config.inference.resolve_profile_provider_binding()? {
+        Some(binding) if binding.is_named_instance => Ok(authorizer.with_provider_binding(
+            binding.provider_instance_id,
+            binding.provider_descriptor_id,
+        )),
+        Some(_) => Ok(authorizer),
+        None => profile_cli_left_role_authorizer(authorizer, config),
+    }
+}
+
+/// Legacy profile extraction has a fixed analytic origin: Left. Retain the
+/// selected slot and immutable CLI configuration at the one provider wrapper.
 fn profile_cli_left_role_authorizer(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     config: &FreedomConfig,
@@ -3910,6 +3928,60 @@ mod tests {
         join.await.unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(std::fs::metadata(segment).unwrap().len() > 0);
+    }
+
+    #[tokio::test]
+    async fn explicit_named_profile_authorizer_uses_profile_leaf_not_conflicting_left_policy() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut cfg = w301_profile_config("main-left-model");
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: profile_local_2061\n    descriptor: local_ollama\n    endpoint: http://127.0.0.1:11434\n    model: w301-left\nleft: { provider: local_ollama, model: main-left-model }\nprofile_provider_instance_id: profile_local_2061\nrole_policy:\n  rules:\n    - role: left\n      provider: local_ollama\n      model: main-left-model\n",
+        )
+        .expect("parse explicit named profile topology");
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("00000000000000000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            segment.clone(),
+            dir.path().to_path_buf(),
+        )
+        .unwrap();
+        let authorizer = profile_cli_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                cfg.autonomy_policy(),
+                Some(writer.clone()),
+                cfg.tokens.max_per_request,
+            ),
+            &cfg,
+        )
+        .expect("named profile authorizer must not inherit Left policy");
+        let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &W301CountingProvider(calls.clone()),
+            authorizer,
+            None,
+            "profile.named.2061",
+        );
+        provider.complete(crate::providers::Request::default()).await.unwrap();
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let bytes = std::fs::read(segment).unwrap();
+        let mut seen = false;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                assert_eq!(payload["provider_instance_id"], "profile_local_2061");
+                assert_eq!(payload["provider_descriptor_id"], "local_ollama");
+                assert_eq!(payload["wire_model"], "w301-left");
+                assert!(payload.get("hemisphere_role").is_none());
+                seen = true;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(seen, "profile leaf must emit a lifecycle request receipt");
     }
 
     #[tokio::test]

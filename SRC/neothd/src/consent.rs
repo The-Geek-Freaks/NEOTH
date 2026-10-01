@@ -447,6 +447,23 @@ pub(crate) fn route_for_provider_config(
     }
 }
 
+/// Build the consent route for an already-resolved provider binding.
+///
+/// A named Bedrock instance owns its region. Unlike legacy slots, an omitted
+/// named region must not enter Bedrock's runtime default-region resolution:
+/// doing so would authorize a route that the named record did not declare.
+pub(crate) fn route_for_resolved_provider_config(
+    kind: ProviderKind,
+    endpoint: Option<&str>,
+    region: Option<&str>,
+    is_named_instance: bool,
+) -> ConsentRoute {
+    if is_named_instance && kind == ProviderKind::AwsBedrock && region.is_none() {
+        return ConsentRoute::new(kind, Some(INVALID_BEDROCK_CONSENT_ROUTE));
+    }
+    route_for_provider_config(kind, endpoint, region)
+}
+
 pub fn route_endpoint_origin(route: &ConsentRoute) -> Result<Option<String>> {
     if uses_endpoint_bound_consent(route.kind)
         && route_requires_consent(route.kind, route.endpoint.as_deref())
@@ -1247,7 +1264,7 @@ pub fn route_for_role(
     let binding = config.inference.resolve_role_binding(role)?;
     let slot = binding.slot;
     Ok(match slot.provider {
-        Some(provider) => Some(route_for_provider_config(
+        Some(provider) => Some(route_for_resolved_provider_config(
             provider.to_provider_kind(),
             slot.endpoint.as_deref(),
             if binding.is_named_instance {
@@ -1255,6 +1272,7 @@ pub fn route_for_role(
             } else {
                 slot.region.as_deref().or(config.provider_region.as_deref())
             },
+            binding.is_named_instance,
         )),
         None => config.provider_kind.map(|kind| {
             route_for_provider_config(
@@ -1264,6 +1282,34 @@ pub fn route_for_role(
             )
         }),
     })
+}
+
+/// Exact consent route for an already-resolved provider binding.  Named
+/// bindings own their region completely and therefore never inherit a global
+/// Bedrock/Azure region while a route is being authorized.
+pub fn route_for_resolved_binding(
+    config: &crate::config::FreedomConfig,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> Result<ConsentRoute> {
+    let provider = binding
+        .slot
+        .provider
+        .ok_or_else(|| anyhow::anyhow!("resolved provider binding has no provider"))?;
+    anyhow::ensure!(
+        !(binding.is_named_instance
+            && provider.to_provider_kind() == ProviderKind::AwsBedrock
+            && binding.slot.region.is_none()),
+        "named Bedrock provider binding requires an explicit region"
+    );
+    Ok(route_for_provider_config(
+        provider.to_provider_kind(),
+        binding.slot.endpoint.as_deref(),
+        if binding.is_named_instance {
+            binding.slot.region.as_deref()
+        } else {
+            binding.slot.region.as_deref().or(config.provider_region.as_deref())
+        },
+    ))
 }
 
 fn route_for_explicit_auxiliary(
@@ -1355,6 +1401,21 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
             candidates.push(route);
         }
     }
+    if let Some(binding) = config.inference.resolve_profile_provider_binding()? {
+        let slot = binding.slot;
+        if let Some(provider) = slot.provider {
+            candidates.push(route_for_resolved_provider_config(
+                provider.to_provider_kind(),
+                slot.endpoint.as_deref(),
+                if binding.is_named_instance {
+                    slot.region.as_deref()
+                } else {
+                    slot.region.as_deref().or(config.provider_region.as_deref())
+                },
+                binding.is_named_instance,
+            ));
+        }
+    }
     // Recursive councils can override every inner role independently for each
     // outer hemisphere. These factories use the explicit sub-slot's endpoint
     // exactly as written, so the consent inventory must mirror those nine
@@ -1368,7 +1429,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
                 .resolve_sub_role_binding(*outer_role, role)?;
             let slot = binding.slot;
             if let Some(provider) = slot.provider {
-                candidates.push(route_for_provider_config(
+                candidates.push(route_for_resolved_provider_config(
                     provider.to_provider_kind(),
                     slot.endpoint.as_deref(),
                     if binding.is_named_instance {
@@ -1376,6 +1437,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
                     } else {
                         slot.region.as_deref().or(config.provider_region.as_deref())
                     },
+                    binding.is_named_instance,
                 ));
             }
         }
@@ -1394,7 +1456,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
             let binding = config.inference.resolve_explicit_slot_binding(slot)?;
             let slot = binding.slot;
             if let Some(provider) = slot.provider {
-                candidates.push(route_for_provider_config(
+                candidates.push(route_for_resolved_provider_config(
                     provider.to_provider_kind(),
                     slot.endpoint.as_deref(),
                     if binding.is_named_instance {
@@ -1402,6 +1464,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
                     } else {
                         slot.region.as_deref().or(config.provider_region.as_deref())
                     },
+                    binding.is_named_instance,
                 ));
             }
         }
@@ -2240,6 +2303,26 @@ mod tests {
     }
 
     #[test]
+    fn required_routes_include_exact_named_profile_instance_endpoint() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.provider_endpoint = Some("https://main.example/v1".into());
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: profile_consent_2061\n    descriptor: openai_compat\n    endpoint: https://profile.example/v1\n    model: profile-model\nprofile_provider_instance_id: profile_consent_2061\n",
+        )
+        .expect("parse named profile consent topology");
+
+        let routes = required_consent_routes(&cfg).expect("inventory profile route");
+        assert!(routes.iter().any(|route| {
+            route.kind == ProviderKind::OpenaiCompat
+                && route.endpoint.as_deref() == Some("https://profile.example/v1")
+        }));
+        assert!(!routes.iter().any(|route| {
+            route.kind == ProviderKind::OpenaiCompat
+                && route.endpoint.as_deref() == Some("https://main.example/v1")
+        }));
+    }
+
+    #[test]
     fn required_routes_include_learn_utility_and_teacher_providers() {
         use crate::config::inference::InferenceProvider;
         let mut cfg = crate::config::FreedomConfig {
@@ -2520,6 +2603,25 @@ mod tests {
         assert_eq!(
             route.endpoint.as_deref(),
             Some(INVALID_BEDROCK_CONSENT_ROUTE)
+        );
+    }
+
+    #[test]
+    fn named_explicit_bedrock_binding_without_region_is_rejected_before_factory() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.provider_region = Some("eu-central-1".into());
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: skill_bedrock, descriptor: aws_bedrock }\n",
+        ).expect("parse named instance topology");
+        let selector: crate::config::inference::HemisphereSlot =
+            serde_yaml::from_str("provider_instance_id: skill_bedrock").expect("parse selector");
+        let binding = cfg.inference.resolve_explicit_slot_binding(&selector)
+            .expect("resolve selected named instance");
+        let error = route_for_resolved_binding(&cfg, &binding)
+            .expect_err("named Bedrock selector must not inherit global/default region");
+        assert!(
+            error.to_string().contains("requires an explicit region"),
+            "the binding must fail before consent grant or factory construction: {error:#}"
         );
     }
 

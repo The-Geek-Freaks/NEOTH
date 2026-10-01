@@ -293,6 +293,16 @@ OAuth, region/project fields, capability/model discovery, tool/image/thinking
 wire semantics, pricing and every Hemisphere/Skill/Cron/Buddy/GUI consumer
 still require an explicit tested provider disposition before v1.0 Gold.
 
+### Profile extraction provider instances
+
+Set `inference.profile_provider_instance_id` to route manual `neoth profile
+run`, post-chat learning, and channel learning through one named provider
+instance. The selected instance supplies its exact endpoint, credential,
+model, compatibility profile, region, consent route, and audit identity.
+`profile_provider_instance_id` is mutually exclusive with the legacy coarse
+`inference.profile_provider`; leaving both unset preserves each caller's
+existing profile/learn fallback behavior.
+
 ## Privacy behavior
 
 | Question | Expected answer |

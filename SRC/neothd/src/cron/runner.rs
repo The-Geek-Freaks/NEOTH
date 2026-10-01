@@ -2969,6 +2969,7 @@ channel_accounts:
             enabled,
             delegate_to: None,
             model: Some("private-model-authority".to_owned()),
+            provider_instance_id: None,
             paths: Vec::new(),
             effort: None,
             loop_trigger: false,
