@@ -316,7 +316,7 @@ fn decode_vector(blob: &[u8], dimension: usize) -> Option<Vec<f32>> {
     }
     let vector = blob
         .chunks_exact(4)
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().ok()?))
+        .map(|bytes| Some(f32::from_le_bytes(bytes.try_into().ok()?)))
         .collect::<Option<Vec<_>>>()?;
     vector
         .iter()
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn delta_reuses_more_than_one_batch_only_for_exact_current_chunk_identity() {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         ensure_schema(&conn).unwrap();
         conn.execute_batch(
             "CREATE TABLE code_map_roots (root TEXT PRIMARY KEY, root_identity TEXT, index_generation INTEGER, chunk_generation INTEGER);

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T17:04:49.2920262Z",
-  "validationStatus": "HOSTED283_OF285_FIXTURE_REPAIR_PENDING",
+  "capturedUtc": "2026-10-01T17:21:50.4774733Z",
+  "validationStatus": "STATIC_REVIEWED_HOSTED_COMPILE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3003,8 +3003,8 @@
     },
     {
       "path": "docs/verification/gold-wave2049-code-vector-recall.json",
-      "bytes": 6658,
-      "sha256": "8642B5FE6ECD65193E2C7BF72F6ED516934EB99B82BC47E82DF3C96ACFE7ED7A"
+      "bytes": 7492,
+      "sha256": "172EE5906FD982300BD1F7FD8A3114BAD284F37468BD127731E68F667D896766"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4108,8 +4108,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2269968,
-      "sha256": "CA5E3F3A9D9EBF9F021790A12E6B77D95AC96B39D4E132FDC9367EC41B918966"
+      "bytes": 2270626,
+      "sha256": "B7B8224EFFBFC6EA4DD17D42F83680CF48C7CE1B1EADAA88D2ACADB3659AA4FF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5043,13 +5043,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/code_map.rs",
-      "bytes": 99599,
-      "sha256": "01C0A94AF2B286A0F7D8511A4776B9916F4FFAB0131F3C71C71456B26F413EE5"
+      "bytes": 99539,
+      "sha256": "62C51D3498FF3D65E01CBA3E266DAF0AA584399C44C80E3CCEF3386E9ACC5464"
     },
     {
       "path": "SRC/neothd/src/cli/code.rs",
-      "bytes": 148590,
-      "sha256": "BD830C42BA6E84DD7DEAF3B7934CE1E940BAFA7720620CBBD3E91769ED7195F3"
+      "bytes": 148506,
+      "sha256": "73CFCDC15F422976C7A952C84CCB1AB6AF7D2C06FAAC881333EAB7FF385033E0"
     },
     {
       "path": "SRC/neothd/src/cli/companion.rs",
@@ -5618,8 +5618,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/vector_embeddings.rs",
-      "bytes": 44356,
-      "sha256": "C7656258948F3347424061E1352BB61D0727918B64B4D8865D477F53AC6AA189"
+      "bytes": 44366,
+      "sha256": "6D3D48178E4CC80FC209A7C9CB46131C54E68D468DE458CFB52442F947F63C1A"
     },
     {
       "path": "SRC/neothd/src/coding/classifier.rs",

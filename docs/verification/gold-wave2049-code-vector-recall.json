@@ -131,5 +131,23 @@
     "acceptance": "PARTIAL_CASE_EVIDENCE_ONLY_NOT_PRODUCT_ACCEPTANCE",
     "localTestsRan": false,
     "custodySHA256": "03A1A8850E22AEDC643A2F3465306938E81CB70140246D553EF59B15B601ED32"
+  },
+  "hostedCompileRepairW2056": {
+    "failedRun": 36897504164,
+    "producer": "ac9219ca73239c353509ef0a46283fe242263247",
+    "failure": "8 compiler diagnostics before focused execution",
+    "executedFocusedCases": 0,
+    "originalArchives": 3,
+    "archiveCustodySHA256": "8BE03B2265864ACE749A34AB01CDB84260BB9861051F43E559236158613529EF",
+    "fixes": [
+      "Match actual Option-returning sealed provider factory",
+      "Keep one Option-to-error conversion for explicit reindex",
+      "Return Option from bounded vector decode iterator",
+      "Allow test transaction helper mutable connection"
+    ],
+    "candidateManifestSHA256": "1ED3E033D5F3B7CDD1320F436C4611C8CC5D9C1A48D5EB8E20B227D33CCD79F8",
+    "reviewer": "/root/w2031_rust_review",
+    "hostedAfterRepair": "pending",
+    "localExecutableValidationRan": false
   }
 }

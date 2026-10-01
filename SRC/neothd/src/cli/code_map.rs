@@ -642,7 +642,6 @@ async fn run_reindex_embeddings(
         &config_path,
     )
     .await
-    .context("initialize sealed local embedding provider")?
     .context("local embedding provider is unavailable or not ready")?;
     let stored =
         crate::code_map::vector_embeddings::reindex_current(&db_path, &snapshot, &provider, full)

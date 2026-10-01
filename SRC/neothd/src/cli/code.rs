@@ -1209,7 +1209,7 @@ pub(crate) async fn prepare_code_map_context_for_root_at_database_with_vectors(
     )
     .await;
     let (semantic, outcome) = match provider {
-        Ok(Some(provider)) => {
+        Some(provider) => {
             return prepare_code_map_context_for_root_at_database_with_sealed_provider(
                 prompt,
                 repository_root,
@@ -1220,8 +1220,7 @@ pub(crate) async fn prepare_code_map_context_for_root_at_database_with_vectors(
             )
             .await;
         }
-        Ok(None) => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderUnavailable),
-        Err(_) => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderError),
+        None => (Vec::new(), CodeMapSemanticQueryOutcome::ProviderUnavailable),
     };
     let prepared = prepare_code_map_context_for_root_at_database_with_semantic(
         prompt,

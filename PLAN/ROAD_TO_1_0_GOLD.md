@@ -1,5 +1,15 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2056 hosted code-vector compile repair (2026-10-01):**
+Run36897504164 stopped at compilation before any of the300 focused cases.
+Eight diagnostics reduce to four source issues: two callers assumed Result
+where the sealed provider factory returns Option, the bounded decoder map
+needed an Option item, and one fixture connection needed mutable access.
+The reviewed three-file correction preserves fallback, bounds and assertions.
+Root verified the failed run's three original archives against API digests.
+Hosted compilation and product acceptance remain pending; no local executable
+validation ran under the BSOD hold. Original backlog remains verbatim.
+
 **W2052 hosted AST fixture repair (2026-10-01):**
 Run36893505482 compiled and executed all285 cases. Root matched283 exact
 passes and two fixture failures to three original archives,576 entries and144
