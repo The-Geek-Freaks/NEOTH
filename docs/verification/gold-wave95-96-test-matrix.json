@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1992_EXACT_HOSTED_SSH_LOCK_AND_REVIEWED_CERTIFICATE_REFUSAL_RUNTIME_PENDING",
+  "status": "W1992_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 274385,
-    "sha256": "4ACE6B63EDB228EF05951305EBC7A386390A356BC4706FCEC89B32051D501D2A"
+    "bytes": 274353,
+    "sha256": "BCF1CC269122EA8F445037B81D579A07170517644470A0DD911BEB3328A2F8FE"
   },
   "sourceInputs": 1521,
   "requiredNativeTests": [
@@ -63578,6 +63578,26 @@
       }
     ],
     "note": "Hosted36834754950 exact Russh0.63.2/Pageant0.2.3 lock admitted; callback adaptation rejects certificates before TOFU and regression asserts no mutation. New test requires ssh-tunnel, not unconditional portable selection. No local tests; feature/full/native/security pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1992HostedFormat": {
+    "base": "e033c0c14b73a7fc42e5abc8d95d7eaa30eb0dcc",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1992-russh-upgrade.json",
+        "bytes": 2758,
+        "sha256": "292A28B600FD385C8E3E1989FD33BAA5679897685138B8CCC8689494D2D280B9",
+        "blob": "fd0192da9e97f8b4222df5da6ebe9b7b9064a458"
+      },
+      {
+        "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
+        "bytes": 29688,
+        "sha256": "DC24A7CCABACBF45D0D0987343107F14CF68E7C98BB22F666307358B7BB9684B",
+        "blob": "83d2dc0f12ce915abcc3a4c305582c34f5ff09d9"
+      }
+    ],
+    "note": "Exact one-file hosted rustfmt artifact36836190437 admitted; no local runtime. Fresh Preflight and runtime remain pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

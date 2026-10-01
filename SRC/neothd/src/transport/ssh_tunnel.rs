@@ -755,7 +755,10 @@ mod tests {
     async fn host_certificates_are_rejected_without_certificate_trust_configuration() {
         use russh::keys::{
             PrivateKey,
-            ssh_key::{Algorithm, certificate::{Builder, CertType}},
+            ssh_key::{
+                Algorithm,
+                certificate::{Builder, CertType},
+            },
         };
 
         let subject = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
@@ -769,25 +772,22 @@ mod tests {
             u64::MAX,
         )
         .expect("create host certificate builder");
-        builder.cert_type(CertType::Host).expect("mark host certificate");
+        builder
+            .cert_type(CertType::Host)
+            .expect("mark host certificate");
         let certificate = builder.sign(&signing_ca).expect("sign host certificate");
         let tofu = Arc::new(Mutex::new(
             TofuStore::in_memory().expect("open test TOFU store"),
         ));
-        let mut handler = SshHandler::new(
-            Arc::clone(&tofu),
-            "certificate-test:22".to_owned(),
-        );
+        let mut handler = SshHandler::new(Arc::clone(&tofu), "certificate-test:22".to_owned());
 
-        assert!(!handler
-            .check_server_key(&PublicKeyOrCertificate::Certificate(certificate))
-            .await
-            .expect("certificate rejection returns a handler result"));
-        assert!(tofu
-            .lock()
-            .await
-            .is_empty()
-            .expect("query test TOFU store"));
+        assert!(
+            !handler
+                .check_server_key(&PublicKeyOrCertificate::Certificate(certificate))
+                .await
+                .expect("certificate rejection returns a handler result")
+        );
+        assert!(tofu.lock().await.is_empty().expect("query test TOFU store"));
     }
 
     #[test]

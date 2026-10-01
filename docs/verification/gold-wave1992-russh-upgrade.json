@@ -23,7 +23,7 @@
   },
   "source": {
     "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
-    "sha256": "35ACD3189540178916290A3D2D37B4990BCFA8B70F107FAD6C2CD07BAFD8D211",
+    "sha256": "DC24A7CCABACBF45D0D0987343107F14CF68E7C98BB22F666307358B7BB9684B",
     "newCallbackType": "russh::keys::PublicKeyOrCertificate",
     "rawKeyTofuPreserved": true,
     "certificateRejectedBeforeTofu": true,
@@ -47,5 +47,15 @@
     "Refreshed release notices and exact-head Security gate"
   ],
   "localExecutableValidationRan": false,
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "hostedFormat": {
+    "producer": "e033c0c14b73a7fc42e5abc8d95d7eaa30eb0dcc",
+    "run": 36836190437,
+    "artifact": 11149516221,
+    "archiveSha256": "C91CC43809826F666361F7E5905C52728EC9DC96FFA04AA69A78EC61C53BF8EB",
+    "patchSha256": "9731F9973827F537EE193FF3D8A1B2DC1BE7747ADF3E3B72E8CE1A5B99072F08",
+    "postimageBlob": "83d2dc0f12ce915abcc3a4c305582c34f5ff09d9",
+    "scope": "Only hosted formatter changes in SSH regression",
+    "freshPreflight": "pending"
+  }
 }
