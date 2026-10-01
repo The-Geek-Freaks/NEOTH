@@ -178,5 +178,18 @@
   "sourceInputsBefore": 1511,
   "registeredPortableTests": 2461,
   "candidateW1984Imported": false,
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "hostedFormatting": {
+    "producer": "566af96f75aba66b8beb619af47002c55dd1549b",
+    "run": 36826235602,
+    "artifact": 11145149400,
+    "zipSha256": "CCA3B25F9EFE270146287D9AF479A026D95C2F4CC0C171123E200F7CFF5C4A84",
+    "patchSha256": "CD16245C435FFF7A1668D4C09028A658CACF3F0A81E9D20BE1BD0BA88CC7A119",
+    "scope": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+    "resultBlob": "899c07377266188605f904fc5033d5f419854aea",
+    "resultSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
+    "semanticChange": false,
+    "codeQuality": 36826234861,
+    "codeQualityConclusion": "success"
+  }
 }

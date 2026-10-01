@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1986_PAPERLESS_CANONICAL_FIXTURES_STATIC_APPROVED_HOSTED_PENDING",
+  "status": "W1986_HOSTED_FORMAT_IMPORTED_FRESH_INTEGRATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 272933,
-    "sha256": "339D6547F5E5E291B5304D4F19FEBB53ABAD663B8F1EF42EFEE7D332EBA1B7C3"
+    "bytes": 272922,
+    "sha256": "93915D1B85FBCFF927A448FB71981F8AB824AB39C564B3A025028B8F93A6BD01"
   },
   "sourceInputs": 1513,
   "requiredNativeTests": [
@@ -12138,73 +12138,73 @@
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::healthy_auth_is_three_service_noop_and_keeps_bytes",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::stopped_exact_id_is_started_and_reconciled",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::missing_owned_recreates_with_six_volumes_and_credentials",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::foreign_image_or_mount_refuse_pre_effect",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::custody_or_missing_token_refuses_before_docker",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::unknown_create_is_held_without_redispatch_or_adoption",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::captured_complete_journal_recovers_exact_receipt_write_once",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::journal_mismatch_refuses_without_effect",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::generation_authority_marker_refuses_before_effect",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::bound_before_receipt_write_replays_without_redispatch",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::commit_dispatched_before_write_replays_the_cas_without_redispatch",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::commit_dispatched_after_write_and_complete_are_idempotent",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
@@ -12246,19 +12246,19 @@
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_with_invalid_configured_binding_refuses_before_effect",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_repair::tests::stopped_container_waits_for_eventual_authenticated_readiness_without_repeat_start",
       "sourcePath": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "sourceSha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A",
+      "sourceSha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
       "junitClass": "neoth"
     },
     {
@@ -63246,6 +63246,26 @@
       }
     ],
     "note": "Four duplicate cfg(test) diagnostics and all98 Paperless macOS failure identities addressed with test-only source changes; prior Windows18877 pass and full failure retained. No local executable validation; fresh hosted full integration required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1986HostedFormat": {
+    "base": "566af96f75aba66b8beb619af47002c55dd1549b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1986-ci-repair.json",
+        "bytes": 17231,
+        "sha256": "412EFDD4B71AB6D362A670E70EF3875F8DF5FBED6F0E5CFCF708E445DABD232B",
+        "blob": "84724f0b87079f17a71d113ed73f7c02a721cadc"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+        "bytes": 25587,
+        "sha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55",
+        "blob": "899c07377266188605f904fc5033d5f419854aea"
+      }
+    ],
+    "note": "Exact run36826235602 formatter artifact11145149400 verified against API ZIP and entry hashes; one return tuple wrapped, no semantic change. CodeQuality36826234861 passed source566af96f. Fresh preflight/full CI still required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

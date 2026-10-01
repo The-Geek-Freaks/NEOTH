@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T06:40:03.3194909Z",
-  "validationStatus": "W1986_PAPERLESS_CANONICAL_FIXTURES_STATIC_APPROVED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T06:43:03.1198079Z",
+  "validationStatus": "W1986_HOSTED_FORMAT_IMPORTED_FRESH_INTEGRATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2888,8 +2888,8 @@
     },
     {
       "path": "docs/verification/gold-wave1986-ci-repair.json",
-      "bytes": 16599,
-      "sha256": "A88C28055C77CB4DF20E1CEFA3DF4B6EF73AD95A8A184C585715FFF9E1868154"
+      "bytes": 17231,
+      "sha256": "412EFDD4B71AB6D362A670E70EF3875F8DF5FBED6F0E5CFCF708E445DABD232B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6153,8 +6153,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "bytes": 25568,
-      "sha256": "739E7E5A052ACC2C12C497A68F52E38F4D43757431E9A9672A7E279632A8094A"
+      "bytes": 25587,
+      "sha256": "68E12AE981FDC03DACF62794964714F4797D6FBFFA0F14EEB27F0C6F65FEBF55"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair.rs",
