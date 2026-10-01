@@ -217,7 +217,7 @@ irc-channel = ["dep:irc"]
 # needs the feature.
 nostr-channel = ["dep:nostr-sdk", "dep:nostr"]
 # B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL; NEOTH
-# dials out). Off by default — needs `jsonwebtoken` (RustCrypto RS256) for the
+# dials out). Off by default — needs `jsonwebtoken` (AWS-LC RS256) for the
 # service-account JWT. The `ChannelKind::GoogleChat` variant + formatter +
 # probe row + the pure `gchat_api` mapping stay compiled in every build; only
 # the pull/send adapter needs the feature.
@@ -273,9 +273,9 @@ irc = { version = "1", default-features = false, features = ["tls-rust"], option
 nostr-sdk = { version = "0.45.1", optional = true }
 nostr = { version = "0.45.1", features = ["nip59"], optional = true }
 # B9 — Google Chat channel (optional, behind `gchat-channel`). RS256 service-
-# account JWT signing through jsonwebtoken's RustCrypto-backed RSA implementation.
+# account JWT signing through jsonwebtoken's AWS-LC backend (no RustCrypto rsa).
 # jsonwebtoken 10 defaults to PEM parsing only; signing needs an explicit backend.
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"], optional = true }
+jsonwebtoken = { version = "=10.4.0", features = ["aws_lc_rs"], optional = true }
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
 semver             = "1"
@@ -686,10 +686,10 @@ neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", fe
 neoth-openclaw-custody = { path = "../neoth-openclaw-custody", version = "1.0.0" }
 
 # V10-04 GA blocker — wasmtime runtime for WASM plugin host. Optional
-# (feature `wasm-plugin-host`). Pinned to 26.x; the 2026 API is stable
+# (feature `wasm-plugin-host`). Pinned to 36.0.16; the 2026 API is stable
 # enough for the Engine + Store + Linker surface we need. Compile-cost:
 # ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
-wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }
+wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }
 
 # PC-01 (clipboard slice, feature `os-clipboard`) — cross-platform OS clipboard.
 # `default-features = false` drops the `image-data` feature (we only ever move

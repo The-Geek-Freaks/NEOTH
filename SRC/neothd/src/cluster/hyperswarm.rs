@@ -2845,12 +2845,24 @@ mod tests {
         let job = rx.recv().await.expect("allowed admission queues one job");
         assert_eq!(job.reply_peer_pk, remote_pk_hex);
         assert_eq!(job.task_id, "task-allow");
+        // `0xEB` acceptance evidence is emitted through the best-effort
+        // non-blocking writer path. Append an ordinary frame through the
+        // acknowledged FIFO path so this test explicitly establishes the
+        // live unmarked tail whose completeness it asserts below.
+        let ordinary_live_tail = b"task-admission live WAL tail".to_vec();
+        writer
+            .append(
+                crate::wal::HeaderBuilder::new(0x7F, &ordinary_live_tail).build(),
+                ordinary_live_tail,
+            )
+            .await
+            .expect("ordinary tail is durably appended after queued admission");
         let live_ledger =
             crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
                 .expect("required Gate append is authenticated before queue send");
         // The required Gate receipt is visible in the live authenticated
-        // prefix before the queued effect. Later ordinary acceptance/notice
-        // frames can leave the open writer tail explicitly incomplete.
+        // prefix before the explicit ordinary tail, which leaves the open
+        // writer tail explicitly incomplete.
         assert!(matches!(
             live_ledger.completeness,
             crate::permissions::TrustLedgerCompleteness::IncompleteAuthenticatedPrefix { .. }

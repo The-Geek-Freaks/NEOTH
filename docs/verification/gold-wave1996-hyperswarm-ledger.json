@@ -1,0 +1,28 @@
+{
+  "schema": "neoth-gold-wave1996-hyperswarm-ledger/v1",
+  "base": "86e96c6b286a7303bcfe8bb4706522f673ef01fe",
+  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "failedBaseline": {
+    "run": 36826661054,
+    "producer": "14f586246ec4a3a945b7517c29ad37543b844c17",
+    "windows": "18877 passed;1leaky;28skipped",
+    "macOS": "18994 passed;1failed;29skipped",
+    "soleMacFailure": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
+    "linux": "30minute Clippy timeout, no compiler diagnostic",
+    "custody": "work/gold-20260906/wave1987-full-integration/admission/final-run-custody.md"
+  },
+  "cause": "The ordinary acceptance event is queued through a nonblocking WAL path. The test replay raced its write and could correctly observe a complete authenticated prefix.",
+  "repair": "Explicitly append an ordinary frame through the acknowledged FIFO writer before asserting the live incomplete tail. Required authenticated Gate, decision, binding digest and shutdown Complete assertions remain.",
+  "productionChanged": false,
+  "testSourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
+  "focusedCases": 239,
+  "portableRegistrations": 2468,
+  "newPortableRegistration": false,
+  "workflowSha256": "ADB97416EDA1B710FB7BEF3E975CA223C39E362EE8A3EC734349BD433FE18D45",
+  "admissionHelper": "work/gold-20260906/wave1996-product239-admission/Root-Admit.ps1",
+  "admissionHelperSha256": "A4BEF4CF57CF3251032FD35872DC08C26ADA7C8914E2D62C5B976C606C71004B",
+  "review": "w1994_repair_review independently approved source,239-case workflow and admission helper",
+  "localExecutableValidationRan": false,
+  "hosted": "pending",
+  "releaseAccepted": false
+}

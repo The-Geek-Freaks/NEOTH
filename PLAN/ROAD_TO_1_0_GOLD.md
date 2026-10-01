@@ -1,5 +1,28 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1996 deterministic live-ledger regression and W1994 lock admission (2026-10-01):**
+The completed baseline36826661054 on14f58624 passed all18877 Windows cases;
+macOS passed18994 with one remaining Hyperswarm live-ledger test failure.
+The test raced a nonblocking ordinary WAL append. An independently reviewed
+acknowledged ordinary append now establishes the unsealed tail before replay,
+while retaining required Gate authentication, decision/digest and shutdown
+completeness checks. Production behavior is unchanged. The exact existing
+portable identity is added to the focused workflow:239 focused cases, still
+2468 portable registrations. Source provenance and admission bounds follow
+that one additional case. Fresh hosted runtime proof remains pending.
+
+Hosted dependency reconciliation36842116833 on86e96c6b succeeded. Root
+verified original artifact11150539999 and admitted the reviewed lock and
+manifest: JWT10.4.0 uses AWS-LC with no rsa package; Wasmtime36.0.16,
+faster-hex0.10.1 and its required autocfg1.5.1 are exact. Only the stale
+Wasmtime26.x prose was corrected after artifact import. The Matrix chunks
+repair remains separate and open. Metadata success is not runtime acceptance.
+The prior Security Rust CodeQL job ended on a runner shutdown signal, without
+a source diagnostic; final-producer validation will rerun the unchanged gate.
+No local runtime, .slint edit, Claude polling or release acceptance occurred.
+Reports: gold-wave1994-security-repair-candidates.json and
+gold-wave1996-hyperswarm-ledger.json under docs/verification.
+
 **W1994 actual Security gate repair candidates (2026-10-01; hosted pending):**
 Preflight36839781209 and CodeQuality36839781724 passed eeecc826. The fresh
 Security run36839952197 then exposed Wasmtime36.0.14, Google Chat's

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1994_TRANSITIVE_AUTOCFG_CONSTRAINT_REPAIRED_HOSTED_PENDING",
+  "status": "W1996_IMPORTED_STATIC_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 275540,
-    "sha256": "CE90E01BEB2C0F0657934EB66816AF23C3B63FB27183293604A53A6D37B562AC"
+    "bytes": 275715,
+    "sha256": "80AE757E4890062DC25CFDC32DFE63596B6BC84BB514652C9AF4463856B4699C"
   },
-  "sourceInputs": 1528,
+  "sourceInputs": 1529,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B",
+      "sourceSha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
       "junitClass": "neoth"
     },
     {
@@ -63700,6 +63700,56 @@
       }
     ],
     "note": "Actual hosted resolver requires autocfg1.5.1 for fasterhex0.10.1; narrow exact update added. Historical Slint ADR clarified against current selected license. No local execution or dependency import.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1996Integration": {
+    "base": "86e96c6b286a7303bcfe8bb4706522f673ef01fe",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 73577,
+        "sha256": "ADB97416EDA1B710FB7BEF3E975CA223C39E362EE8A3EC734349BD433FE18D45",
+        "blob": "b083231dbcff1bab1b5b919a260d42a050eb5e16"
+      },
+      {
+        "path": "docs/verification/gold-wave1994-security-repair-candidates.json",
+        "bytes": 3807,
+        "sha256": "F21DA5ECF441015D3FEC6E09350D2A894E15B3B9F8F84A27E1762784B38D8641",
+        "blob": "8900a5bb208609bbb733c4067b731d12653d5a72"
+      },
+      {
+        "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",
+        "bytes": 1728,
+        "sha256": "354EB3A7CF2E7E3934060DF27BADD4A7D58765DD71BBE2C4E9B5411FDDECE113",
+        "blob": "e3a9f195cefc352c375bcc0776bb1c47b54429d8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2250962,
+        "sha256": "841D63B2287A2429965BC3BFD5DB8B2E723840054B26DEB03842078829EE5E4A",
+        "blob": "954194205dbbe121d6a4e2948b21be760dbd6f40"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 386631,
+        "sha256": "6C61CD5F5D52A46BE44B14E504AA457338686A708F0245F22546748A14B00EDE",
+        "blob": "fe73b5333adc927b66c76d6f211f26407159be69"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46585,
+        "sha256": "1FA3DBF0538E0A198EBCD218542F38C5E28D8EF6A10ECA65D2271AC0DA59C0E8",
+        "blob": "0aa0013d504251ec2983d98fc908c177f3553084"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 149450,
+        "sha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006",
+        "blob": "065d9389a0b7d071c5814b3361a65309fc1abd0f"
+      }
+    ],
+    "note": "Admitted hosted W1994 security lock; exact239-case live-ledger regression selected; local runtimes prohibited; fresh hosted tests pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -134,7 +134,10 @@ jobs:
             SRC/neothd/src/cli/serve_tasks.rs \
             SRC/neothd/src/cli/consent.rs \
             SRC/neothd/src/cli/consent_outbox.rs \
+            SRC/neothd/src/cluster/hyperswarm.rs \
+            SRC/neothd/src/permissions/trust_ledger.rs \
             SRC/neothd/src/wal/writer.rs \
+            SRC/neothd/src/wal/scan.rs \
             SRC/neothd/src/daemon/omi_ingest_task.rs \
             SRC/neothd/src/memory/omi.rs \
             SRC/neothd/src/consent.rs \
@@ -462,9 +465,10 @@ jobs:
           run_case 236 lib daemon::updater_cron::tests::skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied daemon::updater_cron::tests::skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied --lib
           run_case 237 lib updater::probes::native_cli_version_tests::cron_skill_revalidation_cancelled_before_worker_is_network_free updater::probes::native_cli_version_tests::cron_skill_revalidation_cancelled_before_worker_is_network_free --lib
           run_case 238 lib updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free updater::probes::native_cli_version_tests::cron_skill_revalidation_expired_before_worker_is_network_free --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 238
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 238
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 238
+          run_case 239 lib cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 239
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 239
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 239
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

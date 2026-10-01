@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T09:18:02.6205475Z",
-  "validationStatus": "W1994_TRANSITIVE_AUTOCFG_CONSTRAINT_REPAIRED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T09:29:42.0522306Z",
+  "validationStatus": "W1996_IMPORTED_STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 73219,
-      "sha256": "9A414B5946C4860D4AFD5B202D86659B14A7E6909ADA2E57DF73E79CA3A77BC1"
+      "bytes": 73577,
+      "sha256": "ADB97416EDA1B710FB7BEF3E975CA223C39E362EE8A3EC734349BD433FE18D45"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -2943,8 +2943,13 @@
     },
     {
       "path": "docs/verification/gold-wave1994-security-repair-candidates.json",
-      "bytes": 3073,
-      "sha256": "476BEE3176872A55470F5522C7A7D815938B9E97EEBC4A044B21D3F64BF2AAB9"
+      "bytes": 3807,
+      "sha256": "F21DA5ECF441015D3FEC6E09350D2A894E15B3B9F8F84A27E1762784B38D8641"
+    },
+    {
+      "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",
+      "bytes": 1728,
+      "sha256": "354EB3A7CF2E7E3934060DF27BADD4A7D58765DD71BBE2C4E9B5411FDDECE113"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4023,8 +4028,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2249406,
-      "sha256": "6048A740F7970969CB4F541284C0C6CE7328E7033628E42508A430A07F49A6F6"
+      "bytes": 2250962,
+      "sha256": "841D63B2287A2429965BC3BFD5DB8B2E723840054B26DEB03842078829EE5E4A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4088,8 +4093,8 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 390166,
-      "sha256": "A158A550A8A56735A4D41BBEB2029CBF40B6C8E27A31893270A5A788DEC9FEFF"
+      "bytes": 386631,
+      "sha256": "6C61CD5F5D52A46BE44B14E504AA457338686A708F0245F22546748A14B00EDE"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -4718,8 +4723,8 @@
     },
     {
       "path": "SRC/neothd/Cargo.toml",
-      "bytes": 46581,
-      "sha256": "963C03B6A0D991B92F72A6769E5C842A9BB7FBF79448D0746B8A797E733079C1"
+      "bytes": 46585,
+      "sha256": "1FA3DBF0538E0A198EBCD218542F38C5E28D8EF6A10ECA65D2271AC0DA59C0E8"
     },
     {
       "path": "SRC/neothd/src/analytics/mod.rs",
@@ -5403,8 +5408,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 148846,
-      "sha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B"
+      "bytes": 149450,
+      "sha256": "F6B9EBFC96F196C53DD6B4B7A747AFF94E6CF85D6126043D0BA7E7C360326006"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",

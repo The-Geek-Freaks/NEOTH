@@ -2,7 +2,7 @@
   "schema": "neoth-gold-wave1994-security-repair-candidates/v1",
   "base": "eeecc826be8d8f96a3d583f982cb44f422fc3b21",
   "securityRun": 36839952197,
-  "status": "CONFIRMED_GATE_FAILURES_NARROW_REPAIRS_PREPARED",
+  "status": "HOSTED_LOCK_ADMITTED_RUNTIME_AND_MATRIX_REPAIR_PENDING",
   "findings": [
     {
       "package": "wasmtime",
@@ -45,13 +45,25 @@
       "Locked all-features metadata",
       "Only manifest and lock postimages"
     ],
-    "imported": false,
+    "imported": true,
     "firstAttempt": {
       "run": 36841854977,
       "producer": "eb4cd40ab947cf93971e36e7804ed4135ffa00d9",
       "repair": "Target autocfg1.5.1 before faster-hex, verify exact resolved version",
       "result": "Resolution failed closed; no artifact admitted",
       "cause": "faster-hex0.10.1 requires autocfg^1.5.1; existing lock retained1.5.0"
+    },
+    "admission": {
+      "run": 36842116833,
+      "producer": "86e96c6b286a7303bcfe8bb4706522f673ef01fe",
+      "artifact": 11150539999,
+      "archiveSha256": "59C036DB1ADF671087FD228C16AB9CC5017270BBC481EB9A738F9BB74FB7DB7C",
+      "lockSha256": "6C61CD5F5D52A46BE44B14E504AA457338686A708F0245F22546748A14B00EDE",
+      "manifestArtifactSha256": "5D876CEDE3C836CD8C4BC4407DEF04ECC4567C8E65AC8700A8E4F71FFF76633D",
+      "manifestFollowup": "Correct stale Wasmtime comment from26.x to36.0.16; dependency bytes unchanged",
+      "metadata": "Locked all-features graph admitted; rsa absent; imbl-sized-chunks remains0.1.3",
+      "review": "Independent actual artifact review approved import",
+      "runtime": "pending"
     }
   },
   "trivy": {
