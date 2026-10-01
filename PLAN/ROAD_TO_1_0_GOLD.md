@@ -1,5 +1,22 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1993 SSH release contract and notice consistency (2026-10-01):**
+Hosted notice export36838651529 on e033c0c1 regenerated the exact locked
+release notices successfully. Root verified original artifact11149704382,
+its API size/digest/producer, eight entries and all thirteen checksum records.
+THIRD_PARTY_LICENSES and Rust license snapshots are byte-identical to the
+checked-in versions; no notice source import was needed. The unchanged lock,
+manifest, generators and model custody inputs retain that evidence binding.
+
+Preflight36838758602 on a647e529 passed formatting but exposed the old Russh
+0.62.5 literal in the release capability contract. The assertion now requires
+exact =0.63.2, matching the admitted manifest and locked dependency. Optional
+SSH, ring backend, default-feature exclusion, stock-release exclusion and the
+locked feature-test command stay guarded. Fresh hosted Preflight, SSH runtime,
+focused238, full native CI and exact-head Security remain open. No local
+executable validation or native/release acceptance is claimed.
+Report: docs/verification/gold-wave1992-russh-upgrade.json.
+
 **W1992 exact SSH dependency and callback update (2026-10-01; runtime pending):**
 Hosted metadata run36834754950 on11d9345b resolved exact Russh0.63.2 and
 Pageant0.2.3 and passed --locked ssh-tunnel metadata. Root verified the original

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1992_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "status": "W1993_SSH_CONTRACT_ALIGNED_NOTICES_VERIFIED_RUNTIME_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 274353,
-    "sha256": "BCF1CC269122EA8F445037B81D579A07170517644470A0DD911BEB3328A2F8FE"
+    "bytes": 274368,
+    "sha256": "58548144A5C463113931D4498FC2583CB9863ACA5740ECE6E2921D036EBD7F7B"
   },
   "sourceInputs": 1521,
   "requiredNativeTests": [
@@ -63598,6 +63598,32 @@
       }
     ],
     "note": "Exact one-file hosted rustfmt artifact36836190437 admitted; no local runtime. Fresh Preflight and runtime remain pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1993ReleaseContract": {
+    "base": "a647e529bf0b3f243b0b4be948723522e3a69467",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1992-russh-upgrade.json",
+        "bytes": 3592,
+        "sha256": "DC4AB2EF03112F7107C4523EB767ED23BE7D45610DF00DA0A9908D884D33CEBF",
+        "blob": "aa2989f398dfa451fb3adb2f3f5f3c6e49f47e9b"
+      },
+      {
+        "path": "packaging/tests/test_release_capability_contract.py",
+        "bytes": 21605,
+        "sha256": "89EDB5A0B194C41F1D0F0178583F95A0B36CCAF8EFFB7DDF13DECF3F56BFBC40",
+        "blob": "9b7160b65cc4c4fa9da5ba188f07aaec003212f5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2247860,
+        "sha256": "3092C6006B349F42EE85FC473E04F0041CF138FE28DCD8126B78C9C14DC3DE2F",
+        "blob": "652470febd5535187aac951612d880599d67a260"
+      }
+    ],
+    "note": "Correct obsolete exact Russh literal; hosted notice export verified byte-identical. No local executable validation; fresh hosted gates required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

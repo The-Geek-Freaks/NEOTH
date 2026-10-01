@@ -42,9 +42,9 @@
     "result": "APPROVE after added TOFU nonmutation assertion and hosted lock custody review"
   },
   "remaining": [
-    "Hosted format and metadata/contract preflight",
-    "Exact feature test and full native CI",
-    "Refreshed release notices and exact-head Security gate"
+    "Fresh hosted metadata/contract preflight",
+    "Exact SSH feature test and full native CI",
+    "Exact-head Security gate"
   ],
   "localExecutableValidationRan": false,
   "releaseAccepted": false,
@@ -57,5 +57,22 @@
     "postimageBlob": "83d2dc0f12ce915abcc3a4c305582c34f5ff09d9",
     "scope": "Only hosted formatter changes in SSH regression",
     "freshPreflight": "pending"
+  },
+  "releaseContract": {
+    "failedRun": 36838758602,
+    "cause": "Release capability guard still required old Russh0.62.5",
+    "repair": "Require exact =0.63.2; optional, ring, no defaults, stock exclusion, locked SSH CI command unchanged",
+    "validation": "Fresh hosted Preflight pending"
+  },
+  "distributionNotices": {
+    "run": 36838651529,
+    "producer": "e033c0c14b73a7fc42e5abc8d95d7eaa30eb0dcc",
+    "artifact": 11149704382,
+    "archiveSha256": "6BD00FF2DE5F17AFFC4C84234A69D84CBA93D4D75F6B9049B22FE8652A28E790",
+    "entries": 8,
+    "checksumRecords": 13,
+    "result": "Hosted regeneration succeeded; notices and snapshots are byte-identical, no import required",
+    "noticeSha256": "3D250204546FAB5543564558EC21F38F7297CB018FCC684744A7A69FEA07AA9A",
+    "snapshotsSha256": "1CF71B7212A9171CEDDDE963E1A4F26786EF84CE9A0E31AADC275D288B7FFCC8"
   }
 }

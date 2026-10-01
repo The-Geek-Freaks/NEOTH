@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T08:47:19.1872175Z",
-  "validationStatus": "W1992_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-01T08:57:00.6080185Z",
+  "validationStatus": "W1993_SSH_CONTRACT_ALIGNED_NOTICES_VERIFIED_RUNTIME_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2918,8 +2918,8 @@
     },
     {
       "path": "docs/verification/gold-wave1992-russh-upgrade.json",
-      "bytes": 2758,
-      "sha256": "292A28B600FD385C8E3E1989FD33BAA5679897685138B8CCC8689494D2D280B9"
+      "bytes": 3592,
+      "sha256": "DC4AB2EF03112F7107C4523EB767ED23BE7D45610DF00DA0A9908D884D33CEBF"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -3943,8 +3943,8 @@
     },
     {
       "path": "packaging/tests/test_release_capability_contract.py",
-      "bytes": 21604,
-      "sha256": "18AD2FE476292D8F3275286331E8A274650879CB4CF5DB2FC3CCE42970833A33"
+      "bytes": 21605,
+      "sha256": "89EDB5A0B194C41F1D0F0178583F95A0B36CCAF8EFFB7DDF13DECF3F56BFBC40"
     },
     {
       "path": "packaging/tests/test_workflow_replay_gate.py",
@@ -3993,8 +3993,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2246751,
-      "sha256": "2C6B61280525563B62B918B72EDCB08480C224C9B573A376E073206DE820C8B1"
+      "bytes": 2247860,
+      "sha256": "3092C6006B349F42EE85FC473E04F0041CF138FE28DCD8126B78C9C14DC3DE2F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
