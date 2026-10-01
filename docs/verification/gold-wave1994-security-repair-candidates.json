@@ -45,7 +45,14 @@
       "Locked all-features metadata",
       "Only manifest and lock postimages"
     ],
-    "imported": false
+    "imported": false,
+    "firstAttempt": {
+      "run": 36841854977,
+      "producer": "eb4cd40ab947cf93971e36e7804ed4135ffa00d9",
+      "repair": "Target autocfg1.5.1 before faster-hex, verify exact resolved version",
+      "result": "Resolution failed closed; no artifact admitted",
+      "cause": "faster-hex0.10.1 requires autocfg^1.5.1; existing lock retained1.5.0"
+    }
   },
   "trivy": {
     "finding": "gcp-service-account",

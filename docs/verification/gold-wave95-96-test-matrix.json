@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1994_REVIEWED_SECURITY_CANDIDATES_HOSTED_PENDING",
+  "status": "W1994_TRANSITIVE_AUTOCFG_CONSTRAINT_REPAIRED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 275360,
-    "sha256": "27E506B7629F6BDFF2D9327A29E9B9F858CE0E1320BB66181DDF4E3DF2110190"
+    "bytes": 275540,
+    "sha256": "CE90E01BEB2C0F0657934EB66816AF23C3B63FB27183293604A53A6D37B562AC"
   },
-  "sourceInputs": 1527,
+  "sourceInputs": 1528,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -63674,6 +63674,32 @@
       }
     ],
     "note": "Reviewed exact dependency resolution workflow, version-scoped Slint license and generated-fixture Trivy rule. RSA ignore removed. Dependency import, Matrix backport and runtime acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1994AutocfgConstraint": {
+    "base": "eb4cd40ab947cf93971e36e7804ed4135ffa00d9",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 5984,
+        "sha256": "91C4853928373C3E0DC2B1D8D23866766C55E3F97FAB8FEF073B4240411210AA",
+        "blob": "1e9d3237a109a3182f87d202f7dd39f29f27b019"
+      },
+      {
+        "path": "docs/verification/gold-wave1994-security-repair-candidates.json",
+        "bytes": 3073,
+        "sha256": "476BEE3176872A55470F5522C7A7D815938B9E97EEBC4A044B21D3F64BF2AAB9",
+        "blob": "b3a9d114f7fc4895c0c9c448d9cdd1923eb55379"
+      },
+      {
+        "path": "PLAN/ADR/001-slint-gui-framework.md",
+        "bytes": 6189,
+        "sha256": "C3F2F52DFD50B975D54E33A2BDBBE4B37645AAEE9E626711203088197D801303",
+        "blob": "d67dc71814ca5bd6ec39a51b0f29405f0264486c"
+      }
+    ],
+    "note": "Actual hosted resolver requires autocfg1.5.1 for fasterhex0.10.1; narrow exact update added. Historical Slint ADR clarified against current selected license. No local execution or dependency import.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

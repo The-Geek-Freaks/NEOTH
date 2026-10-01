@@ -1,5 +1,14 @@
 # ADR-001 — Slint as the GUI framework
 
+**Licensing update (2026-10-01):** The historical GPL selection below is
+superseded. The current desktop GUI selects Slint's
+`LicenseRef-Slint-Royalty-free-2.0` branch, bound to the reviewed 1.16.1
+packages in `SRC/deny.toml`. `THIRD_PARTY_LICENSES` contains the selected
+terms, and the GUI includes the `AboutSlint` attribution widget. See the
+[versioned Slint license](https://github.com/slint-ui/slint/blob/v1.16.1/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md).
+This note records the current dependency selection; the original design
+rationale remains below.
+
 **Status**: Accepted (backfilled 2026-05-16; the choice was made
 informally during R-A5 research and shipped in `SRC/neothd-gui/`
 without a formal record. This ADR documents the rationale so future

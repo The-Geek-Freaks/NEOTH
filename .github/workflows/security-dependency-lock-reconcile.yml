@@ -77,6 +77,7 @@ jobs:
           set -euo pipefail
           cargo update --manifest-path SRC/Cargo.toml -p jsonwebtoken --precise 10.4.0
           cargo update --manifest-path SRC/Cargo.toml -p wasmtime --precise 36.0.16
+          cargo update --manifest-path SRC/Cargo.toml -p autocfg --precise 1.5.1
           cargo update --manifest-path SRC/Cargo.toml -p faster-hex --precise 0.10.1
           cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$RUNNER_TEMP/security-metadata.json"
           python3 - <<'PY'
@@ -85,7 +86,7 @@ jobs:
           import os
           import tomllib
           lock = tomllib.loads(Path("SRC/Cargo.lock").read_text(encoding="utf-8"))
-          for name, version in (("jsonwebtoken", "10.4.0"), ("wasmtime", "36.0.16"), ("faster-hex", "0.10.1"), ("russh", "0.63.2"), ("pageant", "0.2.3")):
+          for name, version in (("jsonwebtoken", "10.4.0"), ("wasmtime", "36.0.16"), ("autocfg", "1.5.1"), ("faster-hex", "0.10.1"), ("russh", "0.63.2"), ("pageant", "0.2.3")):
               actual = [package["version"] for package in lock["package"] if package["name"] == name]
               if actual != [version]:
                   raise SystemExit(f"Unexpected resolved {name}: {actual}")
