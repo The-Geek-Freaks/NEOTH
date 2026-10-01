@@ -1534,33 +1534,6 @@ async fn run_production_lane_once(
             );
             Ok(())
         }
-        probe_lane => {
-            let deny_reason = match &gate {
-                crate::updater::pipeline::GateDecision::Deny { reason } => reason.clone(),
-                crate::updater::pipeline::GateDecision::Allow => {
-                    return Err(format!(
-                        "recurring updater lane `{}` was enabled before all concrete leaves consumed request-bound authority",
-                        probe_lane.as_str()
-                    ));
-                }
-            };
-            let task_kind = probe_lane
-                .task_kind()
-                .expect("probe lane must map to updater task kind");
-            let result =
-                run_probe_pass_with_builder_at(pass_identity, task_kind, &writer, || async {
-                    Ok(denied_probe_specs(task_kind, &deny_reason))
-                })
-                .await?;
-            tracing::debug!(
-                task_kind = task_kind.as_str(),
-                components = result.components.len(),
-                duration_ms = result.duration_ms,
-                epoch = snapshot.epoch(),
-                "updater tick complete",
-            );
-            Ok(())
-        }
     }
 }
 
@@ -3259,10 +3232,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("mutation-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
-        let controller = crate::config::reload::ReloadController::new(
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
             crate::config::FreedomConfig::default(),
             dir.path().join("freedom.yaml"),
-        );
+        ));
         run_production_lane_once(
             RecurringUpdateLane::CliAutoApply,
             Arc::clone(&controller),
@@ -3332,8 +3305,10 @@ mod tests {
                 .any(|schedule| schedule.lane == RecurringUpdateLane::SelfStage),
             "the fixture must use the same enabled scheduler admission state as production"
         );
-        let controller =
-            crate::config::reload::ReloadController::new(config, home.path().join("freedom.yaml"));
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config,
+            home.path().join("freedom.yaml"),
+        ));
 
         let _fixture = enable_safe_owned_stage_helper_fixture(home.path());
         run_production_lane_once(
@@ -3467,10 +3442,10 @@ mod tests {
             },
         )
         .unwrap();
-        let controller = crate::config::reload::ReloadController::new(
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
             crate::config::FreedomConfig::default(),
             home.path().join("freedom.yaml"),
-        );
+        ));
         run_production_lane_once(
             RecurringUpdateLane::SelfStage,
             Arc::clone(&controller),

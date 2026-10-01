@@ -1,5 +1,22 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2002 hosted updater compilation repair (2026-10-01):**
+The frozen eb554009 focused and native runs exposed one inherited deadline
+conversion error, an unreachable exhaustive-match fallback, and three test
+controllers passed as Arc without Arc ownership. The independently reviewed
+repair converts the same absolute deadline at the containment boundary,
+removes only the unreachable arm, and wraps those three fixture controllers.
+Cancellation/reap, lane admission, snapshots, WAL and denial assertions remain.
+No new registrations:2468 portable identities and239 focused cases remain.
+
+On the failed baseline, Advisory, cargo-audit, cargo-deny, Trivy, Preflight
+and Code Quality succeeded. Rust CodeQL was interrupted by hosted runner
+shutdown; an earlier vendor-imbl semantic-extraction warning is retained as
+an observation, not a completed query result. Fresh hosted compilation,
+focused product execution, Security and native CI remain pending on the
+corrected producer. No local runtime, .slint change or release acceptance.
+Report: docs/verification/gold-wave2002-updater-compile-repair.json.
+
 **W2000 exact notices admitted; final producer acceptance pending (2026-10-01):**
 Producer41f41baa passed Preflight36846026606, CodeQuality36846025524 and
 Rust notice export36846057672. Root admitted original artifact11153691271:

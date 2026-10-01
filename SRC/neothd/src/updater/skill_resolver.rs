@@ -317,7 +317,7 @@ async fn run_contained_git(
             child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("cancel/reap contained Git probe: {error}")))?;
             Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("contained Git probe cancelled after reap")))
         }
-        output = child.wait_until(effect_deadline) => match output {
+        output = child.wait_until(effect_deadline.into()) => match output {
             Ok(output) => Ok(output),
             Err(_) => {
                 child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("reap contained Git probe: {error}")))?;

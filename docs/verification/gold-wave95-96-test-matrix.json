@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2000_GRAPH_AND_NOTICES_ADMITTED_FINAL_HOSTED_PENDING",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 285609,
-    "sha256": "CE5FD692594C5A62270707FDBAEC7A6A01B2797852AC3001EBA1EDC812C37830"
+    "bytes": 285780,
+    "sha256": "0FCE6FA448FDCDF4476058D8E0288F6F8C5F540CDC52C5569C634F256DAFE7E9"
   },
-  "sourceInputs": 1588,
+  "sourceInputs": 1589,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -14778,31 +14778,31 @@
     {
       "test": "daemon::updater_cron::tests::recurring_gate_admits_only_wired_skill_git_and_keeps_auto_apply_denied",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+      "sourceSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::authorized_skill_git_success_binds_exact_leaf_receipt_and_outer_result",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+      "sourceSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_source_drift_after_intent_prevents_any_resolver_launch",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+      "sourceSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_cancellation_and_timeout_reap_containment_before_terminal_receipts",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+      "sourceSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::updater_cron::tests::skill_git_admits_only_installed_skills_while_plugins_and_auto_apply_stay_denied",
       "sourcePath": "SRC/neothd/src/daemon/updater_cron.rs",
-      "sourceSha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C",
+      "sourceSha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
       "junitClass": "neoth"
     },
     {
@@ -64294,6 +64294,38 @@
       }
     ],
     "note": "Source-bound exact notice export admitted;150 existing snapshots preserved,2 observed Cranelift additions;239focused/fullnative/Security on final producer pending; local runtime hold retained.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2002UpdaterCompileRepair": {
+    "base": "eb5540092bd664ebb74d56439624c47cd5670d38",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2002-updater-compile-repair.json",
+        "bytes": 2242,
+        "sha256": "41472DE8D4DBA241BF327F857092F095F16A921AA4F858F7F01F6253A3EC9E3F",
+        "blob": "f37eeff36b191c09d31a327daa262042c36facc0"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2256336,
+        "sha256": "E5F247576CE0164CF7333511C09316235CE3A518473B898A14882D1FD0F8B134",
+        "blob": "8177703e8c0bcb8d07485c63152209bb05266ad2"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/updater_cron.rs",
+        "bytes": 226856,
+        "sha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657",
+        "blob": "dfee76f99069f26288da5784d2fcb5414e899864"
+      },
+      {
+        "path": "SRC/neothd/src/updater/skill_resolver.rs",
+        "bytes": 43598,
+        "sha256": "34898D3C71B512B7CE7E5B35B9712A4BA752D10845C8FB01AE307DE88FBC00AF",
+        "blob": "5f3d6a1fc4606bdb1c1f5d893b7e881e418ca1b7"
+      }
+    ],
+    "note": "Exact reviewed W2002 deadline boundary and test-controller ownership repair; prior full CI terminal failure preserved; no local runtime; focused239/Security/native proof pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

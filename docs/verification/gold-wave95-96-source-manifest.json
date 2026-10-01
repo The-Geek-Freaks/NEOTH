@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T10:03:44.8116313Z",
-  "validationStatus": "W2000_GRAPH_AND_NOTICES_ADMITTED_FINAL_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T10:20:14.5656268Z",
+  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2957,6 +2957,11 @@
       "sha256": "354EB3A7CF2E7E3934060DF27BADD4A7D58765DD71BBE2C4E9B5411FDDECE113"
     },
     {
+      "path": "docs/verification/gold-wave2002-updater-compile-repair.json",
+      "bytes": 2242,
+      "sha256": "41472DE8D4DBA241BF327F857092F095F16A921AA4F858F7F01F6253A3EC9E3F"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4058,8 +4063,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2255233,
-      "sha256": "FB45F11DC0A12CB0B04DD6117E438A2EFF31F7436DDAB7E3C5C98C6717257141"
+      "bytes": 2256336,
+      "sha256": "E5F247576CE0164CF7333511C09316235CE3A518473B898A14882D1FD0F8B134"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6043,8 +6048,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/updater_cron.rs",
-      "bytes": 227972,
-      "sha256": "6F5CA68983D26C0C7E6DB36E63BBAB23A281FEB49035707A882EEF14E2FFD46C"
+      "bytes": 226856,
+      "sha256": "7A4C7E516EC15B630FCF413BB3F3ECE1EA9E96C3BD19564A9A14B2AB53228657"
     },
     {
       "path": "SRC/neothd/src/daemon/usage_log.rs",
@@ -7443,8 +7448,8 @@
     },
     {
       "path": "SRC/neothd/src/updater/skill_resolver.rs",
-      "bytes": 43591,
-      "sha256": "E5A42266B98BD2B8E254BAD69EBB03474453A917BA70CF1D57B2FB3DE4580834"
+      "bytes": 43598,
+      "sha256": "34898D3C71B512B7CE7E5B35B9712A4BA752D10845C8FB01AE307DE88FBC00AF"
     },
     {
       "path": "SRC/neothd/src/util/atomic_write.rs",

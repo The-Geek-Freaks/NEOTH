@@ -1,0 +1,48 @@
+{
+  "schema": "neoth-gold-wave2002-updater-compile-repair/v1",
+  "base": "eb5540092bd664ebb74d56439624c47cd5670d38",
+  "status": "STATIC_REVIEWED_IMPORTED_HOSTED_PENDING",
+  "hostedFailures": {
+    "focusedRun": 36847059938,
+    "fullRun": 36847068724,
+    "securityRun": 36847064065,
+    "diagnostics": [
+      "E0308 skill_resolver.rs:320: tokio Instant passed to std Instant containment deadline",
+      "Unreachable updater_cron.rs:1537 match fallback; denied by Linux Clippy",
+      "Three updater_cron test controllers were values where Arc<ReloadController> was required"
+    ],
+    "evidence": "work/gold-20260906/wave2002-failure-consolidation/failure-consolidation.md"
+  },
+  "repairs": [
+    "Convert the inherited absolute effect_deadline at the ContainedChild call boundary without restarting its budget.",
+    "Remove the unreachable fallback after all five concrete recurring lane variants; preserve compiler exhaustiveness for future variants.",
+    "Wrap the three existing test controllers in Arc; preserve configured authority, snapshots, WAL assertions and denial checks."
+  ],
+  "boundary": {
+    "cancellationAndReapPreserved": true,
+    "pluginsAndCliAutoApplyRemainDenied": true,
+    "newTests": 0,
+    "portableRegistrations": 2468,
+    "focusedCases": 239,
+    "localExecutableValidationRan": false,
+    "slintChanged": false,
+    "releaseAccepted": false
+  },
+  "securityBaseline": {
+    "shortGates": "Advisory, cargo-audit, cargo-deny and Trivy succeeded on eb554009",
+    "rustCodeQL": "Hosted runner shutdown interrupted analysis; vendor imbl semantic extraction warning recorded separately, no query result or SARIF proof",
+    "newProducerAcceptance": "pending"
+  },
+  "review": "w1994_repair_review approved complete exact patch 70E0A5C11B133D0CDACA4DD30D8E85BE1E15F5806DB6AE1034E2C212CF880F9A; original absolute deadline, exhaustive lanes and fixture controller identity preserved",
+  "hosted": "pending corrected producer",
+  "sourcePostimages": [
+    {
+      "path": "SRC/neothd/src/updater/skill_resolver.rs",
+      "blob": "5f3d6a1fc4606bdb1c1f5d893b7e881e418ca1b7"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/updater_cron.rs",
+      "blob": "dfee76f99069f26288da5784d2fcb5414e899864"
+    }
+  ]
+}
