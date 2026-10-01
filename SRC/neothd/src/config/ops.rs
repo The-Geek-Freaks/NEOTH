@@ -1169,9 +1169,8 @@ impl CodeMapConfig {
     /// the sole opt-in gate for automatic context.
     pub fn automatic_context_limit(&self) -> anyhow::Result<Option<usize>> {
         let requested = self.requested_context_policy()?;
-        Ok((self.auto_context_max_files != 0).then(|| {
-            (self.auto_context_max_files.min(requested.recall_max_files)) as usize
-        }))
+        Ok((self.auto_context_max_files != 0)
+            .then(|| (self.auto_context_max_files.min(requested.recall_max_files)) as usize))
     }
 
     pub fn requested_context_policy(&self) -> anyhow::Result<RequestedContextPolicy> {

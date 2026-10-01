@@ -1628,7 +1628,10 @@ mod tests {
         );
         assert!(error.contains("coding_summary_token_budget"), "{error}");
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
-        assert_eq!(ctrl.latest().code_map.automatic_context_limit().unwrap(), None);
+        assert_eq!(
+            ctrl.latest().code_map.automatic_context_limit().unwrap(),
+            None
+        );
         assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
 
         write_yaml(
@@ -1639,7 +1642,10 @@ mod tests {
             ctrl.try_reload().is_err(),
             "invalid requested-context file limit must not publish"
         );
-        assert_eq!(ctrl.latest().code_map.automatic_context_limit().unwrap(), None);
+        assert_eq!(
+            ctrl.latest().code_map.automatic_context_limit().unwrap(),
+            None
+        );
         assert!(!ctrl.latest().code_map.outline_enrichment);
         assert!(ctrl.latest().code_map.enrichment_selectors.is_empty());
         assert_eq!(*generation.borrow(), 0);

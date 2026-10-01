@@ -24780,12 +24780,7 @@ template = "[REDACTED]"
         config.code_map.auto_context_max_files = 5;
         config.code_map.coding_recall_max_files = 2;
 
-        let outcome = maybe_repo_context_recall(
-            &config,
-            "bounded_context_marker",
-            &paths,
-            &repo,
-        );
+        let outcome = maybe_repo_context_recall(&config, "bounded_context_marker", &paths, &repo);
         let RepoContextOutcome::Injected(recall) = outcome else {
             panic!("expected an injected bounded context receipt");
         };

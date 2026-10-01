@@ -41,5 +41,19 @@
   "hostedProductAcceptance": false,
   "nativeReleaseAccepted": false,
   "noSlintChanges": true,
-  "priorPlanBytesPreserved": true
+  "priorPlanBytesPreserved": true,
+  "hostedFormatting": {
+    "producer": "fc32af3e92d19d3dec1b516459bd27cd97c00c29",
+    "run": 36892437443,
+    "artifactId": 11176404907,
+    "archiveSHA256": "719E98776EFBBDD049F54FC1FF46BC2A3747AB4F19338C7A012939104DE51B80",
+    "patchSHA256": "FDA6FED9732E9328860097C595580A4EFA4E8515D69EFC2916DF9742E21AAE2D",
+    "paths": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/config/ops.rs",
+      "SRC/neothd/src/config/reload.rs"
+    ],
+    "verifiedEntries": 3,
+    "localFormatterRan": false
+  }
 }
