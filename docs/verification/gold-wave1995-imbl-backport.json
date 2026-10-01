@@ -71,6 +71,17 @@
     "rsa": 0,
     "temporaryIgnoresRemoved": 2,
     "proof": "Locked all-features metadata and unchanged post-resolution lock hash passed before artifact sealing",
-    "upstreamAcceptance": "Same vendor source passed default122+120doc and all-features132+125doc on36844253038; final-producer suite and NEOTH runtime tracked separately"
+    "upstreamAcceptance": "Same producer36845167851 passed default122+120doc and all-features132+125doc; proof SHA2561E9F1B67359E4D6428BB1C3E7BAE5CF519DE7694EBD614757B4099A40A3B50DD"
+  },
+  "integrationFollowups": {
+    "preflightRun": 36845590950,
+    "passed": "Imbl fixture/full gates, locked metadata and formatting",
+    "failure": "Existing Cosign label assertion scanned every release workflow word and rejected accurate dependency provenance checks",
+    "repair": "Ban mislabeled provenance claims in extracted cosign and publication jobs, preserving exact artifact/certificate/transfer controls",
+    "review": "Independent review approved narrow label-guard scope",
+    "noticeRun": 36845626053,
+    "noticeFailure": "Missing exact upstream license snapshots for cranelift-assembler-x64 and cranelift-assembler-x64-meta0.123.16",
+    "noticeRepair": "Add only both observed exact package versions to existing hosted snapshot allowlist",
+    "hosted": "fresh Preflight and notice export pending"
   }
 }

@@ -512,7 +512,12 @@ require(
     "publish job does not require the exact policy-defined release set",
 )
 
-require("provenance" not in TEXT.lower(), "Cosign bundle is mislabeled as provenance")
+# Source-dependency provenance checks are separate from artifact-signature claims.
+# Keep the label restriction on the jobs that create/publish the Cosign bundles.
+require(
+    "provenance" not in (cosign + publish).lower(),
+    "Cosign bundle is mislabeled as provenance",
+)
 require(
     "--certificate-identity=https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}"
     in publish,

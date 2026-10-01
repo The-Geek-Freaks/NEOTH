@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1998_NARROW_LOCK_ADMITTED_NEOTH_HOSTED_PENDING",
+  "status": "W1999_VENDOR_TESTS_PASSED_NOTICE_EXPORT_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 285603,
-    "sha256": "0690479FC123A23284B24257199F1430733A2BA44F06C4FCEB25EAE2905AE76B"
+    "sha256": "F00DF6D8D5BAAEFD104C31979CCA2EE8818E1BCB8B4D1355DEF0577659A9F335"
   },
   "sourceInputs": 1588,
   "requiredNativeTests": [
@@ -64230,6 +64230,38 @@
       }
     ],
     "note": "Admitted exact narrow imbl/chunks/bitmaps graph; removed both temporary ignores; permanent full provenance and order checks; upstream vendor suites passed, NEOTH focused239/native/Security pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1999IntegrationFollowup": {
+    "base": "ad69a1ddfb28aae7a470bda00ee1138fc89f733b",
+    "sources": [
+      {
+        "path": ".github/release-tools/test-release-isolation.py",
+        "bytes": 28046,
+        "sha256": "44F14C51056EF2E76E5E4CCA8281D6CD5F463B7899B2C7FD2BFDD795B7AE6232",
+        "blob": "d7b4568ba0f0512b31d1b45e8f62b7c7dfeb97db"
+      },
+      {
+        "path": ".github/workflows/rust-notices.yml",
+        "bytes": 9228,
+        "sha256": "27E044066C04A43586CA56DA6203882704E7610BC28C0631AF99598D74F1B10E",
+        "blob": "5dad7a58690852cf21df015bfac6899561a48606"
+      },
+      {
+        "path": "docs/verification/gold-wave1995-imbl-backport.json",
+        "bytes": 5489,
+        "sha256": "E07F3A86AEFA4B91D24245BE6CE3BAD268F1F0A186CDE174FDEA18EEB44879D9",
+        "blob": "44a43efa33d18c0d592b32f68d4ed21483d2f4ac"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2254402,
+        "sha256": "CD0654A825BA03F28EA9382A80B0CD9BA388893B432176126413CA246B126761",
+        "blob": "a1d4ecde424f14e2b3a4e109e14692f40affd076"
+      }
+    ],
+    "note": "Scope Cosign label guard to actual signing/publication jobs; export two observed missing exact Cranelift license snapshots. New native/focused acceptance pending; no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

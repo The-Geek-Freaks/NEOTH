@@ -78,6 +78,8 @@ jobs:
               ("dasp_sample", "0.11.0"),
               ("openraft", "0.9.25"),
               ("openraft-macros", "0.9.25"),
+              ("cranelift-assembler-x64", "0.123.16"),
+              ("cranelift-assembler-x64-meta", "0.123.16"),
           )
           if len(set(targets)) != len(targets):
               raise SystemExit("focused Rust notice allowlist contains a duplicate package")

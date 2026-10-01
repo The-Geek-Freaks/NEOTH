@@ -1,5 +1,17 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1999 hosted integration follow-through (2026-10-01):**
+The narrowed W1995 producer passed both upstream suites as well:122+120
+and132+125 unit/doc tests. Preflight36845590950 passed the new full imbl
+custody checks, metadata and formatting, then exposed an overbroad existing
+Cosign wording assertion. The reviewed repair keeps that restriction on
+Cosign creation and final publication jobs, allowing accurate dependency
+provenance steps elsewhere. Artifact-set, signing and transfer controls stay.
+Notice export36845626053 identified two missing exact upstream snapshots:
+cranelift-assembler-x64 and cranelift-assembler-x64-meta0.123.16. Only those
+two observed packages are added to the existing hosted export allowlist.
+Fresh notice admission and NEOTH hosted acceptance remain pending.
+
 **W1998 narrow Matrix lock admission and permanent gates (2026-10-01):**
 Hosted run36844253038 passed the identical vendored imbl source in default
 configuration (122 tests,120 doctests) and with all features (132 tests,
