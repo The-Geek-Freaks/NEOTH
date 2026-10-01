@@ -163,6 +163,9 @@ pub struct DiffImpactReceipt {
     pub root: CanonicalRepoRoot,
     pub index_generation: i64,
     pub graph_generation: i64,
+    /// AST text is available only when it was published atomically with the
+    /// indexed map and graph snapshot.
+    pub chunk_generation: i64,
     pub root_snapshot_complete: bool,
     pub source: DiffImpactSourceDescriptor,
     /// SHA-256 of the acquired unified-diff bytes. Never raw diff text.
@@ -181,6 +184,7 @@ impl DiffImpactReceipt {
             root: self.root.clone(),
             index_generation: self.index_generation,
             graph_generation: self.graph_generation,
+            chunk_generation: self.chunk_generation,
         }
     }
 
@@ -297,6 +301,7 @@ pub fn analyze_diff_impact(
         root: canonical,
         index_generation: before.index_generation,
         graph_generation: before.graph_generation,
+        chunk_generation: before.chunk_generation,
         root_snapshot_complete: complete_before && complete_after,
         source: DiffImpactSourceDescriptor::from(&acquired.source),
         // Requires the bounded `diff_git` acquisition seam to retain only its

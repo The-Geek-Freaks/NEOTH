@@ -1,6 +1,6 @@
 {
   "schema": "neoth-gold-wave2036-ast-code-recall/v1",
-  "status": "SOURCE_AND_HOSTED_LOCK_IMPORTED_AST_EXECUTION_PENDING",
+  "status": "HOSTED_COMPILE_FINDINGS_REPAIRED_EXECUTION_PENDING",
   "purpose": "Rust AST chunks persist with code-map generations and reach actual bounded decomposer context",
   "source": {
     "reviewedManifestSHA256": "AF58C9B2802B026E77D703F1DBE0B1461057098EC597D247627118C448113AF5",
@@ -106,5 +106,15 @@
       "SRC/neothd/src/coding/decomposer.rs"
     ],
     "localFormatterRan": false
+  },
+  "initialCompileAttempt": {
+    "failedRun": 36889837253,
+    "producer": "bf59e93f20a8c09a5b8e5aa75e53ffc6bd07ecef",
+    "failure": "Compilation stopped before cases: missing chunk_generation and four/five-column tuple mismatch",
+    "warnings": "Removed two unused chunk-generation reads from metadata/publication queries",
+    "fix": "Carry actual chunk generation in diff receipt and map fifth SQL column",
+    "preserved": "Metadata-only eligibility unchanged; AST loader alone enforces AST generation equality",
+    "patchSHA256": "1F38DD56A24E6A4FC387A8F8EA5A738875CFE58AE529E827A11AC65451FDFC1F",
+    "importMethod": "Verified clean base Git blobs and Git-filtered candidate postimages; copied original candidate bytes because portable patch line endings differ from working checkout"
   }
 }

@@ -1164,6 +1164,16 @@ impl Default for CodeMapConfig {
 }
 
 impl CodeMapConfig {
+    /// Derive the bounded automatic Chat/Channel recall cap from the existing
+    /// validated requested-context policy. `auto_context_max_files` remains
+    /// the sole opt-in gate for automatic context.
+    pub fn automatic_context_limit(&self) -> anyhow::Result<Option<usize>> {
+        let requested = self.requested_context_policy()?;
+        Ok((self.auto_context_max_files != 0).then(|| {
+            (self.auto_context_max_files.min(requested.recall_max_files)) as usize
+        }))
+    }
+
     pub fn requested_context_policy(&self) -> anyhow::Result<RequestedContextPolicy> {
         self.validate()?;
         Ok(RequestedContextPolicy {
@@ -1625,6 +1635,25 @@ fn default_profile_extract_window_chars() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_context_limit_remains_off_when_coding_recall_limit_is_positive() {
+        let config = CodeMapConfig::default();
+        assert_eq!(config.coding_recall_max_files, 8);
+        assert_eq!(config.automatic_context_limit().unwrap(), None);
+    }
+
+    #[test]
+    fn automatic_context_limit_uses_the_lower_of_auto_and_requested_bounds() {
+        let mut config = CodeMapConfig::default();
+        config.auto_context_max_files = 5;
+        config.coding_recall_max_files = 12;
+        assert_eq!(config.automatic_context_limit().unwrap(), Some(5));
+
+        config.auto_context_max_files = 12;
+        config.coding_recall_max_files = 5;
+        assert_eq!(config.automatic_context_limit().unwrap(), Some(5));
+    }
 
     #[test]
     fn impact_policy_converts_validated_bounds_without_widening() {

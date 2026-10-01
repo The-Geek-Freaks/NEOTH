@@ -1531,13 +1531,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn code_map_tunables_reload_into_the_next_snapshot() {
+    #[tokio::test]
+    async fn code_map_tunables_reload_into_the_next_snapshot() {
         let dir = tempdir().unwrap();
         let yaml_path = dir.path().join("freedom.yaml");
-        let initial = fresh_config();
+        let mut initial = fresh_config();
+        initial.code_map.auto_context_max_files = 5;
+        initial.code_map.coding_recall_max_files = 12;
         let mut changed = initial.clone();
-        changed.code_map.auto_context_max_files = 5;
+        changed.code_map.coding_recall_max_files = 2;
         changed.code_map.outline_enrichment = true;
         changed.code_map.enrichment_selectors = vec![crate::config::ConfiguredMcpPathRead {
             server_id: "neoth-codegraph".into(),
@@ -1545,7 +1547,6 @@ mod tests {
             kind: crate::config::ConfiguredMcpPathReadKind::ReadPath,
             path_field: "path".into(),
         }];
-        changed.code_map.coding_recall_max_files = 12;
         changed.code_map.coding_callers_per_symbol = 0;
         changed.code_map.coding_summary_token_budget = 4_096;
         changed.code_map.requested_context_max_bfs_depth = 20;
@@ -1564,15 +1565,49 @@ mod tests {
 
         let latest = ctrl.latest();
         assert_eq!(latest.code_map.auto_context_max_files, 5);
+        assert_eq!(latest.code_map.automatic_context_limit().unwrap(), Some(2));
         assert!(latest.code_map.outline_enrichment);
         assert_eq!(latest.code_map.enrichment_selectors.len(), 1);
-        assert_eq!(latest.code_map.coding_recall_max_files, 12);
+        assert_eq!(latest.code_map.coding_recall_max_files, 2);
         assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
         assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
         assert_eq!(latest.code_map.requested_context_max_bfs_depth, 20);
         assert_eq!(latest.code_map.impact_policy.max_depth, 2);
         assert_eq!(latest.code_map.impact_policy.max_nodes, 40);
         assert!(!latest.code_map.impact_policy.allow_stale);
+
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        let source = repo.join("src");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        for name in ["one", "two", "three"] {
+            std::fs::write(
+                source.join(format!("{name}.rs")),
+                "pub fn bounded_context_marker() {}\n",
+            )
+            .unwrap();
+        }
+        let paths = crate::config::InstancePaths::for_home(&home);
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &paths.code_map,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        let outcome = crate::cli::chat::maybe_repo_context_recall_async(
+            &latest,
+            "bounded_context_marker",
+            &paths,
+            &repo,
+            false,
+        )
+        .await;
+        let crate::cli::chat::RepoContextOutcome::Injected(recall) = outcome else {
+            panic!("reloaded Chat/Channel recall must produce a receipt");
+        };
+        assert_eq!(recall.receipt.ranked_files.len(), 2);
     }
 
     #[test]
@@ -1593,7 +1628,18 @@ mod tests {
         );
         assert!(error.contains("coding_summary_token_budget"), "{error}");
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
+        assert_eq!(ctrl.latest().code_map.automatic_context_limit().unwrap(), None);
         assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
+
+        write_yaml(
+            &ctrl.source_path,
+            "code_map:\n  auto_context_max_files: 5\n  coding_recall_max_files: 0\n",
+        );
+        assert!(
+            ctrl.try_reload().is_err(),
+            "invalid requested-context file limit must not publish"
+        );
+        assert_eq!(ctrl.latest().code_map.automatic_context_limit().unwrap(), None);
         assert!(!ctrl.latest().code_map.outline_enrichment);
         assert!(ctrl.latest().code_map.enrichment_selectors.is_empty());
         assert_eq!(*generation.borrow(), 0);

@@ -137,8 +137,9 @@ proactive:
 # bounded `<repo-context>` block. The daemon resolves this setting from the
 # fresh accepted config snapshot for each message.
 #
-# The remaining values tune only the NEXT one-shot `neoth code` invocation.
-# `coding_recall_max_files` bounds recalled files. `coding_callers_per_symbol`
+# `coding_recall_max_files` bounds recalled files for both automatic Chat/Channel
+# context (when enabled) and the NEXT one-shot `neoth code` invocation; automatic
+# context uses the lower of it and `auto_context_max_files`. `coding_callers_per_symbol`
 # bounds depth-one caller enrichment per symbol; 0 disables that enrichment only,
 # not targeted recall. `coding_summary_token_budget` is a heuristic budget for
 # a generic repo-map summary, not provider billing and not the full combined

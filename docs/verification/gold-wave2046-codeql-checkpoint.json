@@ -1,0 +1,24 @@
+{
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "base": "bf59e93f20a8c09a5b8e5aa75e53ffc6bd07ecef",
+  "priorRun": 36878867243,
+  "attempt": 3,
+  "priorFailure": "hosted runner lost communication; original attempt log ZIP has zero entries",
+  "priorEmptyZIP": "8739C76E681F900923B900C9DF0EF75CF421D39CABB54650C4B9AD19B6A76D85",
+  "hypothesis": "reduce only extractor memory/concurrency for runner headroom; not established OOM cause",
+  "extractor": {
+    "ramMB": 4096,
+    "threads": 1
+  },
+  "analysis": {
+    "ramMB": 6144,
+    "threads": 2
+  },
+  "coverageUnchanged": "all Rust, build-mode none, security-extended",
+  "checkpoint": "original artifact before long analyze with head/cgroup/RSS snapshot and hashes",
+  "precedenceEvidence": "work/gold-20260906/wave2033-codeql-failure/resource-precedence-code-trace.md",
+  "localRuntimeRan": false,
+  "workflowSHA256": "47B0D50BB762FF0B468397D7ABED666F1E14D0A6D784E9C6DDC4E3C9CD5B246F",
+  "reviewer": "/root/w2032_lock_workflow_review",
+  "precedenceTraceSHA256": "1DC79763F83E2E1617B9302AC6FA8A303A7B409EA5F463880D214DD5D7B9FF0F"
+}

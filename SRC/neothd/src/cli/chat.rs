@@ -12381,6 +12381,7 @@ pub(crate) struct RepoContextRecall {
 /// only show or retain the stable reason code below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepoContextUnavailable {
+    ConfigInvalid,
     MissingStore,
     UnmappedRoot,
     StaleSnapshot,
@@ -12485,6 +12486,7 @@ impl Drop for RepoContextReceiptPendingGuard {
 impl RepoContextUnavailable {
     const fn code(self) -> &'static str {
         match self {
+            Self::ConfigInvalid => "config_invalid",
             Self::MissingStore => "missing_store",
             Self::UnmappedRoot => "unmapped_root",
             Self::StaleSnapshot => "stale_snapshot",
@@ -12554,7 +12556,8 @@ impl RepoContextOutcome {
 /// flattened to `None` or exposing their raw error chain at a provider boundary.
 ///
 /// Returns `Injected` with a typed block + receipt when:
-///   1. `config.code_map.auto_context_max_files > 0` (operator opted in)
+///   1. `config.code_map.auto_context_max_files > 0` (operator opted in),
+///      bounded by the validated requested-context file limit
 ///   2. `~/.neoth/code_map.db` exists + opens cleanly
 ///   3. The persisted map has at least one file matching `prompt`
 ///
@@ -12611,9 +12614,11 @@ pub(crate) fn maybe_repo_context_recall_with_policy(
     current_path: &std::path::Path,
     sole_root_only: bool,
 ) -> RepoContextOutcome {
-    if config.code_map.auto_context_max_files == 0 {
-        return RepoContextOutcome::Disabled;
-    }
+    let max = match config.code_map.automatic_context_limit() {
+        Ok(Some(max)) => max,
+        Ok(None) => return RepoContextOutcome::Disabled,
+        Err(_) => return RepoContextOutcome::unavailable(RepoContextUnavailable::ConfigInvalid),
+    };
     match paths.code_map.try_exists() {
         Ok(false) => {
             return RepoContextOutcome::unavailable(RepoContextUnavailable::MissingStore);
@@ -12632,7 +12637,6 @@ pub(crate) fn maybe_repo_context_recall_with_policy(
             return RepoContextOutcome::unavailable(RepoContextUnavailable::UnreadableStore);
         }
     };
-    let max = config.code_map.auto_context_max_files as usize;
     let receipt = if sole_root_only {
         // A service CWD is ambient process state, not conversation authority.
         // Ignore it even when it happens to sit inside an indexed repository.
@@ -12719,10 +12723,7 @@ fn maybe_repo_context_block_at_paths(
     ccr_dir: &std::path::Path,
     active_root: &str,
 ) -> Option<String> {
-    let max = config.code_map.auto_context_max_files as usize;
-    if max == 0 {
-        return None;
-    }
+    let max = config.code_map.automatic_context_limit().ok().flatten()?;
     if !db_path.exists() {
         return None;
     }
@@ -24750,6 +24751,70 @@ template = "[REDACTED]"
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn repo_context_receipt_clamps_to_derived_automatic_context_limit() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        let source = repo.join("src");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        for name in ["one", "two", "three"] {
+            std::fs::write(
+                source.join(format!("{name}.rs")),
+                "pub fn bounded_context_marker() {}\n",
+            )
+            .unwrap();
+        }
+        let paths = InstancePaths::for_home(&home);
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &paths.code_map,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        let mut config = FreedomConfig::default();
+        config.code_map.auto_context_max_files = 5;
+        config.code_map.coding_recall_max_files = 2;
+
+        let outcome = maybe_repo_context_recall(
+            &config,
+            "bounded_context_marker",
+            &paths,
+            &repo,
+        );
+        let RepoContextOutcome::Injected(recall) = outcome else {
+            panic!("expected an injected bounded context receipt");
+        };
+        assert_eq!(recall.receipt.ranked_files.len(), 2);
+    }
+
+    #[test]
+    fn invalid_automatic_context_policy_is_a_typed_unavailable_outcome() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let mut config = FreedomConfig::default();
+        config.code_map.auto_context_max_files = 1;
+        config.code_map.coding_recall_max_files = 0;
+
+        let outcome = maybe_repo_context_recall_with_policy(
+            &config,
+            "bounded_context_marker",
+            &InstancePaths::for_home(&home),
+            dir.path(),
+            false,
+        );
+        assert!(matches!(
+            outcome,
+            RepoContextOutcome::Unavailable {
+                reason: RepoContextUnavailable::ConfigInvalid,
+                ..
+            }
+        ));
     }
 
     #[test]

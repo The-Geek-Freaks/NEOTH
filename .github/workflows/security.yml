@@ -284,16 +284,48 @@ jobs:
           languages: rust
           build-mode: none
           queries: security-extended
-          # Controlled hosted-runner resource hypothesis: preserve the full
-          # Rust extraction and security-extended query surface while bounding
-          # extractor and inherited analyze concurrency/memory.
-          ram: 6144
-          threads: 2
+          # Test extractor headroom after hosted-runner communication loss.
+          # This is not an OOM diagnosis. Keep the complete Rust scan surface;
+          # finalization and queries retain their prior explicit bounds below.
+          ram: 4096
+          threads: 1
+
+      - name: Capture CodeQL Rust pre-analysis checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          capture="$RUNNER_TEMP/codeql-rust-preanalysis"
+          mkdir -p "$capture"
+          git rev-parse HEAD > "$capture/source-head.txt"
+          {
+            printf 'run=%s attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'extractor_ram_mb=4096 extractor_threads=1 analyze_ram_mb=6144 analyze_threads=2\n'
+            date --iso-8601=seconds
+            free -b
+            nproc
+            cat /proc/loadavg
+            for field in memory.current memory.max memory.events cpu.stat; do
+              printf '\n[%s]\n' "$field"
+              cat "/sys/fs/cgroup/$field" 2>/dev/null || printf 'unavailable\n'
+            done
+            ps -eo pid,ppid,stat,pcpu,pmem,rss,etime,comm --sort=-rss | sed -n '1,26p'
+          } > "$capture/checkpoint.txt"
+          (cd "$capture" && sha256sum source-head.txt checkpoint.txt > SHA256SUMS)
+
+      - name: Upload CodeQL Rust pre-analysis checkpoint
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codeql-rust-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codeql-rust-preanalysis
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Analyze Rust
         uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
         with:
           category: /language:rust
+          ram: 6144
+          threads: 2
 
   codeql-javascript:
     if: github.ref == 'refs/heads/main'

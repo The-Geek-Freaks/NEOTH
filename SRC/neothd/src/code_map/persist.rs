@@ -1840,9 +1840,9 @@ where
         observed == *expected_root,
         "code-map repository root was replaced before bound snapshot commit"
     );
-    let (stored_identity, index_generation, graph_generation, import_generation, type_generation, chunk_generation) = tx
+    let (stored_identity, index_generation, graph_generation, import_generation, type_generation) = tx
         .query_row(
-            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation, chunk_generation \
+            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation \
              FROM code_map_roots WHERE root = ?1",
             rusqlite::params![&map.root],
             |row| {
@@ -1852,7 +1852,6 @@ where
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
                 ))
             },
         )

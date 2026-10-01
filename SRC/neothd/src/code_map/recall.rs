@@ -748,7 +748,13 @@ pub fn sole_persisted_root_snapshot(conn: &Connection) -> Result<Option<RootGene
             )
             .context("prepare sole code-map root snapshot query")?;
         stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })
         .context("query sole code-map root snapshot")?
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -1112,10 +1118,10 @@ pub fn architecture_findings_for_skill(
         );
     }
     let edges_scanned = edges.len();
-    let (index_generation, graph_generation, import_generation, type_generation, chunk_generation, complete): (i64, i64, i64, i64, i64, bool) = snapshot.query_row(
-        "SELECT index_generation, graph_generation, import_generation, type_generation, chunk_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
+    let (index_generation, graph_generation, import_generation, type_generation, complete): (i64, i64, i64, i64, bool) = snapshot.query_row(
+        "SELECT index_generation, graph_generation, import_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
         [root],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     )?;
     anyhow::ensure!(
         complete

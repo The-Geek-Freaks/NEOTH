@@ -1,0 +1,45 @@
+{
+  "schema": "neoth-gold-wave2044-context-policy-and-ast-repair/v1",
+  "status": "STATIC_REVIEWED_EXECUTION_PENDING",
+  "baseline": "bf59e93f20a8c09a5b8e5aa75e53ffc6bd07ecef",
+  "capturedUtc": "2026-10-01T16:27:39.8179292Z",
+  "policy": {
+    "behavior": "Automatic Chat/Channel context remains opt-in; selected files capped by min(auto_context_max_files, requested recall_max_files)",
+    "invalidPolicy": "typed config_invalid unavailable status",
+    "consumer": "existing shared async Chat/Channel recall route",
+    "newPolicyType": false,
+    "broaderR313Closure": false,
+    "manifestSHA256": "B29AD65E9FA94E8EA79144689CB70C7350C36A7447F965374610C4E6F2D42EC6",
+    "reviewer": "/root/w2031_rust_review",
+    "regressions": [
+      "config::ops::tests::automatic_context_limit_remains_off_when_coding_recall_limit_is_positive",
+      "config::ops::tests::automatic_context_limit_uses_the_lower_of_auto_and_requested_bounds",
+      "cli::chat::tests::repo_context_receipt_clamps_to_derived_automatic_context_limit",
+      "cli::chat::tests::invalid_automatic_context_policy_is_a_typed_unavailable_outcome",
+      "config::reload::tests::code_map_tunables_reload_into_the_next_snapshot",
+      "config::reload::tests::invalid_code_map_reload_never_publishes_a_candidate_snapshot"
+    ]
+  },
+  "astRepair": {
+    "failedRun": 36889837253,
+    "producer": "bf59e93f20a8c09a5b8e5aa75e53ffc6bd07ecef",
+    "failure": "Compilation stopped before cases: missing chunk_generation and four/five-column tuple mismatch",
+    "warnings": "Removed two unused chunk-generation reads from metadata/publication queries",
+    "fix": "Carry actual chunk generation in diff receipt and map fifth SQL column",
+    "preserved": "Metadata-only eligibility unchanged; AST loader alone enforces AST generation equality",
+    "patchSHA256": "1F38DD56A24E6A4FC387A8F8EA5A738875CFE58AE529E827A11AC65451FDFC1F",
+    "importMethod": "Verified clean base Git blobs and Git-filtered candidate postimages; copied original candidate bytes because portable patch line endings differ from working checkout"
+  },
+  "registrations": {
+    "newPortable": 4,
+    "portable": 2508,
+    "focused": 285,
+    "guards": 20,
+    "existingReloadTestsStrengthened": 2
+  },
+  "localExecutableValidationRan": false,
+  "hostedProductAcceptance": false,
+  "nativeReleaseAccepted": false,
+  "noSlintChanges": true,
+  "priorPlanBytesPreserved": true
+}

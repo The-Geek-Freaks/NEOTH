@@ -1,5 +1,21 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2044-2046 shared file caps, AST compile repair and CodeQL checkpoint (2026-10-01):**
+Automatic Chat/Channel code context now uses the existing validated requested
+recall cap while retaining its separate opt-in switch. Invalid policy has a
+typed unavailable status; actual receipt and reload coverage is registered.
+This closes the shared file-limit slice, not every R3-13 context-policy item.
+Hosted AST run36889837253 stopped on two compile integration errors before
+executing cases. The actual chunk generation now reaches diff snapshots,
+and sole-root SQL maps all five fields. Unused AST-generation reads were
+removed without restricting graph-only metadata consumers. The next catalog
+contains 2508 portable registrations and 285 focused cases, still unexecuted.
+CodeQL attempt3 lost its hosted runner and returned an empty original log ZIP.
+A reviewed extractor-headroom hypothesis preserves complete Rust/security-
+extended coverage and adds a head-bound uploaded pre-analysis checkpoint;
+it is not an OOM diagnosis or completed Security acceptance. Local BSOD hold,
+no-.slint boundary, and original PLAN backlog remain in force.
+
 **W2036/W2042 Rust AST context integration (2026-10-01):**
 The reviewed Rust AST source is now integrated: node-bound chunks target
 2500 characters, bounded whole-node overlap stays within the 16 KiB row cap,
