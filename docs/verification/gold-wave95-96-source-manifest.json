@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T09:38:03.5855897Z",
-  "validationStatus": "W1995_SOURCE_REVIEWED_LOCK_RECONCILIATION_PENDING",
+  "capturedUtc": "2026-10-01T09:46:44.5132026Z",
+  "validationStatus": "W1995_UPSTREAM_TESTS_PASSED_NARROW_LOCK_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/security-dependency-lock-reconcile.yml",
-      "bytes": 10767,
-      "sha256": "8DF4A6F006146D156CC43CD0ABFC61BF46A6618740DE54D734A2A1FEC9C86A28"
+      "bytes": 14623,
+      "sha256": "833DB70ACE90D1F3ED8B8784AE311B8E3A355D4C6B2D611AB00DA74DBCED99F9"
     },
     {
       "path": ".github/workflows/security.yml",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "docs/verification/gold-wave1995-imbl-backport.json",
-      "bytes": 2467,
-      "sha256": "7BDC69ACAA8E1F005111F8ABBD5005F3B75FFE2BB9875369DEF666D399436C27"
+      "bytes": 3443,
+      "sha256": "B88FACA4B459606DE6F3D40BA9535162BDF7C36B1CE9EB52769F948A74D57CE0"
     },
     {
       "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",

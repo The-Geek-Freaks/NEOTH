@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1995_SOURCE_REVIEWED_LOCK_RECONCILIATION_PENDING",
+  "status": "W1995_UPSTREAM_TESTS_PASSED_NARROW_LOCK_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 285449,
-    "sha256": "C6125955314C09B8B287E4C4CE5391FEAF1B54FD2B0447127E1BCD7E69968649"
+    "bytes": 285447,
+    "sha256": "C9CE0CBC5E2ED0DCD6234C02A724E7606AD6B43B72A580D129E771CB28BEC9EE"
   },
   "sourceInputs": 1587,
   "requiredNativeTests": [
@@ -64130,6 +64130,26 @@
       }
     ],
     "note": "52-file upstream-backed imbl6.1 backport, source/full provenance modes and closed advisory state; exact hosted lock/config admission and isolated upstream suites pending; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1995NarrowLock": {
+    "base": "c07f2f7862a652310158ff72ec5e8c56e9ec6d13",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 14623,
+        "sha256": "833DB70ACE90D1F3ED8B8784AE311B8E3A355D4C6B2D611AB00DA74DBCED99F9",
+        "blob": "4063fc4dd587dd3501fcac5c69bdc323e8cbad43"
+      },
+      {
+        "path": "docs/verification/gold-wave1995-imbl-backport.json",
+        "bytes": 3443,
+        "sha256": "B88FACA4B459606DE6F3D40BA9535162BDF7C36B1CE9EB52769F948A74D57CE0",
+        "blob": "2c6cc40487e5db235a2f46d59022ad5ba242ba95"
+      }
+    ],
+    "note": "Retain every unrelated HEAD lock package block; locked metadata must leave its exact hash unchanged. First hosted upstream suites passed, initial incidental graph rewires not imported.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

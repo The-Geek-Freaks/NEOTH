@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave1995-imbl-backport/v1",
   "base": "545a504ff6003c57ef463f767d6d3674ea5eaac0",
-  "status": "SOURCE_BACKPORT_PREPARED_HOSTED_LOCK_AND_UPSTREAM_TESTS_PENDING",
+  "status": "UPSTREAM_TESTS_PASSED_NARROWER_LOCK_EXPORT_REQUIRED",
   "reason": "Matrix0.18/eyeball-im0.8/imbl6.1 selects vulnerable imbl-sized-chunks0.1.3; upgrading Matrix0.19 would require Rust1.96 rather than supported1.91.",
   "upstream": {
     "archive": "https://crates.io/api/v1/crates/imbl/6.1.0/download",
@@ -35,5 +35,21 @@
   "localExecutableValidationRan": false,
   "hosted": "pending",
   "releaseAccepted": false,
-  "review": "w1994_repair_review approved exact source/gates, fixed positive/negative full-lock fixtures, transition workflow and final consumer integration candidates; hosted validation pending"
+  "review": "w1994_repair_review approved exact source/gates, fixed positive/negative full-lock fixtures, transition workflow and final consumer integration candidates; hosted validation pending",
+  "firstHostedRun": {
+    "run": 36844253038,
+    "producer": "c07f2f7862a652310158ff72ec5e8c56e9ec6d13",
+    "result": "success",
+    "artifact": 11152524046,
+    "archiveSha256": "EB07CA57BCDD9E43EF34944E9E6FE57462DC3B0297DA3F83B359314FD6C86584",
+    "defaultUnit": 122,
+    "defaultDoc": 120,
+    "allFeatureUnit": 132,
+    "allFeatureDoc": 125,
+    "failed": 0,
+    "imported": false,
+    "admissionFinding": "Six incidental consumer edges select older socket2/windows-core implementations within their allowed ranges. Preserve all unrelated package blocks before locked metadata in the narrower export.",
+    "sourceProof": "The same exact vendor backport passed both upstream configurations; artifact remains retained but not imported."
+  },
+  "narrowedExport": "Only imbl/chunks Cargo updates; every unrelated raw HEAD package block restored and compared in order, then locked metadata must leave the restored lock hash unchanged. Independent review approved preservation logic."
 }

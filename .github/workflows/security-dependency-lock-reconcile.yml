@@ -53,15 +53,84 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo update --manifest-path SRC/Cargo.toml -p jsonwebtoken --precise 10.4.0
-          cargo update --manifest-path SRC/Cargo.toml -p wasmtime --precise 36.0.16
-          cargo update --manifest-path SRC/Cargo.toml -p autocfg --precise 1.5.1
-          cargo update --manifest-path SRC/Cargo.toml -p faster-hex --precise 0.10.1
-          cargo update --manifest-path SRC/Cargo.toml -p russh --precise 0.63.2
-          cargo update --manifest-path SRC/Cargo.toml -p pageant --precise 0.2.3
           cargo update --manifest-path SRC/Cargo.toml -p imbl --precise 6.1.0
           cargo update --manifest-path SRC/Cargo.toml -p imbl-sized-chunks --precise 0.2.0
+      - name: Restore every unrelated Cargo.lock package block from Head
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import tomllib
+
+          path = Path("SRC/Cargo.lock")
+          baseline = subprocess.check_output(
+              ["git", "show", "HEAD:SRC/Cargo.lock"], text=True
+          )
+          updated = path.read_text(encoding="utf-8")
+          excluded = {"imbl", "imbl-sized-chunks", "bitmaps"}
+
+          def split(content: str) -> tuple[str, list[tuple[dict[str, object], str]]]:
+              pieces = content.split("[[package]]\n")
+              if len(pieces) < 2:
+                  raise SystemExit("Cargo.lock has no package records")
+              header = pieces[0]
+              records = []
+              for suffix in pieces[1:]:
+                  raw = "[[package]]\n" + suffix
+                  parsed = tomllib.loads(raw).get("package")
+                  if not isinstance(parsed, list) or len(parsed) != 1:
+                      raise SystemExit("Cargo.lock package block is not singular TOML")
+                  package = parsed[0]
+                  if not isinstance(package, dict) or not isinstance(package.get("name"), str) or not isinstance(package.get("version"), str):
+                      raise SystemExit("Cargo.lock package block has no string name/version")
+                  records.append((package, raw))
+              return header, records
+
+          baseline_header, baseline_records = split(baseline)
+          updated_header, updated_records = split(updated)
+          if updated_header != baseline_header:
+              raise SystemExit("Cargo.lock header drifted outside the reviewed package records")
+          baseline_unrelated = [(package, raw) for package, raw in baseline_records if package["name"] not in excluded]
+          baseline_identity = {
+              (package["name"], package["version"]): raw
+              for package, raw in baseline_unrelated
+          }
+          if len(baseline_identity) != len(baseline_unrelated):
+              raise SystemExit("Head Cargo.lock has duplicate unrelated name/version identities")
+          expected_names = {name for name, _ in baseline_identity}
+          for package, _ in updated_records:
+              if package["name"] not in excluded and package["name"] not in expected_names:
+                  raise SystemExit(f"unrelated package added by resolution: {package['name']}@{package['version']}")
+          selected = [
+              (package, raw)
+              for package, raw in updated_records
+              if package["name"] in {"imbl", "imbl-sized-chunks"}
+          ]
+          selected_names = [package["name"] for package, _ in selected]
+          if selected_names.count("imbl") != 1 or selected_names.count("imbl-sized-chunks") != 1:
+              raise SystemExit("resolution did not produce one imbl and one imbl-sized-chunks block")
+          if any(package["name"] == "bitmaps" for package, _ in updated_records):
+              raise SystemExit("resolution left a bitmaps block before lock restoration")
+          rebuilt = baseline_header + "".join(raw for _, raw in baseline_unrelated) + "".join(raw for _, raw in selected)
+          path.write_text(rebuilt, encoding="utf-8", newline="\n")
+
+          _, final_records = split(path.read_text(encoding="utf-8"))
+          final_unrelated = [(package, raw) for package, raw in final_records if package["name"] not in excluded]
+          final_identity = {
+              (package["name"], package["version"]): raw
+              for package, raw in final_unrelated
+          }
+          if len(final_identity) != len(final_unrelated) or final_identity != baseline_identity or final_unrelated != baseline_unrelated:
+              raise SystemExit("unrelated Cargo.lock package blocks were not restored byte-for-byte")
+          final_names = [package["name"] for package, _ in final_records]
+          if final_names.count("imbl") != 1 or final_names.count("imbl-sized-chunks") != 1 or "bitmaps" in final_names:
+              raise SystemExit("restored Cargo.lock has an invalid imbl/bitmaps block set")
+          PY
+          sha256sum SRC/Cargo.lock > "$RUNNER_TEMP/restored-lock.SHA256SUMS"
           cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$RUNNER_TEMP/security-metadata.json"
+          sha256sum -c "$RUNNER_TEMP/restored-lock.SHA256SUMS"
       - name: Require exact locked graph before retiring exceptions
         shell: bash
         run: |
