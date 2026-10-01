@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-wave2032-hosted-ast-lock-workflow/v1",
-  "base": "c9bd41136365e193081cc343c1247f1f3df76c9f",
+  "base": "37afec2d894cfb50c36562d62087db8482ae9e55",
   "status": "STATIC_REVIEWED_HOSTED_PENDING",
-  "capturedUtc": "2026-10-01T14:57:02.5200491Z",
+  "capturedUtc": "2026-10-01T15:21:57.5453831Z",
   "workflow": {
     "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
-    "sha256": "127172E5854DF2EFC04755C24CE3D6556602E9970946E459D07FC3716398013A",
+    "sha256": "DA46132E3392E70214FED5DC563527EE1391079EC42E6B011DFB83EB79D7D946",
     "trustedRef": "refs/heads/main",
     "baseline": "exact GITHUB_SHA",
     "candidate": "40 lowercase hex descendant commit; not a file SHA256",
@@ -16,11 +16,13 @@
     "resolution": "cargo metadata then identical --locked metadata",
     "compilationOrTests": false,
     "permissions": "contents read",
-    "output": "heads,manifest and lock patches,baseline/resolved postimages,metadata,checksums"
+    "output": "heads,manifest/lock/notice patches,baseline/resolved postimages,metadata,self-contained producer inputs,nested and outer checksums",
+    "notices": "existing packaging/generate_rust_notices.py --write then --check; only lock and THIRD_PARTY_LICENSES may change"
   },
-  "review": "Independent workflow review approved initial gates and final five-path/name delta",
-  "astSourceCandidate": "BLOCKED pending separate Rust review repairs; not published or admitted",
+  "review": "Independent workflow reviewer approved final self-contained notice producer custody delta; separate Rust reviewer approved isolated W2036 source candidate",
+  "astSourceCandidate": "STATIC_APPROVED separately as combined W2036 candidate; isolated, uncompiled, and not imported",
   "lockGenerated": false,
   "sourceOrEmbeddingAcceptance": false,
-  "localExecutableValidationRan": false
+  "localExecutableValidationRan": false,
+  "noticesGenerated": false
 }

@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 287080,
-    "sha256": "FB3E599CC4809F6F04ACAC803720F651E5DD7A238439BDFC68B994023C0866CD"
+    "sha256": "C1C07A3955233442E025D07DC6D8E5661D0761CD4C6F4B1C60225238C7C82CDA"
   },
   "sourceInputs": 1596,
   "requiredNativeTests": [
@@ -64720,6 +64720,32 @@
       }
     ],
     "note": "Reviewed trusted-main-only exact candidate lock resolver;13sourcepaths,two pins,oldnonrootpackageblockpreservation,newdependencyclosureandsealedartifact. Notdispatched; ASTsourcecandidateunapproved, lockandproductacceptancepending. Localruntimeholdintact.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2035AstNoticeCustody": {
+    "base": "37afec2d894cfb50c36562d62087db8482ae9e55",
+    "sources": [
+      {
+        "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
+        "bytes": 13485,
+        "sha256": "DA46132E3392E70214FED5DC563527EE1391079EC42E6B011DFB83EB79D7D946",
+        "blob": "67ba6034195fa466b81900b451c757a1cdeacb0d"
+      },
+      {
+        "path": "docs/verification/gold-wave2032-hosted-ast-lock-workflow.json",
+        "bytes": 1651,
+        "sha256": "A138CA8B615ABA7F4CB1E2ED4E69CF187DAFB81DD0F42BF36DEF4CBD585F2FB5",
+        "blob": "33178d03dac74a36d1499d7ab49808bb23e42bf5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2264340,
+        "sha256": "A65E70E83EDE30DC6B7D5CB87F04B04CAB0D219654B535ACB970F52C392C72C3",
+        "blob": "b7869cde2947292e3db7f63ed0b4d163bc344e1c"
+      }
+    ],
+    "note": "Hosted AST candidate now seals generated lock and required notices with self-contained producer inputs; source isolated and uncompiled; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

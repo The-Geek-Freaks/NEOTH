@@ -1,5 +1,16 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W2035 AST dependency notice custody (2026-10-01):**
+The hosted AST lock candidate now also runs the existing Rust distribution
+notice generator and its check. Only Cargo.lock and THIRD_PARTY_LICENSES
+may change; original and generated postimages, patches, producer workflow,
+generator and snapshot inputs are sealed with artifact-local checksums.
+The W2036 AST source candidate has separate static Rust approval, including
+actual generation-race, source-drift, prompt, ordering and byte-cap regressions.
+It remains isolated and uncompiled until hosted lock, notice and execution
+proof are admitted. Code-vector recall and native release acceptance remain
+open. No local runtime or .slint change occurred; prior backlog is preserved.
+
 **W2032 hosted AST dependency resolution preparation (2026-10-01):**
 A reviewed, main-only workflow can resolve the exact Rust Tree-sitter pins
 for an isolated descendant candidate and return a checksummed manifest/lock

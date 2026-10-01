@@ -123,6 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           cp SRC/Cargo.lock "$RUNNER_TEMP/baseline-Cargo.lock"
+          cp THIRD_PARTY_LICENSES "$RUNNER_TEMP/baseline-THIRD_PARTY_LICENSES"
           # Cargo metadata may add only packages demanded by the two new direct
           # pins while retaining the existing lock selections; no cargo update
           # or generate-lockfile command is permitted here.
@@ -202,6 +203,17 @@ jobs:
           PY
           test "$(git diff --name-only | LC_ALL=C sort)" = 'SRC/Cargo.lock'
 
+      - name: Generate and verify exact Rust distribution notices for the resolved lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The checked-in generator resolves only locked release profiles. It
+          # is the established producer for THIRD_PARTY_LICENSES and does not
+          # compile or test product code.
+          python3 packaging/generate_rust_notices.py --write
+          python3 packaging/generate_rust_notices.py --check
+          test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nTHIRD_PARTY_LICENSES'
+
       - name: Seal importable lock candidate and checksums
         shell: bash
         run: |
@@ -212,11 +224,17 @@ jobs:
           printf '%s\n' "$CANDIDATE_HEAD" > "$evidence/candidate-head.txt"
           git diff --binary --full-index "$BASELINE_HEAD" "$CANDIDATE_HEAD" -- SRC/neothd/Cargo.toml > "$evidence/manifest-input.patch"
           git diff --binary --full-index -- SRC/Cargo.lock > "$evidence/Cargo.lock.patch"
+          git diff --binary --full-index -- THIRD_PARTY_LICENSES > "$evidence/THIRD_PARTY_LICENSES.patch"
           git diff --name-status "$BASELINE_HEAD" "$CANDIDATE_HEAD" > "$evidence/candidate-source-name-status.txt"
           cp "$RUNNER_TEMP/baseline-Cargo.lock" "$evidence/baseline-Cargo.lock"
-          cp SRC/Cargo.lock SRC/neothd/Cargo.toml "$RUNNER_TEMP/metadata.json" "$evidence/"
-          printf '%s\n' 'Exact tree-sitter 0.27.0 and tree-sitter-rust 0.24.2 pins; metadata and repeated locked metadata agreed; existing non-root lock blocks were byte-preserved; each new block is reachable from a reviewed direct pin; no compilation or tests ran.' > "$evidence/validation.txt"
-          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt manifest-input.patch Cargo.lock.patch candidate-source-name-status.txt baseline-Cargo.lock Cargo.lock Cargo.toml metadata.json validation.txt > SHA256SUMS)
+          cp "$RUNNER_TEMP/baseline-THIRD_PARTY_LICENSES" "$evidence/baseline-THIRD_PARTY_LICENSES"
+          cp SRC/Cargo.lock SRC/neothd/Cargo.toml THIRD_PARTY_LICENSES "$RUNNER_TEMP/metadata.json" "$evidence/"
+          git show "$BASELINE_HEAD:.github/workflows/ast-tree-sitter-lock-candidate.yml" > "$evidence/producer-workflow.yml"
+          cp packaging/generate_rust_notices.py "$evidence/generate_rust_notices.py"
+          cp packaging/rust-license-snapshots.json "$evidence/rust-license-snapshots.json"
+          (cd "$evidence" && sha256sum producer-workflow.yml generate_rust_notices.py rust-license-snapshots.json > notice-producer.SHA256SUMS)
+          printf '%s\n' 'Exact tree-sitter 0.27.0 and tree-sitter-rust 0.24.2 pins; metadata and repeated locked metadata agreed; existing non-root lock blocks were byte-preserved; each new block is reachable from a reviewed direct pin; locked Rust distribution notices were regenerated and --check passed; no compilation or tests ran.' > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum baseline-head.txt candidate-head.txt manifest-input.patch Cargo.lock.patch THIRD_PARTY_LICENSES.patch candidate-source-name-status.txt baseline-Cargo.lock baseline-THIRD_PARTY_LICENSES Cargo.lock Cargo.toml THIRD_PARTY_LICENSES metadata.json producer-workflow.yml generate_rust_notices.py rust-license-snapshots.json notice-producer.SHA256SUMS validation.txt > SHA256SUMS)
 
       - name: Upload candidate for Root import review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
