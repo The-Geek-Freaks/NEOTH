@@ -74,6 +74,8 @@ exceptions = [
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-core@1.16.1" },
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-core-macros@1.16.1" },
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-renderer-femtovg@1.16.1" },
+    # The existing desktop software renderer uses the same reviewed license.
+    { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "i-slint-renderer-software@1.16.1" },
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint@1.16.1" },
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint-build@1.16.1" },
     { allow = ["LicenseRef-Slint-Royalty-free-2.0"], crate = "slint-macros@1.16.1" },

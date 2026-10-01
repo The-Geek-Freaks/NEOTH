@@ -1,0 +1,75 @@
+{
+  "schema": "neoth-gold-wave1994-security-repair-candidates/v1",
+  "base": "eeecc826be8d8f96a3d583f982cb44f422fc3b21",
+  "securityRun": 36839952197,
+  "status": "CONFIRMED_GATE_FAILURES_NARROW_REPAIRS_PREPARED",
+  "findings": [
+    {
+      "package": "wasmtime",
+      "before": "36.0.14",
+      "gate": "cargo-audit and cargo-deny",
+      "advisory": "RUSTSEC-2026-0316",
+      "candidate": "=36.0.16"
+    },
+    {
+      "package": "rsa",
+      "before": "0.9.10 via jsonwebtoken rust_crypto",
+      "gate": "cargo-audit and cargo-deny",
+      "advisory": "RUSTSEC-2023-0071",
+      "candidate": "jsonwebtoken =10.4.0 AWS-LC backend; rsa must be absent"
+    },
+    {
+      "package": "faster-hex",
+      "before": "0.10.0",
+      "gate": "cargo-audit warning",
+      "advisory": "RUSTSEC-2026-0306",
+      "candidate": "0.10.1"
+    },
+    {
+      "package": "imbl-sized-chunks",
+      "before": "0.1.3 via Matrix/imbl6.1",
+      "gate": "cargo-audit and cargo-deny",
+      "advisory": "RUSTSEC-2026-0292",
+      "candidate": "Separate compatibility review, not ignored or repaired by this workflow"
+    }
+  ],
+  "hostedCandidate": {
+    "workflow": ".github/workflows/security-dependency-lock-reconcile.yml",
+    "exactMainProducer": true,
+    "permissions": "contents: read",
+    "runtimeOrTestExecuted": false,
+    "verifies": [
+      "Exact package versions",
+      "No rsa package",
+      "Only JWT aws_lc_rs backend selected",
+      "Locked all-features metadata",
+      "Only manifest and lock postimages"
+    ],
+    "imported": false
+  },
+  "trivy": {
+    "finding": "gcp-service-account",
+    "source": "packaging/gchat_converted_relink_product_canary.py:343",
+    "classification": "Runtime-generated disposable RSA fixture, no committed provider credential",
+    "scope": "Single detector and exact canary source path",
+    "oldRsaIgnoreRemoved": true,
+    "existingVulnerabilityIdsMigrated": 11,
+    "canarySourceChanged": false,
+    "hostedValidation": "pending"
+  },
+  "license": {
+    "package": "i-slint-renderer-software@1.16.1",
+    "selected": "LicenseRef-Slint-Royalty-free-2.0",
+    "scope": "Same exact-version desktop Slint license branch already selected for related crates",
+    "noticeAndAttributionPresent": true,
+    "source": "https://raw.githubusercontent.com/slint-ui/slint/v1.16.1/internal/renderers/software/Cargo.toml",
+    "terms": "https://raw.githubusercontent.com/slint-ui/slint/v1.16.1/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md"
+  },
+  "localExecutableValidationRan": false,
+  "slintEdited": false,
+  "releaseAccepted": false,
+  "review": {
+    "result": "APPROVED for Root publication; no hosted/runtime acceptance inferred",
+    "reviewer": "w1994_repair_review"
+  }
+}

@@ -1,5 +1,28 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1994 actual Security gate repair candidates (2026-10-01; hosted pending):**
+Preflight36839781209 and CodeQuality36839781724 passed eeecc826. The fresh
+Security run36839952197 then exposed Wasmtime36.0.14, Google Chat's
+jsonwebtoken->rsa path, and Matrix's imbl-sized-chunks0.1.3. These are actual
+scanner results rather than dependency-alert inference. A reviewed manual
+workflow prepares exact JWT10.4.0 with AWS-LC, Wasmtime36.0.16 and
+faster-hex0.10.1; it requires locked all-features metadata, absence of rsa,
+exclusive JWT backend selection, exact source head and only manifest/lock
+postimages. Candidate import and runtime acceptance are still pending.
+The incompatible Matrix leaf update is not attempted or ignored; it remains
+a separate upstream-backed compatibility repair under review.
+
+The Trivy secret finding is the runtime-generated loopback canary account,
+not a committed credential. A supported YAML rule binds its exception to
+that one detector and exact canary path. Eleven existing vulnerability IDs
+are preserved; the obsolete RSA ignore is removed. The old plain file is a
+comment-only pointer. Both scanners use the same YAML configuration. The
+software renderer receives only the existing Slint royalty-free selection
+at version1.16.1, with its notice and AboutSlint attribution already present.
+Independent review approved these narrow deltas. No .slint edit, local
+executable validation, broad advisory ignore or release acceptance occurred.
+Report: docs/verification/gold-wave1994-security-repair-candidates.json.
+
 **W1993 SSH release contract and notice consistency (2026-10-01):**
 Hosted notice export36838651529 on e033c0c1 regenerated the exact locked
 release notices successfully. Root verified original artifact11149704382,

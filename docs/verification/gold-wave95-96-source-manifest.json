@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T08:57:00.6080185Z",
-  "validationStatus": "W1993_SSH_CONTRACT_ALIGNED_NOTICES_VERIFIED_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-01T09:15:47.3974870Z",
+  "validationStatus": "W1994_REVIEWED_SECURITY_CANDIDATES_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -177,6 +177,16 @@
       "sha256": "95D24F2AAE1038F665AD90A210C61E56356141980F9E80EECB896F53C09297BB"
     },
     {
+      "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+      "bytes": 5881,
+      "sha256": "CD9945E398F019F645BCC87FDE937F66E0E9598F4532314B53BF4CA09FF50133"
+    },
+    {
+      "path": ".github/workflows/security.yml",
+      "bytes": 15716,
+      "sha256": "9B53423E0E79DA945C6AF7C4AC463E0D663535BCD36ABFA4E7A49B3A0F2AF3AA"
+    },
+    {
       "path": ".github/workflows/silero-specialize.yml",
       "bytes": 2721,
       "sha256": "431F995729421456C46ED6F72E7592B0351E1F9B1D710FE1F0AA8D5F5BCBAF26"
@@ -200,6 +210,16 @@
       "path": ".github/workflows/workflow-replay-witness.yml",
       "bytes": 1821,
       "sha256": "7849A7940A6100C731CB22EB63A91230B64A3C08AB2E06E5D5090879E4B39AF0"
+    },
+    {
+      "path": ".trivyignore",
+      "bytes": 188,
+      "sha256": "432BF36CBE71669440EC32AF122123F2C2C4E7DA42DC38783E191C72F0C10105"
+    },
+    {
+      "path": ".trivyignore.yaml",
+      "bytes": 1335,
+      "sha256": "17321E2E60B74FCEC3FCF96742D928497C96EB73AD8586ED3640A7C769A608EE"
     },
     {
       "path": "design-system/AUDIT_CHECKLIST.md",
@@ -2922,6 +2942,11 @@
       "sha256": "DC4AB2EF03112F7107C4523EB767ED23BE7D45610DF00DA0A9908D884D33CEBF"
     },
     {
+      "path": "docs/verification/gold-wave1994-security-repair-candidates.json",
+      "bytes": 2716,
+      "sha256": "D2D03D7FAEB62239CCA1104E68163AD2102B3C8523D6458C5A370A74C31232BF"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3993,8 +4018,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2247860,
-      "sha256": "3092C6006B349F42EE85FC473E04F0041CF138FE28DCD8126B78C9C14DC3DE2F"
+      "bytes": 2249406,
+      "sha256": "6048A740F7970969CB4F541284C0C6CE7328E7033628E42508A430A07F49A6F6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4065,6 +4090,11 @@
       "path": "SRC/Cargo.toml",
       "bytes": 2043,
       "sha256": "DF95718CF41E64A978132F997DB8FC36333890C4D10705D127B771E3A5D6FD96"
+    },
+    {
+      "path": "SRC/deny.toml",
+      "bytes": 11180,
+      "sha256": "0938B78207CFEA8B890F80894F753EABC54AEBE87BF49710F97B46C2C24C8F73"
     },
     {
       "path": "SRC/freedom.yaml.example",

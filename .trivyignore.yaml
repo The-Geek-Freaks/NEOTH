@@ -1,0 +1,24 @@
+# Trivy exceptions for the NEOTH repository.
+#
+# The existing RUSTSEC entries mirror SRC/.cargo/audit.toml and SRC/deny.toml.
+# Re-evaluate each when a safe upstream upgrade lands.
+vulnerabilities:
+  - id: RUSTSEC-2025-0141 # bincode 1.x; WAL format-stable pending postcard migration.
+  - id: RUSTSEC-2025-0119 # number_prefix; transitive via indicatif.
+  - id: RUSTSEC-2024-0436 # paste; archived, transitive only.
+  - id: RUSTSEC-2023-0037 # xsalsa20poly1305; transitive via peeroxide-dht.
+  - id: RUSTSEC-2017-0008 # serial 0.4.0; transitive via portable-pty.
+  - id: RUSTSEC-2026-0173 # proc-macro-error2; transitive through Matrix/vodozemac.
+  - id: RUSTSEC-2025-0134 # rustls-pemfile; transitive through the IRC adapter.
+  - id: RUSTSEC-2026-0192 # ttf-parser; no compatible safe Slint/usvg/lopdf upgrade.
+  - id: RUSTSEC-2026-0206 # rustybuzz; no compatible safe Slint/usvg/lopdf upgrade.
+  - id: RUSTSEC-2026-0194 # quick-xml; build-time vendored wayland scanner only.
+  - id: RUSTSEC-2026-0195 # quick-xml; build-time vendored wayland scanner only.
+
+secrets:
+  - id: gcp-service-account
+    paths:
+      - packaging/gchat_converted_relink_product_canary.py
+    statement: >-
+      Generated only in the hosted loopback canary's empty RUNNER_TEMP root;
+      cleanup removes service-account.json and the generated RSA keypair.

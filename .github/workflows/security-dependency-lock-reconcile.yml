@@ -1,0 +1,122 @@
+name: Security dependency lock reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main commit to reconcile
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-dependency-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+
+      - name: Require exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Verify existing vendored dependency provenance
+        run: python3 packaging/arrayref_provenance_gate.py
+
+      - name: Prepare exact compatible security updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("SRC/neothd/Cargo.toml")
+          source = path.read_text(encoding="utf-8")
+          replacements = (
+              ('jsonwebtoken = { version = "10.4", features = ["rust_crypto"], optional = true }',
+               'jsonwebtoken = { version = "=10.4.0", features = ["aws_lc_rs"], optional = true }'),
+              ('wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }',
+               'wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
+              ('`jsonwebtoken` (RustCrypto RS256)', '`jsonwebtoken` (AWS-LC RS256)'),
+              ("# account JWT signing through jsonwebtoken's RustCrypto-backed RSA implementation.",
+               "# account JWT signing through jsonwebtoken's AWS-LC backend (no RustCrypto rsa)."),
+          )
+          for before, after in replacements:
+              if source.count(before) != 1:
+                  raise SystemExit(f"Expected unique dependency preimage: {before}")
+              source = source.replace(before, after)
+          path.write_text(source, encoding="utf-8", newline="\n")
+          PY
+
+      - name: Resolve and verify the exact dependency graph without compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo update --manifest-path SRC/Cargo.toml -p jsonwebtoken --precise 10.4.0
+          cargo update --manifest-path SRC/Cargo.toml -p wasmtime --precise 36.0.16
+          cargo update --manifest-path SRC/Cargo.toml -p faster-hex --precise 0.10.1
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$RUNNER_TEMP/security-metadata.json"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import tomllib
+          lock = tomllib.loads(Path("SRC/Cargo.lock").read_text(encoding="utf-8"))
+          for name, version in (("jsonwebtoken", "10.4.0"), ("wasmtime", "36.0.16"), ("faster-hex", "0.10.1"), ("russh", "0.63.2"), ("pageant", "0.2.3")):
+              actual = [package["version"] for package in lock["package"] if package["name"] == name]
+              if actual != [version]:
+                  raise SystemExit(f"Unexpected resolved {name}: {actual}")
+          if any(package["name"] == "rsa" for package in lock["package"]):
+              raise SystemExit("The vulnerable rsa crate remains in Cargo.lock")
+          metadata = json.loads((Path(os.environ["RUNNER_TEMP"]) / "security-metadata.json").read_text())
+          jwt_ids = {package["id"] for package in metadata["packages"] if package["name"] == "jsonwebtoken"}
+          nodes = [node for node in metadata["resolve"]["nodes"] if node["id"] in jwt_ids]
+          if len(nodes) != 1 or "aws_lc_rs" not in nodes[0]["features"] or "rust_crypto" in nodes[0]["features"]:
+              raise SystemExit("JWT backend selection is not exclusively AWS-LC")
+          PY
+          test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nSRC/neothd/Cargo.toml'
+
+      - name: Seal source-bound candidate and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/security-dependency-lock"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml > "$evidence/candidate.patch"
+          cp SRC/Cargo.lock "$evidence/Cargo.lock"
+          cp SRC/neothd/Cargo.toml "$evidence/neothd-Cargo.toml"
+          cp "$RUNNER_TEMP/security-metadata.json" "$evidence/metadata.json"
+          printf '%s\n' 'Exact JWT AWS-LC, Wasmtime and faster-hex graph verified; rsa absent; locked all-features metadata passed; Matrix chunks remains a separate unresolved gate; no compilation or tests ran' > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml metadata.json validation.txt > SHA256SUMS)
+
+      - name: Upload candidate for independent Root admission
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-dependency-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/security-dependency-lock
+          if-no-files-found: error
+          retention-days: 14

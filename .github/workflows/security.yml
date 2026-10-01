@@ -373,7 +373,7 @@ jobs:
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
           ignore-unfixed: false
-          trivyignores: '.trivyignore'
+          trivyignores: '.trivyignore.yaml'
 
       - name: Run Trivy filesystem scan (SARIF for Security tab)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
@@ -386,7 +386,7 @@ jobs:
           severity: 'HIGH,CRITICAL'
           exit-code: '0'
           ignore-unfixed: false
-          trivyignores: '.trivyignore'
+          trivyignores: '.trivyignore.yaml'
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5

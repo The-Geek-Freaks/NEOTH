@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1993_SSH_CONTRACT_ALIGNED_NOTICES_VERIFIED_RUNTIME_PENDING",
+  "status": "W1994_REVIEWED_SECURITY_CANDIDATES_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 274368,
-    "sha256": "58548144A5C463113931D4498FC2583CB9863ACA5740ECE6E2921D036EBD7F7B"
+    "bytes": 275360,
+    "sha256": "27E506B7629F6BDFF2D9327A29E9B9F858CE0E1320BB66181DDF4E3DF2110190"
   },
-  "sourceInputs": 1521,
+  "sourceInputs": 1527,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -63624,6 +63624,56 @@
       }
     ],
     "note": "Correct obsolete exact Russh literal; hosted notice export verified byte-identical. No local executable validation; fresh hosted gates required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1994SecurityCandidates": {
+    "base": "eeecc826be8d8f96a3d583f982cb44f422fc3b21",
+    "sources": [
+      {
+        "path": ".github/workflows/security-dependency-lock-reconcile.yml",
+        "bytes": 5881,
+        "sha256": "CD9945E398F019F645BCC87FDE937F66E0E9598F4532314B53BF4CA09FF50133",
+        "blob": "4b3f76cc9223d7f5afc479e83074805b0fba0fa2"
+      },
+      {
+        "path": ".github/workflows/security.yml",
+        "bytes": 15716,
+        "sha256": "9B53423E0E79DA945C6AF7C4AC463E0D663535BCD36ABFA4E7A49B3A0F2AF3AA",
+        "blob": "21b4d4829678283dced2401a1e12cc071bd36561"
+      },
+      {
+        "path": ".trivyignore",
+        "bytes": 188,
+        "sha256": "432BF36CBE71669440EC32AF122123F2C2C4E7DA42DC38783E191C72F0C10105",
+        "blob": "d76e39ef8a04bf07120843a7663dc4cb748eaeac"
+      },
+      {
+        "path": ".trivyignore.yaml",
+        "bytes": 1335,
+        "sha256": "17321E2E60B74FCEC3FCF96742D928497C96EB73AD8586ED3640A7C769A608EE",
+        "blob": "5bb2f90bca2e4b40f315ee73b53b8c703cbe1d08"
+      },
+      {
+        "path": "docs/verification/gold-wave1994-security-repair-candidates.json",
+        "bytes": 2716,
+        "sha256": "D2D03D7FAEB62239CCA1104E68163AD2102B3C8523D6458C5A370A74C31232BF",
+        "blob": "403f5656146a9f0f423bd1933ac673f1b219d4c7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2249406,
+        "sha256": "6048A740F7970969CB4F541284C0C6CE7328E7033628E42508A430A07F49A6F6",
+        "blob": "ca45dd0c3278600ab73d63a402adf96cb047c3da"
+      },
+      {
+        "path": "SRC/deny.toml",
+        "bytes": 11180,
+        "sha256": "0938B78207CFEA8B890F80894F753EABC54AEBE87BF49710F97B46C2C24C8F73",
+        "blob": "bdb042a6cf44d51495d4be9f0bf2c0ff0a3b4924"
+      }
+    ],
+    "note": "Reviewed exact dependency resolution workflow, version-scoped Slint license and generated-fixture Trivy rule. RSA ignore removed. Dependency import, Matrix backport and runtime acceptance pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
