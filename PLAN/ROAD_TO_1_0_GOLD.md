@@ -1,5 +1,24 @@
 # NEOTH — Road to 1.0 GOLD (Leitlinien / Master Plan)
 
+**W1995 Matrix dependency repair, source transition (2026-10-01):**
+W1996 producer545a504f passed Preflight36843417318 and CodeQuality36843416584.
+The remaining Matrix dependency repair backports the upstream imbl change to
+its existing6.1.0 release, preserving Rust1.91 and Matrix0.18. The official
+52-file archive is retained;49 files are unchanged and exactly three remove
+the direct bitmaps dependency, pin chunks0.2.0 and use its bitmap types.
+The source gate verifies archive, files, manifest, VCS and root patch before
+Cargo runs. Its full mode additionally requires the resulting exact lock and
+zero bitmaps. Synthetic tests exercise successful and rejected full states.
+
+The existing hosted reconciliation lane will prove the exact new graph,
+then remove the two synchronized advisory exceptions and verify their closed
+state. The legacy active path retains its expiry and dependency restrictions.
+Original lock and exceptions remain unchanged in this source transition;
+Root admission of hosted lock/config postimages is pending. The upstream
+package's default and all-feature suites run in an isolated hosted copy.
+No local runtime, .slint edit or release acceptance occurred.
+Report: docs/verification/gold-wave1995-imbl-backport.json.
+
 **W1996 deterministic live-ledger regression and W1994 lock admission (2026-10-01):**
 The completed baseline36826661054 on14f58624 passed all18877 Windows cases;
 macOS passed18994 with one remaining Hyperswarm live-ledger test failure.

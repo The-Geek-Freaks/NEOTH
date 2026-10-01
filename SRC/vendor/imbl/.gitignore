@@ -1,0 +1,14 @@
+target/
+dist/
+**/*.rs.bk
+/im-rc
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml

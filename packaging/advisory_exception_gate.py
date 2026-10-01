@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fail closed on the temporary Matrix-only ``bitmaps`` advisory exception.
+"""Fail closed on either state of the temporary ``bitmaps`` exception.
 
-The two ignored advisories have no upstream-compatible remediation yet.  This
-gate makes that narrow exception self-expiring and rejects graph/configuration
-drift before cargo-audit and cargo-deny are allowed to rely on it.
+The active state requires the reviewed Matrix-only path and its expiry. The
+closed state permits removal only when both ignores and every graph occurrence
+are absent. Mixed states always fail.
 """
 
 from __future__ import annotations
@@ -110,28 +110,50 @@ def _deny_temporary_counts(values: object) -> Counter[str]:
     return Counter(identifiers)
 
 
-def require_synchronized_configurations(
-    audit_config: dict[str, object],
-    deny_config: dict[str, object],
-) -> None:
-    """Require one copy of both exception IDs in each independently used tool."""
-
+def _configuration_counts(
+    audit_config: dict[str, object], deny_config: dict[str, object]
+) -> tuple[Counter[str], Counter[str]]:
     audit_advisories = audit_config.get("advisories")
     deny_advisories = deny_config.get("advisories")
     if not isinstance(audit_advisories, dict):
         raise AdvisoryExceptionGateError("audit.toml has no [advisories] table")
     if not isinstance(deny_advisories, dict):
         raise AdvisoryExceptionGateError("deny.toml has no [advisories] table")
-    audit_counts = _temporary_counts(
-        audit_advisories.get("ignore"), location="audit.toml [advisories].ignore"
+    return (
+        _temporary_counts(
+            audit_advisories.get("ignore"), location="audit.toml [advisories].ignore"
+        ),
+        _deny_temporary_counts(deny_advisories.get("ignore")),
     )
-    deny_counts = _deny_temporary_counts(deny_advisories.get("ignore"))
+
+
+def require_synchronized_configurations(
+    audit_config: dict[str, object],
+    deny_config: dict[str, object],
+) -> None:
+    """Require one copy of both exception IDs in each independently used tool."""
+
+    audit_counts, deny_counts = _configuration_counts(audit_config, deny_config)
     expected = Counter({identifier: 1 for identifier in TEMPORARY_ADVISORIES})
     if audit_counts != expected or deny_counts != expected:
         raise AdvisoryExceptionGateError(
             "temporary bitmaps advisory exceptions must occur exactly once in "
             "both SRC/.cargo/audit.toml and SRC/deny.toml; "
             f"audit={dict(audit_counts)!r}, deny={dict(deny_counts)!r}"
+        )
+
+
+def require_closed_configurations(
+    audit_config: dict[str, object], deny_config: dict[str, object]
+) -> None:
+    """Require both tools to have removed every temporary exception."""
+
+    audit_counts, deny_counts = _configuration_counts(audit_config, deny_config)
+    if audit_counts or deny_counts:
+        raise AdvisoryExceptionGateError(
+            "closed bitmaps exception state requires both temporary advisory "
+            f"IDs absent from both configurations; audit={dict(audit_counts)!r}, "
+            f"deny={dict(deny_counts)!r}"
         )
 
 
@@ -404,18 +426,41 @@ def require_matrix_only_bitmaps_chain(metadata: object) -> None:
         )
 
 
+def require_no_bitmaps(metadata: object) -> None:
+    """Require a structurally valid resolved graph without any bitmaps node."""
+
+    packages, _, _ = _metadata_packages(metadata)
+    remaining = [
+        package
+        for package in packages.values()
+        if package.get("name") == BITMAPS_NAME
+    ]
+    if remaining:
+        versions = [package.get("version") for package in remaining]
+        raise AdvisoryExceptionGateError(
+            "closed bitmaps exception state requires no resolved bitmaps package; "
+            f"found versions {versions!r}"
+        )
+
+
 def validate(
     *,
     audit_config: dict[str, object],
     deny_config: dict[str, object],
     metadata: object,
     today: date,
-) -> None:
-    """Run the complete self-expiring, synchronized Matrix-only exception gate."""
+) -> str:
+    """Validate exactly one fail-closed exception state and return its name."""
 
+    audit_counts, deny_counts = _configuration_counts(audit_config, deny_config)
+    if not audit_counts and not deny_counts:
+        require_closed_configurations(audit_config, deny_config)
+        require_no_bitmaps(metadata)
+        return "closed"
     require_unexpired(today=today)
     require_synchronized_configurations(audit_config, deny_config)
     require_matrix_only_bitmaps_chain(metadata)
+    return "active"
 
 
 def parser() -> argparse.ArgumentParser:
@@ -429,7 +474,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        validate(
+        state = validate(
             audit_config=_load_toml(args.audit_config),
             deny_config=_load_toml(args.deny_config),
             metadata=json.loads(args.metadata.read_text(encoding="utf-8")),
@@ -447,10 +492,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(
-        "temporary bitmaps advisory exception gate passed: synchronized Matrix-only "
-        f"exception remains valid before {EXPIRY_DATE.isoformat()}"
-    )
+    if state == "active":
+        print(
+            "temporary bitmaps advisory exception gate passed: synchronized Matrix-only "
+            f"exception remains valid before {EXPIRY_DATE.isoformat()}"
+        )
+    else:
+        print("temporary bitmaps advisory exception gate passed: closed state has no bitmaps")
     return 0
 
 

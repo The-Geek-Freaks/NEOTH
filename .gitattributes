@@ -30,5 +30,8 @@ packaging/**/fixtures/*.txt text eol=lf
 # This vendor archive is checked against upstream SHA-256 file bytes. Disable
 # checkout conversion for every member, including extensionless metadata.
 SRC/vendor/arrayref/** -text
+SRC/vendor/imbl/** -text
+# Preserve the upstream archive member's existing final blank line.
+SRC/vendor/imbl/.github/dependabot.yml whitespace=-blank-at-eof
 # Preserve the pinned Silero model, upstream license and provenance bytes.
 SRC/neothd/assets/silero-vad/** -text

@@ -2,14 +2,14 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-01T09:29:42.0522306Z",
-  "validationStatus": "W1996_IMPORTED_STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-10-01T09:38:03.5855897Z",
+  "validationStatus": "W1995_SOURCE_REVIEWED_LOCK_RECONCILIATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 1284,
-      "sha256": "C5CB7AA02B4315CCCF303F26821B74E9C8D4A613983C8CE7D096DF75DEA02829"
+      "bytes": 1441,
+      "sha256": "8D524F1F957C1A28C39DEA2F02C33B60BFFC3F86B91996717ADC6FFBC291607F"
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/security-dependency-lock-reconcile.yml",
-      "bytes": 5984,
-      "sha256": "91C4853928373C3E0DC2B1D8D23866766C55E3F97FAB8FEF073B4240411210AA"
+      "bytes": 10767,
+      "sha256": "8DF4A6F006146D156CC43CD0ABFC61BF46A6618740DE54D734A2A1FEC9C86A28"
     },
     {
       "path": ".github/workflows/security.yml",
@@ -2947,6 +2947,11 @@
       "sha256": "F21DA5ECF441015D3FEC6E09350D2A894E15B3B9F8F84A27E1762784B38D8641"
     },
     {
+      "path": "docs/verification/gold-wave1995-imbl-backport.json",
+      "bytes": 2467,
+      "sha256": "7BDC69ACAA8E1F005111F8ABBD5005F3B75FFE2BB9875369DEF666D399436C27"
+    },
+    {
       "path": "docs/verification/gold-wave1996-hyperswarm-ledger.json",
       "bytes": 1728,
       "sha256": "354EB3A7CF2E7E3934060DF27BADD4A7D58765DD71BBE2C4E9B5411FDDECE113"
@@ -3777,6 +3782,11 @@
       "sha256": "351F42092541B08A9BC6C1F3F93BC3C8470E80F7585A376ACBD923ADC47F7A62"
     },
     {
+      "path": "packaging/advisory_exception_gate.py",
+      "bytes": 20656,
+      "sha256": "1443FC1E2F862AB31B56A4FF0BB5D7B238C4D16C5CE095002B202D71B52CEBB2"
+    },
+    {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
       "bytes": 45153,
       "sha256": "A3BE87ADED851FB956C79A8E0D63596D6876B3D17A798153DDDD32EF0E948404"
@@ -3795,6 +3805,11 @@
       "path": "packaging/gchat_daemon_adoption_canary.py",
       "bytes": 26220,
       "sha256": "8599FF62047126FBA00782EF17EE28BB618FDFC4266E16919251ABEB0569F84E"
+    },
+    {
+      "path": "packaging/imbl_provenance_gate.py",
+      "bytes": 14824,
+      "sha256": "2B83D272F93A69CF086E9FF342046FC1DEB249092A0EE9F46F5568700711585E"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -3887,6 +3902,11 @@
       "sha256": "D7E04DE6D762EF6900E247A5A3D43561B1CEBBAD9538153F8109290B4B3386B9"
     },
     {
+      "path": "packaging/tests/test_advisory_exception_gate.py",
+      "bytes": 11007,
+      "sha256": "676D511CACE64338ACB4DBB8D4993EC328EC1AEB5055AAA15250B47904663EEB"
+    },
+    {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
       "bytes": 27961,
       "sha256": "4958C858A5815A5DDF0E2F1EC87F5E84FF5C4DBFAB158A576A94C4DA5E227D0B"
@@ -3910,6 +3930,11 @@
       "path": "packaging/tests/test_gchat_daemon_adoption_canary.py",
       "bytes": 9550,
       "sha256": "BEA5A7A60C25CC10E4F56662994FB5D073AEE77E98BABAF435A439373C2D81FC"
+    },
+    {
+      "path": "packaging/tests/test_imbl_provenance_gate.py",
+      "bytes": 7294,
+      "sha256": "FE2931D59790BB71FF8186A584146DFDACB6A2C1918199662D3D1D4EB3D719AE"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -3997,6 +4022,11 @@
       "sha256": "49BB226F68BDA16562484D1AE631049DCA8068FF006277742DA5ABA1012568B3"
     },
     {
+      "path": "packaging/vendor-provenance/imbl-6.1.0.crate",
+      "bytes": 136861,
+      "sha256": "0FADE8AE6828627AD1FA094A891ECCFB25150B383047190A3648D66D06186501"
+    },
+    {
       "path": "packaging/windows/smoke-installer.ps1",
       "bytes": 52630,
       "sha256": "376C113510BC09BEE2F6439DF5F14A5DDB001248E85553B8B4CF500A1D975877"
@@ -4028,8 +4058,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2250962,
-      "sha256": "841D63B2287A2429965BC3BFD5DB8B2E723840054B26DEB03842078829EE5E4A"
+      "bytes": 2252211,
+      "sha256": "065BBEA216ED8501B33D768C6DC1CD2327F74BCCE6D5E1B7FC5BF1135FFB8528"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4098,8 +4128,8 @@
     },
     {
       "path": "SRC/Cargo.toml",
-      "bytes": 2043,
-      "sha256": "DF95718CF41E64A978132F997DB8FC36333890C4D10705D127B771E3A5D6FD96"
+      "bytes": 2095,
+      "sha256": "D83B470302432C01B612C69438BD909F65F848EC33B2F77C52820CC71244DE36"
     },
     {
       "path": "SRC/deny.toml",
@@ -7635,6 +7665,266 @@
       "path": "SRC/neothd/tests/untrusted_consumer_source_gate.rs",
       "bytes": 11344,
       "sha256": "C4707F3290A9A893F28B5E2915E6A2E08D311972FE5DBDDC12EFD438B2E978AE"
+    },
+    {
+      "path": "SRC/vendor/imbl/.cargo_vcs_info.json",
+      "bytes": 94,
+      "sha256": "EF71A652C3DD17771E25DDEA0AAF1C907A4284553AC396072E2E27629921994E"
+    },
+    {
+      "path": "SRC/vendor/imbl/.github/dependabot.yml",
+      "bytes": 107,
+      "sha256": "9CFEC6A922EFE988528A211F58EBD1D3FC3567C59E731B259D9273C7348AA2A0"
+    },
+    {
+      "path": "SRC/vendor/imbl/.github/workflows/ci.yml",
+      "bytes": 2131,
+      "sha256": "6368B237E7C7AAF85BC6027972D19D60D0A293F3EE4145B24F4C3003518728FB"
+    },
+    {
+      "path": "SRC/vendor/imbl/.gitignore",
+      "bytes": 124,
+      "sha256": "AE0226639CB642C8527AA4B9A70A753CA2D1487A70BA974A8B55378D6D3C5604"
+    },
+    {
+      "path": "SRC/vendor/imbl/.rustfmt.toml",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "path": "SRC/vendor/imbl/.travis.yml",
+      "bytes": 517,
+      "sha256": "148C8340BF637260EC16FB05DEA8DE07DB994662CDA966CDA46E34AC787423CB"
+    },
+    {
+      "path": "SRC/vendor/imbl/.vscode/settings.json",
+      "bytes": 1224,
+      "sha256": "9E46F2EF232DCC5289AEE3115090D2C0754D74A8466AE54A964D0A3126E498A8"
+    },
+    {
+      "path": "SRC/vendor/imbl/benches/hashmap.rs",
+      "bytes": 10253,
+      "sha256": "425451910D477FE51EA747476F7C7FC24AD904D50DF0108D50F474DF7025C181"
+    },
+    {
+      "path": "SRC/vendor/imbl/benches/ordmap.rs",
+      "bytes": 14815,
+      "sha256": "2D7010FEE23FF04D05613A0A546A668A0D196BD42C2D10F53522E2AC283B2820"
+    },
+    {
+      "path": "SRC/vendor/imbl/benches/utils/mod.rs",
+      "bytes": 1658,
+      "sha256": "53B3C80E081ECFBFDE1183C0A2F6B4E19B521C6DB9C0B73E73228F0D77CABF4A"
+    },
+    {
+      "path": "SRC/vendor/imbl/benches/vector.rs",
+      "bytes": 10357,
+      "sha256": "8310844D33EF56D03C19B5F0CD1DD5215CEBF39FD20562ADE110B6749792A472"
+    },
+    {
+      "path": "SRC/vendor/imbl/Cargo.lock",
+      "bytes": 28653,
+      "sha256": "85F06207220F53C8E45405685D82A55A83960353CEA94EFC2CCB251B251A437A"
+    },
+    {
+      "path": "SRC/vendor/imbl/Cargo.toml",
+      "bytes": 2931,
+      "sha256": "CAC4C1A1D8F98467782713E32941CECF0B997F52BB4448CE6E7341F0F5FEA514"
+    },
+    {
+      "path": "SRC/vendor/imbl/Cargo.toml.orig",
+      "bytes": 1992,
+      "sha256": "2F7F17962743E0B09C851D918ED4B78B2F11E64787066D68693FEEDA816792D4"
+    },
+    {
+      "path": "SRC/vendor/imbl/CHANGELOG.md",
+      "bytes": 3953,
+      "sha256": "851EDCA6DF0E32A924B0A87E8A5541EAF065924D2938973377868C89C38220DF"
+    },
+    {
+      "path": "SRC/vendor/imbl/clippy.toml",
+      "bytes": 139,
+      "sha256": "6C881ED685DF35C82B4A847A9A63612456A34266EB32234AB3F5C659590DACE1"
+    },
+    {
+      "path": "SRC/vendor/imbl/CODE_OF_CONDUCT.md",
+      "bytes": 3226,
+      "sha256": "3DB9F112C815FFEF9A6F51EEF2F5F6A3F3C2900510C243F26AD890321B888473"
+    },
+    {
+      "path": "SRC/vendor/imbl/LICENCE.md",
+      "bytes": 15550,
+      "sha256": "E6B6566F085DF5746515C6D7E2EDCAEC0D2B77D527AC40D91409D783FB6C8508"
+    },
+    {
+      "path": "SRC/vendor/imbl/README.md",
+      "bytes": 1676,
+      "sha256": "13A5E22AE62C9969272AD79BD0213A300CFB2150E42825D178B398225D7FB264"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/arbitrary.rs",
+      "bytes": 3446,
+      "sha256": "62846714AFCB0B59FEB89609AE2F129200B4EF595AF2BFA594B733D62DD5B956"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/bincode.rs",
+      "bytes": 9428,
+      "sha256": "3E6F57EC8F7D49B0834F49A5B0655B6F089B1050D09D7838183D61D9718A9FDE"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/config.rs",
+      "bytes": 1123,
+      "sha256": "A6C0112756B2A94D587AE3583DBF3550CB41C66C4B17C466748573277EE81929"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/fakepool.rs",
+      "bytes": 784,
+      "sha256": "BB41052C234BED8CC1AFD31A2578F2383AFC3981C2562603FA35CD6E66379A9E"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/hash/map.rs",
+      "bytes": 75222,
+      "sha256": "DABE039CB6F67DD97517DD231812378ED81585A21D49EACBFD1B0A7E671E85D4"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/hash/mod.rs",
+      "bytes": 255,
+      "sha256": "96E9B19B81C59B248C252B9DD085AF45A7A45B1F50087AAA2BD94894F2DF5706"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/hash/set.rs",
+      "bytes": 28624,
+      "sha256": "1C819899A6F029DDE3E8C4FB7A0969F8F534B280154BE9A97AC14DB0C9B90E20"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/iter.rs",
+      "bytes": 1548,
+      "sha256": "A78EEB5FB7DD2241EAC78288478C8B2239C04775F7144AD1AD2D93A30994C3B5"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/lib.rs",
+      "bytes": 22076,
+      "sha256": "0B3E01DD98638DCCD68119D0490747E4D0BFDF907F222E9366FCB458B53EF61E"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/nodes/btree.rs",
+      "bytes": 45147,
+      "sha256": "BF8496B3B3D65F7300F53DBC7F4F2F603FF1732E5977EA00F5F745D30A9E57FD"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/nodes/hamt.rs",
+      "bytes": 33030,
+      "sha256": "ADAEFADF01DF70A09F3251DD7EC68DD229E1A33FAB31061CB9DCBBA7ECB5EF25"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/nodes/mod.rs",
+      "bytes": 463,
+      "sha256": "E207AA15E2179BA0B4DDBA1FB67F89390146AF1C08E94C174F3E7F2D75656B28"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/nodes/rrb.rs",
+      "bytes": 40814,
+      "sha256": "5DE89D2D705D5AAACEF8887E7CE7C7B005322D11B6E7A14BAABE79EEE38E7271"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/ord/map.rs",
+      "bytes": 85556,
+      "sha256": "21C10E0C3CFF232E7F951B93B452831440F868E9721A95F1AE24C8045ABCDD86"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/ord/mod.rs",
+      "bytes": 255,
+      "sha256": "96E9B19B81C59B248C252B9DD085AF45A7A45B1F50087AAA2BD94894F2DF5706"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/ord/set.rs",
+      "bytes": 32673,
+      "sha256": "8FDAF60F3DF641FFFE3956DA8B31ED3C83DF10CA909B2C6B5DAC3772609337B7"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/ord/test-fixtures/issue_124.txt",
+      "bytes": 40768,
+      "sha256": "B47660B232309ABEFE3965F168474DB05A65BF6D36B0289454AABA6318FFD017"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/proptest.rs",
+      "bytes": 4287,
+      "sha256": "AAD97BB11B48AA4128F75D20481ED1D01080790977039ECE218A2D2301A25A39"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/quickcheck.rs",
+      "bytes": 1580,
+      "sha256": "732C2D150D9F1921DCD06E4B542B67D3B85AA3DC29B635FC48B05595B6ABD47B"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/ser.rs",
+      "bytes": 7856,
+      "sha256": "C1573E0048C86C44A07CB6959C080C2673ED87AE4DC28EC90DCB1DE7A439D9BC"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/shared_ptr.rs",
+      "bytes": 1160,
+      "sha256": "B3BE8466EA25F2E137662890ACF65CB2DE1D8027A8E62950252422C90DA58D22"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/sort.rs",
+      "bytes": 7483,
+      "sha256": "CAA9797DFED220463B0114946755B00C9DBC35888143C60FB10C1B0777ACD751"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/sync.rs",
+      "bytes": 1026,
+      "sha256": "DA2D5B2846083E512B2008BF61D847BD5FF54AE07D36CE2C5E5409FC6D585442"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/test.rs",
+      "bytes": 1771,
+      "sha256": "A9676593280E29049789E040B42C6732877FF41696BE5A5DCBE97C8B5E894441"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/tests/hashset.rs",
+      "bytes": 2417,
+      "sha256": "DBB867A786F09872C3815BAA6A106F44D69D01C4E334DDAD237ADE0EBB674784"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/tests/mod.rs",
+      "bytes": 864,
+      "sha256": "4E195032B38A3296D91B0DFDD32C16EB0E8D880AF775C5965826C6402D63EB5F"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/tests/ordset.rs",
+      "bytes": 2752,
+      "sha256": "F18B67E47286EDEEAC13AECAFDA38D8D5C8EE173F16561BBAC1ACAF67E0ACC11"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/tests/vector.rs",
+      "bytes": 8657,
+      "sha256": "E1272666871E6D5A41CE889BC7E41019E283E8DB0AE674E485D456417DECC2F6"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/util.rs",
+      "bytes": 1454,
+      "sha256": "A945475CF9F2F6A9EC1994A801E21BB46FC991A281545F057B90E171AA55A98E"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/vector/focus.rs",
+      "bytes": 37095,
+      "sha256": "7BBCC9A87ED33FCA73DC6ABC3C7CCBB325348E5BCFDB6CB1B38C2E530C362575"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/vector/mod.rs",
+      "bytes": 95054,
+      "sha256": "515FE7B698DF2AEA3DCFC22902982563DAD31CD35DB4FFA1E61DB76E7A0CA6E8"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/vector/pool.rs",
+      "bytes": 2203,
+      "sha256": "881212C56711E62FD7F9538B8B7905DE0687FD766E6C4D18A2481C10F5063CB0"
+    },
+    {
+      "path": "SRC/vendor/imbl/src/vector/rayon.rs",
+      "bytes": 5261,
+      "sha256": "A739DE42ADA6407358D1FAEAEF59A2F5D22689F86019E7B59498013B77D036B2"
     },
     {
       "path": "THIRD_PARTY_LICENSES",

@@ -65,6 +65,28 @@ def metadata_fixture() -> dict[str, Any]:
     }
 
 
+def closed_metadata_fixture() -> dict[str, Any]:
+    """A structurally valid graph after the path-patched imbl removes bitmaps."""
+
+    active = metadata_fixture()
+    packages = [item for item in active["packages"] if item["id"] != "bitmaps"]
+    nodes = []
+    for node in active["resolve"]["nodes"]:
+        if node["id"] == "bitmaps":
+            continue
+        nodes.append(
+            {
+                "id": node["id"],
+                "dependencies": [dependency for dependency in node["dependencies"] if dependency != "bitmaps"],
+            }
+        )
+    return {
+        "packages": packages,
+        "workspace_members": active["workspace_members"],
+        "resolve": {"nodes": nodes},
+    }
+
+
 class AdvisoryExceptionGateTests(unittest.TestCase):
     def validate(
         self, metadata: object | None = None, *, today: date = date(2026, 11, 12)
@@ -78,6 +100,40 @@ class AdvisoryExceptionGateTests(unittest.TestCase):
 
     def test_reviewed_matrix_chain_passes(self) -> None:
         self.validate()
+
+    def test_closed_state_requires_absent_graph_and_absent_exceptions(self) -> None:
+        closed_audit: dict[str, Any] = {"advisories": {"ignore": []}}
+        closed_deny: dict[str, Any] = {"advisories": {"ignore": []}}
+        self.assertEqual(
+            gate.validate(
+                audit_config=closed_audit,
+                deny_config=closed_deny,
+                metadata=closed_metadata_fixture(),
+                today=gate.EXPIRY_DATE,
+            ),
+            "closed",
+        )
+
+    def test_closed_state_rejects_leftover_package_or_one_sided_ignore(self) -> None:
+        closed_audit: dict[str, Any] = {"advisories": {"ignore": []}}
+        closed_deny: dict[str, Any] = {"advisories": {"ignore": []}}
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "no resolved bitmaps"):
+            gate.validate(
+                audit_config=closed_audit,
+                deny_config=closed_deny,
+                metadata=metadata_fixture(),
+                today=gate.EXPIRY_DATE,
+            )
+        one_sided_audit: dict[str, Any] = {
+            "advisories": {"ignore": ["RUSTSEC-2026-0247"]}
+        }
+        with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "exactly once"):
+            gate.validate(
+                audit_config=one_sided_audit,
+                deny_config=closed_deny,
+                metadata=closed_metadata_fixture(),
+                today=date(2026, 11, 12),
+            )
 
     def test_expiration_is_exclusive_and_fails_closed_on_the_review_date(self) -> None:
         with self.assertRaisesRegex(gate.AdvisoryExceptionGateError, "expired"):

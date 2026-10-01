@@ -29,7 +29,6 @@ jobs:
         with:
           ref: ${{ inputs.source_head }}
           persist-credentials: false
-
       - name: Require exact main producer
         shell: bash
         run: |
@@ -38,40 +37,19 @@ jobs:
           test "$EXPECTED_HEAD" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git diff --exit-code
-
       - name: Set up Rust 1.91.0
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: '1.91.0'
-
-      - name: Verify existing vendored dependency provenance
-        run: python3 packaging/arrayref_provenance_gate.py
-
-      - name: Prepare exact compatible security updates
+      - name: Test and prove vendor source custody before Cargo
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("SRC/neothd/Cargo.toml")
-          source = path.read_text(encoding="utf-8")
-          replacements = (
-              ('jsonwebtoken = { version = "10.4", features = ["rust_crypto"], optional = true }',
-               'jsonwebtoken = { version = "=10.4.0", features = ["aws_lc_rs"], optional = true }'),
-              ('wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }',
-               'wasmtime = { version = "=36.0.16", default-features = false, features = ["cranelift", "runtime"], optional = true }'),
-              ('`jsonwebtoken` (RustCrypto RS256)', '`jsonwebtoken` (AWS-LC RS256)'),
-              ("# account JWT signing through jsonwebtoken's RustCrypto-backed RSA implementation.",
-               "# account JWT signing through jsonwebtoken's AWS-LC backend (no RustCrypto rsa)."),
-          )
-          for before, after in replacements:
-              if source.count(before) != 1:
-                  raise SystemExit(f"Expected unique dependency preimage: {before}")
-              source = source.replace(before, after)
-          path.write_text(source, encoding="utf-8", newline="\n")
-          PY
-
-      - name: Resolve and verify the exact dependency graph without compilation
+          python3 packaging/tests/test_arrayref_provenance_gate.py
+          python3 packaging/arrayref_provenance_gate.py
+          python3 packaging/tests/test_imbl_provenance_gate.py
+          python3 packaging/imbl_provenance_gate.py --source-only
+      - name: Resolve exact security and imbl dependencies without compilation
         shell: bash
         run: |
           set -euo pipefail
@@ -79,41 +57,85 @@ jobs:
           cargo update --manifest-path SRC/Cargo.toml -p wasmtime --precise 36.0.16
           cargo update --manifest-path SRC/Cargo.toml -p autocfg --precise 1.5.1
           cargo update --manifest-path SRC/Cargo.toml -p faster-hex --precise 0.10.1
+          cargo update --manifest-path SRC/Cargo.toml -p russh --precise 0.63.2
+          cargo update --manifest-path SRC/Cargo.toml -p pageant --precise 0.2.3
+          cargo update --manifest-path SRC/Cargo.toml -p imbl --precise 6.1.0
+          cargo update --manifest-path SRC/Cargo.toml -p imbl-sized-chunks --precise 0.2.0
           cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$RUNNER_TEMP/security-metadata.json"
+      - name: Require exact locked graph before retiring exceptions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/imbl_provenance_gate.py
           python3 - <<'PY'
           from pathlib import Path
-          import json
-          import os
-          import tomllib
+          import json, os, tomllib
           lock = tomllib.loads(Path("SRC/Cargo.lock").read_text(encoding="utf-8"))
-          for name, version in (("jsonwebtoken", "10.4.0"), ("wasmtime", "36.0.16"), ("autocfg", "1.5.1"), ("faster-hex", "0.10.1"), ("russh", "0.63.2"), ("pageant", "0.2.3")):
-              actual = [package["version"] for package in lock["package"] if package["name"] == name]
-              if actual != [version]:
-                  raise SystemExit(f"Unexpected resolved {name}: {actual}")
-          if any(package["name"] == "rsa" for package in lock["package"]):
-              raise SystemExit("The vulnerable rsa crate remains in Cargo.lock")
+          expected = (("jsonwebtoken", "10.4.0"), ("wasmtime", "36.0.16"), ("autocfg", "1.5.1"), ("faster-hex", "0.10.1"), ("russh", "0.63.2"), ("pageant", "0.2.3"), ("imbl", "6.1.0"), ("imbl-sized-chunks", "0.2.0"))
+          for name, version in expected:
+              actual = [p["version"] for p in lock["package"] if p["name"] == name]
+              if actual != [version]: raise SystemExit(f"Unexpected resolved {name}: {actual}")
+          if any(p["name"] in {"rsa", "bitmaps"} for p in lock["package"]):
+              raise SystemExit("rsa or bitmaps remains in Cargo.lock")
           metadata = json.loads((Path(os.environ["RUNNER_TEMP"]) / "security-metadata.json").read_text())
-          jwt_ids = {package["id"] for package in metadata["packages"] if package["name"] == "jsonwebtoken"}
-          nodes = [node for node in metadata["resolve"]["nodes"] if node["id"] in jwt_ids]
-          if len(nodes) != 1 or "aws_lc_rs" not in nodes[0]["features"] or "rust_crypto" in nodes[0]["features"]:
+          packages = metadata["packages"]
+          if any(p["name"] == "bitmaps" for p in packages): raise SystemExit("bitmaps remains in resolved metadata")
+          jwt_ids = {p["id"] for p in packages if p["name"] == "jsonwebtoken"}
+          jwt_nodes = [n for n in metadata["resolve"]["nodes"] if n["id"] in jwt_ids]
+          if len(jwt_nodes) != 1 or "aws_lc_rs" not in jwt_nodes[0]["features"] or "rust_crypto" in jwt_nodes[0]["features"]:
               raise SystemExit("JWT backend selection is not exclusively AWS-LC")
+          imbl = [p for p in packages if p["name"] == "imbl"]
+          if len(imbl) != 1 or imbl[0].get("version") != "6.1.0" or imbl[0].get("source") is not None:
+              raise SystemExit("imbl is not the single reviewed path-patched package")
+          chunks = [p for p in packages if p["name"] == "imbl-sized-chunks"]
+          if len(chunks) != 1 or chunks[0].get("version") != "0.2.0" or chunks[0].get("source") != "registry+https://github.com/rust-lang/crates.io-index":
+              raise SystemExit("imbl-sized-chunks is not the reviewed registry package")
           PY
-          test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/Cargo.lock\nSRC/neothd/Cargo.toml'
-
-      - name: Seal source-bound candidate and metadata
+      - name: Retire bitmaps exceptions after graph proof only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          updates = {
+              Path("SRC/.cargo/audit.toml"): '''    # Temporary Matrix-only `bitmaps` exceptions. Both advisories have no
+              # upstream-compatible fix: the Matrix SDK's immutable-collections chain
+              # selects bitmaps 3.x, and NEOTH has no direct use or safe substitution.
+              # Re-evaluate 2026-11-13 with the next Matrix stack update.
+              "RUSTSEC-2026-0247",
+              "RUSTSEC-2025-0167",
+          ''',
+              Path("SRC/deny.toml"): '''    # Temporary synchronized exceptions: `bitmaps` is Matrix-only through the
+              # Matrix SDK immutable-collections chain. There is no upstream-compatible
+              # fix, NEOTH does not use it directly, and replacing it locally would fork
+              # the Matrix stack. Re-evaluate both with the next Matrix stack update on
+              # 2026-11-13.
+              { id = "RUSTSEC-2026-0247", reason = "bitmaps is Matrix-only via the matrix-sdk immutable-collections chain; no upstream-compatible fix and no direct NEOTH use. Re-evaluate 2026-11-13." },
+              { id = "RUSTSEC-2025-0167", reason = "bitmaps is Matrix-only via the matrix-sdk immutable-collections chain; no upstream-compatible fix and no direct NEOTH use. Re-evaluate 2026-11-13." },
+          ''',
+          }
+          for path, removed in updates.items():
+              source = path.read_text(encoding="utf-8")
+              if source.count(removed) != 1: raise SystemExit(f"Expected unique bitmaps preimage in {path}")
+              path.write_text(source.replace(removed, ""), encoding="utf-8", newline="\n")
+          PY
+          python3 packaging/tests/test_advisory_exception_gate.py
+          python3 packaging/advisory_exception_gate.py --metadata "$RUNNER_TEMP/security-metadata.json"
+          test "$(git diff --name-only | LC_ALL=C sort)" = $'SRC/.cargo/audit.toml\nSRC/Cargo.lock\nSRC/deny.toml'
+      - name: Seal candidate postimages and evidence
         shell: bash
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/security-dependency-lock"
           mkdir -p "$evidence"
           git rev-parse HEAD > "$evidence/source-head.txt"
-          git diff --binary --full-index -- SRC/Cargo.lock SRC/neothd/Cargo.toml > "$evidence/candidate.patch"
-          cp SRC/Cargo.lock "$evidence/Cargo.lock"
-          cp SRC/neothd/Cargo.toml "$evidence/neothd-Cargo.toml"
+          git diff --binary --full-index -- SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml > "$evidence/candidate.patch"
+          cp SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml "$evidence/"
           cp "$RUNNER_TEMP/security-metadata.json" "$evidence/metadata.json"
-          printf '%s\n' 'Exact JWT AWS-LC, Wasmtime and faster-hex graph verified; rsa absent; locked all-features metadata passed; Matrix chunks remains a separate unresolved gate; no compilation or tests ran' > "$evidence/validation.txt"
-          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock neothd-Cargo.toml metadata.json validation.txt > SHA256SUMS)
-
+          sha256sum packaging/imbl_provenance_gate.py packaging/tests/test_imbl_provenance_gate.py packaging/vendor-provenance/imbl-6.1.0.crate > "$evidence/imbl-gate-sources.SHA256SUMS"
+          find SRC/vendor/imbl -type f -print0 | sort -z | xargs -0 sha256sum > "$evidence/imbl-vendor.SHA256SUMS"
+          printf '%s\n' 'Source-only vendor gates passed before Cargo; exact locked graph verified; rsa and bitmaps absent; closed advisory gate passed; no product build ran' > "$evidence/validation.txt"
+          (cd "$evidence" && sha256sum source-head.txt candidate.patch Cargo.lock audit.toml deny.toml metadata.json imbl-gate-sources.SHA256SUMS imbl-vendor.SHA256SUMS validation.txt > SHA256SUMS)
       - name: Upload candidate for independent Root admission
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -121,3 +143,58 @@ jobs:
           path: ${{ runner.temp }}/security-dependency-lock
           if-no-files-found: error
           retention-days: 14
+
+  vendored-imbl-tests:
+    if: github.ref == 'refs/heads/main'
+    needs: reconcile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Require exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+      - name: Download exact candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: security-dependency-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/security-dependency-lock
+      - name: Admit postimages and prove full imbl provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/security-dependency-lock"
+          (cd "$evidence" && sha256sum -c SHA256SUMS)
+          test "$(cat "$evidence/source-head.txt")" = "$EXPECTED_HEAD"
+          sha256sum -c "$evidence/imbl-gate-sources.SHA256SUMS"
+          sha256sum -c "$evidence/imbl-vendor.SHA256SUMS"
+          cp "$evidence/Cargo.lock" SRC/Cargo.lock
+          cp "$evidence/audit.toml" SRC/.cargo/audit.toml
+          cp "$evidence/deny.toml" SRC/deny.toml
+          python3 packaging/imbl_provenance_gate.py
+          python3 packaging/advisory_exception_gate.py --metadata "$evidence/metadata.json"
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Run all vendored imbl tests in isolated copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_root="$RUNNER_TEMP/imbl-6.1.0-tests"
+          cp -a SRC/vendor/imbl "$test_root"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/imbl-target" cargo test --manifest-path "$test_root/Cargo.toml"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/imbl-target" cargo test --manifest-path "$test_root/Cargo.toml" --all-features
+          git diff --exit-code -- SRC/vendor/imbl
