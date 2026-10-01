@@ -2725,7 +2725,8 @@ where
         &run_config,
         &config.neoth_home,
         &config.freedom_config_path,
-    ).await?;
+    )
+    .await?;
     request.repository_root = repository_root;
     request = request.with_prepared_code_map_context(prepared_context);
     let dispatch_plan = if request.dispatch {
@@ -2764,7 +2765,8 @@ async fn prepare_runtime_code_map_context_at_database(
         runtime_config,
         neoth_home,
         freedom_config_path,
-    ).await
+    )
+    .await
 }
 
 /// Observer handle. It contains no JoinHandle and cannot detach the run.

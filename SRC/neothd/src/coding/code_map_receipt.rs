@@ -826,7 +826,11 @@ impl PreparedCodeMapContext {
             source.sanitize_metadata_for_receipt()?;
         }
         validate_sources(&sources)?;
-        Ok(Self { text, sources, semantic_query_outcome: None })
+        Ok(Self {
+            text,
+            sources,
+            semantic_query_outcome: None,
+        })
     }
 
     /// Original assembled code-map text, before decomposer truncation.
@@ -842,7 +846,10 @@ impl PreparedCodeMapContext {
     /// Record the content-free result of the optional local semantic lane on
     /// the targeted source that it refined.  This remains receipt-only
     /// metadata; source text and embeddings never enter the receipt.
-    pub fn with_semantic_query_outcome(mut self, outcome: CodeMapSemanticQueryOutcome) -> Result<Self> {
+    pub fn with_semantic_query_outcome(
+        mut self,
+        outcome: CodeMapSemanticQueryOutcome,
+    ) -> Result<Self> {
         self.semantic_query_outcome = Some(outcome);
         Ok(self)
     }
@@ -1746,12 +1753,26 @@ mod tests {
 
     #[test]
     fn prepared_receipt_records_content_free_semantic_fallback() {
-        let prepared = PreparedCodeMapContext::new("context".to_owned(), vec![source(CodeMapContextKind::TargetedRecall)])
-            .unwrap()
-            .with_semantic_query_outcome(CodeMapSemanticQueryOutcome::ProviderDrift)
+        let prepared = PreparedCodeMapContext::new(
+            "context".to_owned(),
+            vec![source(CodeMapContextKind::TargetedRecall)],
+        )
+        .unwrap()
+        .with_semantic_query_outcome(CodeMapSemanticQueryOutcome::ProviderDrift)
+        .unwrap();
+        let receipt = prepared
+            .receipt(
+                KanbanSessionId(9),
+                1,
+                "operator prompt",
+                "context",
+                "provider prompt",
+            )
             .unwrap();
-        let receipt = prepared.receipt(KanbanSessionId(9), 1, "operator prompt", "context", "provider prompt").unwrap();
-        assert_eq!(receipt.semantic_query_outcome, Some(CodeMapSemanticQueryOutcome::ProviderDrift));
+        assert_eq!(
+            receipt.semantic_query_outcome,
+            Some(CodeMapSemanticQueryOutcome::ProviderDrift)
+        );
         let serialized = serde_json::to_string(&receipt).unwrap();
         assert!(!serialized.contains("operator prompt"));
         assert!(!serialized.contains("provider prompt"));

@@ -620,8 +620,9 @@ async fn run_reindex_embeddings(
         let conn = crate::code_map::persist::open(&db_path)
             .with_context(|| format!("open code-map database at {}", db_path.display()))?;
         crate::code_map::vector_embeddings::ensure_schema(&conn)?;
-        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(&conn, root.path())?
-            .context("no active code-map snapshot; run `neoth code-map refresh` first")?;
+        let snapshot =
+            crate::code_map::recall::resolve_active_root_snapshot(&conn, root.path())?
+                .context("no active code-map snapshot; run `neoth code-map refresh` first")?;
         anyhow::ensure!(
             crate::code_map::persist::root_snapshot_complete(&conn, snapshot.root.display())?,
             "active code-map root was published from a partial scan; rebuild it without custom limits"
@@ -636,24 +637,35 @@ async fn run_reindex_embeddings(
     let home = crate::config::FreedomConfig::default_neoth_home();
     let config_path = crate::config::FreedomConfig::default_path();
     let provider = crate::providers::local_embedding_provider_from_config_at_path(
-        &config, &home, &config_path,
-    ).await.context("initialize sealed local embedding provider")?
-        .context("local embedding provider is unavailable or not ready")?;
-    let stored = crate::code_map::vector_embeddings::reindex_current(
-        &db_path, &snapshot, &provider, full,
-    ).await?;
+        &config,
+        &home,
+        &config_path,
+    )
+    .await
+    .context("initialize sealed local embedding provider")?
+    .context("local embedding provider is unavailable or not ready")?;
+    let stored =
+        crate::code_map::vector_embeddings::reindex_current(&db_path, &snapshot, &provider, full)
+            .await?;
     let complete = crate::code_map::vector_embeddings::complete_corpus_for_snapshot(
-        &crate::code_map::persist::open(&db_path)?, &snapshot, &provider,
-    )?.is_some();
-    render_lifecycle_value("code-map embedding reindex", &json!({
-        "root": snapshot.root.display(),
-        "root_identity": snapshot.root.identity().as_str(),
-        "index_generation": snapshot.index_generation,
-        "chunk_generation": snapshot.chunk_generation,
-        "mode": if full { "full" } else { "delta" },
-        "embedded_chunks": stored,
-        "complete": complete,
-    }), output)
+        &crate::code_map::persist::open(&db_path)?,
+        &snapshot,
+        &provider,
+    )?
+    .is_some();
+    render_lifecycle_value(
+        "code-map embedding reindex",
+        &json!({
+            "root": snapshot.root.display(),
+            "root_identity": snapshot.root.identity().as_str(),
+            "index_generation": snapshot.index_generation,
+            "chunk_generation": snapshot.chunk_generation,
+            "mode": if full { "full" } else { "delta" },
+            "embedded_chunks": stored,
+            "complete": complete,
+        }),
+        output,
+    )
 }
 
 async fn run_lifecycle_refresh_with_signal<S>(

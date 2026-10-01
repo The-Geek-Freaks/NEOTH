@@ -69,5 +69,48 @@
   "hostedProductAcceptance": false,
   "nativeReleaseAccepted": false,
   "noSlintChanges": true,
-  "priorPlanBytesPreserved": true
+  "priorPlanBytesPreserved": true,
+  "hostedFormatting": {
+    "producer": "13e0f5777443f282952ef2cbc99f2686428c8b32",
+    "run": 36895460994,
+    "artifactId": 11179132261,
+    "archiveSHA256": "A5CA730877A8A5B677A5D75C101C65C78569B758257E94C69A04C069DE69CFE3",
+    "patchSHA256": "04D19ADF5A11568A5FC369B6AC63C577F4A35290D9287D1009918EC05BEF3F67",
+    "paths": [
+      "SRC/neothd/src/cli/code.rs",
+      "SRC/neothd/src/cli/code_map.rs",
+      "SRC/neothd/src/code_map/vector_embeddings.rs",
+      "SRC/neothd/src/coding/code_map_receipt.rs",
+      "SRC/neothd/src/coding/service.rs"
+    ],
+    "rawGitBindings": [
+      {
+        "path": "SRC/neothd/src/cli/code.rs",
+        "before": "36ff15329c27db8cdf8fb651f697feb434e48b1a",
+        "after": "3e9a40e2e537c701781ae5c2b0e257367f221af4"
+      },
+      {
+        "path": "SRC/neothd/src/cli/code_map.rs",
+        "before": "375270f8280da0bb079e1577cac6395cbf19afa4",
+        "after": "1d6b2b489229a2108405f05be65442faacc65100"
+      },
+      {
+        "path": "SRC/neothd/src/code_map/vector_embeddings.rs",
+        "before": "5cbb78a766d834e23cacabf02efe4b44c802e02e",
+        "after": "60111b6192dc4f119affb86b744508f513df4f8e"
+      },
+      {
+        "path": "SRC/neothd/src/coding/code_map_receipt.rs",
+        "before": "eeed4dd0954baa9f2695c0c1a8d0865f844c113f",
+        "after": "fcb09796c6c46ae5c65670d0d4ed5b3a4826669a"
+      },
+      {
+        "path": "SRC/neothd/src/coding/service.rs",
+        "before": "af7689369d5db2f4a8231a716fdbc1f7c68d2df9",
+        "after": "6cab67df143af83024321da227b5ca6efc05fc67"
+      }
+    ],
+    "verifiedEntries": 3,
+    "localFormatterRan": false
+  }
 }
