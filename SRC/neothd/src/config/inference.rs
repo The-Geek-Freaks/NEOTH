@@ -384,7 +384,9 @@ pub struct HemisphereSlot {
 pub struct ProviderInstanceId(String);
 
 impl ProviderInstanceId {
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 
     /// Parse an operator-supplied durable instance identity using the same
     /// grammar as the config wire format. Credential/keychain consumers must
@@ -398,8 +400,14 @@ impl ProviderInstanceId {
         let valid = !value.is_empty()
             && value.len() <= 64
             && value.as_bytes()[0].is_ascii_lowercase()
-            && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-        if valid { Ok(()) } else { Err("provider instance id must be 1..=64 lowercase ascii letters, digits, or underscores and begin with a letter".to_owned()) }
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if valid {
+            Ok(())
+        } else {
+            Err("provider instance id must be 1..=64 lowercase ascii letters, digits, or underscores and begin with a letter".to_owned())
+        }
     }
 }
 
@@ -433,9 +441,14 @@ impl ProviderInstance {
             // Effective adapter data is never serialized as a role reference.
             // The containing binding owns the stable instance id separately.
             provider_instance_id: None,
-            provider: Some(provider), model: self.model.clone(), key: self.key.clone(),
-            endpoint: self.endpoint.clone(), openai_compat_profile: self.openai_compat_profile,
-            region: self.region.clone(), api_version: self.api_version.clone(), voice: None,
+            provider: Some(provider),
+            model: self.model.clone(),
+            key: self.key.clone(),
+            endpoint: self.endpoint.clone(),
+            openai_compat_profile: self.openai_compat_profile,
+            region: self.region.clone(),
+            api_version: self.api_version.clone(),
+            voice: None,
         }
     }
 }
@@ -446,15 +459,24 @@ pub fn provider_descriptor(id: &str) -> Option<InferenceProvider> {
     InferenceProvider::from_str(id)
 }
 
-fn deserialize_provider_instances<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ProviderInstance>, D::Error> {
+fn deserialize_provider_instances<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ProviderInstance>, D::Error> {
     let instances = Vec::<ProviderInstance>::deserialize(deserializer)?;
     let mut ids = std::collections::BTreeSet::new();
     for instance in &instances {
         if !ids.insert(instance.id.as_str()) {
-            return Err(D::Error::custom(format!("duplicate provider instance id `{}`", instance.id.as_str())));
+            return Err(D::Error::custom(format!(
+                "duplicate provider instance id `{}`",
+                instance.id.as_str()
+            )));
         }
         if provider_descriptor(&instance.descriptor).is_none() {
-            return Err(D::Error::custom(format!("unknown provider descriptor `{}` for instance `{}`", instance.descriptor, instance.id.as_str())));
+            return Err(D::Error::custom(format!(
+                "unknown provider descriptor `{}` for instance `{}`",
+                instance.descriptor,
+                instance.id.as_str()
+            )));
         }
     }
     Ok(instances)
@@ -512,7 +534,11 @@ struct RawHemisphereSlot {
     key: Present<SecretString>,
     #[serde(default, deserialize_with = "deserialize_present_option")]
     endpoint: Present<String>,
-    #[serde(default, alias = "open_ai_compat_profile", deserialize_with = "deserialize_present_option")]
+    #[serde(
+        default,
+        alias = "open_ai_compat_profile",
+        deserialize_with = "deserialize_present_option"
+    )]
     openai_compat_profile: Present<OpenAiCompatibleProfile>,
     #[serde(default, deserialize_with = "deserialize_present_option")]
     region: Present<String>,
@@ -527,20 +553,33 @@ impl<'de> Deserialize<'de> for HemisphereSlot {
         let raw = RawHemisphereSlot::deserialize(deserializer)?;
         let named_key_present = raw.provider_instance_id.is_present;
         let named = raw.provider_instance_id.value.as_ref();
-        let inline_present = raw.provider.is_present || raw.model.is_present || raw.key.is_present
-            || raw.endpoint.is_present || raw.openai_compat_profile.is_present || raw.region.is_present
-            || raw.api_version.is_present || raw.voice.is_present;
+        let inline_present = raw.provider.is_present
+            || raw.model.is_present
+            || raw.key.is_present
+            || raw.endpoint.is_present
+            || raw.openai_compat_profile.is_present
+            || raw.region.is_present
+            || raw.api_version.is_present
+            || raw.voice.is_present;
         if named_key_present && inline_present {
-            return Err(D::Error::custom("provider_instance_id cannot be combined with inline provider authority"));
+            return Err(D::Error::custom(
+                "provider_instance_id cannot be combined with inline provider authority",
+            ));
         }
         if named_key_present && named.is_none() {
-            return Err(D::Error::custom("provider_instance_id must be a non-null stable id"));
+            return Err(D::Error::custom(
+                "provider_instance_id must be a non-null stable id",
+            ));
         }
         Ok(Self {
-            provider_instance_id: named.cloned(), provider: raw.provider.value,
-            model: raw.model.value, key: raw.key.value,
-            endpoint: raw.endpoint.value, openai_compat_profile: raw.openai_compat_profile.value,
-            region: raw.region.value, api_version: raw.api_version.value,
+            provider_instance_id: named.cloned(),
+            provider: raw.provider.value,
+            model: raw.model.value,
+            key: raw.key.value,
+            endpoint: raw.endpoint.value,
+            openai_compat_profile: raw.openai_compat_profile.value,
+            region: raw.region.value,
+            api_version: raw.api_version.value,
             voice: raw.voice.value,
         })
     }
@@ -549,7 +588,10 @@ impl<'de> Deserialize<'de> for HemisphereSlot {
 impl Serialize for HemisphereSlot {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        if let Some(id) = &self.provider_instance_id { map.serialize_entry("provider_instance_id", id)?; return map.end(); }
+        if let Some(id) = &self.provider_instance_id {
+            map.serialize_entry("provider_instance_id", id)?;
+            return map.end();
+        }
         // Match the pre-instance derived-Serialize wire shape for inline
         // slots, including explicit nulls for unset legacy fields.
         map.serialize_entry("provider", &self.provider)?;
@@ -680,7 +722,11 @@ pub struct InferenceTopology {
     pub default_slot: HemisphereSlot,
     /// Named reusable transport bindings.  Roles reference these by stable id;
     /// instances own endpoint, credential, model and wire profile together.
-    #[serde(default, deserialize_with = "deserialize_provider_instances", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_provider_instances",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub provider_instances: Vec<ProviderInstance>,
     /// Per-hemisphere overrides (only consulted when `mode = custom` or
     /// `triplet`).
@@ -1420,9 +1466,16 @@ impl TopologyMode {
 
 impl InferenceTopology {
     fn instance(&self, id: &ProviderInstanceId) -> anyhow::Result<&ProviderInstance> {
-        let mut matches = self.provider_instances.iter().filter(|instance| instance.id == *id);
-        let instance = matches.next().ok_or_else(|| anyhow::anyhow!("unknown provider_instance_id `{}`", id.as_str()))?;
-        if matches.next().is_some() { anyhow::bail!("duplicate provider instance id `{}`", id.as_str()); }
+        let mut matches = self
+            .provider_instances
+            .iter()
+            .filter(|instance| instance.id == *id);
+        let instance = matches
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("unknown provider_instance_id `{}`", id.as_str()))?;
+        if matches.next().is_some() {
+            anyhow::bail!("duplicate provider instance id `{}`", id.as_str());
+        }
         Ok(instance)
     }
 
@@ -1440,7 +1493,13 @@ impl InferenceTopology {
                 id.as_str()
             );
             let instance = self.instance(id)?;
-            let provider = provider_descriptor(&instance.descriptor).ok_or_else(|| anyhow::anyhow!("unknown provider descriptor `{}` for instance `{}`", instance.descriptor, id.as_str()))?;
+            let provider = provider_descriptor(&instance.descriptor).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown provider descriptor `{}` for instance `{}`",
+                    instance.descriptor,
+                    id.as_str()
+                )
+            })?;
             return Ok(ResolvedProviderBinding {
                 slot: instance.resolved_slot(provider),
                 provider_instance_id: Some(id.as_str().to_owned()),
@@ -1448,7 +1507,10 @@ impl InferenceTopology {
                 is_named_instance: true,
             });
         }
-        let descriptor = slot.provider.map(InferenceProvider::as_str).unwrap_or("legacy_primary");
+        let descriptor = slot
+            .provider
+            .map(InferenceProvider::as_str)
+            .unwrap_or("legacy_primary");
         Ok(ResolvedProviderBinding {
             slot: slot.clone(),
             provider_instance_id: None,
@@ -1459,14 +1521,21 @@ impl InferenceTopology {
 
     /// Resolve the effective role route into one owned binding before any
     /// factory, cost, or audit consumer can discard its instance identity.
-    pub fn resolve_role_binding(&self, role: HemisphereRole) -> anyhow::Result<ResolvedProviderBinding> {
+    pub fn resolve_role_binding(
+        &self,
+        role: HemisphereRole,
+    ) -> anyhow::Result<ResolvedProviderBinding> {
         self.resolve_explicit_slot_binding(self.slot_for(role))
     }
 
     /// Same resolver for recursive Council leaves.  This is intentionally
     /// separate from `slot_for_sub` so Cron's legacy raw accessor remains
     /// unchanged while new named consumers cannot silently degrade.
-    pub fn resolve_sub_role_binding(&self, outer_role: HemisphereRole, inner_role: HemisphereRole) -> anyhow::Result<ResolvedProviderBinding> {
+    pub fn resolve_sub_role_binding(
+        &self,
+        outer_role: HemisphereRole,
+        inner_role: HemisphereRole,
+    ) -> anyhow::Result<ResolvedProviderBinding> {
         self.resolve_explicit_slot_binding(self.slot_for_sub(outer_role, inner_role))
     }
 
@@ -1475,8 +1544,16 @@ impl InferenceTopology {
     pub fn validate_provider_instances(&self) -> anyhow::Result<()> {
         let mut ids = std::collections::BTreeSet::new();
         for instance in &self.provider_instances {
-            if !ids.insert(instance.id.as_str()) { anyhow::bail!("duplicate provider instance id `{}`", instance.id.as_str()); }
-            if provider_descriptor(&instance.descriptor).is_none() { anyhow::bail!("unknown provider descriptor `{}` for instance `{}`", instance.descriptor, instance.id.as_str()); }
+            if !ids.insert(instance.id.as_str()) {
+                anyhow::bail!("duplicate provider instance id `{}`", instance.id.as_str());
+            }
+            if provider_descriptor(&instance.descriptor).is_none() {
+                anyhow::bail!(
+                    "unknown provider descriptor `{}` for instance `{}`",
+                    instance.descriptor,
+                    instance.id.as_str()
+                );
+            }
         }
         Ok(())
     }
@@ -2559,7 +2636,10 @@ trigger:
     }
     #[test]
     fn provider_instance_id_parse_reuses_wire_validation() {
-        assert_eq!(ProviderInstanceId::parse("compat_a").unwrap().as_str(), "compat_a");
+        assert_eq!(
+            ProviderInstanceId::parse("compat_a").unwrap().as_str(),
+            "compat_a"
+        );
         assert!(ProviderInstanceId::parse("Compat-A").is_err());
     }
 
@@ -2569,7 +2649,9 @@ trigger:
             "mode: custom\nprovider_instances:\n  - id: compat_a\n    descriptor: openai_compat\n    endpoint: https://a.example/v1\n    model: model-a\n  - id: compat_b\n    descriptor: openai_compat\n    endpoint: https://b.example/v1\n    model: model-b\nleft: { provider_instance_id: compat_a }\nright: { provider_instance_id: compat_b }\n",
         ).unwrap();
         let left = topology.resolve_role_binding(HemisphereRole::Left).unwrap();
-        let right = topology.resolve_role_binding(HemisphereRole::Right).unwrap();
+        let right = topology
+            .resolve_role_binding(HemisphereRole::Right)
+            .unwrap();
         assert_eq!(left.slot.provider, Some(InferenceProvider::OpenAiCompat));
         assert_eq!(left.slot.endpoint.as_deref(), Some("https://a.example/v1"));
         assert_eq!(left.slot.model.as_deref(), Some("model-a"));
@@ -2588,21 +2670,38 @@ trigger:
             "provider_instance_id: null\nprovider: openai_compat\n",
             "provider_instance_id: null\n",
         ] {
-            assert!(serde_yaml::from_str::<HemisphereSlot>(yaml).is_err(), "{yaml}");
+            assert!(
+                serde_yaml::from_str::<HemisphereSlot>(yaml).is_err(),
+                "{yaml}"
+            );
         }
     }
 
     #[test]
     fn provider_instance_validation_rejects_duplicate_unknown_descriptor_and_reference() {
         assert!(serde_yaml::from_str::<InferenceTopology>("provider_instances:\n  - { id: compat_a, descriptor: openai_compat }\n  - { id: compat_a, descriptor: openai_compat }\n").is_err());
-        assert!(serde_yaml::from_str::<InferenceTopology>("provider_instances:\n  - { id: compat_a, descriptor: unimplemented_transport }\n").is_err());
-        let unknown_ref: InferenceTopology = serde_yaml::from_str("mode: custom\nleft: { provider_instance_id: missing }\n").unwrap();
-        assert!(unknown_ref.resolve_role_binding(HemisphereRole::Left).is_err());
+        assert!(
+            serde_yaml::from_str::<InferenceTopology>(
+                "provider_instances:\n  - { id: compat_a, descriptor: unimplemented_transport }\n"
+            )
+            .is_err()
+        );
+        let unknown_ref: InferenceTopology =
+            serde_yaml::from_str("mode: custom\nleft: { provider_instance_id: missing }\n")
+                .unwrap();
+        assert!(
+            unknown_ref
+                .resolve_role_binding(HemisphereRole::Left)
+                .is_err()
+        );
     }
 
     #[test]
     fn legacy_inline_slot_round_trips_without_reference_shape() {
-        let slot: HemisphereSlot = serde_yaml::from_str("provider: openai_compat\nendpoint: http://127.0.0.1:1234/v1\nmodel: local-model\n").unwrap();
+        let slot: HemisphereSlot = serde_yaml::from_str(
+            "provider: openai_compat\nendpoint: http://127.0.0.1:1234/v1\nmodel: local-model\n",
+        )
+        .unwrap();
         let encoded = serde_yaml::to_string(&slot).unwrap();
         assert_eq!(
             encoded,
@@ -2615,8 +2714,12 @@ trigger:
 
     #[test]
     fn named_slot_serializes_only_its_reference() {
-        let slot: HemisphereSlot = serde_yaml::from_str("provider_instance_id: compat_a\n").unwrap();
-        assert_eq!(serde_yaml::to_string(&slot).unwrap(), "provider_instance_id: compat_a\n");
+        let slot: HemisphereSlot =
+            serde_yaml::from_str("provider_instance_id: compat_a\n").unwrap();
+        assert_eq!(
+            serde_yaml::to_string(&slot).unwrap(),
+            "provider_instance_id: compat_a\n"
+        );
     }
 
     #[test]

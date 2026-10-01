@@ -4210,7 +4210,7 @@ mod managed_browser_config_tests {
 
 #[cfg(test)]
 mod provider_instance_credential_tests {
-    use super::{credentials::Credentials, merge_effective_credentials, FreedomConfig};
+    use super::{FreedomConfig, credentials::Credentials, merge_effective_credentials};
     use crate::secret::SecretString;
 
     #[test]
@@ -4221,16 +4221,19 @@ mod provider_instance_credential_tests {
         .unwrap();
         let mut credentials = Credentials::default();
         credentials.inference_left_key = Some(SecretString::from("legacy-left"));
-        credentials.inference_provider_instance_keys.insert(
-            "compat_a".into(),
-            Some(SecretString::from("named-secret")),
-        );
+        credentials
+            .inference_provider_instance_keys
+            .insert("compat_a".into(), Some(SecretString::from("named-secret")));
 
         merge_effective_credentials(&mut config, &credentials);
 
         assert!(config.inference.left.key.is_none());
         assert_eq!(
-            config.inference.provider_instances[0].key.as_ref().unwrap().expose(),
+            config.inference.provider_instances[0]
+                .key
+                .as_ref()
+                .unwrap()
+                .expose(),
             "named-secret"
         );
         let public = config.public_yaml().unwrap();

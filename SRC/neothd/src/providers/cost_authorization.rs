@@ -8069,11 +8069,14 @@ mod tests {
     #[test]
     fn provider_lifecycle_context_keeps_instance_and_descriptor_identity() {
         let mut payload = serde_json::Map::new();
-        add_audit_context(&mut payload, &ProviderCallAuditContext {
-            provider_instance_id: Some("compat_b".into()),
-            provider_descriptor_id: Some("openai_compat".into()),
-            ..Default::default()
-        });
+        add_audit_context(
+            &mut payload,
+            &ProviderCallAuditContext {
+                provider_instance_id: Some("compat_b".into()),
+                provider_descriptor_id: Some("openai_compat".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(payload["provider_instance_id"], "compat_b");
         assert_eq!(payload["provider_descriptor_id"], "openai_compat");
     }

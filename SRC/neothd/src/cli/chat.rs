@@ -506,8 +506,12 @@ fn plan_verifiability_route(
         return Ok(VerifiabilityRoute::PreserveConfigured);
     };
     let policy = &config.verifiability_routing;
-    let local = config.inference.resolve_role_binding(policy.local_specialist_role)?;
-    let frontier = config.inference.resolve_role_binding(policy.frontier_role)?;
+    let local = config
+        .inference
+        .resolve_role_binding(policy.local_specialist_role)?;
+    let frontier = config
+        .inference
+        .resolve_role_binding(policy.frontier_role)?;
     let evidence = policy
         .enabled
         .then(|| {
@@ -530,19 +534,25 @@ fn plan_verifiability_route(
             .is_some_and(|row| {
                 row.call_count >= crate::analytics::specialist_advisor::DEFAULT_MINIMUM_CALL_COUNT
             });
-    Ok(crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput {
-        enabled: policy.enabled,
-        workflow_bound: true,
-        changing_facts: args.changing_facts,
-        evidence,
-        meets_specialist_volume: high_volume,
-        local_specialist_role: policy.local_specialist_role,
-        local_specialist_available: local.slot.provider.is_some_and(InferenceProvider::is_local),
-        frontier_role: policy.frontier_role,
-        frontier_available: frontier.slot
-            .provider
-            .is_some_and(|provider| !provider.is_local()),
-    }))
+    Ok(crate::models::selector::decide_verifiability_route(
+        VerifiabilityRoutingInput {
+            enabled: policy.enabled,
+            workflow_bound: true,
+            changing_facts: args.changing_facts,
+            evidence,
+            meets_specialist_volume: high_volume,
+            local_specialist_role: policy.local_specialist_role,
+            local_specialist_available: local
+                .slot
+                .provider
+                .is_some_and(InferenceProvider::is_local),
+            frontier_role: policy.frontier_role,
+            frontier_available: frontier
+                .slot
+                .provider
+                .is_some_and(|provider| !provider.is_local()),
+        },
+    ))
 }
 
 fn config_with_verifiability_role(
@@ -18799,7 +18809,8 @@ modes:
             ..Default::default()
         });
 
-        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
+        let route_safe =
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         assert_eq!(
             primary_only - route_safe,
             u32::try_from(fallback_model.len() - primary_model.len()).unwrap(),
@@ -18821,10 +18832,10 @@ modes:
             "provider_instances:\n  - id: cap-fallback\n    descriptor: openai_compat\n    endpoint: https://cap-fallback.example/v1\n    model: {fallback_model}\n"
         ))
         .expect("parse named routing-cap fallback instance");
-        config.fallback.chain = vec![serde_yaml::from_str(
-            "provider_instance_id: cap-fallback",
-        )
-        .expect("parse named routing-cap fallback reference")];
+        config.fallback.chain = vec![
+            serde_yaml::from_str("provider_instance_id: cap-fallback")
+                .expect("parse named routing-cap fallback reference"),
+        ];
 
         let route_safe =
             routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
@@ -18850,7 +18861,8 @@ modes:
         });
 
         let primary_model = "p";
-        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
+        let route_safe =
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         let wire_model = "claude-opus-4-7[1m]";
         let leaf_cap = crate::tokens::budget::effective_cap(
             "claude_cli",
@@ -24515,7 +24527,9 @@ template = "[REDACTED]"
     fn fan_out_advisory_line_fires_for_two_distinct_clouds() {
         use crate::config::inference::InferenceProvider as I;
         let cfg = mk_advisory_config(Some(I::OpenAi), Some(I::Gemini), Some(I::LocalQwen));
-        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("≥2 clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg)
+            .unwrap()
+            .expect("≥2 clouds should fire");
         assert!(line.contains("2 cloud providers"));
         assert!(line.contains("openai_api"));
         assert!(line.contains("gemini_api"));
@@ -24526,7 +24540,9 @@ template = "[REDACTED]"
     fn fan_out_advisory_line_fires_for_three_distinct_clouds() {
         use crate::config::inference::InferenceProvider as I;
         let cfg = mk_advisory_config(Some(I::ClaudeCli), Some(I::OpenAi), Some(I::Gemini));
-        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("3 clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg)
+            .unwrap()
+            .expect("3 clouds should fire");
         assert!(line.contains("3 cloud providers"));
         for slug in ["claude_cli", "openai_api", "gemini_api"] {
             assert!(line.contains(slug), "advisory must name {slug}: {line}");
@@ -24538,7 +24554,9 @@ template = "[REDACTED]"
         use crate::config::inference::InferenceProvider as I;
         // Left=Right=ClaudeCli, Cerebellum=Gemini → 2 distinct kinds.
         let cfg = mk_advisory_config(Some(I::ClaudeCli), Some(I::ClaudeCli), Some(I::Gemini));
-        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("2 distinct clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg)
+            .unwrap()
+            .expect("2 distinct clouds should fire");
         assert!(line.contains("2 cloud providers"));
         // ClaudeCli appears once, not twice.
         let claude_count = line.matches("claude_cli").count();
@@ -28661,8 +28679,14 @@ mod attach_tests {
             .inference
             .resolve_role_binding(HemisphereRole::Left)
             .expect("D7-pinned Left retains the named transport reference");
-        assert_eq!(selected_binding.provider_instance_id.as_deref(), Some("d7-frontier"));
-        assert_eq!(selected_binding.slot.model.as_deref(), Some("d7-frontier-model"));
+        assert_eq!(
+            selected_binding.provider_instance_id.as_deref(),
+            Some("d7-frontier")
+        );
+        assert_eq!(
+            selected_binding.slot.model.as_deref(),
+            Some("d7-frontier-model")
+        );
     }
 
     #[tokio::test]

@@ -8216,14 +8216,15 @@ mod tests {
 
     #[test]
     fn provider_instance_credential_map_rejects_noncanonical_ids() {
-        assert!(serde_yaml::from_str::<Credentials>(
-            "inference_provider_instance_keys:\n  Compat-A: secret\n"
-        )
-        .is_err());
-        let credentials: Credentials = serde_yaml::from_str(
-            "inference_provider_instance_keys:\n  compat_a: secret\n",
-        )
-        .unwrap();
+        assert!(
+            serde_yaml::from_str::<Credentials>(
+                "inference_provider_instance_keys:\n  Compat-A: secret\n"
+            )
+            .is_err()
+        );
+        let credentials: Credentials =
+            serde_yaml::from_str("inference_provider_instance_keys:\n  compat_a: secret\n")
+                .unwrap();
         assert_eq!(
             credentials.inference_provider_instance_keys["compat_a"]
                 .as_ref()
@@ -8250,14 +8251,10 @@ mod tests {
         );
         credentials.write(&credentials_path).unwrap();
 
-        Credentials::update_with_freedom_at(
-            &freedom_path,
-            &credentials_path,
-            |config, _| {
-                config.operator_id = Some("updated".into());
-                Ok(())
-            },
-        )
+        Credentials::update_with_freedom_at(&freedom_path, &credentials_path, |config, _| {
+            config.operator_id = Some("updated".into());
+            Ok(())
+        })
         .unwrap();
 
         let public = std::fs::read_to_string(&freedom_path).unwrap();

@@ -1363,7 +1363,9 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
     // outer role and therefore need no duplicate candidate here.
     for outer_role in config.inference.hemisphere_sub_slots.keys() {
         for role in roles {
-            let binding = config.inference.resolve_sub_role_binding(*outer_role, role)?;
+            let binding = config
+                .inference
+                .resolve_sub_role_binding(*outer_role, role)?;
             let slot = binding.slot;
             if let Some(provider) = slot.provider {
                 candidates.push(route_for_provider_config(
@@ -1392,8 +1394,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<
             let binding = config.inference.resolve_explicit_slot_binding(slot)?;
             let slot = binding.slot;
             if let Some(provider) = slot.provider {
-                candidates.push(
-                route_for_provider_config(
+                candidates.push(route_for_provider_config(
                     provider.to_provider_kind(),
                     slot.endpoint.as_deref(),
                     if binding.is_named_instance {
@@ -2222,7 +2223,8 @@ mod tests {
             ..HemisphereSlot::default()
         };
 
-        let routes: Vec<_> = required_consent_routes(&cfg).unwrap()
+        let routes: Vec<_> = required_consent_routes(&cfg)
+            .unwrap()
             .into_iter()
             .filter(|route| route.kind == ProviderKind::LocalOllama)
             .collect();
@@ -2359,7 +2361,8 @@ mod tests {
             ..Default::default()
         });
 
-        let origins = required_consent_routes(&cfg).unwrap()
+        let origins = required_consent_routes(&cfg)
+            .unwrap()
             .into_iter()
             .filter(|route| route.kind == ProviderKind::AwsBedrock)
             .map(|route| route_endpoint_origin(&route).unwrap().unwrap())
@@ -2393,7 +2396,8 @@ mod tests {
         });
 
         assert!(
-            required_consent_routes(&cfg).unwrap()
+            required_consent_routes(&cfg)
+                .unwrap()
                 .into_iter()
                 .all(|route| route.kind != ProviderKind::AwsBedrock)
         );
@@ -2476,7 +2480,9 @@ mod tests {
             provider_endpoint: Some("http://10.0.0.9:11434".into()),
             ..Default::default()
         };
-        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left).unwrap().unwrap();
+        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left)
+            .unwrap()
+            .unwrap();
         assert_eq!(route.kind, ProviderKind::LocalOllama);
         assert_eq!(route.endpoint.as_deref(), Some("http://10.0.0.9:11434"));
         assert!(route_requires_consent(
@@ -2511,7 +2517,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(route.kind, ProviderKind::AwsBedrock);
-        assert_eq!(route.endpoint.as_deref(), Some(INVALID_BEDROCK_CONSENT_ROUTE));
+        assert_eq!(
+            route.endpoint.as_deref(),
+            Some(INVALID_BEDROCK_CONSENT_ROUTE)
+        );
     }
 
     // Note: bypass-env semantics for `ensure_all_granted_or_prompt` are

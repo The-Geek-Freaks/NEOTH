@@ -636,7 +636,13 @@ fn effective_route_bindings(
     // Left is always the primary runtime route. Right/Cerebellum and recursive
     // leaves exist only when the council can actually dispatch them.
     match config.inference.resolve_role_binding(HemisphereRole::Left) {
-        Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+        Ok(binding) => push_slot_binding(
+            &mut bindings,
+            config,
+            &binding.slot,
+            binding.is_named_instance,
+            home,
+        ),
         Err(_) => invalid_auxiliary = true,
     }
     let council_enabled =
@@ -644,7 +650,13 @@ fn effective_route_bindings(
     if council_enabled {
         for role in [HemisphereRole::Right, HemisphereRole::Cerebellum] {
             match config.inference.resolve_role_binding(role) {
-                Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+                Ok(binding) => push_slot_binding(
+                    &mut bindings,
+                    config,
+                    &binding.slot,
+                    binding.is_named_instance,
+                    home,
+                ),
                 Err(_) => invalid_auxiliary = true,
             }
         }
@@ -652,7 +664,13 @@ fn effective_route_bindings(
             for outer in ROLES {
                 for inner in ROLES {
                     match config.inference.resolve_sub_role_binding(outer, inner) {
-                        Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+                        Ok(binding) => push_slot_binding(
+                            &mut bindings,
+                            config,
+                            &binding.slot,
+                            binding.is_named_instance,
+                            home,
+                        ),
                         Err(_) => invalid_auxiliary = true,
                     }
                 }
@@ -727,9 +745,15 @@ fn effective_route_bindings(
                 continue;
             };
             let kind = provider.to_provider_kind();
-            let region = explicit_binding_region(config, kind, &binding.slot, binding.is_named_instance);
+            let region =
+                explicit_binding_region(config, kind, &binding.slot, binding.is_named_instance);
             if let Some(home) = home {
-                if !route_consented(Some(home), kind, binding.slot.endpoint.as_deref(), region.as_deref()) {
+                if !route_consented(
+                    Some(home),
+                    kind,
+                    binding.slot.endpoint.as_deref(),
+                    region.as_deref(),
+                ) {
                     continue;
                 }
             }
@@ -861,7 +885,10 @@ fn explicit_binding_region(
     } else if is_named_instance {
         binding_region(kind, slot.region.as_deref())
     } else {
-        binding_region(kind, slot.region.as_deref().or(config.provider_region.as_deref()))
+        binding_region(
+            kind,
+            slot.region.as_deref().or(config.provider_region.as_deref()),
+        )
     }
 }
 
@@ -2105,10 +2132,10 @@ mod tests {
         )
         .unwrap();
         config.fallback.max_hops = 1;
-        config.fallback.chain.push(serde_yaml::from_str(
-            "provider_instance_id: fallback_bedrock\n",
-        )
-        .unwrap());
+        config
+            .fallback
+            .chain
+            .push(serde_yaml::from_str("provider_instance_id: fallback_bedrock\n").unwrap());
 
         let fallback_binding = |config: &FreedomConfig| {
             effective_route_bindings(config, Some(home.path()))

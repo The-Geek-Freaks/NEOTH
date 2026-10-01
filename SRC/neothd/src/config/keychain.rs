@@ -121,7 +121,10 @@ pub(crate) fn telegram_account_token_key(
 pub(crate) fn provider_instance_key(instance_id: &str) -> Result<String> {
     let instance_id = crate::config::inference::ProviderInstanceId::parse(instance_id)
         .context("validate named provider instance credential id")?;
-    Ok(format!("inference-provider-instance/{}/key", instance_id.as_str()))
+    Ok(format!(
+        "inference-provider-instance/{}/key",
+        instance_id.as_str()
+    ))
 }
 
 fn provider_instance_keys(
@@ -1108,7 +1111,8 @@ pub fn migrate_to_file(
                     *populated
                         .inference_provider_instance_keys
                         .get_mut(instance_id)
-                        .expect("cloned provider instance key disappeared during migration") = Some(secret);
+                        .expect("cloned provider instance key disappeared during migration") =
+                        Some(secret);
                 }
                 moved.push(store_key);
             }
@@ -1276,14 +1280,12 @@ mod tests {
     fn provider_instance_key_round_trips_through_keychain_without_cross_instance_reuse() {
         let store = InMemorySecretStore::default();
         let mut credentials = Credentials::default();
-        credentials.inference_provider_instance_keys.insert(
-            "compat_a".into(),
-            Some(SecretString::from("instance-a")),
-        );
-        credentials.inference_provider_instance_keys.insert(
-            "compat_b".into(),
-            Some(SecretString::from("instance-b")),
-        );
+        credentials
+            .inference_provider_instance_keys
+            .insert("compat_a".into(), Some(SecretString::from("instance-a")));
+        credentials
+            .inference_provider_instance_keys
+            .insert("compat_b".into(), Some(SecretString::from("instance-b")));
 
         let (blanked, to_keychain) = migrate_to_keychain(&credentials, &store, false).unwrap();
         assert!(to_keychain.is_clean());

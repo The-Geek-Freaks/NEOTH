@@ -147,7 +147,12 @@ impl FallbackProvider {
             })
             .collect();
         Self::new_with_models_and_bindings_at(
-            chain, configured_models, bindings, max_hops, wal_writer, quota_path,
+            chain,
+            configured_models,
+            bindings,
+            max_hops,
+            wal_writer,
+            quota_path,
         )
     }
 
@@ -171,7 +176,11 @@ impl FallbackProvider {
             configured_models.len(),
             "FallbackProvider model metadata must match the provider chain"
         );
-        assert_eq!(chain.len(), bindings.len(), "FallbackProvider binding metadata must match the provider chain");
+        assert_eq!(
+            chain.len(),
+            bindings.len(),
+            "FallbackProvider binding metadata must match the provider chain"
+        );
         Self {
             chain,
             configured_models,
@@ -412,23 +421,23 @@ impl FallbackProvider {
                 Some((authorizer, call_scope)) => {
                     let leaf_authorizer = self.authorizer_for_candidate(authorizer, i);
                     match cancellation.as_ref() {
-                    Some(cancellation) => {
-                        candidate
-                            .complete_authorized_cancellable(
-                                candidate_req,
-                                &leaf_authorizer,
-                                call_scope,
-                                std::sync::Arc::clone(cancellation),
-                            )
-                            .await
+                        Some(cancellation) => {
+                            candidate
+                                .complete_authorized_cancellable(
+                                    candidate_req,
+                                    &leaf_authorizer,
+                                    call_scope,
+                                    std::sync::Arc::clone(cancellation),
+                                )
+                                .await
+                        }
+                        None => {
+                            candidate
+                                .complete_authorized(candidate_req, &leaf_authorizer, call_scope)
+                                .await
+                        }
                     }
-                    None => {
-                        candidate
-                            .complete_authorized(candidate_req, &leaf_authorizer, call_scope)
-                            .await
-                    }
-                    }
-                },
+                }
                 None => {
                     candidate
                         .complete_raw(
@@ -642,7 +651,12 @@ impl Provider for FallbackProvider {
         candidate_req.model = Some(expected.wire_model.clone());
         let leaf_authorizer = self.authorizer_for_candidate(authorizer, index);
         let result = candidate
-            .complete_authorized_pinned(candidate_req, &child_expected, &leaf_authorizer, call_scope)
+            .complete_authorized_pinned(
+                candidate_req,
+                &child_expected,
+                &leaf_authorizer,
+                call_scope,
+            )
             .await;
         let mut completion = match result {
             Ok(completion) => completion,
@@ -1001,11 +1015,20 @@ mod tests {
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let fallback = FallbackProvider::new_with_models_and_bindings_at(
-            vec![mock("openai_compat", Behavior::Quota), mock("openai_compat", Behavior::Ok)],
+            vec![
+                mock("openai_compat", Behavior::Quota),
+                mock("openai_compat", Behavior::Ok),
+            ],
             vec![Some("model-primary".into()), Some("model-secondary".into())],
             vec![
-                FallbackCandidateBinding { provider_instance_id: Some("compat_primary".into()), provider_descriptor_id: "openai_compat".into() },
-                FallbackCandidateBinding { provider_instance_id: Some("compat_secondary".into()), provider_descriptor_id: "openai_compat".into() },
+                FallbackCandidateBinding {
+                    provider_instance_id: Some("compat_primary".into()),
+                    provider_descriptor_id: "openai_compat".into(),
+                },
+                FallbackCandidateBinding {
+                    provider_instance_id: Some("compat_secondary".into()),
+                    provider_descriptor_id: "openai_compat".into(),
+                },
             ],
             1,
             None,
@@ -1019,7 +1042,9 @@ mod tests {
         .with_usage_home(dir.path());
         let completion = fallback
             .complete_authorized_direct_retry(
-                Request::default(), &authorizer, "test.fallback.named_leaf_identity",
+                Request::default(),
+                &authorizer,
+                "test.fallback.named_leaf_identity",
             )
             .await
             .expect("secondary named fallback must complete after primary quota");

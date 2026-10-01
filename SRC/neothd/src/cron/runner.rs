@@ -530,7 +530,10 @@ fn configured_provider_slot(
             anyhow::bail!(
                 "Cron provider `{}` resolves through named instance `{}`; execution.hemisphere_role is required",
                 provider.as_str(),
-                active_left.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                active_left
+                    .provider_instance_id
+                    .as_deref()
+                    .unwrap_or("<unknown>")
             );
         }
         legacy_match = Some(active_left.slot);
@@ -548,7 +551,10 @@ fn configured_provider_slot(
                 anyhow::bail!(
                     "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
                     provider.as_str(),
-                    binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                    binding
+                        .provider_instance_id
+                        .as_deref()
+                        .unwrap_or("<unknown>")
                 );
             }
             if legacy_match.is_none() {
@@ -564,7 +570,10 @@ fn configured_provider_slot(
                     anyhow::bail!(
                         "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
                         provider.as_str(),
-                        binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                        binding
+                            .provider_instance_id
+                            .as_deref()
+                            .unwrap_or("<unknown>")
                     );
                 }
                 if legacy_match.is_none() {
@@ -580,7 +589,10 @@ fn configured_provider_slot(
                 anyhow::bail!(
                     "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
                     provider.as_str(),
-                    binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                    binding
+                        .provider_instance_id
+                        .as_deref()
+                        .unwrap_or("<unknown>")
                 );
             }
             if legacy_match.is_none() {
@@ -1942,7 +1954,8 @@ channel_accounts:
         config.provider_endpoint = Some("https://openai.example/v1".into());
 
         let slot =
-            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini).unwrap();
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini)
+                .unwrap();
         assert_eq!(
             slot.provider,
             Some(crate::config::inference::InferenceProvider::Gemini)
@@ -1975,7 +1988,8 @@ channel_accounts:
             });
 
         let slot =
-            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini).unwrap();
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini)
+                .unwrap();
         assert_eq!(slot.model.as_deref(), Some("gemini-job-model"));
         assert_eq!(
             slot.key.as_ref().map(crate::secret::SecretString::expose),
@@ -2051,7 +2065,11 @@ channel_accounts:
             crate::config::inference::InferenceProvider::OpenAiCompat,
         )
         .unwrap_err();
-        assert!(error.to_string().contains("execution.hemisphere_role is required"));
+        assert!(
+            error
+                .to_string()
+                .contains("execution.hemisphere_role is required")
+        );
     }
 
     #[test]

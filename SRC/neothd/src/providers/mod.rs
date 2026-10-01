@@ -3513,7 +3513,12 @@ async fn from_config_for_role_inner(
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
-    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind(), binding.is_named_instance);
+    let mut synthetic = synthetic_config_for_slot(
+        config,
+        slot,
+        provider_kind.to_provider_kind(),
+        binding.is_named_instance,
+    );
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
     // top-level FreedomConfig::provider_region. Only relevant for
     // aws_bedrock today; other providers ignore the field.
@@ -3619,7 +3624,11 @@ fn fallback_consent_region<'a>(
     if binding.is_named_instance {
         binding.slot.region.as_deref()
     } else {
-        binding.slot.region.as_deref().or(config.provider_region.as_deref())
+        binding
+            .slot
+            .region
+            .as_deref()
+            .or(config.provider_region.as_deref())
     }
 }
 
@@ -3640,21 +3649,36 @@ fn resolved_fallback_slots_allowed(
     config: &FreedomConfig,
     ephemeral_consent: Option<&crate::consent::EphemeralConsent>,
 ) -> Result<Vec<ResolvedFallbackSlot>> {
-    if config.fallback.max_hops == 0 { return Ok(Vec::new()); }
+    if config.fallback.max_hops == 0 {
+        return Ok(Vec::new());
+    }
     let mut allowed = Vec::new();
     for raw_slot in &config.fallback.chain {
         let binding = config.inference.resolve_explicit_slot_binding(raw_slot)?;
-        let provider = binding.slot.provider.ok_or_else(|| anyhow::anyhow!("fallback slot has no provider configured"))?;
+        let provider = binding
+            .slot
+            .provider
+            .ok_or_else(|| anyhow::anyhow!("fallback slot has no provider configured"))?;
         let route = crate::consent::route_for_provider_config(
-            provider.to_provider_kind(), binding.slot.endpoint.as_deref(),
+            provider.to_provider_kind(),
+            binding.slot.endpoint.as_deref(),
             fallback_consent_region(config, &binding),
         );
         let durable = crate::consent::is_route_granted(home, &route);
-        let ephemeral = ephemeral_consent.map(|consent| consent.permits_route(&route).unwrap_or(false)).unwrap_or(false);
+        let ephemeral = ephemeral_consent
+            .map(|consent| consent.permits_route(&route).unwrap_or(false))
+            .unwrap_or(false);
         if durable || ephemeral {
-            allowed.push(ResolvedFallbackSlot { slot: binding.slot.clone(), provider, binding });
+            allowed.push(ResolvedFallbackSlot {
+                slot: binding.slot.clone(),
+                provider,
+                binding,
+            });
         } else {
-            tracing::warn!(provider = provider.as_str(), "fallback slot skipped: cloud-egress consent not granted");
+            tracing::warn!(
+                provider = provider.as_str(),
+                "fallback slot skipped: cloud-egress consent not granted"
+            );
         }
     }
     Ok(allowed)
@@ -3694,7 +3718,9 @@ async fn fallback_chain_from_config_inner(
     }
     let mut configured_models = vec![provider_default_wire_model(primary.as_ref())];
     let mut chain: Vec<Box<dyn Provider>> = vec![primary];
-    let primary_binding = config.inference.resolve_role_binding(crate::config::inference::HemisphereRole::Left)?;
+    let primary_binding = config
+        .inference
+        .resolve_role_binding(crate::config::inference::HemisphereRole::Left)?;
     let mut bindings = vec![fallback::FallbackCandidateBinding {
         provider_instance_id: primary_binding.provider_instance_id.clone(),
         provider_descriptor_id: resolved_binding_descriptor_id(config, &primary_binding),
@@ -3705,7 +3731,12 @@ async fn fallback_chain_from_config_inner(
     // tested seam rather than an inline branch.
     for resolved in resolved_fallback_slots_allowed(home, config, ephemeral_consent)? {
         let kind = resolved.provider.to_provider_kind();
-        let mut synthetic = synthetic_config_for_slot(config, &resolved.slot, kind, resolved.binding.is_named_instance);
+        let mut synthetic = synthetic_config_for_slot(
+            config,
+            &resolved.slot,
+            kind,
+            resolved.binding.is_named_instance,
+        );
         apply_instance_catalog_default(&mut synthetic, home);
         match from_config_for_instance(&synthetic, Some(home)).await {
             Ok(p) => {
@@ -3714,7 +3745,10 @@ async fn fallback_chain_from_config_inner(
                 configured_models.push(wire_model);
                 bindings.push(fallback::FallbackCandidateBinding {
                     provider_instance_id: resolved.binding.provider_instance_id,
-                    provider_descriptor_id: resolved_binding_descriptor_id(config, &resolved.binding),
+                    provider_descriptor_id: resolved_binding_descriptor_id(
+                        config,
+                        &resolved.binding,
+                    ),
                 });
             }
             Err(e) => tracing::warn!(
@@ -3729,14 +3763,16 @@ async fn fallback_chain_from_config_inner(
         // decorator, just the primary.
         return Ok(chain.into_iter().next().expect("primary present"));
     }
-    Ok(Box::new(fallback::FallbackProvider::new_with_models_and_bindings_at(
-        chain,
-        configured_models,
-        bindings,
-        config.fallback.max_hops,
-        wal_writer,
-        home.join("quota.json"),
-    )))
+    Ok(Box::new(
+        fallback::FallbackProvider::new_with_models_and_bindings_at(
+            chain,
+            configured_models,
+            bindings,
+            config.fallback.max_hops,
+            wal_writer,
+            home.join("quota.json"),
+        ),
+    ))
 }
 
 /// E-2 Phase 3 (Session 14) — construct an adapter for an INNER
@@ -3787,7 +3823,12 @@ async fn from_config_for_sub_role_inner(
             None => from_config_for_role(config, inner_role).await,
         };
     };
-    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind(), binding.is_named_instance);
+    let mut synthetic = synthetic_config_for_slot(
+        config,
+        slot,
+        provider_kind.to_provider_kind(),
+        binding.is_named_instance,
+    );
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -6894,10 +6935,10 @@ mod tests {
         );
 
         config.fallback.max_hops = 1;
-        config.fallback.chain = vec![serde_yaml::from_str(
-            "provider_instance_id: bedrock-default-region",
-        )
-        .expect("parse named Bedrock fallback reference")];
+        config.fallback.chain = vec![
+            serde_yaml::from_str("provider_instance_id: bedrock-default-region")
+                .expect("parse named Bedrock fallback reference"),
+        ];
         let home = tempfile::tempdir().expect("create named Bedrock consent home");
         let inherited_global_route = crate::consent::route_for_provider_config(
             ProviderKind::AwsBedrock,
@@ -6912,11 +6953,8 @@ mod tests {
                 .is_empty(),
             "a named Bedrock instance without region must not inherit the global route"
         );
-        let adapter_default_route = crate::consent::route_for_provider_config(
-            ProviderKind::AwsBedrock,
-            None,
-            None,
-        );
+        let adapter_default_route =
+            crate::consent::route_for_provider_config(ProviderKind::AwsBedrock, None, None);
         crate::consent::grant_route(home.path(), &adapter_default_route)
             .expect("grant the named adapter-default route");
         assert_eq!(
@@ -6958,10 +6996,10 @@ mod tests {
         )
         .expect("parse named primary and fallback instances");
         config.fallback.max_hops = 1;
-        config.fallback.chain = vec![serde_yaml::from_str(
-            "provider_instance_id: compat_fallback",
-        )
-        .expect("parse named fallback reference")];
+        config.fallback.chain = vec![
+            serde_yaml::from_str("provider_instance_id: compat_fallback")
+                .expect("parse named fallback reference"),
+        ];
 
         let fallback = config
             .inference
@@ -6970,7 +7008,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer primary-secret"))
-            .and(body_partial_json(serde_json::json!({ "model": "primary-model" })))
+            .and(body_partial_json(
+                serde_json::json!({ "model": "primary-model" }),
+            ))
             .respond_with(ResponseTemplate::new(429).set_body_string("primary quota"))
             .expect(2)
             .mount(&primary_server)
@@ -6978,7 +7018,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer fallback-secret"))
-            .and(body_partial_json(serde_json::json!({ "model": "fallback-model" })))
+            .and(body_partial_json(
+                serde_json::json!({ "model": "fallback-model" }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{ "message": { "content": "named fallback success" } }],
                 "model": "fallback-model",
@@ -7012,14 +7054,18 @@ mod tests {
         let wrong_chain = fallback_chain_from_config(&config, wrong_home.path(), None)
             .await
             .expect("wrong-route consent skips fallback without construction failure");
-        let wrong_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
-            crate::permissions::AutonomyLevel::Full,
-        )
-        .with_usage_home(wrong_home.path());
+        let wrong_authorizer =
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            )
+            .with_usage_home(wrong_home.path());
         assert!(
             wrong_chain
                 .complete_authorized(
-                    Request { prompt: "wrong consent must not fallback".into(), ..Default::default() },
+                    Request {
+                        prompt: "wrong consent must not fallback".into(),
+                        ..Default::default()
+                    },
                     &wrong_authorizer,
                     "test.named_factory_wrong_consent",
                 )
@@ -7047,7 +7093,10 @@ mod tests {
         .with_usage_home(home.path());
         let completion = chain
             .complete_authorized(
-                Request { prompt: "prove named fallback wire authority".into(), ..Default::default() },
+                Request {
+                    prompt: "prove named fallback wire authority".into(),
+                    ..Default::default()
+                },
                 &authorizer,
                 "test.named_factory_fallback_wire_authority",
             )

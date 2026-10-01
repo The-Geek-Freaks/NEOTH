@@ -868,7 +868,9 @@ mod tests {
         .unwrap();
         let (kind, model, endpoint) = configured_leaf_binding(
             &config,
-            config.inference.slot_for(crate::config::inference::HemisphereRole::Left),
+            config
+                .inference
+                .slot_for(crate::config::inference::HemisphereRole::Left),
         )
         .unwrap();
         assert_eq!(kind, crate::cli::init::ProviderKind::OpenaiCompat);

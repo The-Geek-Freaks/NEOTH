@@ -4726,7 +4726,8 @@ pub(crate) async fn spawn_cron_scheduler(
             // shared provider graph. The runner still reads live Cron policy
             // from freedom.yaml, but a rejected provider edit on disk must not
             // authorize the startup Arc or one of its fallback leaves.
-            let default_provider_routes = Arc::new(crate::consent::required_consent_routes(config)?);
+            let default_provider_routes =
+                Arc::new(crate::consent::required_consent_routes(config)?);
             let handle = tokio::spawn(async move {
                 if let Err(e) = crate::cron::scheduler::run_scheduler(
                     home_for_cron,
