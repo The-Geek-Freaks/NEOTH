@@ -200,6 +200,19 @@ jobs:
             SRC/neothd/src/config/ops.rs \
             SRC/neothd/src/config/reload.rs \
             SRC/neothd/src/code_map/diff_impact.rs \
+            docs/providers.md \
+            SRC/freedom.yaml.example \
+            SRC/neothd/src/cli/agents.rs \
+            SRC/neothd/src/cli/bg_session.rs \
+            SRC/neothd/src/cli/consent_challenge.rs \
+            SRC/neothd/src/cli/cron.rs \
+            SRC/neothd/src/cli/hemispheres.rs \
+            SRC/neothd/src/cli/loop_cmd.rs \
+            SRC/neothd/src/cli/init/catalog.rs \
+            SRC/neothd/src/cli/init/steps_topology.rs \
+            SRC/neothd/src/config/keychain.rs \
+            SRC/neothd/src/providers/cost.rs \
+            SRC/neothd/src/providers/fallback.rs \
             > "$W548_ROOT/source/SHA256SUMS.txt"
           : > "$W548_ROOT/receipt/started.txt"
           : > "$W548_ROOT/receipt/passed.txt"
@@ -559,9 +572,34 @@ jobs:
           run_case 298 lib cli::code::tests::semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome cli::code::tests::semantic_provider_failure_preserves_legacy_prepared_context_and_records_typed_outcome --lib
           run_case 299 lib cli::code::tests::stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call cli::code::tests::stale_semantic_generation_falls_back_through_real_prepared_context_without_provider_call --lib
           run_case 300 lib coding::code_map_receipt::tests::prepared_receipt_records_content_free_semantic_fallback coding::code_map_receipt::tests::prepared_receipt_records_content_free_semantic_fallback --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 300
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 300
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 300
+          run_case 301 lib consent::tests::invalid_named_role_binding_returns_a_consent_error_without_panicking consent::tests::invalid_named_role_binding_returns_a_consent_error_without_panicking --lib
+          run_case 302 lib consent::tests::named_bedrock_role_does_not_inherit_the_legacy_global_region consent::tests::named_bedrock_role_does_not_inherit_the_legacy_global_region --lib
+          run_case 303 lib cli::chat::tests::routing_cap_resolves_named_fallback_model_before_dispatch cli::chat::tests::routing_cap_resolves_named_fallback_model_before_dispatch --lib
+          run_case 304 lib cli::chat::tests::normal_chat_role_policy_binds_named_left_instance_provider cli::chat::tests::normal_chat_role_policy_binds_named_left_instance_provider --lib
+          run_case 305 lib config::credentials::tests::provider_instance_credential_map_rejects_noncanonical_ids config::credentials::tests::provider_instance_credential_map_rejects_noncanonical_ids --lib
+          run_case 306 lib config::credentials::tests::dual_file_update_keeps_private_named_key_out_of_public_yaml_and_preserves_inline_preimage config::credentials::tests::dual_file_update_keeps_private_named_key_out_of_public_yaml_and_preserves_inline_preimage --lib
+          run_case 307 lib config::inference::tests::provider_instance_id_parse_reuses_wire_validation config::inference::tests::provider_instance_id_parse_reuses_wire_validation --lib
+          run_case 308 lib config::inference::tests::named_openai_compat_instances_keep_exact_transport_authority config::inference::tests::named_openai_compat_instances_keep_exact_transport_authority --lib
+          run_case 309 lib config::inference::tests::named_slots_reject_mixed_authority_even_when_inline_value_is_null config::inference::tests::named_slots_reject_mixed_authority_even_when_inline_value_is_null --lib
+          run_case 310 lib config::inference::tests::provider_instance_validation_rejects_duplicate_unknown_descriptor_and_reference config::inference::tests::provider_instance_validation_rejects_duplicate_unknown_descriptor_and_reference --lib
+          run_case 311 lib config::inference::tests::legacy_inline_slot_round_trips_without_reference_shape config::inference::tests::legacy_inline_slot_round_trips_without_reference_shape --lib
+          run_case 312 lib config::inference::tests::named_slot_serializes_only_its_reference config::inference::tests::named_slot_serializes_only_its_reference --lib
+          run_case 313 lib config::inference::tests::constructed_mixed_authority_rejects_before_instance_lookup config::inference::tests::constructed_mixed_authority_rejects_before_instance_lookup --lib
+          run_case 314 lib config::inference::tests::legacy_binding_has_no_synthetic_instance_identity config::inference::tests::legacy_binding_has_no_synthetic_instance_identity --lib
+          run_case 315 lib config::keychain::tests::provider_instance_key_round_trips_through_keychain_without_cross_instance_reuse config::keychain::tests::provider_instance_key_round_trips_through_keychain_without_cross_instance_reuse --lib
+          run_case 316 lib config::provider_instance_credential_tests::named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key config::provider_instance_credential_tests::named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key --lib
+          run_case 317 lib cron::runner::workstream_c_tests::no_role_named_same_enum_provider_lookup_requires_an_explicit_role cron::runner::workstream_c_tests::no_role_named_same_enum_provider_lookup_requires_an_explicit_role --lib
+          run_case 318 lib cron::runner::workstream_c_tests::role_targeted_named_same_enum_provider_lookup_keeps_the_right_binding cron::runner::workstream_c_tests::role_targeted_named_same_enum_provider_lookup_keeps_the_right_binding --lib
+          run_case 319 lib models::discovery::tests::named_bedrock_discovery_does_not_inherit_the_legacy_global_region models::discovery::tests::named_bedrock_discovery_does_not_inherit_the_legacy_global_region --lib
+          run_case 320 lib models::discovery::tests::named_bedrock_fallback_inventory_requires_its_exact_regional_consent models::discovery::tests::named_bedrock_fallback_inventory_requires_its_exact_regional_consent --lib
+          run_case 321 lib providers::cost_authorization::tests::provider_lifecycle_context_keeps_instance_and_descriptor_identity providers::cost_authorization::tests::provider_lifecycle_context_keeps_instance_and_descriptor_identity --lib
+          run_case 322 lib providers::cost::tests::council_cost_binding_uses_named_instance_model_and_endpoint providers::cost::tests::council_cost_binding_uses_named_instance_model_and_endpoint --lib
+          run_case 323 lib providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf --lib
+          run_case 324 lib providers::tests::named_bedrock_fallback_does_not_inherit_global_region_for_consent providers::tests::named_bedrock_fallback_does_not_inherit_global_region_for_consent --lib
+          run_case 325 lib providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 325
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 325
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 325
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

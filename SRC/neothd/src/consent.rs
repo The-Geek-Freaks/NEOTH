@@ -1214,7 +1214,7 @@ fn unix_ts_string() -> String {
 /// at the call site.
 pub fn cloud_kinds_for_council(
     config: &crate::config::FreedomConfig,
-) -> Vec<crate::cli::init::ProviderKind> {
+) -> Result<Vec<crate::cli::init::ProviderKind>> {
     use crate::config::inference::HemisphereRole;
     let mut seen: Vec<crate::cli::init::ProviderKind> = Vec::with_capacity(3);
     for role in [
@@ -1222,7 +1222,7 @@ pub fn cloud_kinds_for_council(
         HemisphereRole::Right,
         HemisphereRole::Cerebellum,
     ] {
-        let slot = config.inference.slot_for(role);
+        let slot = config.inference.resolve_role_binding(role)?.slot;
         let Some(provider) = slot.provider else {
             continue;
         };
@@ -1234,7 +1234,7 @@ pub fn cloud_kinds_for_council(
             seen.push(kind);
         }
     }
-    seen
+    Ok(seen)
 }
 
 /// Effective route for a hemisphere provider construction. Mirrors
@@ -1243,13 +1243,18 @@ pub fn cloud_kinds_for_council(
 pub fn route_for_role(
     config: &crate::config::FreedomConfig,
     role: crate::config::inference::HemisphereRole,
-) -> Option<ConsentRoute> {
-    let slot = config.inference.slot_for(role);
-    match slot.provider {
+) -> Result<Option<ConsentRoute>> {
+    let binding = config.inference.resolve_role_binding(role)?;
+    let slot = binding.slot;
+    Ok(match slot.provider {
         Some(provider) => Some(route_for_provider_config(
             provider.to_provider_kind(),
             slot.endpoint.as_deref(),
-            slot.region.as_deref().or(config.provider_region.as_deref()),
+            if binding.is_named_instance {
+                slot.region.as_deref()
+            } else {
+                slot.region.as_deref().or(config.provider_region.as_deref())
+            },
         )),
         None => config.provider_kind.map(|kind| {
             route_for_provider_config(
@@ -1258,7 +1263,7 @@ pub fn route_for_role(
                 config.provider_region.as_deref(),
             )
         }),
-    }
+    })
 }
 
 fn route_for_explicit_auxiliary(
@@ -1329,7 +1334,7 @@ fn route_for_teacher(config: &crate::config::FreedomConfig) -> Option<ConsentRou
 /// OpenAI-compatible, Azure, Bedrock-region, and remote Ollama routes
 /// deduplicate by canonical origin so one configured host can never hide
 /// another.
-pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<ConsentRoute> {
+pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Result<Vec<ConsentRoute>> {
     use crate::config::inference::HemisphereRole;
 
     let roles = [
@@ -1346,7 +1351,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<Con
         ));
     }
     for role in roles {
-        if let Some(route) = route_for_role(config, role) {
+        if let Some(route) = route_for_role(config, role)? {
             candidates.push(route);
         }
     }
@@ -1356,14 +1361,19 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<Con
     // potential leaves instead of stopping at the outer triplet. Empty
     // sub-slots fall back through `slot_for_sub` to the already-inventoried
     // outer role and therefore need no duplicate candidate here.
-    for sub_slots in config.inference.hemisphere_sub_slots.values() {
+    for outer_role in config.inference.hemisphere_sub_slots.keys() {
         for role in roles {
-            let slot = sub_slots.slot_for(role);
+            let binding = config.inference.resolve_sub_role_binding(*outer_role, role)?;
+            let slot = binding.slot;
             if let Some(provider) = slot.provider {
                 candidates.push(route_for_provider_config(
                     provider.to_provider_kind(),
                     slot.endpoint.as_deref(),
-                    slot.region.as_deref().or(config.provider_region.as_deref()),
+                    if binding.is_named_instance {
+                        slot.region.as_deref()
+                    } else {
+                        slot.region.as_deref().or(config.provider_region.as_deref())
+                    },
                 ));
             }
         }
@@ -1378,15 +1388,22 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<Con
         .flatten(),
     );
     if config.fallback.max_hops > 0 {
-        candidates.extend(config.fallback.chain.iter().filter_map(|slot| {
-            slot.provider.map(|provider| {
+        for slot in &config.fallback.chain {
+            let binding = config.inference.resolve_explicit_slot_binding(slot)?;
+            let slot = binding.slot;
+            if let Some(provider) = slot.provider {
+                candidates.push(
                 route_for_provider_config(
                     provider.to_provider_kind(),
                     slot.endpoint.as_deref(),
-                    slot.region.as_deref().or(config.provider_region.as_deref()),
-                )
-            })
-        }));
+                    if binding.is_named_instance {
+                        slot.region.as_deref()
+                    } else {
+                        slot.region.as_deref().or(config.provider_region.as_deref())
+                    },
+                ));
+            }
+        }
     }
 
     let mut required = Vec::with_capacity(candidates.len());
@@ -1413,7 +1430,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<Con
             required.push(route);
         }
     }
-    required
+    Ok(required)
 }
 
 /// A-2 pre-flight wrapper. Calls `ensure_granted_or_prompt` for each
@@ -1423,7 +1440,7 @@ pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<Con
 /// call — this helper covers the per-hemisphere case the legacy gate missed.
 #[cfg(test)]
 fn ensure_all_granted_or_prompt(home: &Path, config: &crate::config::FreedomConfig) -> Result<()> {
-    for route in required_consent_routes(config) {
+    for route in required_consent_routes(config)? {
         ensure_route_granted_or_prompt(home, &route)?;
     }
     Ok(())
@@ -1446,7 +1463,7 @@ fn ensure_all_granted_or_prompt(home: &Path, config: &crate::config::FreedomConf
 /// 3. Reports the FIRST revoked kind so the operator gets actionable
 ///    output without us iterating every provider after the first miss.
 pub fn ensure_all_still_granted(home: &Path, config: &crate::config::FreedomConfig) -> Result<()> {
-    ensure_routes_still_granted(home, &required_consent_routes(config))
+    ensure_routes_still_granted(home, &required_consent_routes(config)?)
 }
 
 /// Non-interactive live gate for an immutable provider-route inventory.
@@ -1524,7 +1541,7 @@ mod tests {
             provider_kind: Some(ProviderKind::RecursiveMas),
             ..Default::default()
         };
-        let routes = required_consent_routes(&config);
+        let routes = required_consent_routes(&config).unwrap();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].kind, ProviderKind::RecursiveMas);
         assert!(routes[0].endpoint.is_none());
@@ -1723,7 +1740,7 @@ mod tests {
         );
         // Single-mode without a default_slot.provider returns empty —
         // legacy `provider_kind` covers that case at the caller.
-        let kinds = cloud_kinds_for_council(&cfg);
+        let kinds = cloud_kinds_for_council(&cfg).unwrap();
         assert!(kinds.is_empty());
     }
 
@@ -1742,7 +1759,7 @@ mod tests {
         };
         cfg.inference = topo;
         // All three slots collapse to default_slot → one kind dedup'd.
-        let kinds = cloud_kinds_for_council(&cfg);
+        let kinds = cloud_kinds_for_council(&cfg).unwrap();
         assert_eq!(kinds, vec![crate::cli::init::ProviderKind::OpenaiApi]);
     }
 
@@ -1755,7 +1772,7 @@ mod tests {
             Some(crate::config::inference::InferenceProvider::Gemini),
             crate::config::inference::TopologyMode::Custom,
         );
-        let kinds = cloud_kinds_for_council(&cfg);
+        let kinds = cloud_kinds_for_council(&cfg).unwrap();
         assert_eq!(kinds.len(), 3);
         assert!(kinds.contains(&crate::cli::init::ProviderKind::ClaudeCli));
         assert!(kinds.contains(&crate::cli::init::ProviderKind::OpenaiApi));
@@ -1771,7 +1788,7 @@ mod tests {
             Some(crate::config::inference::InferenceProvider::Gemini),
             crate::config::inference::TopologyMode::Custom,
         );
-        let kinds = cloud_kinds_for_council(&cfg);
+        let kinds = cloud_kinds_for_council(&cfg).unwrap();
         // Local_qwen drops; only the two clouds remain.
         assert_eq!(kinds.len(), 2);
         assert!(kinds.contains(&crate::cli::init::ProviderKind::ClaudeCli));
@@ -2205,7 +2222,7 @@ mod tests {
             ..HemisphereSlot::default()
         };
 
-        let routes: Vec<_> = required_consent_routes(&cfg)
+        let routes: Vec<_> = required_consent_routes(&cfg).unwrap()
             .into_iter()
             .filter(|route| route.kind == ProviderKind::LocalOllama)
             .collect();
@@ -2231,7 +2248,7 @@ mod tests {
         cfg.inference.utility_provider = Some(InferenceProvider::Gemini);
         cfg.inference.teacher_provider = Some(InferenceProvider::AnthropicApi);
 
-        let routes = required_consent_routes(&cfg);
+        let routes = required_consent_routes(&cfg).unwrap();
         let kinds: Vec<_> = routes.iter().map(|route| route.kind).collect();
         assert_eq!(
             kinds,
@@ -2282,7 +2299,7 @@ mod tests {
             },
         );
 
-        let routes = required_consent_routes(&cfg);
+        let routes = required_consent_routes(&cfg).unwrap();
         assert_eq!(routes.len(), 4);
         assert!(
             routes
@@ -2342,7 +2359,7 @@ mod tests {
             ..Default::default()
         });
 
-        let origins = required_consent_routes(&cfg)
+        let origins = required_consent_routes(&cfg).unwrap()
             .into_iter()
             .filter(|route| route.kind == ProviderKind::AwsBedrock)
             .map(|route| route_endpoint_origin(&route).unwrap().unwrap())
@@ -2376,7 +2393,7 @@ mod tests {
         });
 
         assert!(
-            required_consent_routes(&cfg)
+            required_consent_routes(&cfg).unwrap()
                 .into_iter()
                 .all(|route| route.kind != ProviderKind::AwsBedrock)
         );
@@ -2446,7 +2463,7 @@ mod tests {
             ..Default::default()
         };
 
-        let routes = required_consent_routes(&cfg);
+        let routes = required_consent_routes(&cfg).unwrap();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].kind, ProviderKind::LocalOllama);
         assert_eq!(routes[0].endpoint.as_deref(), Some("http://10.0.0.8:11434"));
@@ -2459,13 +2476,42 @@ mod tests {
             provider_endpoint: Some("http://10.0.0.9:11434".into()),
             ..Default::default()
         };
-        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left).unwrap();
+        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left).unwrap().unwrap();
         assert_eq!(route.kind, ProviderKind::LocalOllama);
         assert_eq!(route.endpoint.as_deref(), Some("http://10.0.0.9:11434"));
         assert!(route_requires_consent(
             route.kind,
             route.endpoint.as_deref()
         ));
+    }
+
+    #[test]
+    fn invalid_named_role_binding_returns_a_consent_error_without_panicking() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nleft: { provider_instance_id: missing_instance }\n",
+        )
+        .unwrap();
+
+        assert!(route_for_role(&cfg, crate::config::inference::HemisphereRole::Left).is_err());
+        assert!(required_consent_routes(&cfg).is_err());
+        assert!(cloud_kinds_for_council(&cfg).is_err());
+    }
+
+    #[test]
+    fn named_bedrock_role_does_not_inherit_the_legacy_global_region() {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.provider_region = Some("us-east-1".into());
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: named_bedrock, descriptor: aws_bedrock }\nleft: { provider_instance_id: named_bedrock }\n",
+        )
+        .unwrap();
+
+        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left)
+            .unwrap()
+            .unwrap();
+        assert_eq!(route.kind, ProviderKind::AwsBedrock);
+        assert_eq!(route.endpoint.as_deref(), Some(INVALID_BEDROCK_CONSENT_ROUTE));
     }
 
     // Note: bypass-env semantics for `ensure_all_granted_or_prompt` are

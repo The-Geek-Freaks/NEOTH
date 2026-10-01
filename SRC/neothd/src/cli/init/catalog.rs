@@ -358,6 +358,7 @@ pub(crate) fn prompt_inference_provider(
 pub(crate) fn apply_local_only_preset(topology: &mut crate::config::inference::InferenceTopology) {
     use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
     let local_slot = HemisphereSlot {
+        provider_instance_id: None,
         provider: Some(InferenceProvider::LocalQwen),
         model: None,
         key: None,
@@ -386,6 +387,7 @@ pub(crate) fn apply_local_abliterated_preset(
 ) {
     use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
     let make_slot = |model_ref: &str| HemisphereSlot {
+        provider_instance_id: None,
         provider: Some(InferenceProvider::OpenAiCompat),
         model: Some(model_ref.to_string()),
         key: None,

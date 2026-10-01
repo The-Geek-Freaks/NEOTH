@@ -115,6 +115,36 @@ pub(crate) fn telegram_account_token_key(
     format!("channel-account/telegram/{}/token", account_id.as_str())
 }
 
+/// Stable dynamic OS-store key for one named provider instance. The map key is
+/// the public topology's stable instance id; callers preserve null placeholders
+/// so keychain-only authority stays discoverable without an OS-store listing.
+pub(crate) fn provider_instance_key(instance_id: &str) -> Result<String> {
+    let instance_id = crate::config::inference::ProviderInstanceId::parse(instance_id)
+        .context("validate named provider instance credential id")?;
+    Ok(format!("inference-provider-instance/{}/key", instance_id.as_str()))
+}
+
+fn provider_instance_keys(
+    credentials: &crate::config::credentials::Credentials,
+) -> impl Iterator<Item = (&String, &SecretString)> {
+    credentials
+        .inference_provider_instance_keys
+        .iter()
+        .filter_map(|(id, key)| key.as_ref().map(|key| (id, key)))
+}
+
+fn supplement_provider_instance_keys(
+    credentials: &mut crate::config::credentials::Credentials,
+    store: &dyn SecretStore,
+) -> Result<()> {
+    for (id, key) in &mut credentials.inference_provider_instance_keys {
+        if key.is_none() {
+            *key = store.get(&provider_instance_key(id)?)?;
+        }
+    }
+    Ok(())
+}
+
 /// Fill only absent account tokens. File credentials retain established
 /// precedence over keychain values and a store error is surfaced to the caller.
 pub(crate) fn supplement_telegram_account_tokens(
@@ -885,6 +915,32 @@ pub fn migrate_to_keychain(
         }
     }
 
+    for (instance_id, secret) in provider_instance_keys(creds) {
+        let key = provider_instance_key(instance_id)?;
+        if dry_run {
+            moved.push(key);
+            continue;
+        }
+        let previous = match store.get(&key) {
+            Ok(previous) => previous,
+            Err(error) => {
+                failed.push((key, format!("snapshot existing keychain value: {error}")));
+                continue;
+            }
+        };
+        match store.set(&key, secret) {
+            Ok(()) => {
+                *blanked
+                    .inference_provider_instance_keys
+                    .get_mut(instance_id)
+                    .expect("cloned provider instance key disappeared during migration") = None;
+                moved.push(key.clone());
+                previous_values.push((key, previous));
+            }
+            Err(error) => failed.push((key, error.to_string())),
+        }
+    }
+
     match ssh_tunnels_secret.as_ref() {
         None => skipped.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
         Some(_) if dry_run => moved.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
@@ -1038,6 +1094,27 @@ pub fn migrate_to_file(
         }
     }
 
+    for (instance_id, key) in &creds.inference_provider_instance_keys {
+        let store_key = provider_instance_key(instance_id)?;
+        if key.is_some() {
+            skipped.push(store_key);
+            continue;
+        }
+        match store.get(&store_key) {
+            Err(error) => failed.push((store_key, error.to_string())),
+            Ok(None) => skipped.push(store_key),
+            Ok(Some(secret)) => {
+                if !dry_run {
+                    *populated
+                        .inference_provider_instance_keys
+                        .get_mut(instance_id)
+                        .expect("cloned provider instance key disappeared during migration") = Some(secret);
+                }
+                moved.push(store_key);
+            }
+        }
+    }
+
     match store.get(SSH_TUNNELS_SECRET_FIELD) {
         Err(error) => failed.push((SSH_TUNNELS_SECRET_FIELD.to_string(), error.to_string())),
         Ok(None) => skipped.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
@@ -1134,6 +1211,8 @@ pub fn supplement_from_store(
             }
         }
     }
+    supplement_provider_instance_keys(creds, store)
+        .context("read named provider instance keys from keychain")?;
     if creds.ssh_tunnels.is_none()
         && let Some(secret) = store
             .get(SSH_TUNNELS_SECRET_FIELD)
@@ -1191,6 +1270,51 @@ mod tests {
             );
         }
         credentials
+    }
+
+    #[test]
+    fn provider_instance_key_round_trips_through_keychain_without_cross_instance_reuse() {
+        let store = InMemorySecretStore::default();
+        let mut credentials = Credentials::default();
+        credentials.inference_provider_instance_keys.insert(
+            "compat_a".into(),
+            Some(SecretString::from("instance-a")),
+        );
+        credentials.inference_provider_instance_keys.insert(
+            "compat_b".into(),
+            Some(SecretString::from("instance-b")),
+        );
+
+        let (blanked, to_keychain) = migrate_to_keychain(&credentials, &store, false).unwrap();
+        assert!(to_keychain.is_clean());
+        assert_eq!(
+            store
+                .get(&provider_instance_key("compat_a").unwrap())
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "instance-a"
+        );
+        assert!(blanked.inference_provider_instance_keys["compat_a"].is_none());
+
+        let mut supplemented = blanked.clone();
+        supplement_from_store(&mut supplemented, &store).unwrap();
+        assert_eq!(
+            supplemented.inference_provider_instance_keys["compat_b"]
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "instance-b"
+        );
+        let (to_file, report) = migrate_to_file(&blanked, &store, false).unwrap();
+        assert!(report.is_clean());
+        assert_eq!(
+            to_file.inference_provider_instance_keys["compat_a"]
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "instance-a"
+        );
     }
 
     fn account_key(credentials: &Credentials, id: &str) -> String {

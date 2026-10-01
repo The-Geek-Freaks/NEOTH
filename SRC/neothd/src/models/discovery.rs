@@ -635,27 +635,26 @@ fn effective_route_bindings(
 
     // Left is always the primary runtime route. Right/Cerebellum and recursive
     // leaves exist only when the council can actually dispatch them.
-    push_slot_binding(
-        &mut bindings,
-        config,
-        config.inference.slot_for(HemisphereRole::Left),
-        home,
-    );
+    match config.inference.resolve_role_binding(HemisphereRole::Left) {
+        Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+        Err(_) => invalid_auxiliary = true,
+    }
     let council_enabled =
         !config.council.disabled.unwrap_or(false) && !config.council.mode.is_single();
     if council_enabled {
         for role in [HemisphereRole::Right, HemisphereRole::Cerebellum] {
-            push_slot_binding(&mut bindings, config, config.inference.slot_for(role), home);
+            match config.inference.resolve_role_binding(role) {
+                Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+                Err(_) => invalid_auxiliary = true,
+            }
         }
         if config.inference.hemisphere_council_depth.get() > 1 {
             for outer in ROLES {
                 for inner in ROLES {
-                    push_slot_binding(
-                        &mut bindings,
-                        config,
-                        config.inference.slot_for_sub(outer, inner),
-                        home,
-                    );
+                    match config.inference.resolve_sub_role_binding(outer, inner) {
+                        Ok(binding) => push_slot_binding(&mut bindings, config, &binding.slot, binding.is_named_instance, home),
+                        Err(_) => invalid_auxiliary = true,
+                    }
                 }
             }
         }
@@ -716,21 +715,30 @@ fn effective_route_bindings(
     // runtime consent filter; intentionally excluded candidates must not poison
     // an otherwise runnable provider group as a discovery failure.
     if config.fallback.max_hops > 0 {
-        let fallbacks: Vec<_> = match home {
-            Some(home) => crate::providers::consented_fallback_slots(home, config),
-            None => config
-                .fallback
-                .chain
-                .iter()
-                .filter_map(|slot| slot.provider.map(|provider| (slot, provider)))
-                .collect(),
-        };
-        for (slot, provider) in fallbacks {
+        for raw_slot in &config.fallback.chain {
+            let binding = match config.inference.resolve_explicit_slot_binding(raw_slot) {
+                Ok(binding) => binding,
+                Err(_) => {
+                    invalid_auxiliary = true;
+                    continue;
+                }
+            };
+            let Some(provider) = binding.slot.provider else {
+                continue;
+            };
+            let kind = provider.to_provider_kind();
+            let region = explicit_binding_region(config, kind, &binding.slot, binding.is_named_instance);
+            if let Some(home) = home {
+                if !route_consented(Some(home), kind, binding.slot.endpoint.as_deref(), region.as_deref()) {
+                    continue;
+                }
+            }
             push_explicit_binding(
                 &mut bindings,
                 config,
-                provider.to_provider_kind(),
-                slot,
+                kind,
+                &binding.slot,
+                binding.is_named_instance,
                 false,
                 home,
             );
@@ -744,6 +752,7 @@ fn push_slot_binding(
     bindings: &mut Vec<RouteBinding>,
     config: &FreedomConfig,
     slot: &HemisphereSlot,
+    is_named_instance: bool,
     home: Option<&Path>,
 ) {
     match slot.provider {
@@ -752,6 +761,7 @@ fn push_slot_binding(
             config,
             provider.to_provider_kind(),
             slot,
+            is_named_instance,
             false,
             home,
         ),
@@ -820,14 +830,12 @@ fn push_explicit_binding(
     config: &FreedomConfig,
     kind: ProviderKind,
     slot: &HemisphereSlot,
+    is_named_instance: bool,
     runtime_rejected: bool,
     home: Option<&Path>,
 ) {
     let endpoint = nonempty(slot.endpoint.as_deref());
-    let region = binding_region(
-        kind,
-        slot.region.as_deref().or(config.provider_region.as_deref()),
-    );
+    let region = explicit_binding_region(config, kind, slot, is_named_instance);
     push_binding(
         bindings,
         RouteBinding {
@@ -840,6 +848,21 @@ fn push_explicit_binding(
             runtime_rejected,
         },
     );
+}
+
+fn explicit_binding_region(
+    config: &FreedomConfig,
+    kind: ProviderKind,
+    slot: &HemisphereSlot,
+    is_named_instance: bool,
+) -> Option<String> {
+    if is_named_instance && kind == ProviderKind::AwsBedrock && slot.region.is_none() {
+        Some(INVALID_BEDROCK_BINDING_REGION.to_string())
+    } else if is_named_instance {
+        binding_region(kind, slot.region.as_deref())
+    } else {
+        binding_region(kind, slot.region.as_deref().or(config.provider_region.as_deref()))
+    }
 }
 
 fn push_binding(bindings: &mut Vec<RouteBinding>, binding: RouteBinding) {
@@ -2050,6 +2073,73 @@ mod tests {
         let granted = bedrock_binding(&config).expect("consented Bedrock fallback binding");
         assert!(granted.consented);
         assert_eq!(granted.region.as_deref(), Some("eu-central-1"));
+    }
+
+    #[test]
+    fn named_bedrock_discovery_does_not_inherit_the_legacy_global_region() {
+        let mut config = base_config();
+        config.provider_region = Some("us-east-1".into());
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: named_bedrock, descriptor: aws_bedrock }\nleft: { provider_instance_id: named_bedrock }\n",
+        )
+        .unwrap();
+
+        let binding = effective_route_bindings(&config, None)
+            .0
+            .into_iter()
+            .find(|binding| binding.kind == ProviderKind::AwsBedrock)
+            .expect("named Bedrock binding is inventoried");
+        assert_eq!(
+            binding.region.as_deref(),
+            Some(INVALID_BEDROCK_BINDING_REGION)
+        );
+    }
+
+    #[test]
+    fn named_bedrock_fallback_inventory_requires_its_exact_regional_consent() {
+        let home = tempdir().unwrap();
+        let mut config = base_config();
+        config.provider_region = Some("us-east-1".into());
+        config.inference = serde_yaml::from_str(
+            "provider_instances:\n  - { id: fallback_bedrock, descriptor: aws_bedrock, model: named-fallback-model, region: eu-central-1 }\n",
+        )
+        .unwrap();
+        config.fallback.max_hops = 1;
+        config.fallback.chain.push(serde_yaml::from_str(
+            "provider_instance_id: fallback_bedrock\n",
+        )
+        .unwrap());
+
+        let fallback_binding = |config: &FreedomConfig| {
+            effective_route_bindings(config, Some(home.path()))
+                .0
+                .into_iter()
+                .find(|binding| binding.kind == ProviderKind::AwsBedrock)
+        };
+        assert!(fallback_binding(&config).is_none());
+
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("us-east-1"),
+            ),
+        )
+        .unwrap();
+        assert!(fallback_binding(&config).is_none());
+
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("eu-central-1"),
+            ),
+        )
+        .unwrap();
+        let binding = fallback_binding(&config).expect("exact named fallback route is inventoried");
+        assert_eq!(binding.region.as_deref(), Some("eu-central-1"));
     }
 
     #[test]

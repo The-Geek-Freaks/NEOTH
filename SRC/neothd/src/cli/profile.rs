@@ -3207,7 +3207,8 @@ fn profile_cli_left_role_authorizer(
     let role = crate::config::inference::HemisphereRole::Left;
     let provider = config
         .inference
-        .slot_for(role)
+        .resolve_role_binding(role)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .context("profile extraction Left role has no configured provider identity")?;

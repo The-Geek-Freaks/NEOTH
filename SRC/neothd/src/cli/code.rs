@@ -1670,7 +1670,8 @@ fn coding_role_authorizer(
 ) -> Result<providers::cost_authorization::ProviderCallAuthorizer> {
     let provider = config
         .inference
-        .slot_for(role)
+        .resolve_role_binding(role)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .ok_or_else(|| {

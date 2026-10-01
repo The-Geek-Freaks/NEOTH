@@ -122,6 +122,67 @@ inference:
     model: qwen/qwen3-72b-instruct
 ```
 
+### Named provider instances
+
+Use named instances when two routes use the same provider descriptor but must
+retain separate endpoint, model, and credential identities. The list belongs
+under `inference:`; a Left or Right slot that uses an instance contains only
+`provider_instance_id`.
+
+```yaml
+inference:
+  mode: custom
+  provider_instances:
+    - id: compat_a
+      descriptor: openai_compat
+      endpoint: https://vendor-a.example/v1
+      model: vendor-a-chat
+    - id: compat_b
+      descriptor: openai_compat
+      endpoint: https://vendor-b.example/v1
+      model: vendor-b-chat
+  left: { provider_instance_id: compat_a }
+  right: { provider_instance_id: compat_b }
+```
+
+The same `openai_compat` descriptor may therefore represent distinct vendor or
+tenant routes without borrowing another instance's endpoint or model. Instance
+IDs are durable identifiers: 1–64 lowercase ASCII letters, digits, or
+underscores, beginning with a letter. IDs must be unique; descriptors and role
+references must be known. A named slot cannot mix `provider_instance_id` with
+any inline authority (`provider`, `model`, `key`, `endpoint`, compatibility
+profile, region, API version, or voice). This includes explicitly writing an
+inline field as `null`; `provider_instance_id: null` is also invalid.
+
+Legacy inline slots remain supported. Use either the existing inline form or a
+single named reference for one slot, never a mixture.
+
+Cron execution through a named instance requires an explicit
+`execution.hemisphere_role`. A no-role provider or fallback lookup by coarse
+provider enum refuses a matching named instance, even when only one exists, so
+it cannot choose the wrong endpoint.
+
+An `aws_bedrock` named instance must supply its own valid `region`. It never
+inherits the global `provider_region`; missing or invalid instance region fails
+closed at consent and provider construction.
+
+Instance keys live only in the private `~/.neoth/credentials.yaml` map:
+
+```yaml
+inference_provider_instance_keys:
+  compat_a: <provider-instance-a-secret>
+  compat_b: <provider-instance-b-secret>
+```
+
+Do not put these values in `freedom.yaml`. Public configuration rendering strips
+all instance-key values. With the keychain backend, the dynamic target is
+`inference-provider-instance/<id>/key`; credentials may retain
+`compat_a: null` as metadata for a keychain-owned value, so the placeholder is
+preserved without exposing the secret.
+
+Named instances select existing implemented descriptors only. They do not add
+network-adapter, protocol, capability, or provider-parity coverage.
+
 Supported Chat-Completions profiles are `generic`, `openrouter`, `deepseek`,
 `moonshot_kimi`, and `qwen_chat`. Named profiles preserve vendor-specific
 refusal/error attribution and are accepted only with a reviewed matching

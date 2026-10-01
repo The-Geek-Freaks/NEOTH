@@ -195,6 +195,9 @@ pub(crate) fn hydrate_existing_init_state(
     state.inference.right.key = None;
     state.inference.cerebellum.key = None;
     state.inference.default_slot.key = None;
+    for instance in &mut state.inference.provider_instances {
+        instance.key = None;
+    }
     state.auto_update = existing.auto_update;
     state.plugins = existing.plugins;
     state.supervisor = existing.supervisor;
@@ -1490,6 +1493,17 @@ pub(crate) async fn write_config(
     let inference_right_key = public_state.inference.right.key.take();
     let inference_cerebellum_key = public_state.inference.cerebellum.key.take();
     let inference_default_slot_key = public_state.inference.default_slot.key.take();
+    let inference_provider_instance_keys = public_state
+        .inference
+        .provider_instances
+        .iter_mut()
+        .filter_map(|instance| {
+            instance
+                .key
+                .take()
+                .map(|key| (instance.id.as_str().to_owned(), key))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     // Legacy direct-seed/Pear wizard fields are deliberately discarded. The
     // companion credentials belong in credentials.yaml and are written by
     // `neoth channel add keet`; the wizard must not revive the guessed
@@ -1544,6 +1558,7 @@ pub(crate) async fn write_config(
         || inference_right_key.is_some()
         || inference_cerebellum_key.is_some()
         || inference_default_slot_key.is_some()
+        || !inference_provider_instance_keys.is_empty()
         || omi_update.developer_api_key.is_some()
         || omi_update.native_ingest_token.is_some();
 
@@ -1656,6 +1671,11 @@ pub(crate) async fn write_config(
                     }
                     if let Some(value) = inference_default_slot_key.as_ref() {
                         target.inference_default_slot_key = Some(value.clone());
+                    }
+                    for (id, value) in &inference_provider_instance_keys {
+                        target
+                            .inference_provider_instance_keys
+                            .insert(id.clone(), Some(value.clone()));
                     }
                 };
                 apply_common(credentials);

@@ -3451,6 +3451,7 @@ fn synthetic_config_for_slot(
     config: &FreedomConfig,
     slot: &crate::config::inference::HemisphereSlot,
     provider_kind: ProviderKind,
+    named_instance: bool,
 ) -> FreedomConfig {
     let mut synthetic = config.clone();
     synthetic.provider_kind = Some(provider_kind);
@@ -3458,11 +3459,18 @@ fn synthetic_config_for_slot(
     synthetic.provider_key = slot.key.clone();
     synthetic.provider_endpoint = slot.endpoint.clone();
     synthetic.inference.openai_compat_profile = slot.openai_compat_profile;
-    if let Some(slot_region) = slot.region.clone() {
-        synthetic.provider_region = Some(slot_region);
-    }
-    if let Some(slot_ver) = slot.api_version.clone() {
-        synthetic.provider_api_version = Some(slot_ver);
+    if named_instance {
+        // An instance owns its entire transport authority. In particular, a
+        // named Azure/Bedrock route must not inherit a stale global setting.
+        synthetic.provider_region = slot.region.clone();
+        synthetic.provider_api_version = slot.api_version.clone();
+    } else {
+        if let Some(slot_region) = slot.region.clone() {
+            synthetic.provider_region = Some(slot_region);
+        }
+        if let Some(slot_ver) = slot.api_version.clone() {
+            synthetic.provider_api_version = Some(slot_ver);
+        }
     }
     synthetic
 }
@@ -3490,7 +3498,11 @@ async fn from_config_for_role_inner(
     role: crate::config::inference::HemisphereRole,
     home: Option<&Path>,
 ) -> Result<Box<dyn Provider>> {
-    let slot = config.inference.slot_for(role);
+    // Resolve the named binding before the legacy synthetic-config bridge.
+    // This keeps same-enum OpenAI-compatible instances separate through their
+    // endpoint, credential, model and wire profile.
+    let binding = config.inference.resolve_role_binding(role)?;
+    let slot = &binding.slot;
     let Some(provider_kind) = slot.provider else {
         let mut selected = config.clone();
         if let Some(home) = home {
@@ -3501,7 +3513,7 @@ async fn from_config_for_role_inner(
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
-    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind());
+    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind(), binding.is_named_instance);
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
     // top-level FreedomConfig::provider_region. Only relevant for
     // aws_bedrock today; other providers ignore the field.
@@ -3594,6 +3606,60 @@ fn fallback_slots_allowed_by<'a>(
         .collect()
 }
 
+struct ResolvedFallbackSlot {
+    slot: crate::config::inference::HemisphereSlot,
+    provider: crate::config::inference::InferenceProvider,
+    binding: crate::config::inference::ResolvedProviderBinding,
+}
+
+fn fallback_consent_region<'a>(
+    config: &'a FreedomConfig,
+    binding: &'a crate::config::inference::ResolvedProviderBinding,
+) -> Option<&'a str> {
+    if binding.is_named_instance {
+        binding.slot.region.as_deref()
+    } else {
+        binding.slot.region.as_deref().or(config.provider_region.as_deref())
+    }
+}
+
+pub(crate) fn resolved_binding_descriptor_id(
+    config: &FreedomConfig,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> String {
+    binding
+        .slot
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .map(|provider| provider.as_str().to_owned())
+        .unwrap_or_else(|| binding.provider_descriptor_id.clone())
+}
+
+fn resolved_fallback_slots_allowed(
+    home: &std::path::Path,
+    config: &FreedomConfig,
+    ephemeral_consent: Option<&crate::consent::EphemeralConsent>,
+) -> Result<Vec<ResolvedFallbackSlot>> {
+    if config.fallback.max_hops == 0 { return Ok(Vec::new()); }
+    let mut allowed = Vec::new();
+    for raw_slot in &config.fallback.chain {
+        let binding = config.inference.resolve_explicit_slot_binding(raw_slot)?;
+        let provider = binding.slot.provider.ok_or_else(|| anyhow::anyhow!("fallback slot has no provider configured"))?;
+        let route = crate::consent::route_for_provider_config(
+            provider.to_provider_kind(), binding.slot.endpoint.as_deref(),
+            fallback_consent_region(config, &binding),
+        );
+        let durable = crate::consent::is_route_granted(home, &route);
+        let ephemeral = ephemeral_consent.map(|consent| consent.permits_route(&route).unwrap_or(false)).unwrap_or(false);
+        if durable || ephemeral {
+            allowed.push(ResolvedFallbackSlot { slot: binding.slot.clone(), provider, binding });
+        } else {
+            tracing::warn!(provider = provider.as_str(), "fallback slot skipped: cloud-egress consent not granted");
+        }
+    }
+    Ok(allowed)
+}
+
 pub async fn fallback_chain_from_config(
     config: &FreedomConfig,
     home: &std::path::Path,
@@ -3628,22 +3694,31 @@ async fn fallback_chain_from_config_inner(
     }
     let mut configured_models = vec![provider_default_wire_model(primary.as_ref())];
     let mut chain: Vec<Box<dyn Provider>> = vec![primary];
+    let primary_binding = config.inference.resolve_role_binding(crate::config::inference::HemisphereRole::Left)?;
+    let mut bindings = vec![fallback::FallbackCandidateBinding {
+        provider_instance_id: primary_binding.provider_instance_id.clone(),
+        provider_descriptor_id: resolved_binding_descriptor_id(config, &primary_binding),
+    }];
     // CRITICAL consent gate (4-lens gremium) lives in
     // `consented_fallback_slots` — a regression there would leak operator
     // text to an un-consented cloud provider on every 429, so it is a pure
     // tested seam rather than an inline branch.
-    for (slot, inf_provider) in fallback_slots_allowed_by(home, config, ephemeral_consent) {
-        let kind = inf_provider.to_provider_kind();
-        let mut synthetic = synthetic_config_for_slot(config, slot, kind);
+    for resolved in resolved_fallback_slots_allowed(home, config, ephemeral_consent)? {
+        let kind = resolved.provider.to_provider_kind();
+        let mut synthetic = synthetic_config_for_slot(config, &resolved.slot, kind, resolved.binding.is_named_instance);
         apply_instance_catalog_default(&mut synthetic, home);
         match from_config_for_instance(&synthetic, Some(home)).await {
             Ok(p) => {
                 let wire_model = provider_default_wire_model(p.as_ref());
                 chain.push(p);
                 configured_models.push(wire_model);
+                bindings.push(fallback::FallbackCandidateBinding {
+                    provider_instance_id: resolved.binding.provider_instance_id,
+                    provider_descriptor_id: resolved_binding_descriptor_id(config, &resolved.binding),
+                });
             }
             Err(e) => tracing::warn!(
-                provider = inf_provider.as_str(),
+                provider = resolved.provider.as_str(),
                 error = %e,
                 "fallback slot build failed; skipping"
             ),
@@ -3654,9 +3729,10 @@ async fn fallback_chain_from_config_inner(
         // decorator, just the primary.
         return Ok(chain.into_iter().next().expect("primary present"));
     }
-    Ok(Box::new(fallback::FallbackProvider::new_with_models_at(
+    Ok(Box::new(fallback::FallbackProvider::new_with_models_and_bindings_at(
         chain,
         configured_models,
+        bindings,
         config.fallback.max_hops,
         wal_writer,
         home.join("quota.json"),
@@ -3698,7 +3774,10 @@ async fn from_config_for_sub_role_inner(
     inner_role: crate::config::inference::HemisphereRole,
     home: Option<&Path>,
 ) -> Result<Box<dyn Provider>> {
-    let slot = config.inference.slot_for_sub(outer_role, inner_role);
+    let binding = config
+        .inference
+        .resolve_sub_role_binding(outer_role, inner_role)?;
+    let slot = &binding.slot;
     let Some(provider_kind) = slot.provider else {
         // Slot has no provider override at the sub-level → defer
         // to the outer-role path (which still consults sub-fall-
@@ -3708,7 +3787,7 @@ async fn from_config_for_sub_role_inner(
             None => from_config_for_role(config, inner_role).await,
         };
     };
-    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind());
+    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind(), binding.is_named_instance);
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -6162,7 +6241,7 @@ mod tests {
             key: Some(SecretString::from("sk-test")),
             ..Default::default()
         };
-        let synthetic = synthetic_config_for_slot(&cfg, &slot, ProviderKind::OpenaiCompat);
+        let synthetic = synthetic_config_for_slot(&cfg, &slot, ProviderKind::OpenaiCompat, false);
         assert_eq!(
             synthetic.inference.openai_compat_profile,
             Some(OpenAiCompatibleProfile::MoonshotKimi)
@@ -6792,6 +6871,192 @@ mod tests {
         )
         .unwrap();
         assert_eq!(consented_fallback_slots(tmp.path(), &config).len(), 1);
+    }
+
+    #[test]
+    fn named_bedrock_fallback_does_not_inherit_global_region_for_consent() {
+        let mut config = FreedomConfig::default();
+        config.provider_region = Some("eu-central-1".into());
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: bedrock-default-region\n    descriptor: aws_bedrock\n    model: named-bedrock-model\nleft: { provider_instance_id: bedrock-default-region }\n",
+        )
+        .expect("parse named Bedrock topology");
+
+        let named = config
+            .inference
+            .resolve_role_binding(HemisphereRole::Left)
+            .expect("resolve named Bedrock instance");
+        assert!(named.is_named_instance);
+        assert_eq!(
+            fallback_consent_region(&config, &named),
+            None,
+            "a named instance without region must reach the same adapter-default route as its synthetic factory config"
+        );
+
+        config.fallback.max_hops = 1;
+        config.fallback.chain = vec![serde_yaml::from_str(
+            "provider_instance_id: bedrock-default-region",
+        )
+        .expect("parse named Bedrock fallback reference")];
+        let home = tempfile::tempdir().expect("create named Bedrock consent home");
+        let inherited_global_route = crate::consent::route_for_provider_config(
+            ProviderKind::AwsBedrock,
+            None,
+            config.provider_region.as_deref(),
+        );
+        crate::consent::grant_route(home.path(), &inherited_global_route)
+            .expect("grant only the conflicting global Bedrock route");
+        assert!(
+            resolved_fallback_slots_allowed(home.path(), &config, None)
+                .expect("resolve named fallback consent route")
+                .is_empty(),
+            "a named Bedrock instance without region must not inherit the global route"
+        );
+        let adapter_default_route = crate::consent::route_for_provider_config(
+            ProviderKind::AwsBedrock,
+            None,
+            None,
+        );
+        crate::consent::grant_route(home.path(), &adapter_default_route)
+            .expect("grant the named adapter-default route");
+        assert_eq!(
+            resolved_fallback_slots_allowed(home.path(), &config, None)
+                .expect("resolve granted named fallback route")
+                .len(),
+            1
+        );
+
+        let legacy = config
+            .inference
+            .resolve_explicit_slot_binding(&HemisphereSlot {
+                provider: Some(InferenceProvider::AwsBedrock),
+                ..Default::default()
+            })
+            .expect("resolve legacy inline Bedrock slot");
+        assert!(!legacy.is_named_instance);
+        assert_eq!(
+            fallback_consent_region(&config, &legacy),
+            Some("eu-central-1"),
+            "legacy inline slots retain their top-level region fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable() {
+        use wiremock::matchers::{body_partial_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let primary_server = MockServer::start().await;
+        let fallback_server = MockServer::start().await;
+        let mut config = FreedomConfig::default();
+        config.inference = serde_yaml::from_str(
+            &format!(
+                "mode: custom\nprovider_instances:\n  - id: compat_primary\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: primary-model\n    key: primary-secret\n    openai_compat_profile: deepseek\n  - id: compat_fallback\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: fallback-model\n    key: fallback-secret\n    openai_compat_profile: moonshot\nleft: {{ provider_instance_id: compat_primary }}\n",
+                primary_server.uri(),
+                fallback_server.uri(),
+            ),
+        )
+        .expect("parse named primary and fallback instances");
+        config.fallback.max_hops = 1;
+        config.fallback.chain = vec![serde_yaml::from_str(
+            "provider_instance_id: compat_fallback",
+        )
+        .expect("parse named fallback reference")];
+
+        let fallback = config
+            .inference
+            .resolve_explicit_slot_binding(&config.fallback.chain[0])
+            .expect("resolve named fallback");
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer primary-secret"))
+            .and(body_partial_json(serde_json::json!({ "model": "primary-model" })))
+            .respond_with(ResponseTemplate::new(429).set_body_string("primary quota"))
+            .expect(2)
+            .mount(&primary_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer fallback-secret"))
+            .and(body_partial_json(serde_json::json!({ "model": "fallback-model" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{ "message": { "content": "named fallback success" } }],
+                "model": "fallback-model",
+                "usage": { "prompt_tokens": 1, "completion_tokens": 1 }
+            })))
+            .expect(1)
+            .mount(&fallback_server)
+            .await;
+
+        let primary_route = crate::consent::route_for_provider_config(
+            ProviderKind::OpenaiCompat,
+            config
+                .inference
+                .resolve_role_binding(HemisphereRole::Left)
+                .expect("resolve named primary")
+                .slot
+                .endpoint
+                .as_deref(),
+            None,
+        );
+        let wrong_home = tempfile::tempdir().expect("create wrong-consent fallback home");
+        crate::consent::grant_route(wrong_home.path(), &primary_route)
+            .expect("grant named primary endpoint for wrong-route check");
+        let wrong_fallback_route = crate::consent::route_for_provider_config(
+            ProviderKind::OpenaiCompat,
+            Some("http://127.0.0.1:9/v1"),
+            None,
+        );
+        crate::consent::grant_route(wrong_home.path(), &wrong_fallback_route)
+            .expect("grant a different same-enum fallback endpoint");
+        let wrong_chain = fallback_chain_from_config(&config, wrong_home.path(), None)
+            .await
+            .expect("wrong-route consent skips fallback without construction failure");
+        let wrong_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(wrong_home.path());
+        assert!(
+            wrong_chain
+                .complete_authorized(
+                    Request { prompt: "wrong consent must not fallback".into(), ..Default::default() },
+                    &wrong_authorizer,
+                    "test.named_factory_wrong_consent",
+                )
+                .await
+                .is_err(),
+            "a grant for another same-enum endpoint must not dispatch the named fallback"
+        );
+
+        let home = tempfile::tempdir().expect("create named fallback home");
+        crate::consent::grant_route(home.path(), &primary_route)
+            .expect("grant named primary endpoint");
+        let exact_fallback_route = crate::consent::route_for_provider_config(
+            ProviderKind::OpenaiCompat,
+            fallback.slot.endpoint.as_deref(),
+            None,
+        );
+        crate::consent::grant_route(home.path(), &exact_fallback_route)
+            .expect("grant only the named fallback endpoint");
+        let chain = fallback_chain_from_config(&config, home.path(), None)
+            .await
+            .expect("factory constructs both configured compatible leaves without transport I/O");
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(home.path());
+        let completion = chain
+            .complete_authorized(
+                Request { prompt: "prove named fallback wire authority".into(), ..Default::default() },
+                &authorizer,
+                "test.named_factory_fallback_wire_authority",
+            )
+            .await
+            .expect("primary quota response must dispatch the exact named fallback leaf");
+        assert_eq!(completion.text, "named fallback success");
+        assert_eq!(completion.identity.dispatch_route, vec![1]);
+        primary_server.verify().await;
+        fallback_server.verify().await;
     }
 
     #[test]

@@ -527,6 +527,10 @@ pub struct ProviderCallAuditContext {
     pub(crate) wal_session: Option<WalSessionContext>,
     pub target: Option<String>,
     pub configured_provider_kind: Option<String>,
+    /// Stable, content-free transport identity.  These are separate from the
+    /// coarse provider kind so two `openai_compat` endpoints remain auditable.
+    pub provider_instance_id: Option<String>,
+    pub provider_descriptor_id: Option<String>,
     pub model_source: Option<&'static str>,
     pub cost_estimate_model: Option<String>,
     pub prompt_bundle_hash: Option<String>,
@@ -603,6 +607,12 @@ fn add_audit_context(
     }
     if let Some(provider_kind) = context.configured_provider_kind.as_deref() {
         payload.insert("provider_kind".into(), provider_kind.into());
+    }
+    if let Some(instance_id) = context.provider_instance_id.as_deref() {
+        payload.insert("provider_instance_id".into(), instance_id.into());
+    }
+    if let Some(descriptor_id) = context.provider_descriptor_id.as_deref() {
+        payload.insert("provider_descriptor_id".into(), descriptor_id.into());
     }
     if let Some(model_source) = context.model_source {
         payload.insert("model_source".into(), model_source.into());
@@ -2502,6 +2512,18 @@ impl ProviderCallAuthorizer {
     /// this authorizer. Only the typed content-free fields above are accepted.
     pub fn with_audit_context(mut self, context: ProviderCallAuditContext) -> Self {
         self.audit_context = context;
+        self
+    }
+
+    /// Rebind only the fixed transport identity for one concrete fallback
+    /// leaf, preserving all ingress/WAL/session authority from the parent.
+    pub fn with_provider_binding(
+        mut self,
+        provider_instance_id: Option<String>,
+        provider_descriptor_id: String,
+    ) -> Self {
+        self.audit_context.provider_instance_id = provider_instance_id;
+        self.audit_context.provider_descriptor_id = Some(provider_descriptor_id);
         self
     }
 
@@ -8042,6 +8064,18 @@ mod tests {
         assert!(!serialized.contains(raw));
         assert!(payload.get("operator_id").is_none());
         assert_eq!(payload["operator_id_sha256"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn provider_lifecycle_context_keeps_instance_and_descriptor_identity() {
+        let mut payload = serde_json::Map::new();
+        add_audit_context(&mut payload, &ProviderCallAuditContext {
+            provider_instance_id: Some("compat_b".into()),
+            provider_descriptor_id: Some("openai_compat".into()),
+            ..Default::default()
+        });
+        assert_eq!(payload["provider_instance_id"], "compat_b");
+        assert_eq!(payload["provider_descriptor_id"], "openai_compat");
     }
 
     #[tokio::test]

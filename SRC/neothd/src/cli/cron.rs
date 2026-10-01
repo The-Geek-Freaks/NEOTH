@@ -1142,7 +1142,8 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
 fn manual_cron_left_provider(config: &FreedomConfig) -> Result<InferenceProvider> {
     config
         .inference
-        .slot_for(HemisphereRole::Left)
+        .resolve_role_binding(HemisphereRole::Left)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .ok_or_else(|| {

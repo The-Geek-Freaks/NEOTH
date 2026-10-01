@@ -487,19 +487,20 @@ fn collect_council_leaf_slots<'a>(
     }
 }
 
-fn configured_leaf_binding<'a>(
-    config: &'a crate::config::FreedomConfig,
-    slot: &'a crate::config::inference::HemisphereSlot,
+fn configured_leaf_binding(
+    config: &crate::config::FreedomConfig,
+    slot: &crate::config::inference::HemisphereSlot,
 ) -> anyhow::Result<(
     crate::cli::init::ProviderKind,
-    Option<&'a str>,
-    Option<&'a str>,
+    Option<String>,
+    Option<String>,
 )> {
-    if let Some(provider) = slot.provider {
+    let binding = config.inference.resolve_explicit_slot_binding(slot)?;
+    if let Some(provider) = binding.slot.provider {
         return Ok((
             provider.to_provider_kind(),
-            slot.model.as_deref(),
-            slot.endpoint.as_deref(),
+            binding.slot.model,
+            binding.slot.endpoint,
         ));
     }
 
@@ -508,8 +509,8 @@ fn configured_leaf_binding<'a>(
     })?;
     Ok((
         kind,
-        config.provider_model.as_deref(),
-        config.provider_endpoint.as_deref(),
+        config.provider_model.clone(),
+        config.provider_endpoint.clone(),
     ))
 }
 
@@ -604,7 +605,7 @@ fn council_leaf_authorization_bound_usd(
 
     let (kind, configured_model, endpoint) = configured_leaf_binding(config, slot)?;
     let provider = if kind == ProviderKind::LocalOllama {
-        effective_ollama_provider(endpoint)?
+        effective_ollama_provider(endpoint.as_deref())?
     } else {
         kind.as_provider_id()
     };
@@ -612,7 +613,7 @@ fn council_leaf_authorization_bound_usd(
         return Ok(0.0);
     }
 
-    let model = configured_leaf_wire_model(config, kind, configured_model, home)?;
+    let model = configured_leaf_wire_model(config, kind, configured_model.as_deref(), home)?;
     let output_ceiling = match kind {
         ProviderKind::ClaudeCli | ProviderKind::RecursiveMas => None,
         ProviderKind::LocalQwen | ProviderKind::LocalOuro => None,
@@ -857,6 +858,23 @@ fn predict_output_tokens(meter: &Meter) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn council_cost_binding_uses_named_instance_model_and_endpoint() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: compat_b\n    descriptor: openai_compat\n    endpoint: https://b.example/v1\n    model: gpt-4o-mini\nleft: { provider_instance_id: compat_b }\n",
+        )
+        .unwrap();
+        let (kind, model, endpoint) = configured_leaf_binding(
+            &config,
+            config.inference.slot_for(crate::config::inference::HemisphereRole::Left),
+        )
+        .unwrap();
+        assert_eq!(kind, crate::cli::init::ProviderKind::OpenaiCompat);
+        assert_eq!(model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(endpoint.as_deref(), Some("https://b.example/v1"));
+    }
 
     #[test]
     fn lookup_price_returns_free_for_local() {

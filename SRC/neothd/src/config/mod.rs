@@ -1288,16 +1288,32 @@ fn merge_effective_credentials(config: &mut FreedomConfig, credentials: &credent
         config.telegram_token = Some(value.clone());
     }
     if let Some(value) = credentials.inference_left_key.as_ref() {
-        config.inference.left.key = Some(value.clone());
+        if config.inference.left.provider_instance_id.is_none() {
+            config.inference.left.key = Some(value.clone());
+        }
     }
     if let Some(value) = credentials.inference_right_key.as_ref() {
-        config.inference.right.key = Some(value.clone());
+        if config.inference.right.provider_instance_id.is_none() {
+            config.inference.right.key = Some(value.clone());
+        }
     }
     if let Some(value) = credentials.inference_cerebellum_key.as_ref() {
-        config.inference.cerebellum.key = Some(value.clone());
+        if config.inference.cerebellum.provider_instance_id.is_none() {
+            config.inference.cerebellum.key = Some(value.clone());
+        }
     }
     if let Some(value) = credentials.inference_default_slot_key.as_ref() {
-        config.inference.default_slot.key = Some(value.clone());
+        if config.inference.default_slot.provider_instance_id.is_none() {
+            config.inference.default_slot.key = Some(value.clone());
+        }
+    }
+    for instance in &mut config.inference.provider_instances {
+        if let Some(Some(value)) = credentials
+            .inference_provider_instance_keys
+            .get(instance.id.as_str())
+        {
+            instance.key = Some(value.clone());
+        }
     }
     if let Some(value) = credentials.ssh_tunnels.as_ref() {
         config.ssh_tunnels.clone_from(value);
@@ -3339,6 +3355,17 @@ fn remove_split_secret_fields(value: &mut serde_yaml::Value) {
             remove_public_yaml_key(slot, "key");
         }
     }
+    let instances_key = serde_yaml::Value::String("provider_instances".to_string());
+    if let Some(instances) = inference
+        .get_mut(&instances_key)
+        .and_then(serde_yaml::Value::as_sequence_mut)
+    {
+        for instance in instances {
+            if let Some(instance) = instance.as_mapping_mut() {
+                remove_public_yaml_key(instance, "key");
+            }
+        }
+    }
 }
 
 fn canonicalize_public_yaml_aliases(value: &mut serde_yaml::Value) {
@@ -3670,6 +3697,9 @@ impl FreedomConfig {
         public.inference.right.key = None;
         public.inference.cerebellum.key = None;
         public.inference.default_slot.key = None;
+        for instance in &mut public.inference.provider_instances {
+            instance.key = None;
+        }
         // `serde(skip)` is the serialization boundary; clear the cloned
         // runtime authority as well so its duplicate SecretStrings are dropped
         // before public validation/rendering continues.
@@ -4175,5 +4205,37 @@ mod managed_browser_config_tests {
         let configured: FreedomConfig = serde_yaml::from_str("managed_browser:\n  enabled: true\n")
             .expect("typed managed browser config must deserialize");
         assert!(configured.managed_browser.enabled);
+    }
+}
+
+#[cfg(test)]
+mod provider_instance_credential_tests {
+    use super::{credentials::Credentials, merge_effective_credentials, FreedomConfig};
+    use crate::secret::SecretString;
+
+    #[test]
+    fn named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key() {
+        let mut config: FreedomConfig = serde_yaml::from_str(
+            "inference:\n  provider_instances:\n    - id: compat_a\n      descriptor: openai_compat\n  left:\n    provider_instance_id: compat_a\n",
+        )
+        .unwrap();
+        let mut credentials = Credentials::default();
+        credentials.inference_left_key = Some(SecretString::from("legacy-left"));
+        credentials.inference_provider_instance_keys.insert(
+            "compat_a".into(),
+            Some(SecretString::from("named-secret")),
+        );
+
+        merge_effective_credentials(&mut config, &credentials);
+
+        assert!(config.inference.left.key.is_none());
+        assert_eq!(
+            config.inference.provider_instances[0].key.as_ref().unwrap().expose(),
+            "named-secret"
+        );
+        let public = config.public_yaml().unwrap();
+        assert!(!public.contains("named-secret"));
+        assert!(!public.contains("legacy-left"));
+        assert!(public.contains("provider_instance_id: compat_a"));
     }
 }

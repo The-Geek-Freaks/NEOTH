@@ -43,6 +43,14 @@ use super::{
 };
 use crate::security::mirror_refusal_pipeline::MirrorCancellation;
 
+/// Content-free identity for one concrete chain leaf. It is kept alongside
+/// the provider object so a 429 failover cannot retain the primary's audit id.
+#[derive(Clone, Debug, Default)]
+pub struct FallbackCandidateBinding {
+    pub provider_instance_id: Option<String>,
+    pub provider_descriptor_id: String,
+}
+
 /// Ordered primary + fallbacks. See module docs.
 pub struct FallbackProvider {
     /// `[0]` = primary; `[1..]` = ordered fallbacks. Non-empty.
@@ -51,6 +59,7 @@ pub struct FallbackProvider {
     /// belongs to the primary only; every fallback resolves its own configured
     /// or adapter-default model before its separate leaf authorization.
     configured_models: Vec<Option<String>>,
+    bindings: Vec<FallbackCandidateBinding>,
     /// Hard cap on fallback hops (does not count the primary attempt).
     max_hops: u8,
     /// SPEC-03b — optional WAL writer for the `0x25
@@ -130,6 +139,26 @@ impl FallbackProvider {
         wal_writer: Option<crate::wal::writer::WalWriterHandle>,
         quota_path: PathBuf,
     ) -> Self {
+        let bindings = chain
+            .iter()
+            .map(|provider| FallbackCandidateBinding {
+                provider_instance_id: None,
+                provider_descriptor_id: provider.name().to_owned(),
+            })
+            .collect();
+        Self::new_with_models_and_bindings_at(
+            chain, configured_models, bindings, max_hops, wal_writer, quota_path,
+        )
+    }
+
+    pub fn new_with_models_and_bindings_at(
+        chain: Vec<Box<dyn Provider>>,
+        configured_models: Vec<Option<String>>,
+        bindings: Vec<FallbackCandidateBinding>,
+        max_hops: u8,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+        quota_path: PathBuf,
+    ) -> Self {
         // `assert!` (not `debug_assert!`) so the invariant holds in release
         // too — `stream()` does `.first().expect(..)` and would otherwise
         // hard-panic on an empty chain in a release binary.
@@ -142,13 +171,27 @@ impl FallbackProvider {
             configured_models.len(),
             "FallbackProvider model metadata must match the provider chain"
         );
+        assert_eq!(chain.len(), bindings.len(), "FallbackProvider binding metadata must match the provider chain");
         Self {
             chain,
             configured_models,
+            bindings,
             max_hops,
             wal_writer,
             quota_path,
         }
+    }
+
+    fn authorizer_for_candidate(
+        &self,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        index: usize,
+    ) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
+        let binding = &self.bindings[index];
+        authorizer.clone().with_provider_binding(
+            binding.provider_instance_id.clone(),
+            binding.provider_descriptor_id.clone(),
+        )
     }
 
     /// Per-candidate hop decision for a fallback slot (`i > 0`). A candidate
@@ -366,12 +409,14 @@ impl FallbackProvider {
 
             let candidate_req = self.request_for_candidate(i, candidate.as_ref(), &req)?;
             let result = match authorization {
-                Some((authorizer, call_scope)) => match cancellation.as_ref() {
+                Some((authorizer, call_scope)) => {
+                    let leaf_authorizer = self.authorizer_for_candidate(authorizer, i);
+                    match cancellation.as_ref() {
                     Some(cancellation) => {
                         candidate
                             .complete_authorized_cancellable(
                                 candidate_req,
-                                authorizer,
+                                &leaf_authorizer,
                                 call_scope,
                                 std::sync::Arc::clone(cancellation),
                             )
@@ -379,8 +424,9 @@ impl FallbackProvider {
                     }
                     None => {
                         candidate
-                            .complete_authorized(candidate_req, authorizer, call_scope)
+                            .complete_authorized(candidate_req, &leaf_authorizer, call_scope)
                             .await
+                    }
                     }
                 },
                 None => {
@@ -594,8 +640,9 @@ impl Provider for FallbackProvider {
         let child_expected = expected.child_identity_for_slot(index)?;
         let mut candidate_req = self.request_for_candidate(index, candidate.as_ref(), &req)?;
         candidate_req.model = Some(expected.wire_model.clone());
+        let leaf_authorizer = self.authorizer_for_candidate(authorizer, index);
         let result = candidate
-            .complete_authorized_pinned(candidate_req, &child_expected, authorizer, call_scope)
+            .complete_authorized_pinned(candidate_req, &child_expected, &leaf_authorizer, call_scope)
             .await;
         let mut completion = match result {
             Ok(completion) => completion,
@@ -669,8 +716,9 @@ impl Provider for FallbackProvider {
             .first()
             .expect("FallbackProvider chain is non-empty");
         let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let leaf_authorizer = self.authorizer_for_candidate(authorizer, 0);
         let stream = primary
-            .stream_authorized(req, authorizer, call_scope)
+            .stream_authorized(req, &leaf_authorizer, call_scope)
             .await?;
         Ok(Self::stamp_stream_route(stream, 0))
     }
@@ -704,8 +752,9 @@ impl Provider for FallbackProvider {
             .first()
             .expect("FallbackProvider chain is non-empty");
         let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let leaf_authorizer = self.authorizer_for_candidate(authorizer, 0);
         let stream = primary
-            .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+            .stream_events_authorized(req, &leaf_authorizer, call_scope, reasoning_display)
             .await?;
         Ok(Self::stamp_event_stream_route(stream, 0))
     }
@@ -723,10 +772,11 @@ impl Provider for FallbackProvider {
             .first()
             .expect("FallbackProvider chain is non-empty");
         let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let leaf_authorizer = self.authorizer_for_candidate(authorizer, 0);
         let stream = primary
             .stream_events_authorized_cancellable(
                 req,
-                authorizer,
+                &leaf_authorizer,
                 call_scope,
                 reasoning_display,
                 cancellation,
@@ -942,6 +992,54 @@ mod tests {
         assert_eq!(hop_payloads[0]["from_provider"], "primary");
         assert_eq!(hop_payloads[0]["to_provider"], "secondary");
         assert_eq!(hop_payloads[0]["hop"], 1);
+    }
+
+    #[tokio::test]
+    async fn authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("fallback-instance-identity-000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
+        let fallback = FallbackProvider::new_with_models_and_bindings_at(
+            vec![mock("openai_compat", Behavior::Quota), mock("openai_compat", Behavior::Ok)],
+            vec![Some("model-primary".into()), Some("model-secondary".into())],
+            vec![
+                FallbackCandidateBinding { provider_instance_id: Some("compat_primary".into()), provider_descriptor_id: "openai_compat".into() },
+                FallbackCandidateBinding { provider_instance_id: Some("compat_secondary".into()), provider_descriptor_id: "openai_compat".into() },
+            ],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_usage_home(dir.path());
+        let completion = fallback
+            .complete_authorized_direct_retry(
+                Request::default(), &authorizer, "test.fallback.named_leaf_identity",
+            )
+            .await
+            .expect("secondary named fallback must complete after primary quota");
+        assert_eq!(completion.identity.dispatch_route, vec![1]);
+
+        drop(fallback);
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = lifecycle_frames(&segment);
+        assert!(lifecycle.iter().any(|(_, payload)| {
+            payload["provider_instance_id"] == "compat_primary"
+                && payload["provider_descriptor_id"] == "openai_compat"
+        }));
+        assert!(lifecycle.iter().any(|(_, payload)| {
+            payload["provider_instance_id"] == "compat_secondary"
+                && payload["provider_descriptor_id"] == "openai_compat"
+                && payload["provider"] == "openai_compat"
+        }));
     }
 
     #[tokio::test]

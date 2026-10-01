@@ -303,7 +303,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
                 crate::config::FreedomConfig::load_from_path(&neoth_dir.join("freedom.yaml"))
                     .context("reload final wizard config before consent offer")?;
             let mut consent_providers = Vec::new();
-            for route in crate::consent::required_consent_routes(&final_config) {
+            for route in crate::consent::required_consent_routes(&final_config)? {
                 if !consent_providers.contains(&route.kind) {
                     consent_providers.push(route.kind);
                 }
@@ -713,6 +713,7 @@ mod tests {
         // that confuse later wizard reconfigure passes.
         use crate::config::inference::{HemisphereSlot, InferenceProvider, InferenceTopology};
         let dirty = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::OpenAi),
             model: Some("gpt-4o".into()),
             key: Some(crate::secret::SecretString::from("sk-test")),
@@ -784,6 +785,7 @@ mod tests {
         use crate::models::hemisphere_preset::build_local_preset;
         // Pre-seed cloud slots; a 1-local preset must leave right+cerebellum cloud.
         let cloud = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::Gemini),
             model: Some("gemini-3.1-pro-preview".into()),
             key: Some(crate::secret::SecretString::from("k")),

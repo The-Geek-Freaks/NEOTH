@@ -327,7 +327,7 @@ fn route_set_hash(routes: &[RouteBinding]) -> Result<String> {
 }
 
 fn canonical_routes(config: &FreedomConfig) -> Result<Vec<RouteBinding>> {
-    let mut routes = consent::required_consent_routes(config)
+    let mut routes = consent::required_consent_routes(config)?
         .into_iter()
         .filter(|route| consent::route_requires_consent(route.kind, route.endpoint.as_deref()))
         .map(|route| RouteBinding::from_route(&route))

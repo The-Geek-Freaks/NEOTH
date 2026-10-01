@@ -45,6 +45,20 @@ pub(crate) use telegram_migration::{
     TelegramMigrationState,
 };
 
+fn deserialize_provider_instance_key_map<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<String, Option<SecretString>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let keys = BTreeMap::<String, Option<SecretString>>::deserialize(deserializer)?;
+    for id in keys.keys() {
+        crate::config::inference::ProviderInstanceId::parse(id)
+            .map_err(serde::de::Error::custom)?;
+    }
+    Ok(keys)
+}
+
 /// Cross-process-safe credential-store status classifier.
 ///
 /// A single-read probe of `credentials.yaml` that callers use to decide
@@ -638,6 +652,11 @@ pub struct Credentials {
     pub inference_cerebellum_key: Option<SecretString>,
     #[serde(default)]
     pub inference_default_slot_key: Option<SecretString>,
+    /// Instance-owned provider keys keyed by the stable public
+    /// `inference.provider_instances[].id`. `None` retains an intentional
+    /// keychain-backed placeholder for this exact instance.
+    #[serde(default, deserialize_with = "deserialize_provider_instance_key_map")]
+    pub inference_provider_instance_keys: BTreeMap<String, Option<SecretString>>,
     /// WhatsApp Business Cloud API access token. Issued from the Meta
     /// developer console. Used by the live Graph API sender, proactive
     /// delivery route, and authenticated webhook reply path.
@@ -3873,6 +3892,7 @@ impl Credentials {
             inference_right_key,
             inference_cerebellum_key,
             inference_default_slot_key,
+            inference_provider_instance_keys,
             whatsapp_token,
             whatsapp_phone_id,
             whatsapp_verify_token,
@@ -3961,6 +3981,7 @@ impl Credentials {
             && inference_right_key.is_none()
             && inference_cerebellum_key.is_none()
             && inference_default_slot_key.is_none()
+            && inference_provider_instance_keys.is_empty()
             && whatsapp_token.is_none()
             && whatsapp_phone_id.is_none()
             && whatsapp_verify_token.is_none()
@@ -5629,10 +5650,19 @@ struct LegacyInlineInferenceSecrets {
     cerebellum: LegacyInlineSlotSecret,
     #[serde(default)]
     default_slot: LegacyInlineSlotSecret,
+    #[serde(default)]
+    provider_instances: Vec<LegacyInlineProviderInstanceSecret>,
 }
 
 #[derive(Default, Deserialize)]
 struct LegacyInlineSlotSecret {
+    #[serde(default)]
+    key: Option<SecretString>,
+}
+
+#[derive(Deserialize)]
+struct LegacyInlineProviderInstanceSecret {
+    id: crate::config::inference::ProviderInstanceId,
     #[serde(default)]
     key: Option<SecretString>,
 }
@@ -5744,6 +5774,14 @@ fn render_freedom_preserving_unknown_yaml(
     persisted.inference.right.key = legacy.inference.right.key;
     persisted.inference.cerebellum.key = legacy.inference.cerebellum.key;
     persisted.inference.default_slot.key = legacy.inference.default_slot.key;
+    for instance in &mut persisted.inference.provider_instances {
+        instance.key = legacy
+            .inference
+            .provider_instances
+            .iter()
+            .find(|legacy_instance| legacy_instance.id == instance.id)
+            .and_then(|legacy_instance| legacy_instance.key.clone());
+    }
     let known = serde_yaml::to_value(&persisted)
         .context("serialize known freedom.yaml fields for dual-file update")?;
     remove_retired_channel_account_yaml(
@@ -8174,6 +8212,59 @@ mod tests {
             "sk-roundtrip"
         );
         assert!(loaded.telegram_token.is_none());
+    }
+
+    #[test]
+    fn provider_instance_credential_map_rejects_noncanonical_ids() {
+        assert!(serde_yaml::from_str::<Credentials>(
+            "inference_provider_instance_keys:\n  Compat-A: secret\n"
+        )
+        .is_err());
+        let credentials: Credentials = serde_yaml::from_str(
+            "inference_provider_instance_keys:\n  compat_a: secret\n",
+        )
+        .unwrap();
+        assert_eq!(
+            credentials.inference_provider_instance_keys["compat_a"]
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "secret"
+        );
+    }
+
+    #[test]
+    fn dual_file_update_keeps_private_named_key_out_of_public_yaml_and_preserves_inline_preimage() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            "inference:\n  provider_instances:\n    - id: compat_a\n      descriptor: openai_compat\n      key: inline-named-key\n  left:\n    provider_instance_id: compat_a\n",
+        )
+        .unwrap();
+        let mut credentials = Credentials::default();
+        credentials.inference_provider_instance_keys.insert(
+            "compat_a".into(),
+            Some(SecretString::from("private-named-key")),
+        );
+        credentials.write(&credentials_path).unwrap();
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, _| {
+                config.operator_id = Some("updated".into());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(public.contains("inline-named-key"));
+        assert!(!public.contains("private-named-key"));
+        let persisted_credentials = std::fs::read_to_string(&credentials_path).unwrap();
+        assert!(persisted_credentials.contains("private-named-key"));
     }
 
     fn legacy_telegram_freedom_yaml(backend: &str, inline_token: Option<&str>) -> String {

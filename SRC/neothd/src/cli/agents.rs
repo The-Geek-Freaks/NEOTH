@@ -41,7 +41,8 @@ pub(crate) fn fan_out_left_role_binding(
     let role = crate::config::inference::HemisphereRole::Left;
     let provider = config
         .inference
-        .slot_for(role)
+        .resolve_role_binding(role)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .context("sub-agent Left role has no configured provider identity")?;

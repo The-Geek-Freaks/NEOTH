@@ -260,7 +260,8 @@ fn standalone_loop_left_provider(
 ) -> Result<crate::config::inference::InferenceProvider> {
     config
         .inference
-        .slot_for(HemisphereRole::Left)
+        .resolve_role_binding(HemisphereRole::Left)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .ok_or_else(|| {

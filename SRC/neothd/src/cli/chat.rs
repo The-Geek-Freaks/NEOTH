@@ -499,15 +499,15 @@ fn plan_verifiability_route(
     config: &FreedomConfig,
     args: &ChatArgs,
     home: &std::path::Path,
-) -> crate::models::selector::VerifiabilityRoute {
+) -> Result<crate::models::selector::VerifiabilityRoute> {
     use crate::config::inference::InferenceProvider;
     use crate::models::selector::{VerifiabilityRoute, VerifiabilityRoutingInput};
     let Some(workflow) = args.workflow.as_deref() else {
-        return VerifiabilityRoute::PreserveConfigured;
+        return Ok(VerifiabilityRoute::PreserveConfigured);
     };
     let policy = &config.verifiability_routing;
-    let local = config.inference.slot_for(policy.local_specialist_role);
-    let frontier = config.inference.slot_for(policy.frontier_role);
+    let local = config.inference.resolve_role_binding(policy.local_specialist_role)?;
+    let frontier = config.inference.resolve_role_binding(policy.frontier_role)?;
     let evidence = policy
         .enabled
         .then(|| {
@@ -537,22 +537,25 @@ fn plan_verifiability_route(
         evidence,
         meets_specialist_volume: high_volume,
         local_specialist_role: policy.local_specialist_role,
-        local_specialist_available: local.provider.is_some_and(InferenceProvider::is_local),
+        local_specialist_available: local.slot.provider.is_some_and(InferenceProvider::is_local),
         frontier_role: policy.frontier_role,
-        frontier_available: frontier
+        frontier_available: frontier.slot
             .provider
             .is_some_and(|provider| !provider.is_local()),
-    })
+    }))
 }
 
 fn config_with_verifiability_role(
     config: &FreedomConfig,
     role: crate::config::inference::HemisphereRole,
-) -> FreedomConfig {
+) -> Result<FreedomConfig> {
+    // Retain the original reference slot, while resolving first so invalid
+    // named ids fail before this alternate ingress can reach a provider.
+    config.inference.resolve_role_binding(role)?;
     let mut selected = config.clone();
     selected.inference.mode = crate::config::inference::TopologyMode::Custom;
     selected.inference.left = config.inference.slot_for(role).clone();
-    selected
+    Ok(selected)
 }
 
 fn emit_verifiability_human_handoff(
@@ -692,7 +695,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         .await?;
         (config, ephemeral)
     };
-    let d7_route = plan_verifiability_route(&config, &args, &neoth_home);
+    let d7_route = plan_verifiability_route(&config, &args, &neoth_home)?;
     let config = match d7_route {
         crate::models::selector::VerifiabilityRoute::Retrieval => config,
         crate::models::selector::VerifiabilityRoute::HumanHandoff => {
@@ -704,7 +707,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         }
         crate::models::selector::VerifiabilityRoute::LocalSpecialist(role)
         | crate::models::selector::VerifiabilityRoute::Frontier(role) => {
-            config_with_verifiability_role(&config, role)
+            config_with_verifiability_role(&config, role)?
         }
         crate::models::selector::VerifiabilityRoute::PreserveConfigured => config,
     };
@@ -1912,7 +1915,7 @@ fn include_route_slot_cap(
     primary_model: Option<&str>,
     primary_non_content: u32,
     home: Option<&std::path::Path>,
-) {
+) -> Result<()> {
     let (provider_name, model) = match slot.provider {
         Some(provider) => (provider.as_str(), slot.model.as_deref()),
         None => (primary_provider_name, primary_model),
@@ -1924,6 +1927,7 @@ fn include_route_slot_cap(
         primary_non_content,
         home,
     ));
+    Ok(())
 }
 
 /// Resolve the primary-equivalent request cap that is safe for every reachable
@@ -1935,7 +1939,7 @@ pub(super) fn routing_safe_effective_cap(
     config: &FreedomConfig,
     primary_provider_name: &str,
     primary_model: Option<&str>,
-) -> u32 {
+) -> Result<u32> {
     routing_safe_effective_cap_inner(config, primary_provider_name, primary_model, None)
 }
 
@@ -1944,7 +1948,7 @@ pub(super) fn routing_safe_effective_cap_at(
     primary_provider_name: &str,
     primary_model: Option<&str>,
     home: &std::path::Path,
-) -> u32 {
+) -> Result<u32> {
     routing_safe_effective_cap_inner(config, primary_provider_name, primary_model, Some(home))
 }
 
@@ -1953,7 +1957,7 @@ fn routing_safe_effective_cap_inner(
     primary_provider_name: &str,
     primary_model: Option<&str>,
     home: Option<&std::path::Path>,
-) -> u32 {
+) -> Result<u32> {
     use crate::config::inference::HemisphereRole;
 
     let primary_model = route_wire_model(config, primary_provider_name, primary_model, home);
@@ -1977,22 +1981,23 @@ fn routing_safe_effective_cap_inner(
     // safe set is every configured slot whenever at least one hop is allowed.
     if config.fallback.max_hops > 0 {
         for slot in &config.fallback.chain {
+            let binding = config.inference.resolve_explicit_slot_binding(slot)?;
             include_route_slot_cap(
                 config,
                 &mut cap,
-                slot,
+                &binding.slot,
                 primary_provider_name,
                 Some(&primary_model),
                 primary_non_content,
                 home,
-            );
+            )?;
         }
     }
 
     let council_enabled =
         !config.council.disabled.unwrap_or(false) && !config.council.mode.is_single();
     if !council_enabled {
-        return cap;
+        return Ok(cap);
     }
 
     let roles = [
@@ -2010,34 +2015,38 @@ fn routing_safe_effective_cap_inner(
         .unwrap_or(primary_provider_name);
     let configured_primary_model = config.provider_model.as_deref();
     for role in roles {
+        let binding = config.inference.resolve_role_binding(role)?;
         include_route_slot_cap(
             config,
             &mut cap,
-            config.inference.slot_for(role),
+            &binding.slot,
             configured_primary_provider,
             configured_primary_model,
             primary_non_content,
             home,
-        );
+        )?;
     }
 
     if config.inference.hemisphere_council_depth.get() > 1 {
         for outer_role in roles {
             for inner_role in roles {
+                let binding = config
+                    .inference
+                    .resolve_sub_role_binding(outer_role, inner_role)?;
                 include_route_slot_cap(
                     config,
                     &mut cap,
-                    config.inference.slot_for_sub(outer_role, inner_role),
+                    &binding.slot,
                     configured_primary_provider,
                     configured_primary_model,
                     primary_non_content,
                     home,
-                );
+                )?;
             }
         }
     }
 
-    cap
+    Ok(cap)
 }
 
 fn prompt_bundle_hash_for_items(items: &[crate::tokens::budget::BlockItem]) -> String {
@@ -3841,7 +3850,7 @@ pub(super) async fn enforce_preflight(
                                     provider.name(),
                                     effective_model.as_deref(),
                                     home,
-                                );
+                                )?;
                                 let budgeted = finalize_provider_request(
                                     request_items,
                                     &preflight_prompt,
@@ -6206,7 +6215,7 @@ pub(super) async fn dispatch_provider(
     model_source: &'static str,
     // Per-turn metadata copied into every concrete provider-leaf lifecycle
     // frame. Exact provider/model/request hashes are added centrally.
-    provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
+    mut provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
     ephemeral_consent: &crate::consent::EphemeralConsent,
     route: TurnDispatchRoute,
     council_skip: Option<CouncilSkipAudit>,
@@ -6303,6 +6312,15 @@ pub(super) async fn dispatch_provider(
     // B22: every provider invocation below (direct, stream, MCP iteration,
     // loop round, refusal retry) crosses this boundary. Decorators recurse with
     // the authorizer and gate each exact final leaf immediately before dispatch.
+    if normal_chat_role.is_some() {
+        let binding = config
+            .inference
+            .resolve_role_binding(crate::config::inference::HemisphereRole::Left)?;
+        provider_audit_context.provider_instance_id = binding.provider_instance_id;
+        provider_audit_context.provider_descriptor_id = Some(
+            crate::providers::resolved_binding_descriptor_id(config, &binding),
+        );
+    }
     let call_authorizer =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
@@ -9802,9 +9820,9 @@ fn normal_chat_role_binding(
     role_policy_reload: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
 ) -> Result<Option<crate::cli::chat_turn_pipeline::NormalChatRoleBinding>> {
     let role = crate::config::inference::HemisphereRole::Left;
-    let provider = config
-        .inference
-        .slot_for(role)
+    let binding = config.inference.resolve_role_binding(role)?;
+    let provider = binding
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()));
     let Some(provider) = provider else {
@@ -12015,7 +12033,8 @@ fn bind_council_dissent_winner_authorizer(
     config: &FreedomConfig,
     winner_role: crate::config::inference::HemisphereRole,
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
-    let provider = role_provider_from_slot(config, config.inference.slot_for(winner_role))?;
+    let binding = config.inference.resolve_role_binding(winner_role)?;
+    let provider = role_provider_from_slot(config, &binding.slot)?;
     Ok(authorizer.with_role_dispatch(winner_role, provider, std::sync::Arc::new(config.clone())))
 }
 
@@ -12036,7 +12055,8 @@ async fn build_hemisphere(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
-    let role_provider = role_provider_from_slot(config, config.inference.slot_for(role))?;
+    let binding = config.inference.resolve_role_binding(role)?;
+    let role_provider = role_provider_from_slot(config, &binding.slot)?;
     let role_policy_config = std::sync::Arc::new(config.clone());
     let authorizer = authorizer.with_role_dispatch(
         role,
@@ -12053,7 +12073,7 @@ async fn build_hemisphere(
     base_req.model = Some(resolve_provider_call_wire_model(
         config,
         provider.as_ref(),
-        config.inference.slot_for(role).model.as_deref(),
+        binding.slot.model.as_deref(),
     )?);
     Ok(ProviderHemisphere {
         provider,
@@ -12064,7 +12084,7 @@ async fn build_hemisphere(
         config: None,
         outer_role: None,
         // GOLD-WIRE-04: this role's specialist voice, applied at leaf `ask`.
-        voice: config.inference.slot_for(role).voice,
+        voice: binding.slot.voice,
         recall_fragment: None,
         allow_persistent_context: false,
         agreement_v1: false,
@@ -12106,14 +12126,15 @@ async fn build_hemisphere_with_config(
     allow_persistent_context: bool,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
-    let role_provider = role_provider_from_slot(config.as_ref(), config.inference.slot_for(role))?;
+    let binding = config.inference.resolve_role_binding(role)?;
+    let role_provider = role_provider_from_slot(config.as_ref(), &binding.slot)?;
     let authorizer =
         authorizer.with_role_dispatch(role, role_provider, std::sync::Arc::clone(&config));
     let provider =
         crate::providers::from_config_for_role_at(config.as_ref(), role, neoth_home).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
     // resolved before the `config` Arc is moved into the struct.
-    let voice = config.inference.slot_for(role).voice;
+    let voice = binding.slot.voice;
     // GOLD-ADAPT-MEM-10: bias THIS outer hemisphere's base prompt with region-
     // matched recall (Left=factual, Right=narrative, Cerebellum=operational).
     // Appended at the system layer BELOW the operator's combined_system (bias,
@@ -12124,7 +12145,7 @@ async fn build_hemisphere_with_config(
     base_req.model = Some(resolve_provider_call_wire_model(
         config.as_ref(),
         provider.as_ref(),
-        config.inference.slot_for(role).model.as_deref(),
+        binding.slot.model.as_deref(),
     )?);
     let recall_fragment =
         hemisphere_recall_fragment(role, &req.prompt, neoth_home, allow_persistent_context).await;
@@ -12164,10 +12185,10 @@ async fn build_sub_hemisphere_with_config(
     allow_persistent_context: bool,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
-    let role_provider = role_provider_from_slot(
-        config.as_ref(),
-        config.inference.slot_for_sub(outer_role, inner_role),
-    )?;
+    let binding = config
+        .inference
+        .resolve_sub_role_binding(outer_role, inner_role)?;
+    let role_provider = role_provider_from_slot(config.as_ref(), &binding.slot)?;
     let authorizer =
         authorizer.with_role_dispatch(inner_role, role_provider, std::sync::Arc::clone(&config));
     let provider = crate::providers::from_config_for_sub_role_at(
@@ -12182,16 +12203,12 @@ async fn build_sub_hemisphere_with_config(
     // `hemisphere_sub_slots[outer][inner]` gets that specialist framing at
     // the recursion tier; otherwise it falls back to the inner role's own
     // outer-level slot voice (never the parent hemisphere's — no leak).
-    let voice = config.inference.slot_for_sub(outer_role, inner_role).voice;
+    let voice = binding.slot.voice;
     let mut base_req = req.clone();
     base_req.model = Some(resolve_provider_call_wire_model(
         config.as_ref(),
         provider.as_ref(),
-        config
-            .inference
-            .slot_for_sub(outer_role, inner_role)
-            .model
-            .as_deref(),
+        binding.slot.model.as_deref(),
     )?);
     Ok(ProviderHemisphere {
         provider,
@@ -15215,19 +15232,19 @@ static FAN_OUT_ADVISORY_FIRED: std::sync::atomic::AtomicBool =
 /// topology. Returns `None` when fewer than 2 distinct cloud kinds are
 /// configured (single-cloud + local topologies have no fan-out story
 /// to surface beyond the per-provider V03-08 prompt).
-pub(crate) fn fan_out_advisory_line(config: &FreedomConfig) -> Option<String> {
-    let kinds = crate::consent::cloud_kinds_for_council(config);
+pub(crate) fn fan_out_advisory_line(config: &FreedomConfig) -> Result<Option<String>> {
+    let kinds = crate::consent::cloud_kinds_for_council(config)?;
     if kinds.len() < 2 {
-        return None;
+        return Ok(None);
     }
     let providers: Vec<&str> = kinds.iter().map(|k| crate::consent::slug(*k)).collect();
-    Some(format!(
+    Ok(Some(format!(
         "[NEOTH] this prompt fan-outs to {} cloud providers concurrently \
          ({}). Each provider's TOS + retention policies apply independently. \
          Configured via `freedom.yaml::inference.{{left,right,cerebellum}}`.",
         providers.len(),
         providers.join(", "),
-    ))
+    )))
 }
 
 /// Best-effort once-per-process emit. Subsequent calls in the same
@@ -15246,7 +15263,7 @@ fn maybe_fire_fan_out_advisory(
             std::sync::atomic::Ordering::SeqCst,
         )
         .is_ok()
-        && let Some(line) = fan_out_advisory_line(config)
+        && let Some(line) = fan_out_advisory_line(config)?
     {
         emit_chat_output(output, ChatOutput::HumanStderr { text: line })?;
     }
@@ -18771,7 +18788,7 @@ modes:
 
         let primary_model = "p";
         let primary_only =
-            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         let fallback_model = "fallback-deployment-with-a-materially-longer-wire-model-id";
         // An empty/filtered entry before the usable slot must not consume the
         // runtime hop budget in the static safety calculation.
@@ -18782,11 +18799,39 @@ modes:
             ..Default::default()
         });
 
-        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         assert_eq!(
             primary_only - route_safe,
             u32::try_from(fallback_model.len() - primary_model.len()).unwrap(),
             "fallback's exact model-field bytes must reduce primary content capacity"
+        );
+    }
+
+    #[test]
+    fn routing_cap_resolves_named_fallback_model_before_dispatch() {
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 200_000;
+        config.council.disabled = Some(true);
+        config.fallback.max_hops = 1;
+        let primary_model = "p";
+        let primary_only =
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
+        let fallback_model = "named-fallback-model-with-a-materially-longer-wire-id";
+        config.inference = serde_yaml::from_str(format!(
+            "provider_instances:\n  - id: cap-fallback\n    descriptor: openai_compat\n    endpoint: https://cap-fallback.example/v1\n    model: {fallback_model}\n"
+        ))
+        .expect("parse named routing-cap fallback instance");
+        config.fallback.chain = vec![serde_yaml::from_str(
+            "provider_instance_id: cap-fallback",
+        )
+        .expect("parse named routing-cap fallback reference")];
+
+        let route_safe =
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
+        assert_eq!(
+            primary_only - route_safe,
+            u32::try_from(fallback_model.len() - primary_model.len()).unwrap(),
+            "the cap collector must resolve the named leaf model instead of treating its raw reference as a primary fallback"
         );
     }
 
@@ -18805,7 +18850,7 @@ modes:
         });
 
         let primary_model = "p";
-        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model)).unwrap();
         let wire_model = "claude-opus-4-7[1m]";
         let leaf_cap = crate::tokens::budget::effective_cap(
             "claude_cli",
@@ -20550,6 +20595,34 @@ modes:
             crate::config::inference::InferenceProvider::ClaudeCli
         );
         assert!(binding.role_policy_reload.is_none());
+    }
+
+    #[test]
+    fn normal_chat_role_policy_binds_named_left_instance_provider() {
+        let mut config = w292_normal_chat_config(
+            crate::config::inference::InferenceProvider::OpenAiCompat,
+            W292_LEFT_MODEL,
+        );
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: compat_normal_chat\n    descriptor: openai_compat\n    endpoint: https://normal-chat.example/v1\n    model: w292-left-model\nleft: { provider_instance_id: compat_normal_chat }\n",
+        )
+        .expect("parse named normal-chat Left topology");
+        config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Left,
+                provider: crate::config::inference::InferenceProvider::OpenAiCompat,
+                model: Some(W292_LEFT_MODEL.to_owned()),
+            }],
+        });
+
+        let binding = normal_chat_role_binding(&config, None)
+            .expect("named Left topology resolves before policy dispatch")
+            .expect("named Left provider supplies the normal-chat role binding");
+        assert_eq!(
+            binding.provider,
+            crate::config::inference::InferenceProvider::OpenAiCompat,
+            "the policy binding must use the named instance descriptor rather than the empty raw reference slot"
+        );
     }
     #[tokio::test]
     async fn w292_normal_chat_429_fallback_reuses_left_binding_for_every_leaf() {
@@ -24427,7 +24500,7 @@ template = "[REDACTED]"
         // no joint fan-out advisory needed (single per-provider V03-08
         // prompt already covers it).
         let cfg = mk_advisory_config(Some(I::OpenAi), Some(I::OpenAi), Some(I::OpenAi));
-        assert!(super::fan_out_advisory_line(&cfg).is_none());
+        assert!(super::fan_out_advisory_line(&cfg).unwrap().is_none());
     }
 
     #[test]
@@ -24435,14 +24508,14 @@ template = "[REDACTED]"
         use crate::config::inference::InferenceProvider as I;
         // Local-only topology has zero cloud kinds → no advisory.
         let cfg = mk_advisory_config(Some(I::LocalQwen), Some(I::LocalQwen), Some(I::LocalQwen));
-        assert!(super::fan_out_advisory_line(&cfg).is_none());
+        assert!(super::fan_out_advisory_line(&cfg).unwrap().is_none());
     }
 
     #[test]
     fn fan_out_advisory_line_fires_for_two_distinct_clouds() {
         use crate::config::inference::InferenceProvider as I;
         let cfg = mk_advisory_config(Some(I::OpenAi), Some(I::Gemini), Some(I::LocalQwen));
-        let line = super::fan_out_advisory_line(&cfg).expect("≥2 clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("≥2 clouds should fire");
         assert!(line.contains("2 cloud providers"));
         assert!(line.contains("openai_api"));
         assert!(line.contains("gemini_api"));
@@ -24453,7 +24526,7 @@ template = "[REDACTED]"
     fn fan_out_advisory_line_fires_for_three_distinct_clouds() {
         use crate::config::inference::InferenceProvider as I;
         let cfg = mk_advisory_config(Some(I::ClaudeCli), Some(I::OpenAi), Some(I::Gemini));
-        let line = super::fan_out_advisory_line(&cfg).expect("3 clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("3 clouds should fire");
         assert!(line.contains("3 cloud providers"));
         for slug in ["claude_cli", "openai_api", "gemini_api"] {
             assert!(line.contains(slug), "advisory must name {slug}: {line}");
@@ -24465,7 +24538,7 @@ template = "[REDACTED]"
         use crate::config::inference::InferenceProvider as I;
         // Left=Right=ClaudeCli, Cerebellum=Gemini → 2 distinct kinds.
         let cfg = mk_advisory_config(Some(I::ClaudeCli), Some(I::ClaudeCli), Some(I::Gemini));
-        let line = super::fan_out_advisory_line(&cfg).expect("2 distinct clouds should fire");
+        let line = super::fan_out_advisory_line(&cfg).unwrap().expect("2 distinct clouds should fire");
         assert!(line.contains("2 cloud providers"));
         // ClaudeCli appears once, not twice.
         let claude_count = line.matches("claude_cli").count();
@@ -28546,7 +28619,7 @@ mod attach_tests {
         config.inference.cerebellum.provider = Some(InferenceProvider::LocalOllama);
         config.inference.cerebellum.model = Some("specialist-local".to_owned());
 
-        let pinned = config_with_verifiability_role(&config, HemisphereRole::Cerebellum);
+        let pinned = config_with_verifiability_role(&config, HemisphereRole::Cerebellum).unwrap();
         assert_eq!(pinned.inference.mode, TopologyMode::Custom);
         assert_eq!(
             pinned.inference.slot_for(HemisphereRole::Left).provider,
@@ -28562,7 +28635,7 @@ mod attach_tests {
             Some("specialist-local")
         );
 
-        let frontier = config_with_verifiability_role(&config, HemisphereRole::Right);
+        let frontier = config_with_verifiability_role(&config, HemisphereRole::Right).unwrap();
         assert_eq!(
             frontier.inference.slot_for(HemisphereRole::Left).provider,
             Some(InferenceProvider::AnthropicApi),
@@ -28576,6 +28649,20 @@ mod attach_tests {
                 .as_deref(),
             Some("frontier-selected")
         );
+
+        let mut named = FreedomConfig::default();
+        named.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: d7-frontier\n    descriptor: openai_compat\n    endpoint: https://d7-frontier.example/v1\n    model: d7-frontier-model\nright: { provider_instance_id: d7-frontier }\n",
+        )
+        .expect("parse named D7 frontier role");
+        let selected = config_with_verifiability_role(&named, HemisphereRole::Right)
+            .expect("D7 resolves the selected named role before pinning Left");
+        let selected_binding = selected
+            .inference
+            .resolve_role_binding(HemisphereRole::Left)
+            .expect("D7-pinned Left retains the named transport reference");
+        assert_eq!(selected_binding.provider_instance_id.as_deref(), Some("d7-frontier"));
+        assert_eq!(selected_binding.slot.model.as_deref(), Some("d7-frontier-model"));
     }
 
     #[tokio::test]

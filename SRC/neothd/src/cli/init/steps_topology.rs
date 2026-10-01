@@ -57,6 +57,7 @@ pub(crate) fn step5b_inference_topology(
     // Mirror the operator's step-5 provider choice into default_slot so the
     // common single-mode case round-trips without re-asking the operator.
     state.inference.default_slot = HemisphereSlot {
+        provider_instance_id: None,
         provider: state.provider_kind.map(|k| k.to_inference()),
         model: state.provider_model.clone(),
         key: state.provider_key.clone(),
@@ -331,6 +332,7 @@ pub(crate) fn step5b_inference_topology(
                     state.inference.default_slot.model.clone()
                 };
                 let slot = HemisphereSlot {
+                    provider_instance_id: None,
                     provider: Some(chosen),
                     model,
                     key: state.inference.default_slot.key.clone(),
@@ -1256,6 +1258,7 @@ mod tests {
 
         // Wire one hemisphere to the Ollama OpenAI-compat endpoint with an hf.co model ref.
         let slot = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::OpenAiCompat),
             model: Some("hf.co/unsloth/Qwen2.5-7B-Instruct-GGUF:Q4_K_M".to_string()),
             endpoint: Some(crate::installers::ollama::openai_compat_endpoint(

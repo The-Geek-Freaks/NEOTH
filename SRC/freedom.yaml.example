@@ -229,6 +229,21 @@ inference:
   # openai_compat_profile: generic
   # accelerator: cuda      # cuda | metal | openvino | cpu. Auto-detected.
   # embedding_provider: local_qwen
+  # Named instances keep a stable audit identity when two routes share the
+  # same transport. A referenced slot may contain ONLY provider_instance_id;
+  # do not combine it with provider/model/key/endpoint/profile fields.
+  # provider_instances:
+  #   - id: compat_a
+  #     descriptor: openai_compat
+  #     endpoint: https://vendor-a.example/v1
+  #     model: vendor-a-chat
+  #     # key: stored in ~/.neoth/credentials.yaml
+  #   - id: compat_b
+  #     descriptor: openai_compat
+  #     endpoint: https://vendor-b.example/v1
+  #     model: vendor-b-chat
+  # left: { provider_instance_id: compat_a }
+  # right: { provider_instance_id: compat_b }
   # left:
   #   provider: claude_cli
   #   model: claude-opus-4-7

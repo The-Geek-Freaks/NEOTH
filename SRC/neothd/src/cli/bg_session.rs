@@ -1572,7 +1572,8 @@ fn background_left_role_provider(
 ) -> Result<crate::config::inference::InferenceProvider> {
     config
         .inference
-        .slot_for(crate::config::inference::HemisphereRole::Left)
+        .resolve_role_binding(crate::config::inference::HemisphereRole::Left)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .ok_or_else(|| anyhow::anyhow!("background Left role has no configured provider identity"))
@@ -1609,7 +1610,7 @@ pub async fn spawn_background_session(
     provider: Arc<dyn Provider>,
     writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<BgJobId> {
-    let mut request = build_bg_request(&prompt, &config, system);
+    let mut request = build_bg_request(&prompt, &config, system)?;
     let requested_model = request.model.clone();
     request.model = Some(crate::providers::resolve_configured_request_model_for_wire(
         &config,
@@ -1622,14 +1623,19 @@ pub async fn spawn_background_session(
 /// Thin headless provider call. Uses `provider.complete()` directly —
 /// no stdout, no WAL/hook overhead, no skill routing. Intentionally
 /// thin: ephemeral background sessions trade depth for speed.
-fn build_bg_request(prompt: &str, config: &FreedomConfig, system: Option<String>) -> Request {
+fn build_bg_request(
+    prompt: &str,
+    config: &FreedomConfig,
+    system: Option<String>,
+) -> Result<Request> {
     let default_model = config
         .inference
-        .slot_for(crate::config::inference::HemisphereRole::Left)
+        .resolve_role_binding(crate::config::inference::HemisphereRole::Left)?
+        .slot
         .model
         .clone()
         .or(config.provider_model.clone());
-    Request {
+    Ok(Request {
         prompt: prompt.to_owned(),
         system,
         model: default_model,
@@ -1639,7 +1645,7 @@ fn build_bg_request(prompt: &str, config: &FreedomConfig, system: Option<String>
         stop_sequences: vec![],
         thinking_budget: None,
         max_output_tokens: None,
-    }
+    })
 }
 
 /// A detached job is a new session: mint its canary only after the persisted
@@ -3462,7 +3468,7 @@ mod tests {
     fn background_session_resolves_the_exact_wire_model_before_signing() {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new("the-answer"));
         let config = FreedomConfig::default();
-        let mut request = build_bg_request("test prompt", &config, None);
+        let mut request = build_bg_request("test prompt", &config, None).unwrap();
         request.model = Some(
             crate::providers::resolve_configured_request_model_for_wire(
                 &config,
@@ -3488,7 +3494,7 @@ mod tests {
             "</communication_preferences>"
         )
         .to_owned();
-        let request = build_bg_request("test prompt", &config, Some(system.clone()));
+        let request = build_bg_request("test prompt", &config, Some(system.clone())).unwrap();
         assert_eq!(request.system.as_deref(), Some(system.as_str()));
     }
 

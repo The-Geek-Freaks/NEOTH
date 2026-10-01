@@ -201,6 +201,7 @@ pub(crate) fn build_preset_topology(
         }
         PresetName::LocalReasoning => {
             let local_slot = |role: &str| HemisphereSlot {
+                provider_instance_id: None,
                 provider: Some(crate::cli::init::recommended_local_provider_for_role(role)),
                 model: None,
                 key: None,
@@ -359,19 +360,20 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
     ]
     .iter()
     .map(|r| {
-        let slot = topo.slot_for(*r);
-        (*r, slot.clone())
+        let binding = topo.resolve_role_binding(*r)?;
+        Ok((*r, binding.slot, binding.provider_instance_id))
     })
-    .collect::<Vec<_>>();
+    .collect::<Result<Vec<_>>>()?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let body = serde_json::json!({
                 "mode": topo.mode.as_str(),
                 "single_provider_fallback": cfg.provider_kind.as_ref().map(|p| format!("{p:?}")),
-                "roles": rows.iter().map(|(role, slot)| serde_json::json!({
+                "roles": rows.iter().map(|(role, slot, provider_instance_id)| serde_json::json!({
                     "role": role.as_str(),
                     "provider": slot.provider.map(|p| p.as_str()),
+                    "provider_instance_id": provider_instance_id,
                     "model": slot.model,
                     "endpoint": slot.endpoint,
                     "has_key": slot.key.is_some(),
@@ -393,16 +395,17 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                         .unwrap_or_else(|| "Skip".into())
                 );
             }
-            for (role, slot) in &rows {
+            for (role, slot, provider_instance_id) in &rows {
                 let provider = slot.provider.map(|p| p.as_str()).unwrap_or("(default)");
                 let model = slot.model.as_deref().unwrap_or("(default)");
                 let endpoint = slot.endpoint.as_deref().unwrap_or("");
                 // GOLD-WIRE-04: show the specialist voice bound to this slot.
                 let voice = slot.voice.map(|v| v.as_str()).unwrap_or("(none)");
                 println!(
-                    "  {:<10}  provider={:<16} model={:<28} voice={:<24} endpoint={endpoint}",
+                    "  {:<10}  provider={:<16} instance={:<16} model={:<28} voice={:<24} endpoint={endpoint}",
                     role.as_str(),
                     provider,
+                    provider_instance_id.as_deref().unwrap_or("(inline)"),
                     model,
                     voice,
                 );
@@ -436,6 +439,7 @@ fn apply_single_mode_update(
     cfg.inference.mode = crate::config::inference::TopologyMode::Single;
     let openai_compat_profile = exact_known_compat_profile(provider, endpoint);
     cfg.inference.default_slot = crate::config::inference::HemisphereSlot {
+        provider_instance_id: None,
         provider: Some(provider),
         model: model.map(str::to_owned),
         key: None,
@@ -698,6 +702,7 @@ pub(crate) async fn rebind_at(
                     cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
                 }
                 let new_slot = crate::config::inference::HemisphereSlot {
+                    provider_instance_id: None,
                     provider: Some(provider),
                     model: model.clone(),
                     key: None,
@@ -840,7 +845,7 @@ async fn run_test(
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
     let mut ephemeral_consent = crate::consent::EphemeralConsent::default();
     if question.is_some()
-        && let Some(route) = crate::consent::route_for_role(cfg, role)
+        && let Some(route) = crate::consent::route_for_role(cfg, role)?
     {
         let home = FreedomConfig::default_neoth_home();
         ephemeral_consent.extend(
@@ -983,7 +988,8 @@ fn hemisphere_test_role_authorizer(
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
     let provider = cfg
         .inference
-        .slot_for(role)
+        .resolve_role_binding(role)?
+        .slot
         .provider
         .or_else(|| cfg.provider_kind.map(|kind| kind.to_inference()))
         .context("selected hemisphere role has no configured provider identity")?;
@@ -1565,6 +1571,7 @@ inference:
 
         let dir = tempdir().unwrap();
         let prior = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::ClaudeCli),
             model: Some("claude-opus-4-7".into()),
             key: None,
@@ -1575,6 +1582,7 @@ inference:
             voice: None,
         };
         let new_slot = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::Gemini),
             model: Some("gemini-2.5-pro".into()),
             key: None,
@@ -1628,6 +1636,7 @@ inference:
         let dir = tempdir().unwrap();
         // Prior slot inheriting from single-mode default → provider None.
         let prior = HemisphereSlot {
+            provider_instance_id: None,
             provider: None,
             model: None,
             key: None,
@@ -1638,6 +1647,7 @@ inference:
             voice: None,
         };
         let new_slot = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::LocalQwen),
             model: Some("Qwen/Qwen2.5-3B-Instruct".into()),
             key: None,

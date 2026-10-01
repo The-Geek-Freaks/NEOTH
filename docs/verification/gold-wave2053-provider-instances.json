@@ -1,0 +1,189 @@
+{
+  "schema": "neoth-gold-wave2053-provider-instances/v1",
+  "capturedUtc": "2026-10-01T17:55:46.7234040Z",
+  "baseline": "f94fd91f8069ff3f65832c222ef6b3b67b3ad268",
+  "status": "STATIC_REVIEWED_HOSTED_EXECUTION_PENDING",
+  "behavior": [
+    "Named existing-transport instances resolve endpoint, key, model, profile, region and API version atomically",
+    "Role and sub-role policy, consent, discovery, cost and factory consumers use fallible resolution",
+    "Fallback leaves bind their own instance and canonical descriptor into authorization and WAL",
+    "No-role Cron rejects matching named instances; an explicit role selects the intended instance",
+    "Credential-file and keychain custody uses stable validated IDs; public and wizard views strip keys",
+    "Generic dual-file updates preserve only exact-ID inline keys proven in the original public preimage"
+  ],
+  "compatibility": [
+    "Legacy inline configuration and its serialization remain supported",
+    "Named references reject mixed inline authority, including null fields",
+    "Named Bedrock requires its own valid region; no global legacy region inheritance"
+  ],
+  "staticReview": {
+    "reviewer": "/root/w2031_rust_review",
+    "manifestSHA256": "4A474787A6AF5DA517433205374DAA435E58D9C59E9C781254BBB5CF09C6C1FA",
+    "candidateFiles": 29,
+    "hashMismatches": 0,
+    "rootReviewSHA256": "8C8EB17ED569D09BE19C25B374AD149E101225C13B50C33B5128060CA567006C"
+  },
+  "regressions": [
+    {
+      "test": "consent::tests::invalid_named_role_binding_returns_a_consent_error_without_panicking",
+      "sourcePath": "SRC/neothd/src/consent.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "consent::tests::named_bedrock_role_does_not_inherit_the_legacy_global_region",
+      "sourcePath": "SRC/neothd/src/consent.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat::tests::routing_cap_resolves_named_fallback_model_before_dispatch",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat::tests::normal_chat_role_policy_binds_named_left_instance_provider",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::credentials::tests::provider_instance_credential_map_rejects_noncanonical_ids",
+      "sourcePath": "SRC/neothd/src/config/credentials.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::credentials::tests::dual_file_update_keeps_private_named_key_out_of_public_yaml_and_preserves_inline_preimage",
+      "sourcePath": "SRC/neothd/src/config/credentials.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::provider_instance_id_parse_reuses_wire_validation",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::named_openai_compat_instances_keep_exact_transport_authority",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::named_slots_reject_mixed_authority_even_when_inline_value_is_null",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::provider_instance_validation_rejects_duplicate_unknown_descriptor_and_reference",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::legacy_inline_slot_round_trips_without_reference_shape",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::named_slot_serializes_only_its_reference",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::constructed_mixed_authority_rejects_before_instance_lookup",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::inference::tests::legacy_binding_has_no_synthetic_instance_identity",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::keychain::tests::provider_instance_key_round_trips_through_keychain_without_cross_instance_reuse",
+      "sourcePath": "SRC/neothd/src/config/keychain.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::provider_instance_credential_tests::named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::no_role_named_same_enum_provider_lookup_requires_an_explicit_role",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::role_targeted_named_same_enum_provider_lookup_keeps_the_right_binding",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::named_bedrock_discovery_does_not_inherit_the_legacy_global_region",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::named_bedrock_fallback_inventory_requires_its_exact_regional_consent",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::cost_authorization::tests::provider_lifecycle_context_keeps_instance_and_descriptor_identity",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::cost::tests::council_cost_binding_uses_named_instance_model_and_endpoint",
+      "sourcePath": "SRC/neothd/src/providers/cost.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf",
+      "sourcePath": "SRC/neothd/src/providers/fallback.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::tests::named_bedrock_fallback_does_not_inherit_global_region_for_consent",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "junitClass": "neoth"
+    }
+  ],
+  "registrations": {
+    "newPortable": 25,
+    "portable": 2548,
+    "focused": 325,
+    "guards": 20
+  },
+  "precedingFocusedValidation": {
+    "producer": "f94fd91f8069ff3f65832c222ef6b3b67b3ad268",
+    "run": 36899455124,
+    "conclusion": "failure",
+    "executed": 300,
+    "passed": 299,
+    "failed": [
+      "cli::docgen::tests::cli_commands_md_is_up_to_date"
+    ],
+    "originalArchives": 3,
+    "verifiedArchiveEntries": 606,
+    "rawGitSourceBindings": 146,
+    "custodySHA256": "6902CD92DC528B7E1FE39221807EDEF830A00218875B95C5C756C278D43BA1AD",
+    "productStages": "skipped",
+    "scope": "Evidence for preceding AST/code-vector producer only, not named provider instances"
+  },
+  "cliReferenceRepair": {
+    "source": "Exact generated right payload from hosted anti-drift assertion; committed left matched independently",
+    "sourceRun": 36899455124,
+    "artifact": 11182660806,
+    "candidateSHA256": "7388B787650C6A840E91020BCDA09A8B34716EE6965C30C6AB7FC3E0C8F8113A",
+    "rootChecksSHA256": "506C0E6ECEF528BFD89CBC1C28EACD83EAED5BF4622B2980A13935B9115AAEB8",
+    "localGeneratorRan": false
+  },
+  "localExecutableValidationRan": false,
+  "hostedNamedInstanceAcceptance": false,
+  "nativeReleaseAcceptance": false,
+  "completeAdapterParityClaim": false,
+  "noSlintChanges": true,
+  "priorPlanBytesPreserved": true
+}

@@ -164,7 +164,7 @@ async fn run_job_at_inner(
             }
             .with_context(|| format!("Cron job `{}` default provider topology consent", job.id))?;
         } else if let Some(route) =
-            crate::consent::route_for_role(&config, crate::config::inference::HemisphereRole::Left)
+            crate::consent::route_for_role(&config, crate::config::inference::HemisphereRole::Left)?
         {
             // A job-local fallback list builds a fresh provider chain below;
             // its primary therefore follows the current validated config, not
@@ -317,7 +317,7 @@ async fn resolve_job_provider<'a>(
         let provider_kind = primary.to_provider_kind();
         let mut primary_slot = match job.execution.hemisphere_role {
             Some(role) => configured_provider_slot_for_role(config, role, primary)?,
-            None => configured_provider_slot(config, primary),
+            None => configured_provider_slot(config, primary)?,
         };
         primary_slot.provider = Some(primary);
         primary_slot.model = job.execution.model.clone().or(primary_slot.model);
@@ -347,7 +347,7 @@ async fn resolve_job_provider<'a>(
             .execution
             .hemisphere_role
             .unwrap_or(crate::config::inference::HemisphereRole::Left);
-        let mut primary_slot = configured_role_slot(config, role);
+        let mut primary_slot = configured_role_slot(config, role)?;
         if primary_slot.provider.is_some() {
             primary_slot.model = Some(model);
             scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
@@ -357,7 +357,7 @@ async fn resolve_job_provider<'a>(
         // A role-only job also builds its primary from that actual configured
         // binding. The final factory always reads Left from the job-local
         // topology, so copy the selected role atomically into that position.
-        let primary_slot = configured_role_slot(config, role);
+        let primary_slot = configured_role_slot(config, role)?;
         if primary_slot.provider.is_some() {
             scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
             scoped.inference.left = primary_slot;
@@ -368,14 +368,14 @@ async fn resolve_job_provider<'a>(
             .execution
             .fallback
             .iter()
-            .map(|target| {
-                let mut slot = configured_provider_slot(config, target.provider);
+            .map(|target| -> Result<_> {
+                let mut slot = configured_provider_slot(config, target.provider)?;
                 slot.provider = Some(target.provider);
                 slot.model = target.model.clone().or(slot.model);
                 slot.voice = None;
                 slot
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         scoped.fallback.max_hops = u8::try_from(scoped.fallback.chain.len())
             .unwrap_or(u8::MAX)
             .max(1);
@@ -431,7 +431,8 @@ fn cron_role_authorizer(
     })?;
     let provider = config
         .inference
-        .slot_for(role)
+        .resolve_role_binding(role)?
+        .slot
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .ok_or_else(|| {
@@ -453,6 +454,7 @@ fn top_level_provider_slot(
     provider: crate::config::inference::InferenceProvider,
 ) -> crate::config::inference::HemisphereSlot {
     crate::config::inference::HemisphereSlot {
+        provider_instance_id: None,
         provider: Some(provider),
         model: config.provider_model.clone(),
         key: config.provider_key.clone(),
@@ -470,14 +472,15 @@ fn top_level_provider_slot(
 fn configured_role_slot(
     config: &crate::config::FreedomConfig,
     role: crate::config::inference::HemisphereRole,
-) -> crate::config::inference::HemisphereSlot {
-    let slot = config.inference.slot_for(role);
+) -> Result<crate::config::inference::HemisphereSlot> {
+    let slot = config.inference.resolve_role_binding(role)?.slot;
     match slot.provider {
-        Some(_) => slot.clone(),
+        Some(_) => Ok(slot),
         None => config
             .provider_kind
             .map(|kind| top_level_provider_slot(config, kind.to_inference()))
-            .unwrap_or_else(|| slot.clone()),
+            .map(Ok)
+            .unwrap_or_else(|| Ok(slot)),
     }
 }
 
@@ -488,7 +491,7 @@ fn configured_provider_slot_for_role(
     role: crate::config::inference::HemisphereRole,
     provider: crate::config::inference::InferenceProvider,
 ) -> Result<crate::config::inference::HemisphereSlot> {
-    let slot = configured_role_slot(config, role);
+    let slot = configured_role_slot(config, role)?;
     match slot.provider {
         Some(actual) if actual == provider => Ok(slot),
         Some(actual) => anyhow::bail!(
@@ -516,13 +519,21 @@ fn configured_provider_slot_for_role(
 fn configured_provider_slot(
     config: &crate::config::FreedomConfig,
     provider: crate::config::inference::InferenceProvider,
-) -> crate::config::inference::HemisphereSlot {
+) -> Result<crate::config::inference::HemisphereSlot> {
     use crate::config::inference::{HemisphereRole, HemisphereSlot};
 
     let topology = &config.inference;
-    let active_left = topology.slot_for(HemisphereRole::Left);
-    if active_left.provider == Some(provider) {
-        return active_left.clone();
+    let mut legacy_match = None;
+    let active_left = topology.resolve_role_binding(HemisphereRole::Left)?;
+    if active_left.slot.provider == Some(provider) {
+        if active_left.is_named_instance {
+            anyhow::bail!(
+                "Cron provider `{}` resolves through named instance `{}`; execution.hemisphere_role is required",
+                provider.as_str(),
+                active_left.provider_instance_id.as_deref().unwrap_or("<unknown>")
+            );
+        }
+        legacy_match = Some(active_left.slot);
     }
 
     for slot in [
@@ -531,33 +542,63 @@ fn configured_provider_slot(
         &topology.right,
         &topology.cerebellum,
     ] {
-        if slot.provider == Some(provider) {
-            return slot.clone();
+        let binding = topology.resolve_explicit_slot_binding(slot)?;
+        if binding.slot.provider == Some(provider) {
+            if binding.is_named_instance {
+                anyhow::bail!(
+                    "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
+                    provider.as_str(),
+                    binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                );
+            }
+            if legacy_match.is_none() {
+                legacy_match = Some(binding.slot);
+            }
         }
     }
     for sub_slots in topology.hemisphere_sub_slots.values() {
         for slot in [&sub_slots.left, &sub_slots.right, &sub_slots.cerebellum] {
-            if slot.provider == Some(provider) {
-                return slot.clone();
+            let binding = topology.resolve_explicit_slot_binding(slot)?;
+            if binding.slot.provider == Some(provider) {
+                if binding.is_named_instance {
+                    anyhow::bail!(
+                        "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
+                        provider.as_str(),
+                        binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                    );
+                }
+                if legacy_match.is_none() {
+                    legacy_match = Some(binding.slot);
+                }
             }
         }
     }
-    if let Some(slot) = config
-        .fallback
-        .chain
-        .iter()
-        .find(|slot| slot.provider == Some(provider))
-    {
-        return slot.clone();
+    for slot in &config.fallback.chain {
+        let binding = topology.resolve_explicit_slot_binding(slot)?;
+        if binding.slot.provider == Some(provider) {
+            if binding.is_named_instance {
+                anyhow::bail!(
+                    "Cron provider `{}` has named instance `{}`; execution.hemisphere_role is required",
+                    provider.as_str(),
+                    binding.provider_instance_id.as_deref().unwrap_or("<unknown>")
+                );
+            }
+            if legacy_match.is_none() {
+                legacy_match = Some(binding.slot);
+            }
+        }
+    }
+    if let Some(slot) = legacy_match {
+        return Ok(slot);
     }
     if config.provider_kind == Some(provider.to_provider_kind()) {
-        return top_level_provider_slot(config, provider);
+        return Ok(top_level_provider_slot(config, provider));
     }
 
-    HemisphereSlot {
+    Ok(HemisphereSlot {
         provider: Some(provider),
         ..HemisphereSlot::default()
-    }
+    })
 }
 
 async fn validate_delivery_target(
@@ -1901,7 +1942,7 @@ channel_accounts:
         config.provider_endpoint = Some("https://openai.example/v1".into());
 
         let slot =
-            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini);
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini).unwrap();
         assert_eq!(
             slot.provider,
             Some(crate::config::inference::InferenceProvider::Gemini)
@@ -1922,6 +1963,7 @@ channel_accounts:
             .fallback
             .chain
             .push(crate::config::inference::HemisphereSlot {
+                provider_instance_id: None,
                 provider: Some(crate::config::inference::InferenceProvider::Gemini),
                 model: Some("gemini-job-model".into()),
                 key: Some(crate::secret::SecretString::from("gemini-slot-secret")),
@@ -1933,7 +1975,7 @@ channel_accounts:
             });
 
         let slot =
-            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini);
+            configured_provider_slot(&config, crate::config::inference::InferenceProvider::Gemini).unwrap();
         assert_eq!(slot.model.as_deref(), Some("gemini-job-model"));
         assert_eq!(
             slot.key.as_ref().map(crate::secret::SecretString::expose),
@@ -1954,6 +1996,7 @@ channel_accounts:
         let mut config = crate::config::FreedomConfig::default();
         config.inference.mode = TopologyMode::Custom;
         config.inference.left = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::OpenAiCompat),
             model: Some("left-model".into()),
             key: Some(crate::secret::SecretString::from("left-secret")),
@@ -1964,6 +2007,7 @@ channel_accounts:
             voice: None,
         };
         config.inference.right = HemisphereSlot {
+            provider_instance_id: None,
             provider: Some(InferenceProvider::OpenAiCompat),
             model: Some("right-model".into()),
             key: Some(crate::secret::SecretString::from("right-secret")),
@@ -1992,6 +2036,42 @@ channel_accounts:
         );
         assert_eq!(slot.region.as_deref(), Some("right-region"));
         assert_eq!(slot.api_version.as_deref(), Some("right-version"));
+    }
+
+    #[test]
+    fn no_role_named_same_enum_provider_lookup_requires_an_explicit_role() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nleft: { provider: openai_compat, endpoint: https://legacy.example/v1, model: legacy-model }\nprovider_instances:\n  - { id: compat_left, descriptor: openai_compat, endpoint: https://left.example/v1, model: left-model }\n  - { id: compat_right, descriptor: openai_compat, endpoint: https://right.example/v1, model: right-model }\nright: { provider_instance_id: compat_right }\n",
+        )
+        .unwrap();
+
+        let error = configured_provider_slot(
+            &config,
+            crate::config::inference::InferenceProvider::OpenAiCompat,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("execution.hemisphere_role is required"));
+    }
+
+    #[test]
+    fn role_targeted_named_same_enum_provider_lookup_keeps_the_right_binding() {
+        use crate::config::inference::{HemisphereRole, InferenceProvider};
+
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: compat_left, descriptor: openai_compat, endpoint: https://left.example/v1, model: left-model }\n  - { id: compat_right, descriptor: openai_compat, endpoint: https://right.example/v1, model: right-model }\nleft: { provider_instance_id: compat_left }\nright: { provider_instance_id: compat_right }\n",
+        )
+        .unwrap();
+
+        let slot = configured_provider_slot_for_role(
+            &config,
+            HemisphereRole::Right,
+            InferenceProvider::OpenAiCompat,
+        )
+        .unwrap();
+        assert_eq!(slot.endpoint.as_deref(), Some("https://right.example/v1"));
+        assert_eq!(slot.model.as_deref(), Some("right-model"));
     }
 
     #[tokio::test]
@@ -2251,7 +2331,7 @@ channel_accounts:
             startup_config.public_yaml().unwrap(),
         )
         .unwrap();
-        let startup_routes = crate::consent::required_consent_routes(&startup_config);
+        let startup_routes = crate::consent::required_consent_routes(&startup_config).unwrap();
         assert!(
             startup_routes
                 .iter()

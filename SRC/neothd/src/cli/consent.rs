@@ -293,6 +293,7 @@ pub(crate) fn consent_status_rows(
 
     let configured_routes = config
         .map(consent::required_consent_routes)
+        .transpose()?
         .unwrap_or_default();
     let mut rows = Vec::new();
 
@@ -392,7 +393,7 @@ fn render_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         Some(
             FreedomConfig::load_from_path(&config_path)
                 .context("load freedom.yaml for current consent-route status")?,
-        )
+        )?
     } else {
         None
     };
@@ -454,7 +455,7 @@ fn render_show(home: &std::path::Path, provider: ProviderKind, output: OutputFor
         consent::required_consent_routes(
             &FreedomConfig::load_from_path(&config_path)
                 .context("load freedom.yaml for current consent-route status")?,
-        )
+        )?
         .into_iter()
         .filter(|route| route.kind == provider)
         .collect::<Vec<_>>()
@@ -842,7 +843,7 @@ async fn change_consent_with_config_at_inner(
             consent::slug(provider)
         );
     }
-    let configured_routes: Vec<_> = consent::required_consent_routes(config)
+    let configured_routes: Vec<_> = consent::required_consent_routes(config)?
         .into_iter()
         .filter(|route| route.kind == provider)
         .collect();
@@ -1186,7 +1187,7 @@ pub(crate) async fn ensure_all_granted_or_prompt_at(
     source: ConsentMutationSource,
 ) -> Result<consent::EphemeralConsent> {
     let mut ephemeral = consent::EphemeralConsent::default();
-    for route in consent::required_consent_routes(config) {
+    for route in consent::required_consent_routes(config)? {
         ephemeral.extend(ensure_route_granted_or_prompt_at(home, &route, config, source).await?)?;
     }
     Ok(ephemeral)
