@@ -30,7 +30,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/nct_baseline.rs",
-      "candidateSha256": "EC8DC8DAC7A906C54D149183E2CDDB12F17A7D11F218603E7C45BA088770E47E"
+      "candidateSha256": "EC8DC8DAC7A906C54D149183E2CDDB12F17A7D11F218603E7C45BA088770E47E",
+      "formattedSha256": "5F6D532B4852638DCF277F2EAF79E9AF32D3D8C9836AFC2A9835B764C524B873"
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
@@ -38,7 +39,8 @@
     },
     {
       "path": "SRC/neothd/src/updater/self_update.rs",
-      "candidateSha256": "836492CC5A335F34B3AFF393B2BB1957C73A405FD607BF576FC9903C35D4D087"
+      "candidateSha256": "836492CC5A335F34B3AFF393B2BB1957C73A405FD607BF576FC9903C35D4D087",
+      "formattedSha256": "CAC8F302CCF68B62076FE218F0E042505014EF1875FC7D1297A6CE9356462B03"
     }
   ],
   "reviewProofs": {
@@ -83,5 +85,13 @@
     "preProviderReceiptFailures": 2,
     "originalEvidenceSha256": "E6602CD20EC9EB5C7338BDA2D301F4B0D6A0E367C30AC11FFA119DB41AE9E5F3",
     "inputBudgetCause": "source-consistent inference pending hosted confirmation"
+  },
+  "hostedFormat": {
+    "run": 37073717624,
+    "producer": "d81b9b772d7e54cf33b813c508ee60f453f0c188",
+    "artifact": 11256252344,
+    "archiveSha256": "6543DC288B89ACFC2BF0B21A230AA0D197A47E0E79B743F1EE598B58E9D478AE",
+    "patchSha256": "A3288F03021A748B1E4DEC42E9294A4FE721FE072E8F3112E9A139EB2BF3452A",
+    "localFormatterRan": false
   }
 }

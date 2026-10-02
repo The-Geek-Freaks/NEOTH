@@ -447,7 +447,9 @@ fn project_terminal(wal: &Path, route: Route, stream_requested: bool) -> Result<
                 && trace == value.get("request_id").and_then(serde_json::Value::as_u64)
             {
                 if let Some(trace) = trace {
-                    if frame.header.event_type == crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START {
+                    if frame.header.event_type
+                        == crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START
+                    {
                         local_stream_starts.insert(trace);
                     } else {
                         local_stream_ends.insert(trace);
@@ -1221,8 +1223,8 @@ mod tests {
             output_caps.lock().expect("output cap mutex").as_slice(),
             &[Some(NCT_MAX_OUTPUT_TOKENS)]
         );
-        let projection =
-            project_terminal(&wal, Route::Fallback, false).expect("project only owned fallback WAL");
+        let projection = project_terminal(&wal, Route::Fallback, false)
+            .expect("project only owned fallback WAL");
         assert_eq!(
             projection.provider, "nct-hermetic-leaf",
             "receipt records actual fallback leaf"
@@ -1307,15 +1309,22 @@ mod tests {
         direct_config.tokens.max_per_request = NCT_MAX_TOKENS_PER_REQUEST;
         let mut fallback_config = direct_config.clone();
         fallback_config.fallback.max_hops = 1;
-        fallback_config.fallback.chain.push(crate::config::inference::HemisphereSlot {
-            provider: Some(crate::config::inference::InferenceProvider::ClaudeCli),
-            model: Some(NCT_TEST_MODEL.into()),
-            ..Default::default()
-        });
+        fallback_config
+            .fallback
+            .chain
+            .push(crate::config::inference::HemisphereSlot {
+                provider: Some(crate::config::inference::InferenceProvider::ClaudeCli),
+                model: Some(NCT_TEST_MODEL.into()),
+                ..Default::default()
+            });
         let direct_path = direct_home.join("freedom.yaml");
         let fallback_path = fallback_home.join("freedom.yaml");
         std::fs::write(&direct_path, serde_yaml::to_string(&direct_config).unwrap()).unwrap();
-        std::fs::write(&fallback_path, serde_yaml::to_string(&fallback_config).unwrap()).unwrap();
+        std::fs::write(
+            &fallback_path,
+            serde_yaml::to_string(&fallback_config).unwrap(),
+        )
+        .unwrap();
 
         let complete_calls = Arc::new(AtomicUsize::new(0));
         let stream_calls = Arc::new(AtomicUsize::new(0));
@@ -1389,7 +1398,10 @@ mod tests {
                     "fallback_not_exercised_primary_succeeded"
                 }
             );
-            assert!(!raw.contains("native stream"), "receipt contains response content");
+            assert!(
+                !raw.contains("native stream"),
+                "receipt contains response content"
+            );
         }
     }
 
@@ -1403,18 +1415,59 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal = home.path().join("stream-projection-000001.wal");
         for (provider, trace, end, native, requested, expected) in [
-            ("local_ollama", Some(11_u64), true, true, true, "observed_local_stream"),
-            ("local_ollama", Some(12), true, true, true, "requested_unobserved"),
-            ("local_ollama", None, true, true, true, "requested_unobserved"),
-            ("local_ollama", Some(11), false, true, true, "requested_unobserved"),
-            ("local_ollama", Some(11), true, false, true, "requested_unobserved"),
-            ("openai_api", Some(11), true, true, true, "requested_unobserved"),
+            (
+                "local_ollama",
+                Some(11_u64),
+                true,
+                true,
+                true,
+                "observed_local_stream",
+            ),
+            (
+                "local_ollama",
+                Some(12),
+                true,
+                true,
+                true,
+                "requested_unobserved",
+            ),
+            (
+                "local_ollama",
+                None,
+                true,
+                true,
+                true,
+                "requested_unobserved",
+            ),
+            (
+                "local_ollama",
+                Some(11),
+                false,
+                true,
+                true,
+                "requested_unobserved",
+            ),
+            (
+                "local_ollama",
+                Some(11),
+                true,
+                false,
+                true,
+                "requested_unobserved",
+            ),
+            (
+                "openai_api",
+                Some(11),
+                true,
+                true,
+                true,
+                "requested_unobserved",
+            ),
             ("local_ollama", Some(11), true, true, false, "not_requested"),
         ] {
-            let mut bytes =
-                crate::wal::segment_header::SegmentHeader::new(1, 1, 1, 1, [0; 16])
-                    .to_le_bytes()
-                    .to_vec();
+            let mut bytes = crate::wal::segment_header::SegmentHeader::new(1, 1, 1, 1, [0; 16])
+                .to_le_bytes()
+                .to_vec();
             let mut append = |event_type, value: serde_json::Value| {
                 let payload = serde_json::to_vec(&value).unwrap();
                 let header = crate::wal::make_header(event_type, &payload);
@@ -1446,7 +1499,10 @@ mod tests {
             std::fs::write(&wal, bytes).unwrap();
             let projection = project_terminal(&wal, Route::Direct, requested).unwrap();
             assert_eq!(projection.stream_requested, requested);
-            assert_eq!(projection.stream_evidence, expected, "provider={provider} trace={trace:?}");
+            assert_eq!(
+                projection.stream_evidence, expected,
+                "provider={provider} trace={trace:?}"
+            );
         }
     }
 }

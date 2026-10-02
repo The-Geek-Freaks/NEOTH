@@ -7040,7 +7040,10 @@ mod tests {
                 "NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256",
                 invocation.request_sha256(),
             );
-            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER", &started_marker);
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER",
+                &started_marker,
+            );
         }
         let cleanup = OwnedStageChildEnv;
         let task_invocation = invocation.clone();
