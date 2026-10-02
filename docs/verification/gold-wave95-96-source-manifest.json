@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T12:16:13.0537597Z",
-  "validationStatus": "W2139 n8n legacy/WAL hosted failures repaired; focused398 rerun pending",
+  "capturedUtc": "2026-10-02T12:20:43.2711405Z",
+  "validationStatus": "W2141 hosted n8n repair formatting imported; focused398 rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6928,8 +6928,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 88392,
-      "sha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6"
+      "bytes": 88400,
+      "sha256": "FC8D9339F000D92C9CF4D280B3733171BF77A1C50E17E302BAAD8637A99075C9"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",

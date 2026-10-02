@@ -898,7 +898,8 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // A legacy caller did not ask the n8n status surface for a ceiling. Keep
     // its response shape unchanged while preserving the leaf-proven default
     // ceiling inside the existing AuthorizedProvider cost/WAL boundary.
-    let effective_output_token_ceiling = requested_max_output_tokens.and(proven_output_token_ceiling);
+    let effective_output_token_ceiling =
+        requested_max_output_tokens.and(proven_output_token_ceiling);
     match provider.complete(request).await {
         Ok(comp) => {
             let model = comp.identity.wire_model.clone();
