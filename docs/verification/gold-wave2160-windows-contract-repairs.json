@@ -1,0 +1,160 @@
+{
+  "schema": "neoth-gold-wave2160-windows-contract-repairs/v1",
+  "base": "06ecfe66a57294910aa05d4987dcded33b6d187f",
+  "status": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "failureEvidence": {
+    "producer": "d1cd27d506b5dcbfa7fd435c6b3e20891b0a1254",
+    "run": 37016981639,
+    "logSha256": "26FAFFFA507E7830FD437CF29CA848550A11A9D90696770CBF36854D0633CEA4",
+    "junitSha256": "38307d1073f926b10e312bb211777aaee90296d3b6fffba9cdf15fedc681b26c",
+    "windows": {
+      "run": 19011,
+      "passed": 18995,
+      "failed": 16,
+      "skipped": 28,
+      "fail_labels_unique": 15,
+      "named_failures": [
+        "cli::chat::attach_tests::verifiability_role_pin_feeds_the_existing_left_primary_builder_slot",
+        "cli::code::tests::coding_code_map_receipts_redact_indexed_secret_shaped_names",
+        "cli::credential::tests::import_holds_rmw_lock_until_merged_publication",
+        "cli::credential::tests::import_rmw_preserves_unknown_future_fields",
+        "cli::credential::tests::merge_overwrites_set_fields_and_keeps_untouched_ones",
+        "cli::credential::tests::merge_with_empty_incoming_changes_nothing",
+        "cli::credential::tests::merge_with_non_empty_account_map_imports_and_replaces_it",
+        "cli::credential::tests::set_key_names_empty_when_nothing_set",
+        "cli::credential::tests::set_key_names_lists_non_empty_account_map",
+        "cli::credential::tests::set_key_names_lists_only_set_fields_sorted",
+        "cli::eval::tests::verify_command_timeout_kills_long_child",
+        "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+        "models::discovery::tests::build_sources_ignores_recursive_slots_until_runtime_depth_exceeds_one",
+        "models::discovery::tests::source_plan_never_reuses_another_vendors_top_level_key",
+        "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed"
+      ],
+      "nonstandard_sixteenth": {
+        "identity": "cli::chat::tests::direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b",
+        "terminal": "test aborted",
+        "cause": "stack overflow",
+        "evidence": "windows-clean.log"
+      }
+    }
+  },
+  "changes": [
+    "Preserve existing provider-instance secrets on an empty incoming map and omit the default empty map from configured/imported credential names; recognize known schema fields independently of operator-facing filtering.",
+    "Sanitize indexed AST paths and text before the prepared prompt byte budget and provider submission, retaining the existing receipt and hash assertions.",
+    "Correct the named-provider fixture identifier and authoritative discovery ordering expectations; box the large direct-chat test future without changing production dispatch.",
+    "Allow Windows descendant fixture startup time while retaining readiness, timeout and no-escape assertions; Unix timing is unchanged.",
+    "Register eight existing Buddy CLI leaves as explicitly unwired GUI operations with missing receipt/readback evidence.",
+    "Move n8n test forwarding into the final test-only module, retain the unchanged raw-callsite guard and bind the manually reviewed single authorized production call context."
+  ],
+  "counts": {
+    "newlyRegisteredExistingPortableTests": 11,
+    "workflowSources": 181,
+    "newSourceTests": 1,
+    "python": 63,
+    "pythonGroups": [
+      10,
+      18,
+      8,
+      27
+    ],
+    "portableRust": 2630,
+    "focusedRust": 414
+  },
+  "sources": [
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_cli_credential.rs",
+      "path": "SRC/neothd/src/cli/credential.rs",
+      "baseBlob": "b10d29f476aaf759e842ac5a708db868ce79eac0",
+      "sha": "B801FEB9ACAA0A800D9E99D8C0E5E41E3F387D4E6DC62971FD67F296111E0C19",
+      "candidate": "work/gold-20260906/wave2154-credential-map-repair/candidate/SRC_neothd_src_cli_credential.rs",
+      "candidateBlob": "08ca28fadc54d4b16dde409100e5a475fbb2fcd6"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_cli_code.rs",
+      "path": "SRC/neothd/src/cli/code.rs",
+      "baseBlob": "45a4ed19cff57d2d27e344e90f3ad2c5d18ff1ea",
+      "sha": "7E5B83619217B67C57FA4B73CA7516AF01AE7DFEDABEB60EF4BFCA34FE931DC2",
+      "candidate": "work/gold-20260906/wave2155-code-map-redaction/candidate/SRC/neothd/src/cli/code.rs",
+      "candidateBlob": "00bc6228d20cadda74c008bbcd4320ab6fe8eed9"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_cli_chat.rs",
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "baseBlob": "13df03255746f26ac784c039238ed615abd96e87",
+      "sha": "64AAFF5A67D4071E8942AC7818112C25D1EC09C463A2EB0FCF667B4E5C76E25B",
+      "candidate": "work/gold-20260906/wave2156-provider-fixture-repair/SRC/neothd/src/cli/chat.rs",
+      "candidateBlob": "026b8b303a4f1b26b21ba81f7ae6fd29276e8f42"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_models_discovery.rs",
+      "path": "SRC/neothd/src/models/discovery.rs",
+      "baseBlob": "375e5e43e787a78304fb338d6d39dabd2e0a68b2",
+      "sha": "27F59377CDC33EE1120AD3817D138E60B55D8AB6C4E36E5D2CB6F869BFF3C060",
+      "candidate": "work/gold-20260906/wave2156-provider-fixture-repair/SRC/neothd/src/models/discovery.rs",
+      "candidateBlob": "7294e7e13ee1ce0edb944aa729bf6b937e3230ac"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_cli_eval.rs",
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "baseBlob": "5730b040e99ccc371f61c1156d51023e361a80f1",
+      "sha": "FD15E361930BDC8D5175BEC9E954822FE3D3AF4984AD501AF615718368295526",
+      "candidate": "work/gold-20260906/wave2158-eval-and-parity/candidate/SRC_neothd_src_cli_eval.rs",
+      "candidateBlob": "3a0b14c6586ac677faa45d0adecc40f3ef72f783"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_cli_parity_drift.rs",
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "baseBlob": "e695b098095f22669c31087721d55a0b06316f74",
+      "sha": "1EAB10752F85B3ADDAAFF9761E2CAE9BECDE33DEB5EDB99A84FBCFB4665EB5F9",
+      "candidate": "work/gold-20260906/wave2158-eval-and-parity/candidate/SRC_neothd_src_cli_parity_drift.rs",
+      "candidateBlob": "575a8cf4abac8b8abd251b207a61f43a1fd8358c"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_n8n_api_handlers.rs",
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "baseBlob": "99d6fc1ea11ee1208961a17124b4fe378affed81",
+      "sha": "208B247C0A12F586B622D7E706D541186FA41073CFF7FE2DA9B7BC3F3580DB10",
+      "candidate": "work/gold-20260906/wave2159-n8n-test-boundary/candidate/SRC_neothd_src_n8n_api_handlers.rs",
+      "candidateBlob": "03aaa845d7f3306f1dda82a6e68fd174d16f7875"
+    },
+    {
+      "baseSnapshot": "work/gold-20260906/wave2160-windows-repairs/base/SRC_neothd_src_providers_cost_authorization.rs",
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "baseBlob": "fc125e174246f30b853060616605d573e09a7734",
+      "sha": "43C8CD5A40DC9CBD3436299C1DF59C9EAC592216B042A894DDBA0F80A34B27A2",
+      "candidate": "work/gold-20260906/wave2159-n8n-test-boundary/candidate/SRC_neothd_src_providers_cost_authorization.rs",
+      "candidateBlob": "3589ae958f2601b12d7aea525d97bcb299c024cc"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave2154-credential-map-repair/REVIEW.json",
+      "sha": "77358EB94A6F35EB7F8288D8E2DD5376F62A4CEA2234EA0B93239D3CF57CCF3F"
+    },
+    {
+      "path": "work/gold-20260906/wave2155-code-map-redaction/REVIEW.json",
+      "sha": "F40BD50B3A3F0712398DB5B495C2A5821B380CC920870070637547B98DEE8489"
+    },
+    {
+      "path": "work/gold-20260906/wave2156-provider-fixture-repair/REVIEW.json",
+      "sha": "1A65B248672457BB05D79795B07B2FDFD3301F04A7681022CB3B2DBA8CA7E4CB"
+    },
+    {
+      "path": "work/gold-20260906/wave2158-eval-and-parity/REVIEW.json",
+      "sha": "6CB436186A74092766464050AD4C3CBBC9D7424FC3F8790A0BC5886074CF2A81"
+    },
+    {
+      "path": "work/gold-20260906/wave2159-n8n-test-boundary/REVIEW.json",
+      "sha": "207AC11BBE1823C45B06223146B295923B30EB44154F7A25D9F5540D6D827FC8"
+    }
+  ],
+  "limitations": [
+    "Stack-pressure and Windows fixture-timing repairs require hosted confirmation.",
+    "The older full CI and current 398-case run remain producer-specific evidence; they do not accept this change.",
+    "Native GUI and signed historical installer qualification remain open."
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

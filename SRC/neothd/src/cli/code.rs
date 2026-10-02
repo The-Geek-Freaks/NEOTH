@@ -896,7 +896,7 @@ fn targeted_selection(
         if !files.iter().any(|file| file.path == chunk.path) {
             continue;
         }
-        let block = format!(
+        let block = crate::security::redact::sanitize_tool_output(&format!(
             "\n<untrusted_rust_source origin=\"code-map\" path=\"{}\" sha256=\"{}\" ordinal=\"{}\" bytes=\"{}..{}\" lines=\"{}..{}\">\n{}\n</untrusted_rust_source>\n",
             chunk.path,
             chunk.source_sha256,
@@ -906,7 +906,7 @@ fn targeted_selection(
             chunk.start_line,
             chunk.end_line,
             chunk.text
-        );
+        ));
         if text.len().saturating_add(block.len()) > MAX_PREPARED_CODE_MAP_CONTEXT_BYTES {
             source.selection_truncated = true;
             break;

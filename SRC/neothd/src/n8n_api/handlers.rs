@@ -24,95 +24,13 @@ use super::server::{ApiRequestCtx, ApiState, HandlerOutcome};
 use super::{ApiErrorCode, REQUEST_BODY_LIMIT_BYTES};
 use crate::providers::Provider;
 
-#[cfg(test)]
-#[derive(Clone)]
-struct N8nTestProviderHandle(Arc<dyn crate::providers::Provider>);
-
-#[cfg(test)]
-#[async_trait::async_trait]
-impl crate::providers::Provider for N8nTestProviderHandle {
-    fn name(&self) -> &'static str {
-        self.0.name()
-    }
-
-    fn request_controls(&self) -> crate::providers::ProviderRequestControls {
-        self.0.request_controls()
-    }
-
-    fn default_model(&self) -> Option<&str> {
-        self.0.default_model()
-    }
-
-    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
-        self.0.consent_route()
-    }
-
-    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
-        self.0.resolve_model_for_wire(requested_model)
-    }
-
-    fn output_token_ceiling(&self, request: &crate::providers::Request) -> Option<u32> {
-        self.0.output_token_ceiling(request)
-    }
-
-    async fn complete(
-        &self,
-        request: crate::providers::Request,
-    ) -> anyhow::Result<crate::providers::Completion> {
-        self.0.complete(request).await
-    }
-}
-
-#[cfg(test)]
-type N8nTestDependencies = std::collections::BTreeMap<
-    std::path::PathBuf,
-    (
-        Arc<dyn crate::providers::Provider>,
-        Arc<crate::skills::registry::SkillRegistry>,
-    ),
->;
-
-#[cfg(test)]
-type N8nTestDependencyStore = std::sync::Mutex<N8nTestDependencies>;
-
-#[cfg(test)]
-fn n8n_test_dependencies() -> &'static N8nTestDependencyStore {
-    static DEPENDENCIES: std::sync::OnceLock<N8nTestDependencyStore> = std::sync::OnceLock::new();
-    DEPENDENCIES.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
-}
-
-#[cfg(test)]
-fn install_n8n_test_dependencies(
-    home: &std::path::Path,
-    provider: Arc<dyn crate::providers::Provider>,
-    registry: Arc<crate::skills::registry::SkillRegistry>,
-) {
-    n8n_test_dependencies()
-        .lock()
-        .expect("n8n test dependency mutex")
-        .insert(home.to_path_buf(), (provider, registry));
-}
-
-#[cfg(test)]
-fn remove_n8n_test_dependencies(home: &std::path::Path) {
-    n8n_test_dependencies()
-        .lock()
-        .expect("n8n test dependency mutex")
-        .remove(home);
-}
-
 async fn n8n_provider_from_config(
     config: &crate::config::FreedomConfig,
     home: &std::path::Path,
 ) -> anyhow::Result<Box<dyn crate::providers::Provider>> {
     #[cfg(test)]
-    if let Some((provider, _)) = n8n_test_dependencies()
-        .lock()
-        .expect("n8n test dependency mutex")
-        .get(home)
-        .cloned()
-    {
-        return Ok(Box::new(N8nTestProviderHandle(provider)));
+    if let Some(provider) = tests::test_provider_for(home) {
+        return Ok(provider);
     }
     crate::providers::from_config_at(config, home).await
 }
@@ -121,12 +39,7 @@ fn n8n_provider_call_skill_registry(
     _home: &std::path::Path,
 ) -> Option<Arc<crate::skills::registry::SkillRegistry>> {
     #[cfg(test)]
-    if let Some((_, registry)) = n8n_test_dependencies()
-        .lock()
-        .expect("n8n test dependency mutex")
-        .get(_home)
-        .cloned()
-    {
+    if let Some(registry) = tests::test_skill_registry_for(_home) {
         return Some(registry);
     }
     crate::skills::registry::global()
@@ -1022,6 +935,100 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[derive(Clone)]
+    struct N8nTestProviderHandle(Arc<dyn crate::providers::Provider>);
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for N8nTestProviderHandle {
+        fn name(&self) -> &'static str {
+            self.0.name()
+        }
+
+        fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+            self.0.request_controls()
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            self.0.default_model()
+        }
+
+        fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+            self.0.consent_route()
+        }
+
+        fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+            self.0.resolve_model_for_wire(requested_model)
+        }
+
+        fn output_token_ceiling(&self, request: &crate::providers::Request) -> Option<u32> {
+            self.0.output_token_ceiling(request)
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.0.complete(request).await
+        }
+    }
+
+    type N8nTestDependencies = std::collections::BTreeMap<
+        std::path::PathBuf,
+        (
+            Arc<dyn crate::providers::Provider>,
+            Arc<crate::skills::registry::SkillRegistry>,
+        ),
+    >;
+
+    type N8nTestDependencyStore = std::sync::Mutex<N8nTestDependencies>;
+
+    fn n8n_test_dependencies() -> &'static N8nTestDependencyStore {
+        static DEPENDENCIES: std::sync::OnceLock<N8nTestDependencyStore> =
+            std::sync::OnceLock::new();
+        DEPENDENCIES.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
+    }
+
+    pub(super) fn test_provider_for(
+        home: &std::path::Path,
+    ) -> Option<Box<dyn crate::providers::Provider>> {
+        n8n_test_dependencies()
+            .lock()
+            .expect("n8n test dependency mutex")
+            .get(home)
+            .map(|(provider, _)| {
+                Box::new(N8nTestProviderHandle(Arc::clone(provider)))
+                    as Box<dyn crate::providers::Provider>
+            })
+    }
+
+    pub(super) fn test_skill_registry_for(
+        home: &std::path::Path,
+    ) -> Option<Arc<crate::skills::registry::SkillRegistry>> {
+        n8n_test_dependencies()
+            .lock()
+            .expect("n8n test dependency mutex")
+            .get(home)
+            .map(|(_, registry)| Arc::clone(registry))
+    }
+
+    fn install_n8n_test_dependencies(
+        home: &std::path::Path,
+        provider: Arc<dyn crate::providers::Provider>,
+        registry: Arc<crate::skills::registry::SkillRegistry>,
+    ) {
+        n8n_test_dependencies()
+            .lock()
+            .expect("n8n test dependency mutex")
+            .insert(home.to_path_buf(), (provider, registry));
+    }
+
+    fn remove_n8n_test_dependencies(home: &std::path::Path) {
+        n8n_test_dependencies()
+            .lock()
+            .expect("n8n test dependency mutex")
+            .remove(home);
+    }
 
     struct N8nCeilingProbe {
         controls: crate::providers::ProviderRequestControls,

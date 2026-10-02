@@ -1901,14 +1901,14 @@ mod tests {
         let (report, sources) = build_sources_from_config(&config).into_execution();
         assert_eq!(
             report.configured,
-            vec![OPENAI_CATALOG_PROVIDER, GEMINI_CATALOG_PROVIDER]
+            vec![GEMINI_CATALOG_PROVIDER, OPENAI_CATALOG_PROVIDER]
         );
         assert_eq!(
             sources
                 .iter()
                 .map(|(provider, _, _, _)| provider.as_str())
                 .collect::<Vec<_>>(),
-            vec![OPENAI_CATALOG_PROVIDER, GEMINI_CATALOG_PROVIDER]
+            vec![GEMINI_CATALOG_PROVIDER, OPENAI_CATALOG_PROVIDER]
         );
     }
 
@@ -1923,7 +1923,7 @@ mod tests {
         let (report, sources) = build_sources_from_config(&config).into_execution();
         assert_eq!(
             report.configured,
-            vec![ANTHROPIC_CATALOG_PROVIDER, OPENAI_CATALOG_PROVIDER]
+            vec![OPENAI_CATALOG_PROVIDER, ANTHROPIC_CATALOG_PROVIDER]
         );
         assert_eq!(report.skipped_no_creds, vec![OPENAI_CATALOG_PROVIDER]);
         assert_eq!(

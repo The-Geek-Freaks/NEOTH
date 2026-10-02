@@ -107,17 +107,21 @@ pub enum CredentialAction {
 /// never returned, logged, or printed.
 fn set_key_names(creds: &Credentials) -> Result<Vec<String>> {
     let mut names = creds.configured_field_names()?;
-    // `#[serde(default)]` serializes the absent account map as `{}`. It is not
-    // an operator-configured credential field until it contains an account.
+    // `#[serde(default)]` serializes absent account and provider-instance maps
+    // as `{}`. Neither is an operator-configured credential field until it
+    // contains an entry.
     if creds.channel_accounts.telegram.is_empty() {
         names.retain(|name| name != "channel_accounts");
+    }
+    if creds.inference_provider_instance_keys.is_empty() {
+        names.retain(|name| name != "inference_provider_instance_keys");
     }
     Ok(names)
 }
 
 /// Overlay every SET (non-null) field of `incoming` onto `existing`,
-/// field-agnostically, except for the serde-default account map. Returns the
-/// merged credentials plus the sorted NAMES of the keys taken from `incoming`.
+/// field-agnostically, except for serde-default maps. Returns the merged
+/// credentials plus the sorted NAMES of the keys taken from `incoming`.
 /// Values are never returned or logged.
 fn merge_credentials(
     existing: &Credentials,
@@ -129,6 +133,12 @@ fn merge_credentials(
     if incoming.channel_accounts.telegram.is_empty() {
         merged.channel_accounts = existing.channel_accounts.clone();
         imported.retain(|name| name != "channel_accounts");
+    }
+    // The default provider-instance map likewise renders as `{}`. Preserve an
+    // existing map unless the import explicitly carries at least one entry.
+    if incoming.inference_provider_instance_keys.is_empty() {
+        merged.inference_provider_instance_keys = existing.inference_provider_instance_keys.clone();
+        imported.retain(|name| name != "inference_provider_instance_keys");
     }
     Ok((merged, imported))
 }
@@ -232,7 +242,7 @@ fn load_external_import(path: &Path) -> Result<Credentials> {
     // printing success is data loss. Reject every non-null key that did not
     // round-trip through this binary's typed schema. The sole legacy alias is
     // accepted explicitly and canonicalized by serde.
-    let canonical = set_key_names(&incoming)?;
+    let canonical = incoming.configured_field_names()?;
     let mut unknown = Vec::new();
     for (name, value) in raw_fields {
         if value.is_none() {
@@ -1291,6 +1301,30 @@ ssh_tunnels:
     fn set_key_names_lists_non_empty_account_map() {
         let c = creds("channel_accounts:\n  telegram:\n    default:\n      token: T\n");
         assert_eq!(set_key_names(&c).unwrap(), vec!["channel_accounts"]);
+    }
+
+    #[test]
+    fn empty_provider_instance_key_map_is_not_listed_or_imported() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("known-empty-map-import.yaml");
+        std::fs::write(&source, "inference_provider_instance_keys: {}\n").unwrap();
+        let parsed = load_external_import(&source).unwrap();
+        assert!(set_key_names(&parsed).unwrap().is_empty());
+
+        let existing = creds("inference_provider_instance_keys:\n  compat_a: EXISTING\n");
+        let incoming = creds("{}");
+        assert!(set_key_names(&incoming).unwrap().is_empty());
+
+        let (merged, imported) = merge_credentials(&existing, &incoming).unwrap();
+        assert!(imported.is_empty());
+        assert_eq!(
+            merged
+                .inference_provider_instance_keys
+                .get("compat_a")
+                .and_then(|value| value.as_ref())
+                .map(|value| value.expose()),
+            Some("EXISTING")
+        );
     }
 
     #[test]

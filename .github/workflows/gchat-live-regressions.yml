@@ -62,6 +62,7 @@ jobs:
             SRC/neothd/src/lib.rs \
             SRC/neothd/src/shutdown.rs \
             SRC/neothd/src/cli/serve.rs \
+            SRC/neothd/src/cli/credential.rs \
             SRC/neothd/src/cli/serve_tests.rs \
             SRC/neothd/src/daemon/chat_runtime.rs \
             SRC/neothd/src/daemon/gui_chat_runtime.rs \
@@ -703,9 +704,25 @@ jobs:
           run_case 396 lib cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call --lib
           run_case 397 lib cli::cron::tests::edit_updates_name_and_timeout cli::cron::tests::edit_updates_name_and_timeout --lib
           run_case 398 lib cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 398
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 398
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 398
+          run_case 399 lib cli::chat::attach_tests::verifiability_role_pin_feeds_the_existing_left_primary_builder_slot cli::chat::attach_tests::verifiability_role_pin_feeds_the_existing_left_primary_builder_slot --lib
+          run_case 400 lib cli::code::tests::coding_code_map_receipts_redact_indexed_secret_shaped_names cli::code::tests::coding_code_map_receipts_redact_indexed_secret_shaped_names --lib
+          run_case 401 lib cli::credential::tests::import_holds_rmw_lock_until_merged_publication cli::credential::tests::import_holds_rmw_lock_until_merged_publication --lib
+          run_case 402 lib cli::credential::tests::import_rmw_preserves_unknown_future_fields cli::credential::tests::import_rmw_preserves_unknown_future_fields --lib
+          run_case 403 lib cli::credential::tests::merge_overwrites_set_fields_and_keeps_untouched_ones cli::credential::tests::merge_overwrites_set_fields_and_keeps_untouched_ones --lib
+          run_case 404 lib cli::credential::tests::merge_with_empty_incoming_changes_nothing cli::credential::tests::merge_with_empty_incoming_changes_nothing --lib
+          run_case 405 lib cli::credential::tests::merge_with_non_empty_account_map_imports_and_replaces_it cli::credential::tests::merge_with_non_empty_account_map_imports_and_replaces_it --lib
+          run_case 406 lib cli::credential::tests::set_key_names_empty_when_nothing_set cli::credential::tests::set_key_names_empty_when_nothing_set --lib
+          run_case 407 lib cli::credential::tests::set_key_names_lists_non_empty_account_map cli::credential::tests::set_key_names_lists_non_empty_account_map --lib
+          run_case 408 lib cli::credential::tests::set_key_names_lists_only_set_fields_sorted cli::credential::tests::set_key_names_lists_only_set_fields_sorted --lib
+          run_case 409 lib cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves --lib
+          run_case 410 lib models::discovery::tests::build_sources_ignores_recursive_slots_until_runtime_depth_exceeds_one models::discovery::tests::build_sources_ignores_recursive_slots_until_runtime_depth_exceeds_one --lib
+          run_case 411 lib models::discovery::tests::source_plan_never_reuses_another_vendors_top_level_key models::discovery::tests::source_plan_never_reuses_another_vendors_top_level_key --lib
+          run_case 412 lib providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed --lib
+          run_case 413 lib cli::chat::tests::direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b cli::chat::tests::direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b --lib
+          run_case 414 lib cli::credential::tests::empty_provider_instance_key_map_is_not_listed_or_imported cli::credential::tests::empty_provider_instance_key_map_is_not_listed_or_imported --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 414
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 414
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 414
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

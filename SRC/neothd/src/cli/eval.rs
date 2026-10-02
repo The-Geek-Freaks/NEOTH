@@ -1097,20 +1097,24 @@ mod tests {
         // shell alive. Killing only cmd.exe/sh would leave that writer running;
         // contained tree cleanup must make the marker impossible after return.
         // The ready marker proves the descendant began before that assertion.
+        // Windows PowerShell cold start can consume the former one-second
+        // fixture deadline before the descendant reaches its ready marker.
+        // Keep the writer delayed beyond the fixture deadline on both platforms.
+        let (timeout_secs, marker_delay_secs) = if cfg!(windows) { (5, 7) } else { (1, 2) };
         #[cfg(windows)]
         let long_cmd = format!(
-            "powershell -NoProfile -Command \"[System.IO.File]::WriteAllText({}, 'ready'); Start-Sleep -Seconds 2; [System.IO.File]::WriteAllText({}, 'escaped')\" & ping -n 30 127.0.0.1 > nul",
+            "powershell -NoProfile -Command \"[System.IO.File]::WriteAllText({}, 'ready'); Start-Sleep -Seconds {marker_delay_secs}; [System.IO.File]::WriteAllText({}, 'escaped')\" & ping -n 30 127.0.0.1 > nul",
             quote_powershell_literal(&ready),
             quote_powershell_literal(&marker)
         );
         #[cfg(not(windows))]
         let long_cmd = format!(
-            "sh -c \"printf ready > {}; sleep 2; printf escaped > {}\" & sleep 30",
+            "sh -c \"printf ready > {}; sleep {marker_delay_secs}; printf escaped > {}\" & sleep 30",
             quote_posix_shell_literal(&ready),
             quote_posix_shell_literal(&marker)
         );
 
-        let short = std::time::Duration::from_secs(1);
+        let short = std::time::Duration::from_secs(timeout_secs);
         let result = run_verify_command(&long_cmd, short);
         assert!(result.is_err(), "expected Err on timeout, got Ok");
         let msg = result.unwrap_err().to_string();
@@ -1119,7 +1123,7 @@ mod tests {
             "error must mention 'timed out', got: {msg}"
         );
         assert!(ready.exists(), "timeout descendant never started");
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        std::thread::sleep(std::time::Duration::from_secs(marker_delay_secs + 1));
         assert!(
             !marker.exists(),
             "a timeout descendant escaped eval verify_command containment"

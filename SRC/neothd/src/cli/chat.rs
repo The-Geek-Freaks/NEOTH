@@ -20179,9 +20179,8 @@ modes:
             iterations: None,
             until: Vec::new(),
         };
-        run_chat_with(args, config_a, &provider)
-            .await
-            .expect("reachable direct CLI fallback completes");
+        let result = Box::pin(run_chat_with(args, config_a, &provider)).await;
+        result.expect("reachable direct CLI fallback completes");
 
         let snapshot_b = registry
             .authority_bound_snapshot_for_epoch(reload.accepted_snapshot().epoch())
@@ -29111,7 +29110,7 @@ mod attach_tests {
 
         let mut named = FreedomConfig::default();
         named.inference = serde_yaml::from_str(
-            "mode: custom\nprovider_instances:\n  - id: d7-frontier\n    descriptor: openai_compat\n    endpoint: https://d7-frontier.example/v1\n    model: d7-frontier-model\nright: { provider_instance_id: d7-frontier }\n",
+            "mode: custom\nprovider_instances:\n  - id: d7_frontier\n    descriptor: openai_compat\n    endpoint: https://d7-frontier.example/v1\n    model: d7-frontier-model\nright: { provider_instance_id: d7_frontier }\n",
         )
         .expect("parse named D7 frontier role");
         let selected = config_with_verifiability_role(&named, HemisphereRole::Right)
@@ -29122,7 +29121,7 @@ mod attach_tests {
             .expect("D7-pinned Left retains the named transport reference");
         assert_eq!(
             selected_binding.provider_instance_id.as_deref(),
-            Some("d7-frontier")
+            Some("d7_frontier")
         );
         assert_eq!(
             selected_binding.slot.model.as_deref(),

@@ -9062,7 +9062,9 @@ mod tests {
             (
                 "n8n_api/handlers.rs",
                 1,
-                "ce04a4c8a3960d940221d34d9d272b3b3a68aad8a4e26bc671594560185b5ca5",
+                // W2159 deliberately rebinds the one authorized n8n leaf after
+                // output-ceiling preflight became part of its call context.
+                "281894bdae4bbee5ed5b0390db4cc1864882bce5f29743ce9690deb369e6938d",
             ),
             (
                 "profile/extract.rs",
