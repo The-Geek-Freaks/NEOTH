@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T17:57:09.9146515Z",
-  "validationStatus": "EXACT_LOCK_PREPARATION_HOSTED_RETRY_PENDING",
+  "capturedUtc": "2026-10-02T18:26:51.8456802Z",
+  "validationStatus": "STATIC_REVIEWED_HOSTED_REVALIDATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -83,8 +83,8 @@
     },
     {
       "path": ".github/workflows/matrix-security-lock-reconcile.yml",
-      "bytes": 25808,
-      "sha256": "CBA1CCEF2956953D9E91158877812EC9689DCAB541867A8DF4231E7EC7BC792F"
+      "bytes": 27829,
+      "sha256": "A6D9312E795D4E93BC5E030477D4B2520A105201CC79261267D6516186EB2EA6"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
@@ -3122,6 +3122,11 @@
       "sha256": "CC9AE345D35E30C58BD2DF716897A8E5C2F41415D1611F87B3A3CE66FFFF424E"
     },
     {
+      "path": "docs/verification/gold-wave2184-hosted-fixture-repairs.json",
+      "bytes": 5737,
+      "sha256": "6303B896D0C13E4EEDF6C556A465D74B3FBC4A12160C02A66BC3C6D0C4CA92F2"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4212,6 +4217,16 @@
       "sha256": "7083D580527511AC5D9369E03B9F2B20902E76949F1B3964051F978E4D3756AE"
     },
     {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-benchmark-fixtures/keys_claim.json",
+      "bytes": 39855,
+      "sha256": "D3E6E54BC78A1022FEB82196F4D54A553582BCCA2E55E79508AB65FE2AFDE34B"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-benchmark-fixtures/keys_query.json",
+      "bytes": 74816,
+      "sha256": "7406244F3D19A5E33A2FBA34F0A472077940B6F8EFD134B437A1F5967FDD84F0"
+    },
+    {
       "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch",
       "bytes": 3807,
       "sha256": "3F626F88D765B6288BA5E82E03580087932483D34FFA5A8462FEB95238BFEE44"
@@ -4253,8 +4268,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2306330,
-      "sha256": "0FD857F75BA9F19ABA8C8CDDA46D3C5174C81492CE8AE00868F916FB4126C9C4"
+      "bytes": 2308638,
+      "sha256": "0F99A53871930E56AA869012754B5388089CB1C285F35DA977BB6612C33CF38A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5298,8 +5313,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/eval.rs",
-      "bytes": 49473,
-      "sha256": "FD15E361930BDC8D5175BEC9E954822FE3D3AF4984AD501AF615718368295526"
+      "bytes": 49665,
+      "sha256": "D483666D157BA4579753167927596D9750633931D268A361BE01CBFF637DD36A"
     },
     {
       "path": "SRC/neothd/src/cli/export.rs",
@@ -5458,8 +5473,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 84363,
-      "sha256": "1EAB10752F85B3ADDAAFF9761E2CAE9BECDE33DEB5EDB99A84FBCFB4665EB5F9"
+      "bytes": 84618,
+      "sha256": "ED463D87C60FBF88A17C204521F2A28046B7901FD3D8ADFFC0987C3CF2082D2D"
     },
     {
       "path": "SRC/neothd/src/cli/privacy.rs",

@@ -1,0 +1,119 @@
+{
+  "schema": "neoth.gold.wave2184.hosted-fixture-repairs.v1",
+  "base": "3f67e6ab479417af54ee59efb1b4fd2e4adf8af1",
+  "status": "STATIC_REVIEWED_HOSTED_REVALIDATION_PENDING",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "baseSha": "1EAB10752F85B3ADDAAFF9761E2CAE9BECDE33DEB5EDB99A84FBCFB4665EB5F9",
+      "candidate": "work/gold-20260906/wave2181-parity-inventory-repair/post/parity_drift.rs",
+      "sha": "ED463D87C60FBF88A17C204521F2A28046B7901FD3D8ADFFC0987C3CF2082D2D",
+      "candidateBlob": "3b477e75f2e1756c2c94d4b8fa11eceaf98bcf40"
+    },
+    {
+      "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+      "baseSha": "CBA1CCEF2956953D9E91158877812EC9689DCAB541867A8DF4231E7EC7BC792F",
+      "candidate": "work/gold-20260906/wave2182-matrix-test-fixtures/.github/workflows/matrix-security-lock-reconcile.yml",
+      "sha": "A6D9312E795D4E93BC5E030477D4B2520A105201CC79261267D6516186EB2EA6",
+      "candidateBlob": "39e76d7973ac7a4fd0b40e88e0bfd5663ffd6aef"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-benchmark-fixtures/keys_query.json",
+      "baseSha": null,
+      "candidate": "work/gold-20260906/wave2182-matrix-test-fixtures/inputs/benchmarks/benches/crypto_bench/keys_query.json",
+      "sha": "7406244F3D19A5E33A2FBA34F0A472077940B6F8EFD134B437A1F5967FDD84F0",
+      "candidateBlob": "048f7eb8f63fd1c8208bc7bdea0bffdef5aa43df"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-benchmark-fixtures/keys_claim.json",
+      "baseSha": null,
+      "candidate": "work/gold-20260906/wave2182-matrix-test-fixtures/inputs/benchmarks/benches/crypto_bench/keys_claim.json",
+      "sha": "D3E6E54BC78A1022FEB82196F4D54A553582BCCA2E55E79508AB65FE2AFDE34B",
+      "candidateBlob": "58aa4669fd4d15c6cc6052ea9863b0d3c6225417"
+    },
+    {
+      "sha": "D483666D157BA4579753167927596D9750633931D268A361BE01CBFF637DD36A",
+      "candidateBlob": "e4f53aa01a9d91208143e71130e5cd2cced148f2",
+      "baseSha": "FD15E361930BDC8D5175BEC9E954822FE3D3AF4984AD501AF615718368295526",
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "candidate": "work/gold-20260906/wave2184-hosted-fixture-repairs/eval-post.rs"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave2181-parity-inventory-repair/review/PARITY_INVENTORY_REVIEW.json",
+      "sha": "5D5B9B5E09F3B15BF49BADF054E3C85B3D0FB3F3DB73CBBB5F66B2103C8D4D17"
+    },
+    {
+      "path": "work/gold-20260906/wave2182-matrix-test-fixtures/review/MATRIX_FIXTURE_REVIEW.json",
+      "sha": "457CBE30FA205027B64F7C555A2EB0A47DB598F58FFAF274DDDF3D306CB42BFD"
+    },
+    {
+      "sha": "E5C9F4EA9CC48853DA46A6ADB1E46C82003B42C52FDEDDA9701997E7B4F54C89",
+      "path": "work/gold-20260906/wave2183-eval-descendant-fixture/review/EVAL_DESCENDANT_FIXTURE_REVIEW.json"
+    }
+  ],
+  "nativeFailure": {
+    "remainingWindowsFailure": "cli::eval::tests::verify_command_timeout_kills_long_child",
+    "scope": "Eight inventory IDs were already explicitly Unwired. Only the expected test set changes; no missing GUI operation is relabeled implemented.",
+    "run": 37036343155,
+    "macos": {
+      "skipped": 29,
+      "executed": 19130,
+      "passed": 19129,
+      "failed": 1
+    },
+    "windows": {
+      "skipped": 28,
+      "executed": 19012,
+      "passed": 19010,
+      "failed": 2
+    },
+    "sharedFailure": "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
+    "producer": "d7e323e16b632fadefad2f54852cfe52e25adbf3",
+    "windowsTimeoutStaticRepair": "W2183 test-only fixture repair imported; hosted Windows revalidation pending."
+  },
+  "matrixFailure": {
+    "custody": "work/gold-20260906/wave2180-matrix-hosted-candidate/failure-custody/FAILURE_CUSTODY.json",
+    "passed": [
+      "source-only provenance",
+      "six provenance gate tests",
+      "exact lock reconciliation",
+      "final provenance and metadata graph",
+      "notices write/check",
+      "Rust 1.93 Matrix feature cargo check"
+    ],
+    "run": 37044796135,
+    "sha256": "0CA805D3AB46CF65B55377FD68A8B62D3939D3CB8C12EFBC1677B776D7BBF21A",
+    "notReached": [
+      "exact crypto regression",
+      "cargo-audit",
+      "cargo-deny",
+      "successful candidate sealing"
+    ],
+    "failed": "Standalone upstream crypto lib-test compilation: two include_bytes benchmark fixtures absent from published crate",
+    "producer": "3f67e6ab479417af54ee59efb1b4fd2e4adf8af1"
+  },
+  "upstreamFixtureProvenance": {
+    "manifest": "work/gold-20260906/wave2182-matrix-test-fixtures/FIXTURE_MANIFEST.md",
+    "repository": "matrix-org/matrix-rust-sdk",
+    "commit": "1c44fb66214667c6d00acaf72ab592493653708b",
+    "paths": [
+      "benchmarks/benches/crypto_bench/keys_query.json",
+      "benchmarks/benches/crypto_bench/keys_claim.json"
+    ],
+    "sha256": "92DF92C67D21A4F3D20022CEDBF2E8DF58450BFA6D94026640220732A954972F",
+    "boundBy": "matrix-sdk-crypto-0.18.0.crate .cargo_vcs_info.json"
+  },
+  "changes": [
+    "Keep eight Buddy provider/fallback GUI gaps explicit in the test inventory.",
+    "Recreate the exact upstream standalone fixture topology using two commit-bound benchmark JSON files. Check hashes, copies and both include paths before hosted Cargo. Preserve vendor-tree comparison, lock stability and exact regression selection.",
+    "Replace the cold PowerShell descendant fixture with native cmd/ping; retain real readiness, timeout, containment and delayed forbidden-marker proof. Windows test timeout decreases from five to two seconds."
+  ],
+  "localExecutableValidationRan": false,
+  "workspaceDependenciesChanged": false,
+  "advisoryExceptionsActivated": false,
+  "hostedMatrixAccepted": false,
+  "fullNativeAccepted": false,
+  "releaseAccepted": false
+}

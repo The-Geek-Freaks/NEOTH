@@ -347,9 +347,26 @@ jobs:
           cargo check --manifest-path SRC/neothd/Cargo.toml --locked --features matrix-channel
           (
             set -euo pipefail
-            test_root="$RUNNER_TEMP/matrix-sdk-crypto-regression"
+            fixture_root="$RUNNER_TEMP/neoth-matrix-sdk-crypto-fixture-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            test_root="$fixture_root/crates/matrix-sdk-crypto"
             source_root="$GITHUB_WORKSPACE/SRC/vendor/matrix-sdk-crypto"
+            fixture_source="$GITHUB_WORKSPACE/packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-benchmark-fixtures"
+            query_fixture="$fixture_source/keys_query.json"
+            claim_fixture="$fixture_source/keys_claim.json"
+            test "$(sha256sum "$query_fixture" | awk '{print $1}')" = "7406244f3d19a5e33a2fba34f0a472077940b6f8efd134b437a1f5967fdd84f0"
+            test "$(sha256sum "$claim_fixture" | awk '{print $1}')" = "d3e6e54bc78a1022feb82196f4d54a553582bcca2e55e79508ab65fe2afde34b"
+            mkdir -p "$fixture_root/crates" "$fixture_root/benchmarks/benches/crypto_bench"
             cp -a "$source_root" "$test_root"
+            cp "$query_fixture" "$fixture_root/benchmarks/benches/crypto_bench/keys_query.json"
+            cp "$claim_fixture" "$fixture_root/benchmarks/benches/crypto_bench/keys_claim.json"
+            cmp "$query_fixture" "$fixture_root/benchmarks/benches/crypto_bench/keys_query.json"
+            cmp "$claim_fixture" "$fixture_root/benchmarks/benches/crypto_bench/keys_claim.json"
+            sha256sum "$query_fixture" "$claim_fixture" > "$MATRIX_EVIDENCE/matrix-sdk-crypto-benchmark-fixture-source.SHA256"
+            sha256sum "$fixture_root/benchmarks/benches/crypto_bench/keys_query.json" "$fixture_root/benchmarks/benches/crypto_bench/keys_claim.json" > "$MATRIX_EVIDENCE/matrix-sdk-crypto-benchmark-fixture-copy.SHA256"
+            grep -Fq 'include_bytes!("../../../../../benchmarks/benches/crypto_bench/keys_query.json")' "$test_root/src/session_manager/group_sessions/mod.rs"
+            grep -Fq 'include_bytes!("../../../../../benchmarks/benches/crypto_bench/keys_claim.json")' "$test_root/src/session_manager/group_sessions/mod.rs"
+            test -f "$test_root/src/session_manager/group_sessions/../../../../../benchmarks/benches/crypto_bench/keys_query.json"
+            test -f "$test_root/src/session_manager/group_sessions/../../../../../benchmarks/benches/crypto_bench/keys_claim.json"
             (
               cd "$source_root"
               find . -path ./target -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum

@@ -817,8 +817,13 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn quote_powershell_literal(path: &std::path::Path) -> String {
-        format!("'{}'", path.display().to_string().replace('\'', "''"))
+    fn quote_windows_cmd_redirection_path(path: &std::path::Path) -> String {
+        let path = path.display().to_string();
+        assert!(
+            !path.contains('\"'),
+            "Windows temporary fixture path must not contain a double quote"
+        );
+        format!("\"{path}\"")
     }
 
     #[cfg(not(windows))]
@@ -1097,15 +1102,16 @@ mod tests {
         // shell alive. Killing only cmd.exe/sh would leave that writer running;
         // contained tree cleanup must make the marker impossible after return.
         // The ready marker proves the descendant began before that assertion.
-        // Windows PowerShell cold start can consume the former one-second
-        // fixture deadline before the descendant reaches its ready marker.
-        // Keep the writer delayed beyond the fixture deadline on both platforms.
-        let (timeout_secs, marker_delay_secs) = if cfg!(windows) { (5, 7) } else { (1, 2) };
+        // Use cmd.exe plus ping on Windows: unlike a background PowerShell,
+        // both are native and reach the ready write within the small deadline.
+        // The inner cmd remains a real Job Object descendant and writes the
+        // forbidden marker only after the outer timeout has elapsed.
+        let (timeout_secs, marker_delay_secs) = if cfg!(windows) { (2, 4) } else { (1, 2) };
         #[cfg(windows)]
         let long_cmd = format!(
-            "powershell -NoProfile -Command \"[System.IO.File]::WriteAllText({}, 'ready'); Start-Sleep -Seconds {marker_delay_secs}; [System.IO.File]::WriteAllText({}, 'escaped')\" & ping -n 30 127.0.0.1 > nul",
-            quote_powershell_literal(&ready),
-            quote_powershell_literal(&marker)
+            "start \"\" /B cmd /D /Q /C echo ready ^> {} ^& ping -n {marker_delay_secs} 127.0.0.1 ^> nul ^& echo escaped ^> {} & ping -n 30 127.0.0.1 > nul",
+            quote_windows_cmd_redirection_path(&ready),
+            quote_windows_cmd_redirection_path(&marker),
         );
         #[cfg(not(windows))]
         let long_cmd = format!(
