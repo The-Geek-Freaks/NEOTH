@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2132-automation-output-ceilings/v1",
   "base": "88655e0d5946bec57bc5ba61d2a859a13e8299da",
-  "status": "W2139_HOSTED_FAILURE_REPAIRED_STATIC_REVIEWED_RERUN_PENDING",
+  "status": "W2143_PAID_FIXTURE_STATIC_REVIEWED_HOSTED_RERUN_PENDING",
   "requirement": "GOLD-R4-14a n8n and Cron caller schema/status parity",
   "behavior": [
     "n8n optional max_output_tokens JSON binds the final Request before existing provider control/cost/WAL authorization; response shows requested and adapter-authorized effective ceiling",
@@ -124,6 +124,30 @@
     "candidateRawSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
     "manifestSha256": "AFF535046AB0400A7E905C8E7DC104D7C3BA6F063F24AA81FD9C2C2540939DE1",
     "reviewSha256": "92B13FE6786367DF37C5531A341B04B2F8EDA0760A085796A17A323DE52A3D33",
+    "testsUnchanged": 398,
+    "localExecutableValidationRan": false,
+    "hostedRerun": "37006672116: legacy response repaired; 396/398 passed; two local-provider fixtures emitted no cost estimate"
+  },
+  "wave2143PaidFixtureRepair": {
+    "base": "95e29e21bccd7a78488cb7d582e54bb01cb3c82d",
+    "failedRun": "37006672116",
+    "expected": 398,
+    "executed": 398,
+    "actualPassed": 396,
+    "actualFailed": 2,
+    "failureCustodySha256": "455ED20A4DD3A62C81C1CBF61AEAA2D9B78402BADBF2A9B2CCF6738E2F54CA24",
+    "rootCause": "Both cost-WAL fixtures reported local_ollama, whose intentional local early return bypasses COST_ESTIMATE_SHOWN.",
+    "changes": [
+      "Use the existing hermetic openai_api/gpt-4o paid fixture and matching configured provider identity.",
+      "Grant consent only inside the temporary test home before the unchanged handler gate; the existing home-keyed dependency injection prevents real provider construction and network calls."
+    ],
+    "productionLogicChanged": false,
+    "assertionsWeakened": false,
+    "candidateBlob": "99d6fc1ea11ee1208961a17124b4fe378affed81",
+    "candidateRawSha256": "320CE9C688DE64DE98222E342365EF095A751BB5BCC9345A56A34128228E2036",
+    "manifestSha256": "E4FA9BA5B33F88DFFB32DDD7AE5FDEB91CE40D32F6D45E40B14AE6085E11D8B7",
+    "reviewSha256": "9E44631690AA7540C43749CC07AD3ACD55DB459484910F51713F8326BC4DCE71",
+    "traceSha256": "BC305120A238356AF761BCEA9B6DFD7C7AFBA538E0029E8662B078CC9BC161CF",
     "testsUnchanged": 398,
     "localExecutableValidationRan": false,
     "hostedRerun": "pending"

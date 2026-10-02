@@ -1033,7 +1033,7 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::providers::Provider for N8nCeilingProbe {
         fn name(&self) -> &'static str {
-            "local_ollama"
+            "openai_api"
         }
 
         fn request_controls(&self) -> crate::providers::ProviderRequestControls {
@@ -1045,7 +1045,7 @@ mod tests {
         }
 
         fn default_model(&self) -> Option<&str> {
-            Some("n8n-ceiling-probe")
+            Some("gpt-4o")
         }
 
         async fn complete(
@@ -1059,9 +1059,7 @@ mod tests {
                 .push(request.clone());
             Ok(crate::providers::Completion {
                 text: "bounded n8n completion".to_owned(),
-                model: request
-                    .model
-                    .unwrap_or_else(|| "n8n-ceiling-probe".to_owned()),
+                model: request.model.unwrap_or_else(|| "gpt-4o".to_owned()),
                 latency: Duration::ZERO,
                 ..Default::default()
             })
@@ -1098,8 +1096,10 @@ mod tests {
         tokio::task::JoinHandle<()>,
     ) {
         let mut config = crate::config::FreedomConfig::default();
-        config.provider_kind = Some(crate::cli::init::ProviderKind::LocalOllama);
-        config.provider_model = Some("n8n-ceiling-probe".to_owned());
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        config.provider_model = Some("gpt-4o".to_owned());
+        crate::consent::grant(home, crate::cli::init::ProviderKind::OpenaiApi)
+            .expect("record n8n ceiling test consent");
         let (controller, registry) = n8n_test_registry(home, config.clone()).await;
         install_n8n_test_dependencies(home, provider, registry);
         let (writer, writer_join) =
@@ -1702,7 +1702,7 @@ mod tests {
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
             Arc::clone(&inner) as Arc<dyn crate::providers::Provider>,
             authorizer,
-            Some("n8n-ceiling-probe".to_owned()),
+            Some("gpt-4o".to_owned()),
             "n8n.provider_call",
         );
         let exact_request = crate::providers::Request {
