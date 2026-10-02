@@ -230,12 +230,11 @@ pub(crate) async fn replace_fallback_at(
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for fallback rollback snapshot")?;
     let snapshot_segment =
         crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fallback-replace-snapshot");
-    let (snap_writer, snap_completion) =
-        crate::wal::writer::spawn_for_home_with_completion(
-            snapshot_segment.clone(),
-            home.to_path_buf(),
-        )
-            .context("spawn WAL writer for fallback rollback snapshot")?;
+    let (snap_writer, snap_completion) = crate::wal::writer::spawn_for_home_with_completion(
+        snapshot_segment.clone(),
+        home.to_path_buf(),
+    )
+    .context("spawn WAL writer for fallback rollback snapshot")?;
     let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
         &rollback,
@@ -853,16 +852,13 @@ fn resolved_audit_route(
             .unwrap_or_else(|| cfg.resolve_model_alias(model).to_owned())
     });
     ResolvedAuditRoute {
-        provider: binding
-            .slot
-            .provider
-            .or_else(|| {
-                if providerless_legacy {
-                    cfg.provider_kind.map(|kind| kind.to_inference())
-                } else {
-                    None
-                }
-            }),
+        provider: binding.slot.provider.or_else(|| {
+            if providerless_legacy {
+                cfg.provider_kind.map(|kind| kind.to_inference())
+            } else {
+                None
+            }
+        }),
         display_model,
         provider_instance_id: binding.provider_instance_id.clone(),
     }
@@ -893,7 +889,10 @@ pub(crate) async fn select_named_instance_at(
             );
             let prior_route = resolved_audit_route(cfg, &prior_binding);
             let new_route = resolved_audit_route(cfg, &new_binding);
-            if matches!(cfg.inference.mode, crate::config::inference::TopologyMode::Single) {
+            if matches!(
+                cfg.inference.mode,
+                crate::config::inference::TopologyMode::Single
+            ) {
                 let single_default = cfg.inference.default_slot.clone();
                 cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
                 match role {
@@ -916,7 +915,12 @@ pub(crate) async fn select_named_instance_at(
                 HemisphereRole::Right => cfg.inference.right = selector.clone(),
                 HemisphereRole::Cerebellum => cfg.inference.cerebellum = selector.clone(),
             }
-            Ok((cfg.rollback.clone(), prior_route, new_route, cfg.inference.mode))
+            Ok((
+                cfg.rollback.clone(),
+                prior_route,
+                new_route,
+                cfg.inference.mode,
+            ))
         })
         .context("prepare named hemisphere instance selection")?;
     let prior_yaml_bytes = prepared
@@ -925,16 +929,14 @@ pub(crate) async fn select_named_instance_at(
     let now_unix = crate::time::now_unix_i64();
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for named hemisphere selection")?;
-    let snapshot_segment = crate::wal::writer::unique_standalone_segment_path(
-        &wal_dir,
-        "hemisphere-select-snapshot",
-    );
+    let snapshot_segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemisphere-select-snapshot");
     let (snapshot_writer, snapshot_completion) =
         crate::wal::writer::spawn_for_home_with_completion(
             snapshot_segment.clone(),
             home.to_path_buf(),
         )
-            .context("spawn WAL writer for named hemisphere selection snapshot")?;
+        .context("spawn WAL writer for named hemisphere selection snapshot")?;
     let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(
         &snapshot_writer,
         &rollback,
@@ -942,7 +944,10 @@ pub(crate) async fn select_named_instance_at(
         path.display().to_string(),
         prior_yaml_bytes,
         now_unix,
-        Some(format!("hemispheres select --role {} via CLI", role.as_str())),
+        Some(format!(
+            "hemispheres select --role {} via CLI",
+            role.as_str()
+        )),
     )
     .await
     .context("emit pre-mutation snapshot for named hemisphere selection");
@@ -981,7 +986,9 @@ pub(crate) async fn select_named_instance_at(
         .context("selected named provider instance has no provider descriptor")?;
     Ok(NamedRoleSelectionResult {
         role,
-        prior_provider: prior_route.provider.map(|provider| provider.as_str().to_string()),
+        prior_provider: prior_route
+            .provider
+            .map(|provider| provider.as_str().to_string()),
         prior_model: prior_route.display_model,
         prior_provider_instance_id: prior_route.provider_instance_id,
         new_provider,
@@ -1220,8 +1227,7 @@ async fn emit_resolved_rebind_audit_to(
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir)
         .context("create WAL dir for named hemisphere selection audit")?;
-    let segment =
-        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemisphere-rebind");
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemisphere-rebind");
     let payload = serde_json::to_vec(&serde_json::json!({
         "role": role.as_str(),
         "prior_provider": prior.provider.map(|provider| provider.as_str()),
@@ -1589,12 +1595,10 @@ fallback:
         .unwrap();
         let before = std::fs::read(&freedom).unwrap();
 
-        let receipt = replace_fallback_at(
-            home.path(),
-            vec!["fallback_b".into(), "fallback_a".into()],
-        )
-        .await
-        .expect("replace named fallback selectors");
+        let receipt =
+            replace_fallback_at(home.path(), vec!["fallback_b".into(), "fallback_a".into()])
+                .await
+                .expect("replace named fallback selectors");
         assert_eq!(receipt.prior_count, 1);
         assert_eq!(receipt.fallback_count, 2);
         assert!(receipt.snapshot_offset.is_some());
@@ -1603,10 +1607,12 @@ fallback:
         let mut cursor = &snapshot_segment[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
         let mut snapshot_before_state = None;
         while !cursor.is_empty() {
-            let frame = crate::wal::frame::decode_frame(cursor).expect("decode fallback snapshot frame");
+            let frame =
+                crate::wal::frame::decode_frame(cursor).expect("decode fallback snapshot frame");
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
                 let snapshot: crate::wal::snapshot::PreMutationSnapshot =
-                    serde_json::from_slice(frame.payload).expect("decode fallback snapshot payload");
+                    serde_json::from_slice(frame.payload)
+                        .expect("decode fallback snapshot payload");
                 snapshot_before_state = Some(snapshot.before_state_bytes().unwrap());
                 break;
             }
@@ -1622,9 +1628,17 @@ fallback:
         assert!(persisted.proactive.enabled);
         let persisted_raw: serde_yaml::Value =
             serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
-        assert_eq!(persisted_raw["future_extension"].as_str(), Some("preserve-me"));
         assert_eq!(
-            persisted.inference.left.provider_instance_id.as_ref().map(|id| id.as_str()),
+            persisted_raw["future_extension"].as_str(),
+            Some("preserve-me")
+        );
+        assert_eq!(
+            persisted
+                .inference
+                .left
+                .provider_instance_id
+                .as_ref()
+                .map(|id| id.as_str()),
             Some("fallback_a")
         );
         assert_eq!(
@@ -1707,21 +1721,24 @@ inference:
             .expect("select declared named instance");
         assert_eq!(result.prior_provider.as_deref(), Some("openai_compat"));
         assert_eq!(result.prior_model.as_deref(), Some("global-fast"));
-        assert_eq!(result.prior_provider_instance_id.as_deref(), Some("compat_a"));
+        assert_eq!(
+            result.prior_provider_instance_id.as_deref(),
+            Some("compat_a")
+        );
         assert_eq!(result.new_provider, InferenceProvider::OpenAiCompat);
         assert_eq!(result.new_model.as_deref(), Some("local-fast"));
         assert_eq!(result.provider_instance_id, "compat_b");
         assert!(result.snapshot_offset.is_some());
         let snapshot_bytes = std::fs::read(&result.snapshot_segment).unwrap();
-        let mut snapshot_cursor =
-            &snapshot_bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut snapshot_cursor = &snapshot_bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
         let mut snapshot_before_state = None;
         while !snapshot_cursor.is_empty() {
             let frame = crate::wal::frame::decode_frame(snapshot_cursor)
                 .expect("decode selection snapshot frame");
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
                 let snapshot: crate::wal::snapshot::PreMutationSnapshot =
-                    serde_json::from_slice(frame.payload).expect("decode selection snapshot payload");
+                    serde_json::from_slice(frame.payload)
+                        .expect("decode selection snapshot payload");
                 snapshot_before_state = Some(snapshot.before_state_bytes().unwrap());
                 break;
             }
@@ -1735,10 +1752,18 @@ inference:
 
         let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
         let right = &persisted.inference.right;
-        assert_eq!(right.provider_instance_id.as_ref().map(|id| id.as_str()), Some("compat_b"));
+        assert_eq!(
+            right.provider_instance_id.as_ref().map(|id| id.as_str()),
+            Some("compat_b")
+        );
         assert!(right.provider.is_none() && right.model.is_none() && right.endpoint.is_none());
         assert_eq!(
-            persisted.inference.left.provider_instance_id.as_ref().map(|id| id.as_str()),
+            persisted
+                .inference
+                .left
+                .provider_instance_id
+                .as_ref()
+                .map(|id| id.as_str()),
             Some("compat_a")
         );
         assert_eq!(persisted.inference.provider_instances.len(), 2);
@@ -1746,17 +1771,22 @@ inference:
             .inference
             .resolve_role_binding(HemisphereRole::Right)
             .expect("selected role resolves through registry");
-        assert_eq!(resolved.slot.provider, Some(InferenceProvider::OpenAiCompat));
+        assert_eq!(
+            resolved.slot.provider,
+            Some(InferenceProvider::OpenAiCompat)
+        );
         assert_eq!(resolved.slot.model.as_deref(), Some("@fast"));
         assert_eq!(resolved.provider_instance_id.as_deref(), Some("compat_b"));
-        let raw: serde_yaml::Value = serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
         assert_eq!(raw["future_extension"].as_str(), Some("preserve-me"));
 
         let bytes = std::fs::read(&result.audit_segment).unwrap();
         let mut cursor = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
         let mut audit = None;
         while !cursor.is_empty() {
-            let frame = crate::wal::frame::decode_frame(cursor).expect("decode selection audit frame");
+            let frame =
+                crate::wal::frame::decode_frame(cursor).expect("decode selection audit frame");
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_HEMISPHERE_REBOUND {
                 audit = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
                 break;
@@ -1788,7 +1818,11 @@ inference:
         )
         .unwrap();
         let before = std::fs::read(&freedom).unwrap();
-        assert!(select_named_instance_at(home.path(), "right", "Invalid-ID").await.is_err());
+        assert!(
+            select_named_instance_at(home.path(), "right", "Invalid-ID")
+                .await
+                .is_err()
+        );
         let unknown = select_named_instance_at(home.path(), "right", "compat_missing")
             .await
             .expect_err("unknown instance must not publish");
@@ -1798,7 +1832,8 @@ inference:
     }
 
     #[tokio::test]
-    async fn select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots() {
+    async fn select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots()
+    {
         let home = tempfile::tempdir().unwrap();
         let freedom = home.path().join("freedom.yaml");
         std::fs::write(
@@ -1877,7 +1912,11 @@ inference:
     fn fallback_preparation_cas_rejects_a_newer_generation_without_overwrite() {
         let home = tempfile::tempdir().unwrap();
         let freedom = home.path().join("freedom.yaml");
-        std::fs::write(&freedom, "operator_id: before\nfuture_extension: preserve\n").unwrap();
+        std::fs::write(
+            &freedom,
+            "operator_id: before\nfuture_extension: preserve\n",
+        )
+        .unwrap();
         let (prepared, ()) = FreedomConfig::prepare_update_at(&freedom, |cfg| {
             cfg.fallback.chain = fallback_selectors_from_named_ids(&["fallback_a".into()])?;
             Ok(())
@@ -1891,7 +1930,9 @@ inference:
         .unwrap();
         let winning_generation = std::fs::read(&freedom).unwrap();
 
-        let error = prepared.commit().expect_err("stale fallback target must not publish");
+        let error = prepared
+            .commit()
+            .expect_err("stale fallback target must not publish");
         assert!(error.to_string().contains("changed after review"));
         assert_eq!(std::fs::read(&freedom).unwrap(), winning_generation);
     }
@@ -1899,9 +1940,14 @@ inference:
     #[test]
     fn fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids() {
         assert!(fallback_selectors_from_named_ids(&["Invalid-ID".into()]).is_err());
-        let duplicate = fallback_selectors_from_named_ids(&["fallback_a".into(), "fallback_a".into()])
-            .expect_err("duplicate fallback selectors are rejected");
-        assert!(duplicate.to_string().contains("duplicate provider_instance_id"));
+        let duplicate =
+            fallback_selectors_from_named_ids(&["fallback_a".into(), "fallback_a".into()])
+                .expect_err("duplicate fallback selectors are rejected");
+        assert!(
+            duplicate
+                .to_string()
+                .contains("duplicate provider_instance_id")
+        );
     }
 
     #[tokio::test]

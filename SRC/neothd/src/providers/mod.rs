@@ -7210,8 +7210,9 @@ mod tests {
             .expect("primary quota response must dispatch the exact named fallback leaf");
         assert_eq!(completion.text, "named fallback success");
         assert_eq!(completion.identity.dispatch_route, vec![1]);
-        let quota = crate::providers::quota::QuotaTracker::load_from(&home.path().join("quota.json"))
-            .expect("load named fallback quota state");
+        let quota =
+            crate::providers::quota::QuotaTracker::load_from(&home.path().join("quota.json"))
+                .expect("load named fallback quota state");
         assert!(
             quota
                 .backoff_remaining_for("instance:compat_primary", crate::time::now_unix_secs())

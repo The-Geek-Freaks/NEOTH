@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T08:48:32.3347529Z",
-  "validationStatus": "Static-reviewed named fallback isolation and test diagnostics;372 focused cases pending",
+  "capturedUtc": "2026-10-02T08:52:09.4907443Z",
+  "validationStatus": "Hosted formatting imported;372 focused cases pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4998,8 +4998,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/buddy.rs",
-      "bytes": 67632,
-      "sha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71"
+      "bytes": 67678,
+      "sha256": "D3C2AF3CCAF0EFA268565B77C0E2284DA4AC67E369C6B51E51155A28CBBD4EFB"
     },
     {
       "path": "SRC/neothd/src/cli/calendar.rs",
@@ -5228,8 +5228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 99882,
-      "sha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2"
+      "bytes": 100532,
+      "sha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305"
     },
     {
       "path": "SRC/neothd/src/cli/identity.rs",
@@ -6643,8 +6643,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 318294,
-      "sha256": "DDD910F853631338D3BBC10C9A5497C00305207055348C029D05FEFAEA03E684"
+      "bytes": 318378,
+      "sha256": "DDCC7AE0F7B43ED9D2D09EC8AE49BA0BE1563836BCD9B93B31FC34158A44D88F"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
@@ -7173,8 +7173,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 319866,
-      "sha256": "39E6FEF6A8351B508B012DFFC76D2A80CF3CBE7BD64C873B9C144722EFE1D57C"
+      "bytes": 319882,
+      "sha256": "5A5BA7169A981B1FB009DB90B8C1ADC1100832014F25742A98AD767470A4CF4B"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",

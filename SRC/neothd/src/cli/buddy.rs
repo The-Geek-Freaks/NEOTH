@@ -305,7 +305,10 @@ async fn run_fallback(action: BuddyFallbackAction, output: OutputFormat) -> Resu
                 "fallback_count          : {} -> {}",
                 result.prior_count, result.fallback_count
             );
-            println!("snapshot_segment        : {}", result.snapshot_segment.display());
+            println!(
+                "snapshot_segment        : {}",
+                result.snapshot_segment.display()
+            );
             println!("snapshot_offset         : {:?}", result.snapshot_offset);
             println!("prior_source_sha256     : {}", result.prior_source_sha256);
         }

@@ -1324,11 +1324,14 @@ where
                             }
                             capped
                         };
-                        let sanitized_server = crate::security::redact::sanitize_tool_output(&call.server);
+                        let sanitized_server =
+                            crate::security::redact::sanitize_tool_output(&call.server);
                         let diagnostic_server = cap_sanitized_diagnostic(&sanitized_server);
-                        let sanitized_tool = crate::security::redact::sanitize_tool_output(&call.tool);
+                        let sanitized_tool =
+                            crate::security::redact::sanitize_tool_output(&call.tool);
                         let diagnostic_tool = cap_sanitized_diagnostic(&sanitized_tool);
-                        let sanitized_reason = crate::security::redact::sanitize_tool_output(&reason);
+                        let sanitized_reason =
+                            crate::security::redact::sanitize_tool_output(&reason);
                         let diagnostic_reason = cap_sanitized_diagnostic(&sanitized_reason);
                         warn!(
                             target: "neothd::mcp::dispatch_loop",
