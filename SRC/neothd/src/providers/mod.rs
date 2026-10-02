@@ -3539,14 +3539,13 @@ async fn from_config_for_role_inner(
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
-    let mut synthetic =
-        synthetic_config_for_slot(
-            config,
-            slot,
-            provider_kind,
-            binding.is_named_instance,
-            &binding.models_aliases,
-        );
+    let mut synthetic = synthetic_config_for_slot(
+        config,
+        slot,
+        provider_kind,
+        binding.is_named_instance,
+        &binding.models_aliases,
+    );
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
     // top-level FreedomConfig::provider_region. Only relevant for
     // aws_bedrock today; other providers ignore the field.
@@ -3887,14 +3886,13 @@ async fn from_config_for_sub_role_inner(
     };
     let provider_kind = provider_kind.to_provider_kind();
     reject_missing_named_bedrock_region(slot, provider_kind, binding.is_named_instance)?;
-    let mut synthetic =
-        synthetic_config_for_slot(
-            config,
-            slot,
-            provider_kind,
-            binding.is_named_instance,
-            &binding.models_aliases,
-        );
+    let mut synthetic = synthetic_config_for_slot(
+        config,
+        slot,
+        provider_kind,
+        binding.is_named_instance,
+        &binding.models_aliases,
+    );
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -7223,7 +7221,9 @@ mod tests {
         .expect("parse named explicit profile provider");
         config.provider_model = Some("main-model-must-not-reach-profile-wire".into());
         config.provider_key = Some("main-secret-must-not-reach-profile-wire".into());
-        config.models_aliases.insert("@fast".into(), "global-fast-must-not-reach-profile".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "global-fast-must-not-reach-profile".into());
 
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
@@ -7257,7 +7257,10 @@ mod tests {
             Some(expected_endpoint.as_str())
         );
         assert_eq!(binding.slot.model.as_deref(), Some("@fast"));
-        assert_eq!(binding.models_aliases.get("@fast"), Some(&"profile-local-fast".to_owned()));
+        assert_eq!(
+            binding.models_aliases.get("@fast"),
+            Some(&"profile-local-fast".to_owned())
+        );
 
         let home = tempfile::tempdir().expect("create profile factory home");
         let provider = from_config_for_explicit_profile_at(&config, home.path())
@@ -7452,7 +7455,9 @@ mod tests {
         let a = MockServer::start().await;
         let b = MockServer::start().await;
         let mut config = FreedomConfig::default();
-        config.models_aliases.insert("@fast".into(), "global-fast".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "global-fast".into());
         config.inference = serde_yaml::from_str(&format!(
             "mode: custom\nprovider_instances:\n  - id: w2078_a\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    key: secret-a\n    models_aliases: {{ '@fast': vendor-a-fast }}\n  - id: w2078_b\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    key: secret-b\n    models_aliases: {{ '@fast': vendor-b-fast }}\n",
             a.uri(), b.uri()
@@ -7474,15 +7479,24 @@ mod tests {
                 .expect(1)
                 .mount(server)
                 .await;
-            let binding = config.inference.resolve_explicit_slot_binding(
-                &serde_yaml::from_str(&format!("provider_instance_id: {instance}"))
-                    .expect("parse W2078 selector"),
-            ).expect("resolve W2078 selected binding");
-            let provider = from_config_for_resolved_binding_at(
-                &config, &binding, std::path::Path::new("."),
-            ).await.expect("construct selected W2078 leaf");
-            let completion = provider.complete(Request { prompt: "W2078".into(), ..Default::default() })
-                .await.expect("complete selected W2078 leaf");
+            let binding = config
+                .inference
+                .resolve_explicit_slot_binding(
+                    &serde_yaml::from_str(&format!("provider_instance_id: {instance}"))
+                        .expect("parse W2078 selector"),
+                )
+                .expect("resolve W2078 selected binding");
+            let provider =
+                from_config_for_resolved_binding_at(&config, &binding, std::path::Path::new("."))
+                    .await
+                    .expect("construct selected W2078 leaf");
+            let completion = provider
+                .complete(Request {
+                    prompt: "W2078".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect("complete selected W2078 leaf");
             assert_eq!(completion.identity.wire_model, wire);
         }
         a.verify().await;
@@ -7492,9 +7506,15 @@ mod tests {
     #[test]
     fn w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract() {
         let mut config = FreedomConfig::default();
-        config.models_aliases.insert("@fast".into(), "global-fast".into());
-        config.models_aliases.insert("@fallback".into(), "global-fallback".into());
-        config.models_aliases.insert("@next".into(), "must-not-chain".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "global-fast".into());
+        config
+            .models_aliases
+            .insert("@fallback".into(), "global-fallback".into());
+        config
+            .models_aliases
+            .insert("@next".into(), "must-not-chain".into());
         let mut local = crate::models::catalog::ModelAliasMap::new();
         local.insert("@fast".into(), "local-fast".into());
         local.insert("@one".into(), "@next".into());

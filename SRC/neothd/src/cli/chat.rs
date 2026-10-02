@@ -12309,7 +12309,9 @@ async fn build_hemisphere(
     // budgeting sees the same canonical model that `complete_authorized`
     // binds again at the exact paid-call boundary.
     let mut model_config = config.clone();
-    model_config.models_aliases.extend(binding.models_aliases.clone());
+    model_config
+        .models_aliases
+        .extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
         &model_config,
         provider.as_ref(),
@@ -12383,7 +12385,9 @@ async fn build_hemisphere_with_config(
     // Best-effort → leaves base_req untouched on empty recall.
     let mut base_req = req.clone();
     let mut model_config = config.as_ref().clone();
-    model_config.models_aliases.extend(binding.models_aliases.clone());
+    model_config
+        .models_aliases
+        .extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
         &model_config,
         provider.as_ref(),
@@ -12448,7 +12452,9 @@ async fn build_sub_hemisphere_with_config(
     let voice = binding.slot.voice;
     let mut base_req = req.clone();
     let mut model_config = config.as_ref().clone();
-    model_config.models_aliases.extend(binding.models_aliases.clone());
+    model_config
+        .models_aliases
+        .extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
         &model_config,
         provider.as_ref(),
@@ -19968,7 +19974,9 @@ modes:
             "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: { '@fast': skill-local-fast }\n    key: skill-secret\n",
             selected.uri(),
         )).expect("parse named skill provider topology");
-        config.models_aliases.insert("@fast".into(), "global-fast-must-not-reach-skill".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "global-fast-must-not-reach-skill".into());
         std::fs::write(
             &config_path,
             serde_yaml::to_string(&config).expect("serialize named skill config"),
@@ -24714,14 +24722,17 @@ template = "[REDACTED]"
 
         let server = MockServer::start().await;
         let mut cfg = FreedomConfig::default();
-        cfg.models_aliases.insert("@fast".into(), "global-fast-must-not-reach-council".into());
+        cfg.models_aliases
+            .insert("@fast".into(), "global-fast-must-not-reach-council".into());
         cfg.inference = serde_yaml::from_str(&format!(
             "mode: custom\nprovider_instances:\n  - id: council_local_alias\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: {{ '@fast': council-local-fast }}\n    key: council-secret\nleft: {{ provider_instance_id: council_local_alias }}\n",
             server.uri(),
         )).expect("parse W2078 named Council topology");
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
-            .and(body_partial_json(serde_json::json!({ "model": "council-local-fast" })))
+            .and(body_partial_json(
+                serde_json::json!({ "model": "council-local-fast" }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{ "message": { "content": "council local alias" } }],
                 "model": "council-local-fast",
@@ -24740,9 +24751,16 @@ template = "[REDACTED]"
                 crate::permissions::AutonomyLevel::Full,
             ),
             None,
-        ).await.expect("build selected named Council leaf");
-        assert_eq!(hemisphere.base_req.model.as_deref(), Some("council-local-fast"));
-        let reply = hemisphere.ask("prove selected Council wire").await
+        )
+        .await
+        .expect("build selected named Council leaf");
+        assert_eq!(
+            hemisphere.base_req.model.as_deref(),
+            Some("council-local-fast")
+        );
+        let reply = hemisphere
+            .ask("prove selected Council wire")
+            .await
             .expect("call selected named Council leaf");
         assert_eq!(reply.text, "council local alias");
         server.verify().await;

@@ -2534,10 +2534,19 @@ model: claude-opus-4-7
                 &serde_yaml::from_str("provider_instance_id: compat_b").expect("parse b"),
             )
             .expect("resolve b");
-        assert_eq!(a.models_aliases.get("@fast"), Some(&"vendor-a-fast".to_owned()));
-        assert_eq!(b.models_aliases.get("@fast"), Some(&"vendor-b-fast".to_owned()));
+        assert_eq!(
+            a.models_aliases.get("@fast"),
+            Some(&"vendor-a-fast".to_owned())
+        );
+        assert_eq!(
+            b.models_aliases.get("@fast"),
+            Some(&"vendor-b-fast".to_owned())
+        );
         let yaml = serde_yaml::to_string(&topology).expect("serialize W2078 aliases");
-        assert!(yaml.contains("models_aliases:"), "public topology output retains aliases: {yaml}");
+        assert!(
+            yaml.contains("models_aliases:"),
+            "public topology output retains aliases: {yaml}"
+        );
         assert!(yaml.contains("vendor-a-fast") && yaml.contains("vendor-b-fast"));
     }
 
