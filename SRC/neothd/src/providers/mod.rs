@@ -7186,8 +7186,18 @@ mod tests {
         let chain = fallback_chain_from_config(&config, home.path(), None)
             .await
             .expect("factory constructs both configured compatible leaves without transport I/O");
-        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create named fallback lifecycle WAL directory");
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            segment,
+            home.path().to_path_buf(),
+        )
+        .expect("spawn named fallback lifecycle WAL writer");
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
             crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            config.tokens.max_per_request,
         )
         .with_usage_home(home.path());
         let completion = chain
@@ -7203,6 +7213,11 @@ mod tests {
             .expect("primary quota response must dispatch the exact named fallback leaf");
         assert_eq!(completion.text, "named fallback success");
         assert_eq!(completion.identity.dispatch_route, vec![1]);
+        drop(chain);
+        drop(authorizer);
+        drop(writer);
+        join.await
+            .expect("named fallback lifecycle WAL writer joins");
         primary_server.verify().await;
         fallback_server.verify().await;
     }
@@ -7272,7 +7287,7 @@ mod tests {
 
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).expect("create profile lifecycle WAL directory");
-        let segment = wal_dir.join("00000000000000000001.wal");
+        let segment = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
                 .expect("spawn home-bound lifecycle WAL writer");
@@ -7375,7 +7390,11 @@ mod tests {
             .await
             .err()
             .expect("conflicting selector must reject before leaf factory construction");
-        assert!(conflicting_error.to_string().contains("cannot combine"));
+        assert!(
+            conflicting_error
+                .to_string()
+                .contains("profile_provider and profile_provider_instance_id are mutually exclusive")
+        );
         server.verify().await;
     }
 

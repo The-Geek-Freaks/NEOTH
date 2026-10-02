@@ -1,0 +1,61 @@
+{
+  "schema": "neoth-gold-wave2095-buddy-and-hosted-fixtures/v1",
+  "capturedUtc": "2026-10-02T07:36:16.0871945Z",
+  "baseline": "e3cf9d3f71e4bfd901c195bfd9d4b1f6e36b2ffd",
+  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "behavior": [
+    "Buddy status reports canonical role provider routes, durable instance IDs, descriptors, configured/display models and fallback presence/count",
+    "Named aliases shadow global aliases once; providerless legacy routes display factory-equivalent globals while named routes never inherit them",
+    "Endpoint userinfo, query and fragment are removed; malformed and opaque endpoints fail closed to a fixed marker",
+    "Seven failing hosted regression fixtures use canonical WAL names, actual audited fallback authorizer, exact conflict diagnostics and quoted YAML aliases"
+  ],
+  "review": {
+    "buddyCandidateSHA256": "94B9924AEFFE289335E0E02FB156BA7F0DD524293E26449A5DE374C8EB58E14B",
+    "repairManifestSHA256": "2C7B1A87D60582F028153F70E465A4E802CAF554E92EE1A61647CB804061EC89",
+    "reviewer": "/root/w2078_alias_review",
+    "status": "APPROVED_STATIC"
+  },
+  "buddyTests": [
+    "cli::buddy::tests::status_json_shape_has_base_keys_and_provider_routes",
+    "cli::buddy::tests::buddy_status_routes_keep_named_alias_shadowing_and_global_fallback_once",
+    "cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once",
+    "cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver",
+    "cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable"
+  ],
+  "repairedExistingTests": {
+    "providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf": "fallback.rs fixture WAL path: 000001.wal",
+    "providers::tests::fallback_factory_keeps_two_named_compat_instances_isolated_and_auditable": "mod.rs canonical home-bound writer, fail_closed lifecycle audit, explicit writer drain",
+    "providers::tests::explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound": "mod.rs fixture WAL path: 000001.wal",
+    "providers::tests::explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io": "mod.rs exact mutual-exclusion error assertion; zero-I/O mock remains",
+    "cli::profile::tests::explicit_named_profile_authorizer_uses_profile_leaf_not_conflicting_left_policy": "profile.rs fixture WAL path: 000001.wal",
+    "cli::chat::tests::public_chat_admits_named_skill_before_unconfigured_left_factory": "chat.rs fixture writer/read WAL paths: 000001.wal",
+    "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds": "serve_pipeline.rs quote @fast YAML scalar; preserve format brace escaping"
+  },
+  "productionWalChecksUnchanged": [
+    "SRC/neothd/src/wal/scan.rs",
+    "SRC/neothd/src/wal/writer.rs"
+  ],
+  "registrations": {
+    "existingBuddyTestRenamed": true,
+    "newBuddyTests": 4,
+    "portable": 2583,
+    "guards": 20,
+    "focused": 361,
+    "focusedSourceBindings": 173
+  },
+  "precedingHosted": {
+    "run": "36975996502",
+    "conclusion": "failure",
+    "partialChecksSHA256": "537A337A269B44B4F1B5CD26A513324BDC586AAA18C1B2B558C524DBC1C4A474",
+    "passed": 337,
+    "failed": 7,
+    "executed": 344,
+    "producer": "9ec805d16c84c6bca58341a6b8b45a6120a8fbd1"
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "guiProviderSelectionAcceptance": false,
+  "priorPlanBytesPreserved": true
+}

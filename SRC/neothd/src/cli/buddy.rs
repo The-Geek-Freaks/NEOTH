@@ -433,6 +433,9 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let local_models = buddy_local_models_status(&home).await;
     let provider_retry = crate::providers::claude_retry::retry_operator_history(&home);
     let self_improve_quality = passive::quality_snapshot(&home);
+    // Read the existing resolved-binding authority only.  Status deliberately
+    // does not construct providers, read credentials, or probe endpoints.
+    let provider_routes = buddy_provider_routes(&cfg)?;
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
     for (skill_id, configured) in &cfg.custom_autonomy.skill_overrides {
@@ -465,6 +468,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                     "vault_mirror": vault_mirror,
                     "local_models": local_models,
                     "provider_retry": provider_retry,
+                    "provider_routes": provider_routes,
                 })
             );
         }
@@ -491,9 +495,127 @@ async fn run_status(output: OutputFormat) -> Result<()> {
             println!("vault_mirror            : {}", vault_mirror);
             println!("local_models            : {}", local_models);
             println!("provider_retry          : {}", provider_retry);
+            for line in buddy_provider_routes_table_lines(&provider_routes) {
+                println!("{line}");
+            }
         }
     }
     Ok(())
+}
+
+/// Read-only projection of the role bindings that Buddy already consumes via
+/// `freedom.yaml`.  It intentionally shares the canonical named-instance
+/// resolver with the hemisphere CLI so an invalid selector cannot silently
+/// fall back to a legacy provider.
+fn buddy_provider_routes(cfg: &FreedomConfig) -> Result<Value> {
+    let routes = [
+        crate::config::inference::HemisphereRole::Left,
+        crate::config::inference::HemisphereRole::Right,
+        crate::config::inference::HemisphereRole::Cerebellum,
+    ]
+    .into_iter()
+    .map(|role| {
+        let binding = cfg.inference.resolve_role_binding(role)?;
+        // A provider-less legacy slot intentionally routes through the
+        // top-level provider fields in the normal factory.  Project those
+        // same configured values for display only; a named binding owns its
+        // transport and never inherits them.
+        let providerless_legacy = !binding.is_named_instance && binding.slot.provider.is_none();
+        let configured_model = if providerless_legacy {
+            cfg.provider_model.clone()
+        } else {
+            binding.slot.model.clone()
+        };
+        let endpoint = if providerless_legacy {
+            cfg.provider_endpoint.as_deref()
+        } else {
+            binding.slot.endpoint.as_deref()
+        };
+        let region = if providerless_legacy {
+            cfg.provider_region.clone()
+        } else {
+            binding.slot.region.clone()
+        };
+        let provider_descriptor_id =
+            crate::providers::resolved_binding_descriptor_id(cfg, &binding);
+        // Named aliases shadow the legacy global aliases for this selected
+        // binding, exactly once.  With no configured model there is no claim
+        // about an adapter's runtime default.
+        let display_model = configured_model.as_deref().map(|model| {
+            binding
+                .models_aliases
+                .get(model)
+                .cloned()
+                .unwrap_or_else(|| cfg.resolve_model_alias(model).to_owned())
+        });
+        Ok(json!({
+            "role": role.as_str(),
+            "binding_source": if binding.is_named_instance { "named_instance" } else { "legacy_inline" },
+            "provider_instance_id": binding.provider_instance_id,
+            "provider_descriptor_id": provider_descriptor_id,
+            "configured_model": configured_model,
+            "display_model": display_model,
+            "endpoint": buddy_status_endpoint(endpoint),
+            "region": region,
+        }))
+    })
+    .collect::<Result<Vec<_>>>()?;
+
+    // Resolve every fallback selector as well, even though this status surface
+    // intentionally exposes only its existence and count.  This keeps an
+    // unknown named fallback from being hidden by a count-only display.
+    for slot in &cfg.fallback.chain {
+        cfg.inference.resolve_explicit_slot_binding(slot)?;
+    }
+
+    Ok(json!({
+        "roles": routes,
+        "fallback_configured": !cfg.fallback.chain.is_empty(),
+        "fallback_count": cfg.fallback.chain.len(),
+    }))
+}
+
+/// Keep operator-facing status endpoint data useful while never copying URL
+/// credentials, query tokens, or fragments.  A malformed endpoint becomes a
+/// fixed label instead of echoing potentially sensitive source text.
+fn buddy_status_endpoint(endpoint: Option<&str>) -> Option<String> {
+    endpoint.map(|raw| match url::Url::parse(raw) {
+        Ok(mut parsed) => {
+            if parsed.set_username("").is_err() || parsed.set_password(None).is_err() {
+                return "(invalid endpoint)".to_owned();
+            }
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            parsed.to_string().trim_end_matches('/').to_owned()
+        }
+        Err(_) => "(invalid endpoint)".to_owned(),
+    })
+}
+
+fn buddy_provider_routes_table_lines(provider_routes: &Value) -> Vec<String> {
+    let mut lines = vec!["provider_routes:".to_owned()];
+    if let Some(routes) = provider_routes["roles"].as_array() {
+        for route in routes {
+            let role = route["role"].as_str().unwrap_or("(invalid)");
+            let source = route["binding_source"].as_str().unwrap_or("(invalid)");
+            let descriptor = route["provider_descriptor_id"]
+                .as_str()
+                .unwrap_or("(invalid)");
+            let instance = route["provider_instance_id"].as_str().unwrap_or("(inline)");
+            let model = route["display_model"].as_str().unwrap_or("(unconfigured)");
+            let endpoint = route["endpoint"].as_str().unwrap_or("");
+            let region = route["region"].as_str().unwrap_or("");
+            lines.push(format!(
+                "  {role:<10} source={source:<15} descriptor={descriptor:<16} instance={instance:<16} model={model:<28} endpoint={endpoint} region={region}"
+            ));
+        }
+    }
+    lines.push(format!(
+        "  fallback_configured={} fallback_count={}",
+        provider_routes["fallback_configured"].as_bool().unwrap_or(false),
+        provider_routes["fallback_count"].as_u64().unwrap_or(0),
+    ));
+    lines
 }
 
 /// Buddy stays available when `neoth serve` is down. A successful value is the
@@ -665,10 +787,11 @@ mod tests {
 
     // ── status JSON shape ─────────────────────────────────────────────────────
 
-    /// The seven keys required by the GUI contract must all be present and have
+    /// The Buddy JSON contract must retain its base fields and a stable,
+    /// resolved provider-routes projection for the existing GUI backend, with
     /// the correct types when read back from a constructed FreedomConfig.
     #[test]
-    fn status_json_shape_has_all_seven_keys() {
+    fn status_json_shape_has_base_keys_and_provider_routes() {
         let cfg = make_buddy_cfg();
 
         let sovereign_buddy = cfg.sovereign_buddy;
@@ -679,6 +802,7 @@ mod tests {
         let autonomy = cfg.autonomy.as_str().to_owned();
         let proactive_enabled = cfg.proactive.enabled;
         let skill_autonomy_caps = Vec::<Value>::new();
+        let provider_routes = buddy_provider_routes(&cfg).expect("default routes resolve");
 
         let v = json!({
             "sovereign_buddy": sovereign_buddy,
@@ -688,6 +812,7 @@ mod tests {
             "autonomy": autonomy,
             "proactive_enabled": proactive_enabled,
             "skill_autonomy_caps": skill_autonomy_caps,
+            "provider_routes": provider_routes,
         });
 
         assert!(
@@ -715,6 +840,10 @@ mod tests {
             v["skill_autonomy_caps"].is_array(),
             "skill_autonomy_caps must be array"
         );
+        assert!(v["provider_routes"]["roles"].is_array());
+        assert_eq!(v["provider_routes"]["roles"].as_array().unwrap().len(), 3);
+        assert_eq!(v["provider_routes"]["fallback_configured"], false);
+        assert_eq!(v["provider_routes"]["fallback_count"], 0);
 
         // Values match the constructed config.
         assert_eq!(v["sovereign_buddy"], false);
@@ -728,6 +857,128 @@ mod tests {
         assert_eq!(v["autonomy"], "standard");
         assert_eq!(v["proactive_enabled"], false);
         assert!(v["skill_autonomy_caps"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn buddy_status_routes_keep_named_alias_shadowing_and_global_fallback_once() {
+        let mut cfg = make_buddy_cfg();
+        cfg.provider_model = Some("global-must-not-inherit".into());
+        cfg.provider_endpoint = Some("https://global.example/v1".into());
+        cfg.provider_region = Some("eu-central-1".into());
+        cfg.models_aliases
+            .insert("@shared".into(), "global-shared".into());
+        cfg.models_aliases
+            .insert("@global".into(), "global-only".into());
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - id: compat_left\n    descriptor: openai_compat\n    endpoint: https://left.example/v1\n    model: '@shared'\n    models_aliases: { '@shared': left-local }\n  - id: compat_right\n    descriptor: openai_compat\n    endpoint: https://right.example/v1\n    model: '@global'\n  - id: compat_model_less\n    descriptor: openai_compat\n    endpoint: https://model-less.example/v1\nleft: { provider_instance_id: compat_left }\nright: { provider_instance_id: compat_right }\ncerebellum: { provider_instance_id: compat_model_less }\n",
+        )
+        .expect("named route fixture parses");
+        cfg.fallback.chain = vec![
+            serde_yaml::from_str("provider_instance_id: compat_left")
+                .expect("named fallback selector parses"),
+            serde_yaml::from_str("provider: openai_compat\nmodel: fallback-model")
+                .expect("legacy fallback selector parses"),
+        ];
+
+        let routes = buddy_provider_routes(&cfg).expect("named routes resolve");
+        let roles = routes["roles"].as_array().expect("roles array");
+        assert_eq!(roles[0]["provider_instance_id"], "compat_left");
+        assert_eq!(roles[0]["provider_descriptor_id"], "openai_compat");
+        assert_eq!(roles[0]["configured_model"], "@shared");
+        assert_eq!(roles[0]["display_model"], "left-local");
+        assert_eq!(roles[1]["provider_instance_id"], "compat_right");
+        assert_eq!(roles[1]["display_model"], "global-only");
+        assert_eq!(roles[2]["binding_source"], "named_instance");
+        assert_eq!(roles[2]["provider_instance_id"], "compat_model_less");
+        assert!(roles[2]["configured_model"].is_null());
+        assert!(roles[2]["display_model"].is_null());
+        assert_eq!(roles[2]["endpoint"], "https://model-less.example/v1");
+        assert!(roles[2]["region"].is_null());
+        assert_eq!(routes["fallback_configured"], true);
+        assert_eq!(routes["fallback_count"], 2);
+    }
+
+    #[test]
+    fn buddy_status_routes_project_providerless_legacy_global_route_once() {
+        let mut cfg = make_buddy_cfg();
+        cfg.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiCompat);
+        cfg.provider_model = Some("@global-route".into());
+        cfg.provider_endpoint = Some(
+            "https://global-user:global-password@global.example/v1?api_key=global-query"
+                .into(),
+        );
+        cfg.provider_region = Some("us-east-1".into());
+        cfg.models_aliases
+            .insert("@global-route".into(), "global-wire-model".into());
+
+        let routes = buddy_provider_routes(&cfg).expect("legacy global route resolves");
+        let left = &routes["roles"][0];
+        assert_eq!(left["binding_source"], "legacy_inline");
+        assert!(left["provider_instance_id"].is_null());
+        assert_eq!(left["provider_descriptor_id"], "openai_compat");
+        assert_eq!(left["configured_model"], "@global-route");
+        assert_eq!(left["display_model"], "global-wire-model");
+        assert_eq!(left["endpoint"], "https://global.example/v1");
+        assert_eq!(left["region"], "us-east-1");
+        let rendered = serde_json::to_string(&routes).expect("serialize legacy global route");
+        assert!(!rendered.contains("global-user"));
+        assert!(!rendered.contains("global-password"));
+        assert!(!rendered.contains("global-query"));
+    }
+
+    #[test]
+    fn buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver() {
+        let mut cfg = make_buddy_cfg();
+        cfg.inference = serde_yaml::from_str(
+            "mode: custom\nleft: { provider_instance_id: missing_named_route }\n",
+        )
+        .expect("unknown selector remains parseable until resolution");
+
+        let err = buddy_provider_routes(&cfg).expect_err("unknown named selector must fail");
+        assert!(
+            err.to_string()
+                .contains("unknown provider_instance_id `missing_named_route`"),
+            "Buddy must preserve the canonical resolver error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable() {
+        let mut cfg = make_buddy_cfg();
+        cfg.models_aliases
+            .insert("@legacy".into(), "global-resolved".into());
+        cfg.inference = serde_yaml::from_str(
+            "mode: single\ndefault_slot:\n  provider: openai_compat\n  model: '@legacy'\n  endpoint: https://route-user:route-password@compat.example/v1?api_key=route-query#route-fragment\n",
+        )
+        .expect("legacy route fixture parses");
+
+        let routes = buddy_provider_routes(&cfg).expect("legacy route resolves");
+        let left = &routes["roles"][0];
+        assert_eq!(left["binding_source"], "legacy_inline");
+        assert!(left["provider_instance_id"].is_null());
+        assert_eq!(left["configured_model"], "@legacy");
+        assert_eq!(left["display_model"], "global-resolved");
+        assert_eq!(left["endpoint"], "https://compat.example/v1");
+        let rendered = serde_json::to_string(&routes).expect("serialize routes");
+        for secret in ["route-user", "route-password", "route-query", "route-fragment"] {
+            assert!(!rendered.contains(secret), "status must redact {secret}");
+        }
+        let table = buddy_provider_routes_table_lines(&routes).join("\n");
+        assert!(table.contains("provider_routes:"));
+        assert!(table.contains("source=legacy_inline"));
+        assert!(table.contains("model=global-resolved"));
+        assert!(!table.contains("route-password"));
+        assert!(!table.contains("route-query"));
+        assert_eq!(
+            buddy_status_endpoint(Some("mailto:route-user:route-password@compat.example?api_key=route-query")),
+            Some("(invalid endpoint)".to_owned()),
+            "opaque URLs cannot prove userinfo stripping and must fail closed"
+        );
+        assert_eq!(
+            buddy_status_endpoint(Some("%%%route-password?api_key=route-query")),
+            Some("(invalid endpoint)".to_owned()),
+            "malformed endpoints must not echo raw source text"
+        );
     }
 
     #[test]

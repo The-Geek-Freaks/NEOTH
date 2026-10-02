@@ -11797,7 +11797,7 @@ mod tests {
                 config.memory.recall_shortcut = false;
                 config.skills.enabled.push(SKILL_ID.to_owned());
                 config.inference = serde_yaml::from_str(&format!(
-                    "mode: custom\nprovider_instances:\n  - id: {INSTANCE_ID}\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: {CONFIG_MODEL}\n    models_aliases: {{ '@fast': {WIRE_MODEL} }}\n    key: w2062-secret\n",
+                    "mode: custom\nprovider_instances:\n  - id: {INSTANCE_ID}\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '{CONFIG_MODEL}'\n    models_aliases: {{ '@fast': {WIRE_MODEL} }}\n    key: w2062-secret\n",
                     selected.uri(),
                 ))
                 .expect("parse W2062 named compat topology");

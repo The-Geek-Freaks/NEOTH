@@ -19956,7 +19956,7 @@ modes:
         let home = fixture.path().join("home");
         let skills_dir = home.join("skills");
         let config_path = home.join("freedom.yaml");
-        let wal_path = home.join("wal").join("00000000000000000001.wal");
+        let wal_path = home.join("wal").join("000001.wal");
         let skill_id = "named-skill-cli";
         std::fs::create_dir_all(skills_dir.join(skill_id)).expect("create named skill directory");
         std::fs::write(skills_dir.join(skill_id).join("skill.yaml"), format!(
@@ -20056,7 +20056,7 @@ modes:
             "AllowOnce must remain ephemeral for the selected named route"
         );
         selected.verify().await;
-        let wal = std::fs::read(home.join("wal").join("00000000000000000001.wal"))
+        let wal = std::fs::read(home.join("wal").join("000001.wal"))
             .expect("read named skill provider leaf receipt");
         assert!(
             String::from_utf8_lossy(&wal).contains("skill_compat"),

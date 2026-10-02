@@ -176,6 +176,7 @@ jobs:
             SRC/neothd/src/models/catalog.rs \
             SRC/neothd/src/models/refresh_task.rs \
             SRC/neothd/src/cli/catalog.rs \
+            SRC/neothd/src/cli/buddy.rs \
             SRC/neothd/src/cli/serve_pipeline.rs \
             SRC/neothd/src/cli/profile.rs \
             SRC/neothd/src/config/inference.rs \
@@ -641,9 +642,14 @@ jobs:
           run_case 354 lib models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed --lib
           run_case 355 lib models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce --lib
           run_case 356 lib models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 356
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 356
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 356
+          run_case 357 lib cli::buddy::tests::status_json_shape_has_base_keys_and_provider_routes cli::buddy::tests::status_json_shape_has_base_keys_and_provider_routes --lib
+          run_case 358 lib cli::buddy::tests::buddy_status_routes_keep_named_alias_shadowing_and_global_fallback_once cli::buddy::tests::buddy_status_routes_keep_named_alias_shadowing_and_global_fallback_once --lib
+          run_case 359 lib cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once --lib
+          run_case 360 lib cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver --lib
+          run_case 361 lib cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 361
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 361
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 361
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

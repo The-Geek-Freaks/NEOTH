@@ -397,3 +397,14 @@ linked local-model guide documents each distinct workflow.
 | Developer | Fast code model + deep review model + local profile extraction. |
 | Homelab | Local gateway/Ollama/vLLM + Tailscale mesh + cloud fallback disabled. |
 | Heavy multimodal | CLIP + Whisper + ffmpeg + document pipeline. |
+
+### Inspect Buddy provider routes
+
+`neoth buddy status --output json` includes `provider_routes`; table output shows
+the same role bindings. Each route identifies its named instance (if configured),
+transport descriptor, configured model and alias-resolved display model. The
+status also reports whether a fallback chain is configured and its length.
+Providerless legacy roles use the global route fields; named instances use only
+their own fields. Missing models remain unset. Endpoint credentials, query strings
+and fragments are omitted. This command reads configuration without constructing
+a provider or making a network call.

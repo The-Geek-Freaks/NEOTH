@@ -3939,7 +3939,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = wal_dir.join("00000000000000000001.wal");
+        let segment = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let authorizer = profile_cli_authorizer(
