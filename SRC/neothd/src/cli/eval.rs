@@ -282,19 +282,22 @@ async fn run_verify_command_contained(
     deadline: Instant,
 ) -> Result<bool> {
     use crate::updater::process_containment::{ContainedChild, ContainedChildError};
-    use std::{ffi::OsString, path::Path};
-
-    let program = if cfg!(windows) { "cmd" } else { "sh" };
-    let argv = if cfg!(windows) {
-        vec![OsString::from("/C"), OsString::from(cmd)]
-    } else {
-        vec![OsString::from("-c"), OsString::from(cmd)]
-    };
+    let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command
+            .args(["/D", "/S", "/C"])
+            .as_std_mut()
+            .raw_arg(format!("\"{cmd}\""));
+    }
+    #[cfg(not(windows))]
+    command.args(["-c", cmd]);
     // Eval verifiers are headless exit-code gates: they intentionally receive
     // EOF rather than inherited CLI stdin. `run_verify_command` historically
     // drained without an output limit, so preserve that result contract while
     // moving pipe ownership and terminal cleanup to the shared lifecycle.
-    let mut child = ContainedChild::spawn(Path::new(program), &argv, b"", usize::MAX)
+    let mut child = ContainedChild::spawn_configured(command, b"", usize::MAX)
         .await
         .map_err(anyhow::Error::new)
         .with_context(|| format!("spawn verify_command: {cmd}"))?;
@@ -1087,6 +1090,20 @@ mod tests {
             !run_verify_command(failure, timeout).expect("non-zero verifier must run"),
             "normal non-zero verifier must remain a Fail result, not an execution error"
         );
+        #[cfg(windows)]
+        {
+            let tmp = tempfile::tempdir().expect("create quoted Windows fixture root");
+            let directory = tmp.path().join("quoted path & metachar literal");
+            std::fs::create_dir(&directory).expect("create quoted Windows fixture directory");
+            let batch = directory.join("success fixture.cmd");
+            std::fs::write(&batch, "@echo off\r\nexit /b 0\r\n")
+                .expect("write quoted Windows batch fixture");
+            assert!(
+                run_verify_command(&quote_windows_cmd_redirection_path(&batch), timeout)
+                    .expect("quoted batch verifier must run"),
+                "quoted Windows path with a literal metacharacter must round trip through cmd /S /C"
+            );
+        }
     }
 
     /// NEOTH-AUDIT-EVAL-RUNNER-HARDENING-01 (a) — a verify_command that runs
@@ -1095,6 +1112,12 @@ mod tests {
     #[test]
     fn verify_command_timeout_kills_long_child() {
         let tmp = tempfile::tempdir().expect("create descendant marker directory");
+        #[cfg(windows)]
+        let tmp = {
+            let path = tmp.path().join("descendant fixture with spaces");
+            std::fs::create_dir(&path).expect("create space-containing fixture directory");
+            tempfile::TempDir::new_in(&path).expect("create descendant fixture directory")
+        };
         let ready = tmp.path().join("ready.txt");
         let marker = tmp.path().join("escaped.txt");
 
@@ -1102,17 +1125,29 @@ mod tests {
         // shell alive. Killing only cmd.exe/sh would leave that writer running;
         // contained tree cleanup must make the marker impossible after return.
         // The ready marker proves the descendant began before that assertion.
-        // Use cmd.exe plus ping on Windows: unlike a background PowerShell,
-        // both are native and reach the ready write within the small deadline.
+        // Windows writes a separate native batch fixture, with a deliberately
+        // space-containing path, so START launches one quoted /C target and
+        // the child performs each redirection on its own command line.
         // The inner cmd remains a real Job Object descendant and writes the
         // forbidden marker only after the outer timeout has elapsed.
         let (timeout_secs, marker_delay_secs) = if cfg!(windows) { (2, 4) } else { (1, 2) };
         #[cfg(windows)]
-        let long_cmd = format!(
-            "start \"\" /B cmd /D /Q /C echo ready ^> {} ^& ping -n {marker_delay_secs} 127.0.0.1 ^> nul ^& echo escaped ^> {} & ping -n 30 127.0.0.1 > nul",
-            quote_windows_cmd_redirection_path(&ready),
-            quote_windows_cmd_redirection_path(&marker),
-        );
+        let long_cmd = {
+            let batch = tmp.path().join("timeout-descendant.cmd");
+            std::fs::write(
+                &batch,
+                format!(
+                    "@echo off\r\n> {} echo ready\r\nping -n {marker_delay_secs} 127.0.0.1 > nul\r\n> {} echo escaped\r\n",
+                    quote_windows_cmd_redirection_path(&ready),
+                    quote_windows_cmd_redirection_path(&marker),
+                ),
+            )
+            .expect("write descendant batch fixture");
+            format!(
+                "start \"\" /B cmd /D /Q /C {} & ping -n 30 127.0.0.1 > nul",
+                quote_windows_cmd_redirection_path(&batch),
+            )
+        };
         #[cfg(not(windows))]
         let long_cmd = format!(
             "sh -c \"printf ready > {}; sleep {marker_delay_secs}; printf escaped > {}\" & sleep 30",

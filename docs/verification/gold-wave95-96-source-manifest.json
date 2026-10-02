@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T21:23:11.9780781Z",
-  "validationStatus": "AUTHENTIC_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "capturedUtc": "2026-10-02T21:36:57.8600953Z",
+  "validationStatus": "STATIC_REVIEWED_HOSTED_WINDOWS_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -213,8 +213,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 170027,
-      "sha256": "88C135645D82E548D98BEBE5A5BF1723131CFF856708B5E7ACF3F618A0A7CCBF"
+      "bytes": 170236,
+      "sha256": "4AC7D624FDA2126FBF08ED3C99FBAE3877F67369DBAF6E52371E31D2D4B3CEFC"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -3152,6 +3152,11 @@
       "sha256": "E39774EF0912CC9AC36E289989B0B86725FC770C79108C60425443C0B7A25864"
     },
     {
+      "path": "docs/verification/gold-wave2210-windows-verifier-command.json",
+      "bytes": 2619,
+      "sha256": "804D9F959B9885252B924C5C77A26118847B4BE47CE4E0E35F1B178FA9F799B2"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4293,8 +4298,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2315192,
-      "sha256": "C41227C2D8649A0EEA5F8FA5CA0198C64EA824307AAAA079DDF775CDC51F2413"
+      "bytes": 2316489,
+      "sha256": "E44FCF671B652755AC28C17B5E04D85E50E14DD25D940F676CA57D428798EC50"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5338,8 +5343,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/eval.rs",
-      "bytes": 49665,
-      "sha256": "D483666D157BA4579753167927596D9750633931D268A361BE01CBFF637DD36A"
+      "bytes": 51300,
+      "sha256": "DD1522C5BC34EC2338A80821FFEC19F15426ADF340A0588375240752C3E45FCA"
     },
     {
       "path": "SRC/neothd/src/cli/export.rs",

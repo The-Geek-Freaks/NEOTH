@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.gold.wave2210.windows-verifier-command.v1",
+  "base": "126d514a06e15a8612734770046b1a8f255af740",
+  "status": "STATIC_REVIEWED_HOSTED_WINDOWS_QUALIFICATION_PENDING",
+  "problem": "Windows Command.args encoded an explicit cmd /C shell program using CRT argument escaping, corrupting embedded quote boundaries.",
+  "change": "Windows uses /D /S /C plus outer-quoted raw_arg through the existing ContainedChild configured launch. Non-Windows remains sh -c. Timeout, Job Object ownership, output drain, kill and reap remain unchanged.",
+  "regression": "Existing normal-output case now executes a quoted batch path with spaces and literal ampersand. Existing timeout case starts a native descendant batch under a path with spaces and preserves strict readiness and no escaped-marker assertions.",
+  "sourceImages": [
+    {
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "sha256": "DD1522C5BC34EC2338A80821FFEC19F15426ADF340A0588375240752C3E45FCA",
+      "blob": "f51de1d565bb525f8f556a53542d1d73c56d84f3"
+    },
+    {
+      "path": ".github/workflows/windows-storage-regressions.yml",
+      "sha256": "4AC7D624FDA2126FBF08ED3C99FBAE3877F67369DBAF6E52371E31D2D4B3CEFC",
+      "blob": "e85ce33c527dc4c7d8a0072a142793418ea7bf8a"
+    }
+  ],
+  "reviewSha256": "63AC4AABDC8D9B3CA11B17485778656D8FD990119E066D562FC2C6978E2E07F0",
+  "rejectedCandidates": [
+    "W2207 R1",
+    "W2207 R2"
+  ],
+  "priorWindowsEvidence": {
+    "producer": "76f59ed093d2f5be3cc28a46d146cef6a6d7e1dd",
+    "run": 37053490515,
+    "failed": 1,
+    "failure": "cli::eval::tests::verify_command_timeout_kills_long_child",
+    "admissionSha256": "CA9D23EEC0F5D91493CD188D6F548F05F9501AB2355CCB56AA6796B056562A1C",
+    "passed": 19011,
+    "skipped": 28,
+    "tests": 19012
+  },
+  "nativeSelection": {
+    "cases": 1022,
+    "catalogSha256": "CDFF0BD64E3EAC5E1C46819F89F754E58423B12D6274F18B4A4A712436277CE6",
+    "workflow": ".github/workflows/windows-storage-regressions.yml",
+    "addedExistingIdentities": [
+      "cli::eval::tests::verify_command_containment_preserves_normal_output_and_exit_status",
+      "cli::eval::tests::verify_command_timeout_kills_long_child"
+    ]
+  },
+  "primaryReferences": [
+    "https://raw.githubusercontent.com/rust-lang/rust/1.91.0/library/std/src/sys/process/windows.rs",
+    "https://raw.githubusercontent.com/rust-lang/rust/1.91.0/library/std/src/sys/args/windows.rs",
+    "https://doc.rust-lang.org/std/os/windows/process/trait.CommandExt.html#tymethod.raw_arg"
+  ],
+  "localExecutableValidationRan": false,
+  "runtimeAccepted": false,
+  "fullCiAccepted": false,
+  "releaseAccepted": false
+}
