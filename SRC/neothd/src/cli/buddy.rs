@@ -612,7 +612,9 @@ fn buddy_provider_routes_table_lines(provider_routes: &Value) -> Vec<String> {
     }
     lines.push(format!(
         "  fallback_configured={} fallback_count={}",
-        provider_routes["fallback_configured"].as_bool().unwrap_or(false),
+        provider_routes["fallback_configured"]
+            .as_bool()
+            .unwrap_or(false),
         provider_routes["fallback_count"].as_u64().unwrap_or(0),
     ));
     lines
@@ -904,8 +906,7 @@ mod tests {
         cfg.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiCompat);
         cfg.provider_model = Some("@global-route".into());
         cfg.provider_endpoint = Some(
-            "https://global-user:global-password@global.example/v1?api_key=global-query"
-                .into(),
+            "https://global-user:global-password@global.example/v1?api_key=global-query".into(),
         );
         cfg.provider_region = Some("us-east-1".into());
         cfg.models_aliases
@@ -960,7 +961,12 @@ mod tests {
         assert_eq!(left["display_model"], "global-resolved");
         assert_eq!(left["endpoint"], "https://compat.example/v1");
         let rendered = serde_json::to_string(&routes).expect("serialize routes");
-        for secret in ["route-user", "route-password", "route-query", "route-fragment"] {
+        for secret in [
+            "route-user",
+            "route-password",
+            "route-query",
+            "route-fragment",
+        ] {
             assert!(!rendered.contains(secret), "status must redact {secret}");
         }
         let table = buddy_provider_routes_table_lines(&routes).join("\n");
@@ -970,7 +976,9 @@ mod tests {
         assert!(!table.contains("route-password"));
         assert!(!table.contains("route-query"));
         assert_eq!(
-            buddy_status_endpoint(Some("mailto:route-user:route-password@compat.example?api_key=route-query")),
+            buddy_status_endpoint(Some(
+                "mailto:route-user:route-password@compat.example?api_key=route-query"
+            )),
             Some("(invalid endpoint)".to_owned()),
             "opaque URLs cannot prove userinfo stripping and must fail closed"
         );

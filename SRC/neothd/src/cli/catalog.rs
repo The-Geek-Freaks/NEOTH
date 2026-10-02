@@ -191,15 +191,19 @@ fn validate_catalog_snapshot(catalog: &ModelsCatalog) -> Result<()> {
                     | discovery::GEMINI_CATALOG_PROVIDER
                     | discovery::OPENAI_COMPAT_CATALOG_PROVIDER
                     | discovery::BEDROCK_CATALOG_PROVIDER
-            ) || provider.split_once("__").is_some_and(|(descriptor, instance)| {
-                crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
-                    && matches!(descriptor,
-                        discovery::ANTHROPIC_CATALOG_PROVIDER
-                            | discovery::OPENAI_CATALOG_PROVIDER
-                            | discovery::GEMINI_CATALOG_PROVIDER
-                            | discovery::OPENAI_COMPAT_CATALOG_PROVIDER
-                            | discovery::BEDROCK_CATALOG_PROVIDER)
-            }),
+            ) || provider
+                .split_once("__")
+                .is_some_and(|(descriptor, instance)| {
+                    crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
+                        && matches!(
+                            descriptor,
+                            discovery::ANTHROPIC_CATALOG_PROVIDER
+                                | discovery::OPENAI_CATALOG_PROVIDER
+                                | discovery::GEMINI_CATALOG_PROVIDER
+                                | discovery::OPENAI_COMPAT_CATALOG_PROVIDER
+                                | discovery::BEDROCK_CATALOG_PROVIDER
+                        )
+                }),
             "catalog snapshot contains unknown provider key `{provider}`"
         );
         if !entry.models.is_empty() {
@@ -267,10 +271,13 @@ fn validate_report_partition(report: &discovery::DiscoveryReport, stale_only: bo
         )
     };
     let canonical_provider = |provider: &str| {
-        recognized_report_prefix(provider) || provider.split_once("__").is_some_and(|(descriptor, instance)| {
-            crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
-                && recognized_report_prefix(descriptor)
-        })
+        recognized_report_prefix(provider)
+            || provider
+                .split_once("__")
+                .is_some_and(|(descriptor, instance)| {
+                    crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
+                        && recognized_report_prefix(descriptor)
+                })
     };
     let mut configured = std::collections::HashSet::new();
     for provider in &report.configured {

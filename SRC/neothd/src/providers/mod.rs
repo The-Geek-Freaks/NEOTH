@@ -7189,11 +7189,8 @@ mod tests {
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).expect("create named fallback lifecycle WAL directory");
         let segment = wal_dir.join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment,
-            home.path().to_path_buf(),
-        )
-        .expect("spawn named fallback lifecycle WAL writer");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf())
+            .expect("spawn named fallback lifecycle WAL writer");
         let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
             crate::permissions::AutonomyLevel::Full,
             Some(writer.clone()),
@@ -7391,9 +7388,9 @@ mod tests {
             .err()
             .expect("conflicting selector must reject before leaf factory construction");
         assert!(
-            conflicting_error
-                .to_string()
-                .contains("profile_provider and profile_provider_instance_id are mutually exclusive")
+            conflicting_error.to_string().contains(
+                "profile_provider and profile_provider_instance_id are mutually exclusive"
+            )
         );
         server.verify().await;
     }

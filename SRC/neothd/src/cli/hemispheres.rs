@@ -408,7 +408,9 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                         .unwrap_or_else(|| "Skip".into())
                 );
             }
-            for (role, slot, provider_instance_id, catalog_key, catalog_default, catalog_models) in &rows {
+            for (role, slot, provider_instance_id, catalog_key, catalog_default, catalog_models) in
+                &rows
+            {
                 let provider = slot.provider.map(|p| p.as_str()).unwrap_or("(default)");
                 let model = slot.model.as_deref().unwrap_or("(default)");
                 let endpoint = slot.endpoint.as_deref().unwrap_or("");
@@ -425,7 +427,10 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                 if let Some(default) = catalog_default {
                     println!("             catalog={catalog_key} default={default}");
                 } else if !catalog_models.is_empty() {
-                    println!("             catalog={catalog_key} models={}", catalog_models.join(", "));
+                    println!(
+                        "             catalog={catalog_key} models={}",
+                        catalog_models.join(", ")
+                    );
                 }
             }
         }

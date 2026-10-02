@@ -1152,7 +1152,9 @@ mod tests {
         )
         .unwrap();
         let a = topology.resolve_role_binding(HemisphereRole::Left).unwrap();
-        let b = topology.resolve_role_binding(HemisphereRole::Right).unwrap();
+        let b = topology
+            .resolve_role_binding(HemisphereRole::Right)
+            .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("catalog.json");
         let mut catalog = ModelsCatalog::default().with_path(path.clone());
@@ -1173,11 +1175,26 @@ mod tests {
         );
         catalog.save().unwrap();
 
-        assert_eq!(catalog_key_for_resolved_binding(&a), "openai_compat__compat_a");
-        assert_eq!(catalog_recommended_for_resolved_binding_at(&path, &a), Some("a-default".into()));
-        assert_eq!(catalog_model_ids_for_resolved_binding_at(&path, &a), vec!["a-default", "a-choice"]);
-        assert_eq!(catalog_recommended_for_resolved_binding_at(&path, &b), Some("b-default".into()));
-        assert_eq!(catalog_model_ids_for_resolved_binding_at(&path, &b), vec!["b-default"]);
+        assert_eq!(
+            catalog_key_for_resolved_binding(&a),
+            "openai_compat__compat_a"
+        );
+        assert_eq!(
+            catalog_recommended_for_resolved_binding_at(&path, &a),
+            Some("a-default".into())
+        );
+        assert_eq!(
+            catalog_model_ids_for_resolved_binding_at(&path, &a),
+            vec!["a-default", "a-choice"]
+        );
+        assert_eq!(
+            catalog_recommended_for_resolved_binding_at(&path, &b),
+            Some("b-default".into())
+        );
+        assert_eq!(
+            catalog_model_ids_for_resolved_binding_at(&path, &b),
+            vec!["b-default"]
+        );
 
         catalog.providers.remove("openai_compat__compat_b");
         catalog.save().unwrap();
@@ -1194,8 +1211,13 @@ mod tests {
         )
         .unwrap();
         let named = topology.resolve_role_binding(HemisphereRole::Left).unwrap();
-        let inline = topology.resolve_role_binding(HemisphereRole::Right).unwrap();
-        assert_eq!(catalog_key_for_resolved_binding(&named), "anthropic_api__named_claude");
+        let inline = topology
+            .resolve_role_binding(HemisphereRole::Right)
+            .unwrap();
+        assert_eq!(
+            catalog_key_for_resolved_binding(&named),
+            "anthropic_api__named_claude"
+        );
         assert_eq!(catalog_key_for_resolved_binding(&inline), "anthropic_api");
     }
 }

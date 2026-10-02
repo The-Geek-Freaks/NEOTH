@@ -1086,14 +1086,16 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
     // below compares it atomically and refuses to publish stale responses.
     let mut attempts = Vec::with_capacity(sources.len());
     for (provider, source_provider, binding_hash, _) in &sources {
-        attempts.push((provider.clone(), *source_provider, binding_hash.clone(), mint_refresh_token()?));
+        attempts.push((
+            provider.clone(),
+            *source_provider,
+            binding_hash.clone(),
+            mint_refresh_token()?,
+        ));
     }
     ModelsCatalog::update_at_with_clear_epoch(catalog_path, |catalog, clear_epoch| {
         for (provider, _, binding_hash, token) in &attempts {
-            let entry = catalog
-                .providers
-                .entry(provider.clone())
-                .or_default();
+            let entry = catalog.providers.entry(provider.clone()).or_default();
             entry.refresh_attempt = Some(CatalogRefreshAttempt {
                 token: token.clone(),
                 binding_hash: binding_hash.clone(),
@@ -1109,7 +1111,9 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
     let results = join_all(futures).await;
     let mut updates = Vec::with_capacity(results.len());
 
-    for ((provider, source_provider, binding_hash, attempt_token), result) in attempts.into_iter().zip(results) {
+    for ((provider, source_provider, binding_hash, attempt_token), result) in
+        attempts.into_iter().zip(results)
+    {
         match result {
             Ok(fr) if fr.provider == source_provider => {
                 updates.push(CatalogUpdate::Refreshed {
@@ -1448,8 +1452,14 @@ mod tests {
             vec!["openai_compat__compat_a", "openai_compat__compat_b"]
         );
         let catalog = ModelsCatalog::load_strict_from(&path).unwrap().unwrap();
-        assert_eq!(catalog.provider("openai_compat__compat_a").unwrap().models[0].id, "a-model");
-        assert_eq!(catalog.provider("openai_compat__compat_b").unwrap().models[0].id, "b-model");
+        assert_eq!(
+            catalog.provider("openai_compat__compat_a").unwrap().models[0].id,
+            "a-model"
+        );
+        assert_eq!(
+            catalog.provider("openai_compat__compat_b").unwrap().models[0].id,
+            "b-model"
+        );
     }
 
     #[tokio::test]
@@ -1509,9 +1519,17 @@ mod tests {
             report.refreshed,
             vec!["openai_compat__compat_a", "openai_compat__compat_b"]
         );
-        let catalog = ModelsCatalog::load_strict_from(&catalog_path).unwrap().unwrap();
-        assert_eq!(catalog.provider("openai_compat__compat_a").unwrap().models[0].id, "a-model");
-        assert_eq!(catalog.provider("openai_compat__compat_b").unwrap().models[0].id, "b-model");
+        let catalog = ModelsCatalog::load_strict_from(&catalog_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            catalog.provider("openai_compat__compat_a").unwrap().models[0].id,
+            "a-model"
+        );
+        assert_eq!(
+            catalog.provider("openai_compat__compat_b").unwrap().models[0].id,
+            "b-model"
+        );
         assert_eq!(server_a.received_requests().await.unwrap().len(), 1);
         assert_eq!(server_b.received_requests().await.unwrap().len(), 1);
     }
@@ -1559,14 +1577,20 @@ mod tests {
             plan.push(
                 identity,
                 PlannedSourceState::Runnable {
-                    source: Box::new(MockSource::ok(OPENAI_COMPAT_CATALOG_PROVIDER, vec!["model"])),
+                    source: Box::new(MockSource::ok(
+                        OPENAI_COMPAT_CATALOG_PROVIDER,
+                        vec!["model"],
+                    )),
                     binding_hash: hash,
                 },
             );
         }
         let (report, runnable) = plan.stale_only(&catalog, 1_000_001).into_execution();
         assert_eq!(report.fresh, vec!["openai_compat__compat_a"]);
-        assert_eq!(report.configured, vec!["openai_compat__compat_a", "openai_compat__compat_b"]);
+        assert_eq!(
+            report.configured,
+            vec!["openai_compat__compat_a", "openai_compat__compat_b"]
+        );
         assert_eq!(runnable.len(), 1);
         assert_eq!(runnable[0].0.as_str(), "openai_compat__compat_b");
     }
@@ -1701,7 +1725,10 @@ mod tests {
         b.push(
             "openai_compat__compat_b",
             PlannedSourceState::Runnable {
-                source: Box::new(MockSource::ok(OPENAI_COMPAT_CATALOG_PROVIDER, vec!["b-model"])),
+                source: Box::new(MockSource::ok(
+                    OPENAI_COMPAT_CATALOG_PROVIDER,
+                    vec!["b-model"],
+                )),
                 binding_hash: "b".repeat(64),
             },
         );
@@ -1717,7 +1744,10 @@ mod tests {
         let b_entry = catalog.provider("openai_compat__compat_b").unwrap();
         assert_eq!(b_entry.models[0].id, "b-model");
         let expected_b_hash = "b".repeat(64);
-        assert_eq!(b_entry.binding_hash.as_deref(), Some(expected_b_hash.as_str()));
+        assert_eq!(
+            b_entry.binding_hash.as_deref(),
+            Some(expected_b_hash.as_str())
+        );
     }
 
     #[tokio::test]
@@ -1770,7 +1800,10 @@ mod tests {
         config.provider_kind = Some(ProviderKind::ClaudeCli);
         config.provider_key = Some(crate::secret::SecretString::new("sk-ant".into()));
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
+        let names: Vec<_> = sources
+            .iter()
+            .map(|(provider, _, _, _)| provider.as_str())
+            .collect();
         assert!(names.contains(&"anthropic_api"));
     }
 
@@ -1787,7 +1820,10 @@ mod tests {
             ..Default::default()
         };
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
+        let names: Vec<_> = sources
+            .iter()
+            .map(|(provider, _, _, _)| provider.as_str())
+            .collect();
         assert!(names.contains(&"openai_api"));
     }
 
@@ -1804,7 +1840,10 @@ mod tests {
             ..Default::default()
         };
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
+        let names: Vec<_> = sources
+            .iter()
+            .map(|(provider, _, _, _)| provider.as_str())
+            .collect();
         assert!(names.contains(&"gemini_api"));
     }
 
