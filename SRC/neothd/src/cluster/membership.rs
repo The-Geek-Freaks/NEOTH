@@ -3293,6 +3293,7 @@ impl MembershipStore {
                 task_id: "scope-validation".into(),
                 prompt: "scope-validation".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: Some(scope.clone()),
             },
         )?;
@@ -3420,6 +3421,7 @@ impl MembershipStore {
                 task_id: "outbound-scope-validation".into(),
                 prompt: "outbound-scope-validation".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: Some(scope.clone()),
             },
         )?;
@@ -3476,6 +3478,7 @@ impl MembershipStore {
                 task_id: task_id.into(),
                 prompt: "outbound-operation-validation".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: Some(scope.clone()),
             },
         )?;

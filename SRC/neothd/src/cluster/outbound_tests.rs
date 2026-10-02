@@ -92,6 +92,7 @@ fn dispatch_request(
         task_id: task_id.into(),
         prompt: "summarize this exact authorized task".into(),
         model_hint: None,
+        max_output_tokens: None,
         scope,
     }
 }
@@ -449,6 +450,54 @@ fn clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_e
         receiver.try_recv().is_err(),
         "teardown-gated dispatch must not enqueue a frame on the former live stream"
     );
+}
+
+#[test]
+fn capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling() {
+    let home = tempfile::tempdir().expect("create capped dispatch authority home");
+    let live_now = crate::time::now_unix_i64();
+    let live_sessions = Arc::new(LiveSessionRegistry::new());
+    let membership = Arc::new(MembershipController::new(
+        MembershipStore::open(home.path()).expect("open authority store"),
+        live_sessions,
+    ));
+    let exact = scope();
+    let peer_key = active_live_peer(membership.store(), "capped-wire", live_now);
+    assign(membership.store(), peer_key.clone(), &exact, true, 1, 0);
+    let grant = membership
+        .store()
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key.clone()).expect("parse capped peer transport"),
+            live_now,
+        )
+        .expect("admit capped peer");
+    let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
+    let (_generation, mut receiver, _cancel) =
+        streams.register_authorized_session(&peer_key, &grant);
+    let controller = OutboundTaskDelegateController::new(home.path(), Arc::clone(&membership))
+        .expect("construct capped outbound controller");
+    controller.install_peer_streams(streams);
+    let mut request = dispatch_request("op-capped", "task-capped", exact);
+    request.model_hint = Some("advisory-only".into());
+    request.max_output_tokens = Some(73);
+
+    assert_eq!(
+        controller
+            .dispatch(&request)
+            .expect("capped dispatch queues on exact authorized live peer")
+            .state,
+        OutboundTaskDelegateState::Accepted
+    );
+    let delivered = receiver.try_recv().expect("one capped frame delivered");
+    assert_eq!(delivered.kind, super::heartbeat::FrameKind::TaskDelegateCapped);
+    match &delivered.body {
+        super::heartbeat::FrameBody::TaskDelegateCapped(body) => {
+            assert_eq!(body.max_output_tokens, Some(73));
+            assert_eq!(body.model_hint.as_deref(), Some("advisory-only"));
+        }
+        other => panic!("capped dispatch must not downgrade to legacy body: {other:?}"),
+    }
 }
 
 #[test]

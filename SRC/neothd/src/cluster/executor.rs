@@ -55,6 +55,9 @@ const CLUSTER_DELEGATED_SYSTEM: &str = "You are executing one isolated task dele
 pub struct ClusterTaskJob {
     pub task_id: String,
     pub prompt: String,
+    /// Optional strict ceiling copied from the authenticated task envelope.
+    /// This never selects a model; it only narrows the final provider request.
+    pub max_output_tokens: Option<u32>,
     /// Authenticated peer Noise pubkey hex to reply to.
     pub reply_peer_pk: String,
     /// Request-controlled resource selector, enforced only through the
@@ -69,6 +72,7 @@ impl ClusterTaskJob {
     pub fn authorized(
         task_id: String,
         prompt: String,
+        max_output_tokens: Option<u32>,
         reply_peer_pk: String,
         scope: Option<super::heartbeat::TaskDelegateScope>,
         membership_grant: super::membership::MembershipGrant,
@@ -80,6 +84,7 @@ impl ClusterTaskJob {
         Ok(Self {
             task_id,
             prompt,
+            max_output_tokens,
             reply_peer_pk,
             scope,
             membership_grant,
@@ -260,6 +265,8 @@ pub fn spawn_cluster_executor(
                             },
                             result: None,
                             provider_name: None,
+                            requested_max_output_tokens: None,
+                            effective_output_token_ceiling: None,
                         }.into()
                     }
                     None => {
@@ -274,6 +281,8 @@ pub fn spawn_cluster_executor(
                             },
                             result: None,
                             provider_name: None,
+                            requested_max_output_tokens: None,
+                            effective_output_token_ceiling: None,
                         }.into()
                     }
                 },
@@ -351,6 +360,7 @@ struct ClusterProviderRequest {
 fn assemble_cluster_request(
     provider: &crate::providers::cost_authorization::AuthorizedProvider,
     prompt: &str,
+    max_output_tokens: Option<u32>,
     execution_context: &ClusterExecutionContext,
 ) -> anyhow::Result<ClusterProviderRequest> {
     let config = execution_context.reload_controller.latest();
@@ -413,6 +423,7 @@ fn assemble_cluster_request(
         prompt: typed_prompt,
         system: typed_system,
         model: model.clone(),
+        max_output_tokens,
         ..Default::default()
     };
     let effective_cap = crate::tokens::budget::effective_cap(
@@ -465,6 +476,8 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: None,
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling: None,
             }
             .into();
         }
@@ -479,6 +492,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: None,
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling: None,
         }
         .into();
     };
@@ -503,6 +518,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: None,
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling: None,
         }
         .into();
     }
@@ -520,7 +537,12 @@ async fn run_one_task_execution_inner(
     // The delegated prompt is the USER turn. The node's moral core + locked
     // identity use the same typed assembler as CLI/channels, while private
     // operator context and tool surfaces remain isolated from remote peers.
-    let req = match assemble_cluster_request(&provider, &job.prompt, &execution_context) {
+    let req = match assemble_cluster_request(
+        &provider,
+        &job.prompt,
+        job.max_output_tokens,
+        &execution_context,
+    ) {
         Ok(assembled) => assembled.request,
         Err(error) => {
             tracing::warn!(
@@ -535,10 +557,17 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: Some(provider_name),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling: None,
             }
             .into();
         }
     };
+    // This is the adapter's reviewed, authorization-time proof, not an
+    // observation that a remote peer/provider actually produced that many
+    // tokens. `AuthorizedProvider::complete` rejects a requested cap that has
+    // no matching proven ceiling before provider work begins.
+    let effective_output_token_ceiling = provider.output_token_ceiling(&req);
 
     // Consent is live state, not a startup capability. Re-evaluate every route
     // reachable by the already-built provider (primary + fallback candidates)
@@ -562,6 +591,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: Some(provider_name),
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling: effective_output_token_ceiling,
         }
         .into();
     }
@@ -593,6 +624,8 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: Some(provider_name),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling: effective_output_token_ceiling,
             }
             .into();
         }
@@ -610,6 +643,8 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: Some(provider_name),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling: effective_output_token_ceiling,
             }
             .into();
         }
@@ -645,6 +680,8 @@ async fn run_one_task_execution_inner(
                     },
                     result: None,
                     provider_name: Some(provider_name),
+                    requested_max_output_tokens: job.max_output_tokens,
+                    effective_output_token_ceiling,
                 });
             }
             return TaskExecutionResult::suppressed(TaskResultBody {
@@ -654,6 +691,8 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: Some(provider_name),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling: effective_output_token_ceiling,
             });
         }
         outcome = &mut provider_call => outcome,
@@ -666,6 +705,8 @@ async fn run_one_task_execution_inner(
                 status: TaskResultStatus::Completed,
                 result: Some(result),
                 provider_name: Some(completion.identity.provider),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling,
             }
         }
         Ok(Ok(_)) => TaskResultBody {
@@ -675,6 +716,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: Some(provider_name),
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling,
         },
         Ok(Err(e)) => TaskResultBody {
             task_id: job.task_id.clone(),
@@ -684,6 +727,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: Some(provider_name),
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling,
         },
         Err(_elapsed) => TaskResultBody {
             task_id: job.task_id.clone(),
@@ -692,6 +737,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: Some(provider_name),
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling,
         },
     };
     if let Err(error) = external_permit.validate((now_unix_ms() / 1_000) as i64) {
@@ -717,6 +764,8 @@ async fn run_one_task_execution_inner(
                 },
                 result: None,
                 provider_name: result.provider_name,
+                requested_max_output_tokens: result.requested_max_output_tokens,
+                effective_output_token_ceiling: result.effective_output_token_ceiling,
             });
         }
         return TaskExecutionResult::suppressed(TaskResultBody {
@@ -726,6 +775,8 @@ async fn run_one_task_execution_inner(
             },
             result: None,
             provider_name: result.provider_name,
+            requested_max_output_tokens: result.requested_max_output_tokens,
+            effective_output_token_ceiling: result.effective_output_token_ceiling,
         });
     }
     TaskExecutionResult::guarded(result, effect_guard)
@@ -832,6 +883,7 @@ mod tests {
         ClusterTaskJob::authorized(
             "t-1".into(),
             prompt.into(),
+            None,
             "aa".into(),
             None,
             store
@@ -934,7 +986,7 @@ mod tests {
             )
             .unwrap();
         (
-            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), None, grant)
+            ClusterTaskJob::authorized("t-1".into(), prompt.into(), None, "aa".into(), None, grant)
                 .unwrap(),
             controller,
         )
@@ -1435,6 +1487,7 @@ mod tests {
         let queued = ClusterTaskJob::authorized(
             "cancel-me".into(),
             "block".into(),
+            None,
             "aa".into(),
             None,
             grant,
@@ -1825,6 +1878,14 @@ mod tests {
                 Some("qwen3")
             }
 
+            fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+                crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+            }
+
+            fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+                req.max_output_tokens
+            }
+
             async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
                 *self.seen.lock().unwrap() = Some(req);
                 Ok(Completion {
@@ -1880,8 +1941,13 @@ mod tests {
             ),
         );
 
-        let expected =
-            assemble_cluster_request(provider.as_ref(), "delegated work", &context).unwrap();
+        let expected = assemble_cluster_request(
+            provider.as_ref(),
+            "delegated work",
+            Some(73),
+            &context,
+        )
+        .unwrap();
         assert!(
             expected
                 .budget_items
@@ -1905,9 +1971,11 @@ mod tests {
             "fully rendered cluster request must fit the exact model-aware cap"
         );
 
+        let mut capped_job = job(home.path(), "delegated work");
+        capped_job.max_output_tokens = Some(73);
         let body = run_one_task(
             Some(Arc::clone(&provider)),
-            job(home.path(), "delegated work"),
+            capped_job,
             context,
         )
         .await;
@@ -1916,6 +1984,9 @@ mod tests {
         assert_eq!(actual.prompt, expected.request.prompt);
         assert_eq!(actual.system, expected.request.system);
         assert_eq!(actual.model, expected.request.model);
+        assert_eq!(actual.max_output_tokens, Some(73));
+        assert_eq!(body.requested_max_output_tokens, Some(73));
+        assert_eq!(body.effective_output_token_ceiling, Some(73));
     }
 
     #[test]
@@ -1946,7 +2017,7 @@ mod tests {
             "cluster.test.cap",
         );
 
-        let error = assemble_cluster_request(&provider, &"x".repeat(2_000), &context)
+        let error = assemble_cluster_request(&provider, &"x".repeat(2_000), None, &context)
             .expect_err("non-degradable protected A/E request must be blocked");
         assert!(
             error.to_string().contains("above the effective cap 512"),

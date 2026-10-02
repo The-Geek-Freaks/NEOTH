@@ -1,0 +1,110 @@
+{
+  "schema": "neoth-gold-wave2121-cluster-output-ceiling/v1",
+  "base": "6f8b1422fa83d417c65176371338062265c755ff",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "requirement": "GOLD-R4-14a bounded Cluster caller schema/status leaf",
+  "behavior": {
+    "feature": "cluster delegated-task output-ceiling parity",
+    "public_cli": "neoth cluster task-delegate outbound-dispatch --max-output-tokens N",
+    "feature_flags": {
+      "default_includes_cluster": true,
+      "required": [
+        "cluster"
+      ],
+      "local_execution": "prohibited by BSOD hold; hosted validation required"
+    },
+    "authority": [
+      "model_hint remains advisory and does not select a provider or model",
+      "the receiving node uses its own AuthorizedProvider and exact scoped membership assignment",
+      "an explicit ceiling is copied into the final Request before token-cap, cost authorization, and provider dispatch"
+    ],
+    "mixed_version": {
+      "legacy_absence": "uses TaskDelegate and leaves max_output_tokens absent",
+      "explicit_ceiling": "uses TaskDelegateCapped / TaskDelegateCapped body so a prior decoder rejects the unknown tag instead of ignoring an additive field",
+      "no_claim": "effective_output_token_ceiling is an adapter-proven authorization-time ceiling, never a claimed observed remote-wire outcome"
+    }
+  },
+  "sourceCandidates": [
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_heartbeat.rs",
+      "base_blob": "1b92aa89a7870d7d8a5ea7398dc550faa631c26a",
+      "candidate_normalized_blob": "1c474bdc0ebdaf38e3b41f8c991bf8944e4a55fe",
+      "candidate_raw_sha256": "257EA8925D395BD4B77B5EE09AD2B5E592BCB53A94CAB5D2C954EBCC3D9422C7"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_executor.rs",
+      "base_blob": "eb3afdf27e2d73d87a8ecc75a51f463cbf0e54b0",
+      "candidate_normalized_blob": "da1a9db15612576b12cfbdacb693eaf2ced87936",
+      "candidate_raw_sha256": "2B6080318B1B0E235AE32F6BF0739B126FF5654E8DB3177A3A0F1B31B2E1FEAB"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_hyperswarm.rs",
+      "base_blob": "065d9389a0b7d071c5814b3361a65309fc1abd0f",
+      "candidate_normalized_blob": "494c683910117f37428707fe3640777f4ccbc036",
+      "candidate_raw_sha256": "58EF5FAE249EFCF292FB0050E3CCE87096D25D1937DCA0A6C08E74B23DAC5960"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/runtime_supervisor.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_runtime_supervisor.rs",
+      "base_blob": "d49a5cb44799e2e69d03cd727dd81b41f5b84937",
+      "candidate_normalized_blob": "c4788e7296fa757c61d302831c97de7c57f084a8",
+      "candidate_raw_sha256": "330C52876E215DE00125DAAA5E744E99098F3AD3877FB8C3A08968F85E7CA3D2"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_outbound_tests.rs",
+      "base_blob": "3782b322852848c01bd6b55608f4a6ddeff97a34",
+      "candidate_normalized_blob": "bbcec8d4b9fc108f251eab020c0e9449925a7625",
+      "candidate_raw_sha256": "A87B63980AF02FDACFA2F0B9EB38ECF2A999826665C8E0D6F2C9A38188A7AA07"
+    },
+    {
+      "path": "SRC/neothd/src/cli/cluster.rs",
+      "candidate": "candidate/SRC_neothd_src_cli_cluster.rs",
+      "base_blob": "af4368637957805d5d0768828dcfd675af30564b",
+      "candidate_normalized_blob": "42dafd0cb75e3d5b8e00438244f44050a7e9d4cd",
+      "candidate_raw_sha256": "36E3FB5090F33D24401394C9874292C51B5BEF5CF21DCF90CC843E889B850895"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "candidate": "candidate/SRC_neothd_src_daemon_audit_rpc_tests.rs",
+      "base_blob": "c92a23e78d58037b733ac34c98001451855a807d",
+      "candidate_normalized_blob": "a68825afaa04fa238a8356792477e7c59437c954",
+      "candidate_raw_sha256": "8A2628C93A8B1276D7F85A26A418982F860C8D82BB5BB18CA9C516E2F47F47EC"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "candidate": "candidate/SRC_neothd_src_cluster_membership.rs",
+      "base_blob": "e627d61f045c3f27c6f757106d3732d9f306cc62",
+      "candidate_normalized_blob": "a2baa1858e05ab5447ee3a44206d4285d86efeea",
+      "candidate_raw_sha256": "815A8B3254E6AAA45CD036C1DAD4D27BA332096CF4181F9FF7E5B8198AB31045"
+    }
+  ],
+  "focusedTests": [
+    "cluster::heartbeat::tests::task_delegate_round_trips_and_validates",
+    "cluster::heartbeat::tests::capped_task_delegate_uses_a_distinct_fail_closed_wire_tag",
+    "cluster::heartbeat::tests::legacy_task_delegate_omits_ceiling_without_inventing_one",
+    "cluster::heartbeat::tests::validate_task_delegate_enforces_bounds",
+    "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
+    "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
+    "cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling",
+    "cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context"
+  ],
+  "reviewSha256": "CF6A1F4DD531D8191EC8BFA5CE58F916FAE64C6B091372253EECC546848756C2",
+  "combinedBatch": [
+    "W2120",
+    "W2121",
+    "W2123"
+  ],
+  "focusedCases": 387,
+  "portableCases": 2607,
+  "focusedSourceBindings": 179,
+  "guards": 20,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "remaining": "n8n and Cron caller parity and whole-surface hosted/native/release qualification remain separate"
+}

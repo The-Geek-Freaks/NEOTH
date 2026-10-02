@@ -1,0 +1,32 @@
+{
+  "schema": "neoth-gold-wave2123-mcp-descriptor-fixture/v1",
+  "base": "6f8b1422fa83d417c65176371338062265c755ff",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "previousRun": {
+    "id": "36992154638",
+    "producer": "6f8b1422fa83d417c65176371338062265c755ff",
+    "started": 372,
+    "executed": 372,
+    "actualPassed": 371,
+    "actualFailed": 1,
+    "failedIdentity": "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds",
+    "partialCustodySha256": "A883708DB4AFE2CF0CECA6B659921E2A12F23EC62EEB27E3708DCF27563DF369"
+  },
+  "cause": "Fixture server descriptor declared only one of the canonical Codegraph tools, so generated-descriptor recognition withheld policy trailers and the strict marker rejected it",
+  "change": "Fixture server allow_tools changes from recall-only to canonical Codegraph TOOL_NAMES; the installed Skill remains recall-only.",
+  "preserved": [
+    "Skill remains recall-only",
+    "wrong-consent route produces no request",
+    "two exact named-provider HTTP leaves and WAL receipts",
+    "one MCP call and exact derived child descriptor",
+    "marker environment restoration and lock"
+  ],
+  "candidateBlob": "61a597eeb70beae6e3764dfc2ab5bde954ccab45",
+  "candidateSha256": "DB1D4A96106A80205DA2FB7B658CB232170AD97F0A31DD070FA747326C1560E2",
+  "reviewSha256": "3837C73C0DD7BFCE98D4CD9455C7A62B77848D73F9B18E507DE18D549405B3FD",
+  "productionLogicChanged": false,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

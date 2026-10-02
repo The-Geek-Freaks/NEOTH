@@ -297,6 +297,7 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--task-id <TASK_ID>`
 - `--prompt <PROMPT>`
 - `--model-hint <MODEL_HINT>`
+- `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Strict completion ceiling forwarded to the authenticated peer. The peer authorizes its own provider and rejects an unsupported cap
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
@@ -1004,6 +1005,7 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--task-id <TASK_ID>`
 - `--prompt <PROMPT>`
 - `--model-hint <MODEL_HINT>`
+- `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Strict completion ceiling forwarded to the authenticated peer. The peer authorizes its own provider and rejects an unsupported cap
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
@@ -3865,6 +3867,32 @@ Revoke an existing redaction by id. The field becomes eligible for re-extraction
 LLM provider catalogue (C-1 Session 13). `list` enumerates all supported `InferenceProvider` variants + their implementation status + the OpenAI-compatible endpoint examples that the `openai_compat` adapter covers. `show <id>` prints details for one provider and `test <id>` checks its effective hemisphere wiring. Provider mutations use the fully implemented `neoth init` and `neoth hemispheres set` surfaces
 
 _Aliases:_ `neoth providers`
+
+### `neoth provider instance`
+
+Inspect or add declared named provider instances. This public registry never constructs providers, resolves credentials, grants consent, or starts catalog discovery
+
+#### `neoth provider instance add`
+
+Add one unbound named provider instance. Public transport fields only; keys remain private credentials and are never accepted on this surface
+
+- `--id <ID>`
+- `--descriptor <DESCRIPTOR>`
+- `--model <MODEL>`
+- `--endpoint <ENDPOINT>`
+- `--openai-compat-profile <OPENAI_COMPAT_PROFILE>`
+- `--region <REGION>`
+- `--api-version <API_VERSION>`
+
+#### `neoth provider instance list`
+
+List every declared named provider instance, including unbound records
+
+#### `neoth provider instance show`
+
+Show one declared named provider instance by its durable ID
+
+- `<ID>`
 
 ### `neoth provider known`
 

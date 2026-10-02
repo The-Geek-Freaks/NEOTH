@@ -636,7 +636,7 @@ fn buddy_provider_routes(cfg: &FreedomConfig) -> Result<Value> {
             "provider_descriptor_id": provider_descriptor_id,
             "configured_model": configured_model,
             "display_model": display_model,
-            "endpoint": buddy_status_endpoint(endpoint),
+            "endpoint": crate::cli::providers::safe_operator_endpoint(endpoint),
             "region": region,
         }))
     })
@@ -654,23 +654,6 @@ fn buddy_provider_routes(cfg: &FreedomConfig) -> Result<Value> {
         "fallback_configured": !cfg.fallback.chain.is_empty(),
         "fallback_count": cfg.fallback.chain.len(),
     }))
-}
-
-/// Keep operator-facing status endpoint data useful while never copying URL
-/// credentials, query tokens, or fragments.  A malformed endpoint becomes a
-/// fixed label instead of echoing potentially sensitive source text.
-fn buddy_status_endpoint(endpoint: Option<&str>) -> Option<String> {
-    endpoint.map(|raw| match url::Url::parse(raw) {
-        Ok(mut parsed) => {
-            if parsed.set_username("").is_err() || parsed.set_password(None).is_err() {
-                return "(invalid endpoint)".to_owned();
-            }
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.to_string().trim_end_matches('/').to_owned()
-        }
-        Err(_) => "(invalid endpoint)".to_owned(),
-    })
 }
 
 fn buddy_provider_routes_table_lines(provider_routes: &Value) -> Vec<String> {
@@ -1171,14 +1154,14 @@ mod tests {
         assert!(!table.contains("route-password"));
         assert!(!table.contains("route-query"));
         assert_eq!(
-            buddy_status_endpoint(Some(
+            crate::cli::providers::safe_operator_endpoint(Some(
                 "mailto:route-user:route-password@compat.example?api_key=route-query"
             )),
             Some("(invalid endpoint)".to_owned()),
             "opaque URLs cannot prove userinfo stripping and must fail closed"
         );
         assert_eq!(
-            buddy_status_endpoint(Some("%%%route-password?api_key=route-query")),
+            crate::cli::providers::safe_operator_endpoint(Some("%%%route-password?api_key=route-query")),
             Some("(invalid endpoint)".to_owned()),
             "malformed endpoints must not echo raw source text"
         );

@@ -114,7 +114,7 @@ pub const MAX_CAPABILITIES: usize = 64;
 /// Max length of a single capability string.
 pub const MAX_CAPABILITY_STRING_LEN: usize = 64;
 
-/// Discriminator for the eight message kinds NEOTH peers
+/// Discriminator for the message kinds NEOTH peers
 /// exchange. Bumping the schema means adding a new variant +
 /// keeping the existing ones additive — CBOR + serde tolerate
 /// unknown fields per the Codex verdict.
@@ -138,6 +138,10 @@ pub enum FrameKind {
     /// the local provider) to this node. Subject to the
     /// 3-checkpoint accept gate.
     TaskDelegate,
+    /// A TaskDelegate with a strict requested output ceiling. This distinct tag
+    /// is fail-closed for older peers: they cannot silently ignore the new
+    /// ceiling as an unknown optional struct field.
+    TaskDelegateCapped,
     /// SL-01: the slave's reply to a `TaskDelegate` — the
     /// completion, a rejection reason, or an execution error.
     TaskResult,
@@ -185,6 +189,7 @@ pub enum FrameBody {
     CapabilityUpdate(CapabilityUpdateBody),
     Goodbye(GoodbyeBody),
     TaskDelegate(TaskDelegateBody),
+    TaskDelegateCapped(TaskDelegateBody),
     TaskResult(TaskResultBody),
     Gossip(Box<super::gossip_wire::GossipFrame>),
     GossipAck(super::gossip_wire::GossipAck),
@@ -353,6 +358,10 @@ pub const MAX_TASK_ID_BYTES: usize = 64;
 /// Scoped delegation identifiers are bounded, canonical wire atoms. They name
 /// an operator-assigned capability; they never identify the requesting peer.
 pub const MAX_TASK_SCOPE_ID_BYTES: usize = 128;
+/// Largest delegated output ceiling. Keep the cluster envelope aligned with the
+/// reviewed portable provider contract; this is a request bound, not a claim
+/// that an adapter observed a remote provider enforcing it.
+pub const MAX_TASK_OUTPUT_TOKENS: u32 = crate::providers::MAX_REQUEST_OUTPUT_TOKENS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -380,6 +389,11 @@ pub struct TaskDelegateBody {
     /// Capability-aware routing is v1.0 hardening.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_hint: Option<String>,
+    /// Strict requested completion ceiling. `None` preserves the legacy
+    /// envelope and leaves the selected provider's reviewed default in force.
+    /// Like `model_hint`, this does not select a provider or model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
     /// An optional requested capability/channel/account tuple. Its presence
     /// narrows authority: the authenticated peer must have an exact
     /// operator-created scoped assignment. Omitting it preserves the legacy
@@ -411,6 +425,14 @@ pub struct TaskResultBody {
     /// Which provider the slave actually ran (observability for the master).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_name: Option<String>,
+    /// The caller's requested ceiling, copied from the admitted envelope.
+    /// `None` means a legacy peer omitted the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_max_output_tokens: Option<u32>,
+    /// Adapter-proven effective ceiling used at authorization. This is not an
+    /// observation of the remote provider response or a wire-delivery claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_output_token_ceiling: Option<u32>,
 }
 
 /// Validate an inbound [`TaskDelegateBody`] BEFORE the accept gate. Fail-closed
@@ -461,6 +483,13 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
         anyhow::bail!(
             "task_delegate: model_hint {} bytes exceeds cap {MAX_TASK_ID_BYTES}",
             hint.len()
+        );
+    }
+    if let Some(max_output_tokens) = body.max_output_tokens
+        && (max_output_tokens == 0 || max_output_tokens > MAX_TASK_OUTPUT_TOKENS)
+    {
+        anyhow::bail!(
+            "task_delegate: max_output_tokens must be within [1, {MAX_TASK_OUTPUT_TOKENS}], got {max_output_tokens}"
         );
     }
     Ok(())
@@ -718,6 +747,7 @@ mod tests {
                 task_id: "task-abc".into(),
                 prompt: "summarize this".into(),
                 model_hint: Some("qwen3".into()),
+                max_output_tokens: Some(768),
                 scope: None,
             }),
         };
@@ -726,10 +756,70 @@ mod tests {
             FrameBody::TaskDelegate(b) => {
                 assert_eq!(b.task_id, "task-abc");
                 assert_eq!(b.prompt, "summarize this");
+                assert_eq!(b.max_output_tokens, Some(768));
                 validate_task_delegate(&b).expect("well-formed delegate validates");
             }
             other => panic!("expected TaskDelegate, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn capped_task_delegate_uses_a_distinct_fail_closed_wire_tag() {
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum OlderFrameKind {
+            Hello,
+            Heartbeat,
+            CapabilityUpdate,
+            Goodbye,
+            TaskDelegate,
+            TaskResult,
+            Gossip,
+            GossipAck,
+            BudgetRaft,
+        }
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        struct OlderWireFrame {
+            kind: OlderFrameKind,
+        }
+        let frame = WireFrame {
+            kind: FrameKind::TaskDelegateCapped,
+            sequence: 8,
+            sent_unix_ms: 1_700_000_000_001,
+            peer_id: "master-1".into(),
+            body: FrameBody::TaskDelegateCapped(TaskDelegateBody {
+                task_id: "task-capped".into(),
+                prompt: "summarize this".into(),
+                model_hint: Some("advisory-only".into()),
+                max_output_tokens: Some(96),
+                scope: None,
+            }),
+        };
+        let encoded = encode_frame(&frame).unwrap();
+        assert!(
+            ciborium::from_reader::<OlderWireFrame, _>(encoded.as_slice()).is_err(),
+            "an older decoder must reject the capped tag before it can execute an uncapped task"
+        );
+        match decode_frame(&encoded).unwrap().body {
+            FrameBody::TaskDelegateCapped(body) => {
+                assert_eq!(body.max_output_tokens, Some(96));
+                assert_eq!(body.model_hint.as_deref(), Some("advisory-only"));
+                validate_task_delegate(&body).unwrap();
+            }
+            other => panic!("expected capped TaskDelegate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_task_delegate_omits_ceiling_without_inventing_one() {
+        let legacy: TaskDelegateBody = serde_json::from_str(
+            r#"{"task_id":"legacy","prompt":"p","model_hint":null,"scope":null}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.max_output_tokens, None);
+        validate_task_delegate(&legacy).unwrap();
     }
 
     #[test]
@@ -746,6 +836,8 @@ mod tests {
                 },
                 result: None,
                 provider_name: None,
+                requested_max_output_tokens: None,
+                effective_output_token_ceiling: None,
             }),
         };
         let bytes = encode_frame(&frame).unwrap();
@@ -842,6 +934,7 @@ mod tests {
             task_id: "t".into(),
             prompt: "p".into(),
             model_hint: None,
+            max_output_tokens: None,
             scope: None,
         };
         assert!(validate_task_delegate(&ok).is_ok());
@@ -849,6 +942,7 @@ mod tests {
             task_id: "scope".into(),
             prompt: "p".into(),
             model_hint: None,
+            max_output_tokens: Some(64),
             scope: Some(TaskDelegateScope {
                 skill_id: "summarize".into(),
                 channel_id: Some("telegram".into()),
@@ -881,6 +975,7 @@ mod tests {
                 task_id: String::new(),
                 prompt: "p".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: None,
             })
             .is_err()
@@ -890,6 +985,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: String::new(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: None,
             })
             .is_err()
@@ -901,6 +997,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: "x".repeat(MAX_TASK_PROMPT_BYTES + 1),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: None,
             })
             .is_err(),
@@ -913,6 +1010,7 @@ mod tests {
                 task_id: "x".repeat(MAX_TASK_ID_BYTES + 1),
                 prompt: "p".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: None,
             })
             .is_err()
@@ -922,6 +1020,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: "p".into(),
                 model_hint: Some("x".repeat(MAX_TASK_ID_BYTES + 1)),
+                max_output_tokens: None,
                 scope: None,
             })
             .is_err()
@@ -935,6 +1034,7 @@ mod tests {
                     task_id: bad.into(),
                     prompt: "p".into(),
                     model_hint: None,
+                    max_output_tokens: None,
                     scope: None,
                 })
                 .is_err(),
@@ -947,10 +1047,24 @@ mod tests {
                 task_id: "task-42_v1.0:retry".into(),
                 prompt: "p".into(),
                 model_hint: None,
+                max_output_tokens: None,
                 scope: None,
             })
             .is_ok()
         );
+        for invalid in [Some(0), Some(MAX_TASK_OUTPUT_TOKENS + 1)] {
+            assert!(
+                validate_task_delegate(&TaskDelegateBody {
+                    task_id: "output-cap".into(),
+                    prompt: "p".into(),
+                    model_hint: None,
+                    max_output_tokens: invalid,
+                    scope: None,
+                })
+                .is_err(),
+                "invalid delegated output ceiling {invalid:?} must reject before admission"
+            );
+        }
     }
 
     #[test]

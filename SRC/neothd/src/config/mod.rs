@@ -147,6 +147,18 @@ fn with_coherent_freedom_update_lock<T>(
         credentials::with_config_writer_guard(path, action)
     })
 }
+/// Public-only counterpart of the normal writer boundary. It retains journal
+/// recovery, coherent pair locking and the writer guard, but intentionally
+/// skips optional legacy SSH credential migration: callers use it only when
+/// their operation must leave credentials byte-for-byte untouched.
+fn with_coherent_public_freedom_update_lock<T>(
+    path: &Path,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        credentials::with_config_writer_guard(path, action)
+    })
+}
 
 /// Hold the canonical `freedom.yaml` authority boundary while an adjacent
 /// durable mutation is validated against its effective policy and published.
@@ -1643,10 +1655,17 @@ fn snapshot_raw_config_pair_using(
 /// which it was planned. The final compare-and-swap takes the same process and
 /// OS locks as every other config mutation, so a concurrent operator edit is a
 /// loud retry instead of being overwritten by a stale consent/audit plan.
+#[derive(Clone, Copy)]
+enum PreparedFreedomUpdateLockMode {
+    CanonicalWithLegacySshMigration,
+    PublicOnlyNoLegacySshMigration,
+}
+
 pub(crate) struct PreparedFreedomUpdate {
     path: PathBuf,
     expected_source: Option<zeroize::Zeroizing<Vec<u8>>>,
     target: zeroize::Zeroizing<Vec<u8>>,
+    lock_mode: PreparedFreedomUpdateLockMode,
 }
 
 impl PreparedFreedomUpdate {
@@ -1695,18 +1714,34 @@ impl PreparedFreedomUpdate {
     /// previously observed source untouched; a changed source is never
     /// overwritten.
     pub(crate) fn commit(self) -> Result<()> {
-        with_coherent_freedom_update_lock(&self.path, || {
-            let current = read_optional_config_bytes(&self.path)?.map(zeroize::Zeroizing::new);
-            anyhow::ensure!(
-                current.as_deref() == self.expected_source.as_deref(),
-                "freedom.yaml changed after review; refusing a stale config publication — retry the command"
-            );
-            crate::util::atomic_write::atomic_write_private(&self.path, &self.target)
-                .with_context(|| format!("atomically write {}", self.path.display()))
-        })
+        match self.lock_mode {
+            PreparedFreedomUpdateLockMode::CanonicalWithLegacySshMigration => {
+                with_coherent_freedom_update_lock(&self.path, || {
+                    commit_prepared_freedom_update(&self.path, &self.expected_source, &self.target)
+                })
+            }
+            PreparedFreedomUpdateLockMode::PublicOnlyNoLegacySshMigration => {
+                with_coherent_public_freedom_update_lock(&self.path, || {
+                    commit_prepared_freedom_update(&self.path, &self.expected_source, &self.target)
+                })
+            }
+        }
     }
 }
 
+fn commit_prepared_freedom_update(
+    path: &Path,
+    expected_source: &Option<zeroize::Zeroizing<Vec<u8>>>,
+    target: &[u8],
+) -> Result<()> {
+    let current = read_optional_config_bytes(path)?.map(zeroize::Zeroizing::new);
+    anyhow::ensure!(
+        current.as_deref() == expected_source.as_deref(),
+        "freedom.yaml changed after review; refusing a stale config publication — retry the command"
+    );
+    crate::util::atomic_write::atomic_write_private(path, target)
+        .with_context(|| format!("atomically write {}", path.display()))
+}
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1738,6 +1773,7 @@ pub(crate) fn prepare_raw_freedom_update<T>(
                 path: path.to_path_buf(),
                 expected_source,
                 target: zeroize::Zeroizing::new(target.into_bytes()),
+                lock_mode: PreparedFreedomUpdateLockMode::CanonicalWithLegacySshMigration,
             },
             value,
         ))
@@ -3569,6 +3605,14 @@ impl FreedomConfig {
         Self::load_from_path(&Self::default_path())
     }
 
+    /// Read and validate only the public configuration for display. This does
+    /// not migrate legacy state, read credentials, or open the OS secret store.
+    /// Runtime consumers that need effective credentials must use the runtime
+    /// pair loader instead.
+    pub(crate) fn load_public_from_path(path: &Path) -> Result<Self> {
+        Self::load_public_from_path_unlocked(path)
+    }
+
     /// Load the default config when present, or use the safe compiled defaults
     /// only when the path is genuinely absent. Unlike `unwrap_or_default()`,
     /// this preserves read, parse, validation, and credential-backend errors
@@ -3679,6 +3723,36 @@ impl FreedomConfig {
                     path: path.to_path_buf(),
                     expected_source: Some(source),
                     target,
+                    lock_mode: PreparedFreedomUpdateLockMode::CanonicalWithLegacySshMigration,
+                },
+                value,
+            ))
+        })
+    }
+
+    /// Prepare a public-only typed update without applying optional legacy SSH
+    /// credential migration. This is for operator actions whose contract is
+    /// byte-for-byte preservation of the adjacent private credential image.
+    pub(crate) fn prepare_public_update_at<T>(
+        path: &Path,
+        mutation: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<(PreparedFreedomUpdate, T)> {
+        with_coherent_public_freedom_update_lock(path, || {
+            let source = zeroize::Zeroizing::new(std::fs::read(path).with_context(|| {
+                format!(
+                    "read freedom.yaml at {} for reviewed public update",
+                    path.display()
+                )
+            })?);
+            let (target, value) = mutate_public_freedom_source(path, &source, mutation)?;
+            let target =
+                target.unwrap_or_else(|| zeroize::Zeroizing::new(source.as_slice().to_vec()));
+            Ok((
+                PreparedFreedomUpdate {
+                    path: path.to_path_buf(),
+                    expected_source: Some(source),
+                    target,
+                    lock_mode: PreparedFreedomUpdateLockMode::PublicOnlyNoLegacySshMigration,
                 },
                 value,
             ))
@@ -4265,5 +4339,49 @@ mod profile_provider_selector_load_tests {
                 "invalid profile selector unexpectedly passed public config validation: {source}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod public_prepared_update_tests {
+    use super::FreedomConfig;
+
+    fn legacy_ssh_source() -> &'static str {
+        "operator_id: alex\nfuture_extension: preserve\nssh_tunnels:\n  - endpoint:\n      host: bastion.example\n      username: alex\n      auth:\n        password: legacy-secret\n    remote_host: 127.0.0.1\n    remote_port: 5432\ninference: {}\n"
+    }
+
+    #[test]
+    fn prepared_public_update_keeps_legacy_ssh_and_credentials_bytes_on_error_cas_and_success() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        std::fs::write(&freedom, legacy_ssh_source()).unwrap();
+        std::fs::write(&credentials, "future_private_field: retain\n").unwrap();
+        let credentials_before = std::fs::read(&credentials).unwrap();
+        let source_before = std::fs::read(&freedom).unwrap();
+
+        assert!(FreedomConfig::prepare_public_update_at(&freedom, |_| anyhow::bail!("reject before publication")).is_err());
+        assert_eq!(std::fs::read(&freedom).unwrap(), source_before);
+        assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
+
+        let (stale, ()) = FreedomConfig::prepare_public_update_at(&freedom, |cfg| {
+            cfg.language_primary = Some("de".to_owned());
+            Ok(())
+        }).unwrap();
+        std::fs::write(&freedom, "operator_id: newer\ninference: {}\n").unwrap();
+        assert!(stale.commit().is_err(), "public prepared update must retain CAS refusal");
+        assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
+
+        std::fs::write(&freedom, legacy_ssh_source()).unwrap();
+        let (prepared, ()) = FreedomConfig::prepare_public_update_at(&freedom, |cfg| {
+            cfg.language_primary = Some("de".to_owned());
+            Ok(())
+        }).unwrap();
+        prepared.commit().unwrap();
+        let public = std::fs::read_to_string(&freedom).unwrap();
+        assert!(public.contains("ssh_tunnels"));
+        assert!(public.contains("legacy-secret"));
+        assert!(public.contains("future_extension"));
+        assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
     }
 }

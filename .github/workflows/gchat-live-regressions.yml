@@ -177,6 +177,11 @@ jobs:
             SRC/neothd/src/models/refresh_task.rs \
             SRC/neothd/src/cli/catalog.rs \
             SRC/neothd/src/cli/buddy.rs \
+            SRC/neothd/src/cli/providers.rs \
+            SRC/neothd/src/cluster/heartbeat.rs \
+            SRC/neothd/src/cluster/executor.rs \
+            SRC/neothd/src/cluster/outbound_tests.rs \
+            SRC/neothd/src/daemon/audit_rpc/tests.rs \
             SRC/neothd/src/cli/serve_pipeline.rs \
             SRC/neothd/src/mcp/dispatch_loop.rs \
             SRC/neothd/src/cli/profile.rs \
@@ -671,9 +676,24 @@ jobs:
           run_case 370 lib cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots --lib
           run_case 371 lib cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias --lib
           run_case 372 lib providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 372
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 372
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 372
+          run_case 373 lib cli::providers::tests::named_instance_records_keep_unbound_entries_and_redact_endpoint_authority cli::providers::tests::named_instance_records_keep_unbound_entries_and_redact_endpoint_authority --lib
+          run_case 374 lib cli::providers::tests::safe_operator_endpoint_rejects_malformed_source_without_echoing_it cli::providers::tests::safe_operator_endpoint_rejects_malformed_source_without_echoing_it --lib
+          run_case 375 lib cli::providers::tests::named_instance_view_reads_only_public_config_without_migration_or_credentials cli::providers::tests::named_instance_view_reads_only_public_config_without_migration_or_credentials --lib
+          run_case 376 lib cli::default_invocation_tests::provider_instance_parser_accepts_list_show_and_public_add_without_key cli::default_invocation_tests::provider_instance_parser_accepts_list_show_and_public_add_without_key --lib
+          run_case 377 lib cli::providers::tests::provider_instance_add_rejects_invalid_duplicate_and_unknown_before_snapshot cli::providers::tests::provider_instance_add_rejects_invalid_duplicate_and_unknown_before_snapshot --lib
+          run_case 378 lib cli::providers::tests::provider_instance_add_preparation_is_lossless_and_cas_bound cli::providers::tests::provider_instance_add_preparation_is_lossless_and_cas_bound --lib
+          run_case 379 lib cli::providers::tests::provider_instance_add_snapshots_exact_prior_bytes_and_preserves_credentials cli::providers::tests::provider_instance_add_snapshots_exact_prior_bytes_and_preserves_credentials --lib
+          run_case 380 lib config::public_prepared_update_tests::prepared_public_update_keeps_legacy_ssh_and_credentials_bytes_on_error_cas_and_success config::public_prepared_update_tests::prepared_public_update_keeps_legacy_ssh_and_credentials_bytes_on_error_cas_and_success --lib
+          run_case 381 lib cluster::heartbeat::tests::task_delegate_round_trips_and_validates cluster::heartbeat::tests::task_delegate_round_trips_and_validates --lib
+          run_case 382 lib cluster::heartbeat::tests::capped_task_delegate_uses_a_distinct_fail_closed_wire_tag cluster::heartbeat::tests::capped_task_delegate_uses_a_distinct_fail_closed_wire_tag --lib
+          run_case 383 lib cluster::heartbeat::tests::legacy_task_delegate_omits_ceiling_without_inventing_one cluster::heartbeat::tests::legacy_task_delegate_omits_ceiling_without_inventing_one --lib
+          run_case 384 lib cluster::heartbeat::tests::validate_task_delegate_enforces_bounds cluster::heartbeat::tests::validate_task_delegate_enforces_bounds --lib
+          run_case 385 lib cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue --lib
+          run_case 386 lib cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling --lib
+          run_case 387 lib cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 387
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 387
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 387
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

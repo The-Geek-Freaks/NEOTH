@@ -1359,8 +1359,8 @@ async fn handle_peeroxide_connection(
         // provider / lease / autonomy access). TaskDelegate runs the accept
         // gate + dispatches to the executor; TaskResult (we were the master) is
         // audited. Both `continue` — they never reach handle_inbound_frame.
-        if frame.kind == FrameKind::TaskDelegate {
-            if let FrameBody::TaskDelegate(delegate) = frame.body {
+        if matches!(frame.kind, FrameKind::TaskDelegate | FrameKind::TaskDelegateCapped) {
+            if let FrameBody::TaskDelegate(delegate) | FrameBody::TaskDelegateCapped(delegate) = frame.body {
                 let autonomy_policy = reload_controller.autonomy_policy();
                 handle_task_delegate(
                     delegate,
@@ -2053,7 +2053,12 @@ async fn handle_task_delegate_inner(
             // The Noise remote static key is the Gate subject. Task-body
             // fields never name a requester; they only enter the immutable,
             // length-delimited binding hash for this admission attempt.
-            let binding = cluster_task_admission_binding(remote_pk_hex, &task_id, &body.prompt);
+            let binding = cluster_task_admission_binding(
+                remote_pk_hex,
+                &task_id,
+                &body.prompt,
+                body.max_output_tokens,
+            );
             let gate = crate::permissions::Gate::for_policy(autonomy_policy.clone())
                 .with_confirm(crate::permissions::ConfirmStrategy::FailClosed)
                 .with_lease_snapshot(&lease_store, remote_pk_hex, now_unix_secs() as i64);
@@ -2138,6 +2143,7 @@ async fn handle_task_delegate_inner(
             let job = match ClusterTaskJob::authorized(
                 task_id.clone(),
                 body.prompt,
+                body.max_output_tokens,
                 remote_pk_hex.to_string(),
                 body.scope,
                 membership_grant.clone(),
@@ -2224,13 +2230,22 @@ async fn load_cluster_leases(
 
 /// Bind one delegated execution request without retaining its prompt in WAL.
 /// Every variable field is length-delimited to prevent concatenation ambiguity.
-fn cluster_task_admission_binding(remote_pk_hex: &str, task_id: &str, prompt: &str) -> String {
+fn cluster_task_admission_binding(
+    remote_pk_hex: &str,
+    task_id: &str,
+    prompt: &str,
+    max_output_tokens: Option<u32>,
+) -> String {
     let mut digest = Sha256::new();
     digest.update(b"neoth.cluster.task-delegate-admission.v1\0");
+    let output_ceiling = max_output_tokens.unwrap_or_default().to_be_bytes();
+    let output_ceiling_present = [u8::from(max_output_tokens.is_some())];
     for field in [
         remote_pk_hex.as_bytes(),
         task_id.as_bytes(),
         prompt.as_bytes(),
+        &output_ceiling,
+        &output_ceiling_present,
     ] {
         digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(field);
@@ -2258,6 +2273,8 @@ fn reply_task_rejected(
             },
             result: None,
             provider_name: None,
+            requested_max_output_tokens: None,
+            effective_output_token_ceiling: None,
         }),
     };
     if let Err(e) = peer_streams.send_to(remote_pk_hex, frame) {
@@ -2496,6 +2513,7 @@ pub fn handle_inbound_frame(
         // doesn't have). Reaching here means the intercept has a bug — fail
         // loudly rather than silently no-op.
         FrameBody::TaskDelegate(_)
+        | FrameBody::TaskDelegateCapped(_)
         | FrameBody::TaskResult(_)
         | FrameBody::Gossip(_)
         | FrameBody::GossipAck(_)
@@ -2595,6 +2613,7 @@ mod tests {
             task_id: task_id.into(),
             prompt: prompt.into(),
             model_hint: None,
+            max_output_tokens: None,
             scope: None,
         }
     }
@@ -2825,9 +2844,14 @@ mod tests {
         let (writer, writer_join) = authenticated_writer(home.path());
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let peer_streams = PeerStreamRegistry::new();
-        let body = task_delegate("task-allow", "exact delegated prompt");
-        let expected_binding =
-            cluster_task_admission_binding(&remote_pk_hex, &body.task_id, &body.prompt);
+        let mut body = task_delegate("task-allow", "exact delegated prompt");
+        body.max_output_tokens = Some(73);
+        let expected_binding = cluster_task_admission_binding(
+            &remote_pk_hex,
+            &body.task_id,
+            &body.prompt,
+            body.max_output_tokens,
+        );
 
         handle_task_delegate(
             body,
@@ -2845,6 +2869,7 @@ mod tests {
         let job = rx.recv().await.expect("allowed admission queues one job");
         assert_eq!(job.reply_peer_pk, remote_pk_hex);
         assert_eq!(job.task_id, "task-allow");
+        assert_eq!(job.max_output_tokens, Some(73));
         // `0xEB` acceptance evidence is emitted through the best-effort
         // non-blocking writer path. Append an ordinary frame through the
         // acknowledged FIFO path so this test explicitly establishes the
@@ -3323,6 +3348,37 @@ mod tests {
             crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &spoofed_remote)
                 .expect("spoof prefilter writes no final decision");
         assert!(ledger.entries.is_empty());
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_output_ceiling_rejects_before_gate_or_executor_enqueue() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut invalid = task_delegate("task-invalid-cap", "prompt");
+        invalid.max_output_tokens = Some(0);
+
+        handle_task_delegate(
+            invalid,
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        assert!(rx.try_recv().is_err(), "invalid cap must not enqueue provider work");
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .expect("invalid prefilter leaves an inspectable empty ledger");
+        assert!(ledger.entries.is_empty(), "invalid cap must not enter the Gate");
         drop(writer);
         writer_join.await.unwrap();
     }

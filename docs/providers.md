@@ -159,6 +159,37 @@ inline field as `null`; `provider_instance_id: null` is also invalid.
 Legacy inline slots remain supported. Use either the existing inline form or a
 single named reference for one slot, never a mixture.
 
+### Inspect or add an instance
+
+Use the instance subcommands to inspect the public registry or add one new,
+initially unbound record:
+
+```bash
+neoth provider instance list
+neoth provider instance show compat_a
+neoth provider instance add \
+  --id compat_c \
+  --descriptor openai_compat \
+  --model vendor-chat \
+  --endpoint https://vendor-c.example/v1 \
+  --openai-compat-profile generic
+```
+
+`list` includes every declared record, even one that no role or fallback uses;
+`show` selects exactly one durable ID. Both read only the public
+`freedom.yaml` configuration. They do not load private credentials, contact a
+keychain, construct a provider, grant consent, or start catalog discovery.
+
+`add` accepts only the durable `--id`, a known `--descriptor`, and optional
+public transport fields: `--model`, `--endpoint`,
+`--openai-compat-profile`, `--region`, and `--api-version`. It never accepts a
+key, role, or fallback argument. A successful add takes a pre-mutation rollback
+snapshot and writes the public configuration, but it does not bind the new
+record to a role or fallback, resolve credentials, grant consent, create a
+provider, or start discovery. Configure private instance credentials separately
+in `credentials.yaml`, then bind the ID through the relevant hemisphere or
+fallback configuration.
+
 Each instance can define its own `models_aliases` map. After selecting that
 instance, its entries take precedence over the global `models_aliases` map;
 missing entries still use the global map. Resolution remains one level: an

@@ -1215,6 +1215,39 @@ pub enum ProviderAction {
     /// Show where a provider is wired into the hemispheres (live round-trip:
     /// `neoth hemispheres test --role <r> --question "Reply with OK"`).
     Test { provider: String },
+    /// Inspect or add declared named provider instances.
+    /// This public registry never constructs providers, resolves credentials,
+    /// grants consent, or starts catalog discovery.
+    Instance {
+        #[command(subcommand)]
+        action: ProviderInstanceAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProviderInstanceAction {
+    /// List every declared named provider instance, including unbound records.
+    List,
+    /// Show one declared named provider instance by its durable ID.
+    Show { id: String },
+    /// Add one unbound named provider instance. Public transport fields only;
+    /// keys remain private credentials and are never accepted on this surface.
+    Add {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        descriptor: String,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        endpoint: Option<String>,
+        #[arg(long)]
+        openai_compat_profile: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long)]
+        api_version: Option<String>,
+    },
 }
 
 // GAP-19: the Add variant carries optional credential/policy flags (clap args),
@@ -2192,6 +2225,20 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderAction::Show { provider } => providers::run_show(&provider, &global_output)?,
             ProviderAction::Known => providers::run_known(&global_output)?,
             ProviderAction::Test { provider } => providers::run_test(&provider, &global_output)?,
+            ProviderAction::Instance { action } => match action {
+                ProviderInstanceAction::List => providers::run_instance_list(&global_output)?,
+                ProviderInstanceAction::Show { id } => providers::run_instance_show(&id, &global_output)?,
+                ProviderInstanceAction::Add { id, descriptor, model, endpoint, openai_compat_profile, region, api_version } => providers::run_instance_add(
+                    &id,
+                    &descriptor,
+                    model,
+                    endpoint,
+                    openai_compat_profile,
+                    region,
+                    api_version,
+                    &global_output,
+                ).await?,
+            },
         },
         Commands::Usage(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
@@ -2394,6 +2441,40 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 mod default_invocation_tests {
     use super::*;
     use crate::interface_preference::InterfacePreference;
+
+    #[test]
+    fn provider_instance_parser_accepts_list_show_and_public_add_without_key() {
+        let list = Cli::try_parse_from(["neoth", "provider", "instance", "list"]).unwrap();
+        assert!(matches!(
+            list.command,
+            Commands::Provider {
+                action: ProviderAction::Instance {
+                    action: ProviderInstanceAction::List
+                }
+            }
+        ));
+        let show =
+            Cli::try_parse_from(["neoth", "provider", "instance", "show", "compat_a"]).unwrap();
+        assert!(matches!(
+            show.command,
+            Commands::Provider {
+                action: ProviderAction::Instance {
+                    action: ProviderInstanceAction::Show { id }
+                }
+            } if id == "compat_a"
+        ));
+        assert!(Cli::try_parse_from(["neoth", "provider", "instance", "show"]).is_err());
+        let add = Cli::try_parse_from([
+            "neoth", "provider", "instance", "add", "--id", "compat_a", "--descriptor", "openai_compat", "--model", "vendor-model", "--endpoint", "https://vendor.example/v1", "--region", "eu-central-1", "--api-version", "2024-10-21",
+        ]).unwrap();
+        assert!(matches!(
+            add.command,
+            Commands::Provider { action: ProviderAction::Instance { action: ProviderInstanceAction::Add { id, descriptor, model: Some(model), endpoint: Some(endpoint), openai_compat_profile: None, region: Some(region), api_version: Some(api_version) } } }
+                if id == "compat_a" && descriptor == "openai_compat" && model == "vendor-model" && endpoint == "https://vendor.example/v1" && region == "eu-central-1" && api_version == "2024-10-21"
+        ));
+        assert!(Cli::try_parse_from(["neoth", "provider", "instance", "add", "--id", "compat_a"]).is_err());
+        assert!(Cli::try_parse_from(["neoth", "provider", "instance", "add", "--id", "compat_a", "--descriptor", "openai_compat", "--key", "secret"]).is_err());
+    }
 
     #[test]
     fn openclaw_slack_migration_requires_bound_inputs_and_explicit_confirmation() {

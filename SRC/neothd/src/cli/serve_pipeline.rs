@@ -11790,7 +11790,12 @@ mod tests {
                     ],
                     env: std::collections::HashMap::new(),
                     enabled: true,
-                    allow_tools: Some(vec!["codegraph_recall_v1".into()]),
+                    allow_tools: Some(
+                        crate::mcp::codegraph_server::TOOL_NAMES
+                            .iter()
+                            .map(|tool| (*tool).to_owned())
+                            .collect(),
+                    ),
                     trust_all_tools: false,
                     smart_approve: true,
                     autonomy_gate: None,

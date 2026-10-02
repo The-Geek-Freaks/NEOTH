@@ -33,6 +33,10 @@ pub struct OutboundTaskDelegateDispatchRequest {
     pub task_id: String,
     pub prompt: String,
     pub model_hint: Option<String>,
+    /// Optional strict completion ceiling. This envelope cannot choose a
+    /// provider; the receiving node still authorizes its own configured leaf.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
     pub scope: crate::cluster::heartbeat::TaskDelegateScope,
 }
 
@@ -100,6 +104,7 @@ impl OutboundTaskDelegateController {
                 task_id: request.task_id.clone(),
                 prompt: request.prompt.clone(),
                 model_hint: request.model_hint.clone(),
+                max_output_tokens: request.max_output_tokens,
                 scope: Some(request.scope.clone()),
             },
         )?;
@@ -141,22 +146,43 @@ impl OutboundTaskDelegateController {
                     &request.scope,
                     crate::time::now_unix_i64(),
                 )?;
+            let capped = request.max_output_tokens.is_some();
             let frame = crate::cluster::heartbeat::WireFrame {
-                kind: crate::cluster::heartbeat::FrameKind::TaskDelegate,
+                // A capped request must not downgrade to an older peer that
+                // would ignore an additive body field. The distinct tag makes
+                // mixed-version handling fail closed at decode.
+                kind: if capped {
+                    crate::cluster::heartbeat::FrameKind::TaskDelegateCapped
+                } else {
+                    crate::cluster::heartbeat::FrameKind::TaskDelegate
+                },
                 sequence: 0,
                 sent_unix_ms: crate::time::now_unix_i64()
                     .max(0)
                     .unsigned_abs()
                     .saturating_mul(1000),
                 peer_id: self.local_peer_id.clone(),
-                body: crate::cluster::heartbeat::FrameBody::TaskDelegate(
-                    crate::cluster::heartbeat::TaskDelegateBody {
-                        task_id: request.task_id.clone(),
-                        prompt: request.prompt.clone(),
-                        model_hint: request.model_hint.clone(),
-                        scope: Some(request.scope.clone()),
-                    },
-                ),
+                body: if capped {
+                    crate::cluster::heartbeat::FrameBody::TaskDelegateCapped(
+                        crate::cluster::heartbeat::TaskDelegateBody {
+                            task_id: request.task_id.clone(),
+                            prompt: request.prompt.clone(),
+                            model_hint: request.model_hint.clone(),
+                            max_output_tokens: request.max_output_tokens,
+                            scope: Some(request.scope.clone()),
+                        },
+                    )
+                } else {
+                    crate::cluster::heartbeat::FrameBody::TaskDelegate(
+                        crate::cluster::heartbeat::TaskDelegateBody {
+                            task_id: request.task_id.clone(),
+                            prompt: request.prompt.clone(),
+                            model_hint: request.model_hint.clone(),
+                            max_output_tokens: request.max_output_tokens,
+                            scope: Some(request.scope.clone()),
+                        },
+                    )
+                },
             };
             match streams.send_to(&candidate.peer_key, frame) {
                 Ok(()) => {

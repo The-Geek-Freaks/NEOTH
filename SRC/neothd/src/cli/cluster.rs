@@ -166,6 +166,10 @@ pub enum ClusterTaskDelegateAction {
         prompt: String,
         #[arg(long)]
         model_hint: Option<String>,
+        /// Strict completion ceiling forwarded to the authenticated peer. The
+        /// peer authorizes its own provider and rejects an unsupported cap.
+        #[arg(long)]
+        max_output_tokens: Option<u32>,
         #[arg(long)]
         skill: String,
         #[arg(long)]
@@ -1916,6 +1920,7 @@ async fn run_task_delegate_assignment(
             task_id,
             prompt,
             model_hint,
+            max_output_tokens,
             skill,
             channel,
             account,
@@ -1925,6 +1930,7 @@ async fn run_task_delegate_assignment(
                 task_id,
                 prompt,
                 model_hint,
+                max_output_tokens,
                 scope: crate::cluster::heartbeat::TaskDelegateScope {
                     skill_id: skill,
                     channel_id: channel,
@@ -1967,6 +1973,7 @@ fn task_delegate_scope_show_at(
             task_id: "scope-show".into(),
             prompt: "scope-show".into(),
             model_hint: None,
+            max_output_tokens: None,
             scope: Some(scope.clone()),
         },
     )?;
@@ -1986,6 +1993,7 @@ fn task_delegate_outbound_assignment_show_at(
             task_id: "outbound-scope-show".into(),
             prompt: "outbound-scope-show".into(),
             model_hint: None,
+            max_output_tokens: None,
             scope: Some(scope.clone()),
         },
     )?;

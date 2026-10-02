@@ -1,0 +1,130 @@
+{
+  "schema": "neoth-gold-wave2120-provider-instance-cli/v1",
+  "capturedUtc": "2026-10-02T09:59:27.1825926Z",
+  "base": "6f8b1422fa83d417c65176371338062265c755ff",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "behavior": [
+    "provider instance list/show presents declared and unbound identities, deterministic references, and safe endpoint metadata without credentials or migrations",
+    "provider instance add validates implemented descriptors and IDs, records exact public rollback bytes, drains the writer, then commits with source-generation CAS",
+    "public-only prepared updates retain pair recovery and writer guards while excluding incidental legacy SSH credential migration",
+    "new public instance entries do not bind roles, grant consent, discover models, or call provider endpoints"
+  ],
+  "review": {
+    "path": "work/gold-20260906/wave2120-instance-cli-integration/REVIEW.json",
+    "sha256": "79113A8303A5DFD33614E3B55A1ACA1796165722EEA11ABB355DD1C2779CC377",
+    "reviewer": "/root/w2118_terminal_review",
+    "findings": 0
+  },
+  "sourceCandidates": [
+    {
+      "path": "SRC/neothd/src/cli/providers.rs",
+      "baseBlob": "86a575ae3bd8710c5f36e110e243981bf9137b57",
+      "candidatePath": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2120-instance-cli-integration\\SRC_neothd_src_cli_providers.rs.merged",
+      "candidateBlob": "e1ad0b761743b02096217a5d3b057e96cc216cac",
+      "candidateRawBlob": "0a22c46cdbc9c6a9278bba8e9c7a22e3d0cce5fb",
+      "candidateSha256": "A22578E6EB44249346C6F2E3BAC127664B2F7FE89ADB7974D450C38EA3A892CF"
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "baseBlob": "743f555cf5619400c69ba319250b4c3e9d0d34e0",
+      "candidatePath": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2120-instance-cli-integration\\SRC_neothd_src_cli_buddy.rs.merged",
+      "candidateBlob": "9aa4642d41ed916073f64893a6f49a46e01c759d",
+      "candidateRawBlob": "9aa4642d41ed916073f64893a6f49a46e01c759d",
+      "candidateSha256": "967D9C858B8EE4D9F03051789DEF48DE466C309A9446E630A96C5280C5D0F417"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "baseBlob": "01ac8f92431963e05718d6bc72332d56100b2df4",
+      "candidatePath": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2120-instance-cli-integration\\SRC_neothd_src_cli_mod.rs.merged",
+      "candidateBlob": "6a0a9fe28dddce540149c3ac6b4b6452d50f1091",
+      "candidateRawBlob": "2e6befed0aa83792fe1650c17606d61bd704de4b",
+      "candidateSha256": "495D758DE338A5D553A1D65D10DA71F64F9D68674AE91A8E530A374C7D3DA8A2"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "baseBlob": "2467e9c79530b6586aa6ce9407c7d4f59a4b5f7c",
+      "candidatePath": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2120-instance-cli-integration\\SRC_neothd_src_config_mod.rs.merged",
+      "candidateBlob": "60e219eac845dc14140b0cf2c3f805746f2626bc",
+      "candidateRawBlob": "f41c7bef1390002e0c6121c86411ea5b79ead8c0",
+      "candidateSha256": "0233F908C3D86A95C4AB37B6098E5748589AA546D5D9726E7D1A9B849E16B103"
+    }
+  ],
+  "newTests": [
+    "cli::providers::tests::named_instance_records_keep_unbound_entries_and_redact_endpoint_authority",
+    "cli::providers::tests::safe_operator_endpoint_rejects_malformed_source_without_echoing_it",
+    "cli::providers::tests::named_instance_view_reads_only_public_config_without_migration_or_credentials",
+    "cli::default_invocation_tests::provider_instance_parser_accepts_list_show_and_public_add_without_key",
+    "cli::providers::tests::provider_instance_add_rejects_invalid_duplicate_and_unknown_before_snapshot",
+    "cli::providers::tests::provider_instance_add_preparation_is_lossless_and_cas_bound",
+    "cli::providers::tests::provider_instance_add_snapshots_exact_prior_bytes_and_preserves_credentials",
+    "config::public_prepared_update_tests::prepared_public_update_keeps_legacy_ssh_and_credentials_bytes_on_error_cas_and_success"
+  ],
+  "focusedCases": 387,
+  "portableCases": 2607,
+  "focusedSourceBindings": 179,
+  "guards": 20,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "documentationCandidates": [
+    {
+      "path": "docs/providers.md",
+      "baseBlob": "779804e0b1dcacf88c3b4d269e969b541f4996fa",
+      "baseRawSha256": "160B75789A70AA63F68AD3A92B6FE848196C27030321EEBD6D911584E2967EC0",
+      "candidatePath": "providers.md.candidate",
+      "candidateBlob": "07b034871d020378cacf75c5f79b70d3b3380b85",
+      "candidateRawBlob": "07b034871d020378cacf75c5f79b70d3b3380b85",
+      "candidateRawSha256": "A51EF2E48CAC0F3F683D7A4A6C42A4E93EAD028FC089E3E9B52F5583F368C104",
+      "delta": "+31/-0",
+      "guideClaims": [
+        "list and show read only public freedom.yaml",
+        "list and show do not load credentials, contact a keychain, construct a provider, grant consent, or start discovery",
+        "add accepts only public transport fields and creates an unbound record",
+        "add has no key, role, or fallback argument",
+        "add writes a pre-mutation rollback snapshot and public configuration without credential resolution, provider construction, consent, or discovery"
+      ]
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "baseBlob": "3aa8627e856960e38a9101bef115cd1ac1bc166e",
+      "baseRawSha256": "1E4F81F82BCAD891216832D82F6F45193C5F5076CA378EC7A5652C2602010536",
+      "candidatePath": "cli-commands.md.candidate",
+      "candidateBlob": "d72e3d2af065ebd52feec65874836b92b7ae2c81",
+      "candidateRawBlob": "d72e3d2af065ebd52feec65874836b92b7ae2c81",
+      "candidateRawSha256": "AA0EEE64B7E92A2802268E5DA185933B4E4F609199397C6C5AF819E73A2C3AF2",
+      "delta": "+26/-0",
+      "rendererDerivation": {
+        "source": "SRC/neothd/src/cli/docgen.rs",
+        "providerInstanceHelpSourceBlob": "6a0a9fe28dddce540149c3ac6b4b6452d50f1091",
+        "order": [
+          "instance",
+          "known",
+          "list",
+          "show",
+          "test"
+        ],
+        "instanceChildren": [
+          "add",
+          "list",
+          "show"
+        ],
+        "about": "joined merged Clap doc-comment lines with the terminal period removed, as established by existing known and test reference entries",
+        "argumentOrder": [
+          "id",
+          "descriptor",
+          "model",
+          "endpoint",
+          "openai_compat_profile",
+          "region",
+          "api_version"
+        ]
+      }
+    }
+  ],
+  "combinedBatch": [
+    "W2120",
+    "W2121",
+    "W2123"
+  ]
+}
