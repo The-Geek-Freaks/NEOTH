@@ -156,8 +156,76 @@ jobs:
               raise SystemExit("deny exception preimage is absent or ambiguous")
           deny.write_text(deny_source.replace(deny_anchor, deny_anchor + deny_addition), encoding="utf-8", newline="\n")
           PY
-          cargo update --manifest-path SRC/Cargo.toml -p matrix-sdk --precise 0.18.0
-          cargo update --manifest-path SRC/Cargo.toml -p matrix-sdk-crypto --precise 0.18.0
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ["MATRIX_EVIDENCE"])
+          lock_path = Path("SRC/Cargo.lock")
+          before = lock_path.read_text(encoding="utf-8")
+          archive_checksums = {
+              "packaging/vendor-provenance/matrix-sdk-0.18.0.crate": "7083d580527511ac5d9369e03b9f2b20902e76949f1b3964051f978e4d3756ae",
+              "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate": "c54afd2a326f51c13a6ad44ec86315a688fffeb3f1e287fb343e0e1836a3bdaf",
+          }
+          for archive, expected_checksum in archive_checksums.items():
+              actual_checksum = hashlib.sha256(Path(archive).read_bytes()).hexdigest()
+              if actual_checksum != expected_checksum:
+                  raise SystemExit(f"reviewed archive checksum mismatch: {archive}")
+
+          def exact_block(text: str, package: str) -> str:
+              header = f'[[package]]\nname = "{package}"\n'
+              if text.count(header) != 1:
+                  raise SystemExit(f"expected exactly one {package} lock block")
+              start = text.index(header)
+              end = text.find("\n[[package]]", start + len(header))
+              if end < 0:
+                  end = len(text)
+              else:
+                  end += 1
+              return text[start:end]
+
+          registry = "registry+https://github.com/rust-lang/crates.io-index"
+          sdk_before = exact_block(before, "matrix-sdk")
+          crypto_before = exact_block(before, "matrix-sdk-crypto")
+          anymap2_before = exact_block(before, "anymap2")
+          if not sdk_before.startswith('[[package]]\nname = "matrix-sdk"\nversion = "0.18.0"\n'):
+              raise SystemExit("matrix-sdk lock block is not the reviewed 0.18.0 preimage")
+          if not crypto_before.startswith('[[package]]\nname = "matrix-sdk-crypto"\nversion = "0.18.0"\n'):
+              raise SystemExit("matrix-sdk-crypto lock block is not the reviewed 0.18.0 preimage")
+          expected_anymap2 = (
+              '[[package]]\nname = "anymap2"\nversion = "0.13.0"\n'
+              f'source = "{registry}"\n'
+              'checksum = "d301b3b94cb4b2f23d7917810addbbaff90738e0ca2be692bd027e70d7e0330c"\n\n'
+          )
+          if anymap2_before != expected_anymap2:
+              raise SystemExit("anymap2 lock block preimage is not the reviewed exact block")
+
+          def pathify(block: str, package: str, checksum: str) -> str:
+              source_and_checksum = f'source = "{registry}"\nchecksum = "{checksum}"\n'
+              if block.count(source_and_checksum) != 1:
+                  raise SystemExit(f"{package} lock block lacks the authenticated registry preimage")
+              return block.replace(source_and_checksum, "", 1)
+
+          sdk_after = pathify(sdk_before, "matrix-sdk", archive_checksums["packaging/vendor-provenance/matrix-sdk-0.18.0.crate"])
+          if sdk_after.count(' "anymap2",\n') != 1 or ' "anymap3",\n' in sdk_before:
+              raise SystemExit("matrix-sdk dependency preimage is not the reviewed anymap2 edge")
+          sdk_after = sdk_after.replace(' "anymap2",\n', ' "anymap3",\n', 1)
+          crypto_after = pathify(crypto_before, "matrix-sdk-crypto", archive_checksums["packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate"])
+
+          after = before.replace(sdk_before, sdk_after, 1).replace(crypto_before, crypto_after, 1).replace(anymap2_before, "", 1)
+          if after.count('[[package]]\nname = "matrix-sdk"\n') != 1 or after.count('[[package]]\nname = "matrix-sdk-crypto"\n') != 1 or '[[package]]\nname = "anymap2"\n' in after:
+              raise SystemExit("Matrix lock transformation did not produce exactly the three reviewed block changes")
+          before_remainder = before.replace(sdk_before, "", 1).replace(crypto_before, "", 1).replace(anymap2_before, "", 1)
+          after_remainder = after.replace(sdk_after, "", 1).replace(crypto_after, "", 1)
+          if before_remainder != after_remainder:
+              raise SystemExit("a Cargo.lock block outside the reviewed Matrix/anymap2 set changed")
+          if after.count(' "anymap3",\n') != before.count(' "anymap3",\n') + 1:
+              raise SystemExit("matrix-sdk anymap3 replacement is not exact")
+
+          (evidence / "Cargo.lock.after-proposed").write_text(after, encoding="utf-8", newline="\n")
+          lock_path.write_text(after, encoding="utf-8", newline="\n")
+          PY
           cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features matrix-channel > "$MATRIX_EVIDENCE/matrix-metadata.after-resolution.json"
           python3 - <<'PY'
           import os

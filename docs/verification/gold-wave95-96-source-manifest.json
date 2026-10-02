@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T17:41:44.2182588Z",
-  "validationStatus": "CORRECTED_PREPARATION_HOSTED_RETRY_PENDING",
+  "capturedUtc": "2026-10-02T17:57:09.9146515Z",
+  "validationStatus": "EXACT_LOCK_PREPARATION_HOSTED_RETRY_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -83,8 +83,8 @@
     },
     {
       "path": ".github/workflows/matrix-security-lock-reconcile.yml",
-      "bytes": 21491,
-      "sha256": "26E3E17ABC78BEB345F3CBD3FF44405EBFB38D99B15C4D4BC0DE8B673BEBFD7E"
+      "bytes": 25808,
+      "sha256": "CBA1CCEF2956953D9E91158877812EC9689DCAB541867A8DF4231E7EC7BC792F"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
@@ -3117,6 +3117,11 @@
       "sha256": "9785CAF75764CBEB58323CE6AFE339EC41E7431B7F1E08194B16B5FA9C3AFAEA"
     },
     {
+      "path": "docs/verification/gold-wave2179-matrix-lock-stability.json",
+      "bytes": 1664,
+      "sha256": "CC9AE345D35E30C58BD2DF716897A8E5C2F41415D1611F87B3A3CE66FFFF424E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4248,8 +4253,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2304977,
-      "sha256": "85065BDB0D5E1568366D9FCE4027A3615051B44078E069DD36A4A2BBF2D3FD61"
+      "bytes": 2306330,
+      "sha256": "0FD857F75BA9F19ABA8C8CDDA46D3C5174C81492CE8AE00868F916FB4126C9C4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

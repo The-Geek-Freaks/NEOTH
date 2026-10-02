@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "CORRECTED_PREPARATION_HOSTED_RETRY_PENDING",
+  "status": "EXACT_LOCK_PREPARATION_HOSTED_RETRY_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 295441,
-    "sha256": "4F214EA06B47095274C10F516EE97C8DEE4F2927494B7836D65FC277DEAC07C9"
+    "bytes": 295635,
+    "sha256": "EEED0D3E6F988D742148011A49BF677486654848172DCB210B6C9E296A50C4A9"
   },
-  "sourceInputs": 1641,
+  "sourceInputs": 1642,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -67986,6 +67986,32 @@
       }
     ],
     "note": "Crypto authentic archive inventory corrected from141to140; hosted candidate now includes exact distribution notices. Actual dependency import pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2179MatrixLockStability": {
+    "base": "027f0270f517aef5c010715d7d45c0b55134c2ff",
+    "sources": [
+      {
+        "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+        "bytes": 25808,
+        "sha256": "CBA1CCEF2956953D9E91158877812EC9689DCAB541867A8DF4231E7EC7BC792F",
+        "blob": "17c774b97d13e20c521f087bc369a41316016264"
+      },
+      {
+        "path": "docs/verification/gold-wave2179-matrix-lock-stability.json",
+        "bytes": 1664,
+        "sha256": "CC9AE345D35E30C58BD2DF716897A8E5C2F41415D1611F87B3A3CE66FFFF424E",
+        "blob": "eac62af36d76a6d4c88b0bc6106f8fdc78c9c3ee"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2306330,
+        "sha256": "0FD857F75BA9F19ABA8C8CDDA46D3C5174C81492CE8AE00868F916FB4126C9C4",
+        "blob": "022a16d29c6e562a4608cc184e28a9f1cfe0ad5f"
+      }
+    ],
+    "note": "Source custody and 6 gate tests passed on 027f; replace broad updates with exact 3-block preparation and mandatory locked metadata validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,39 @@
+{
+  "schema": "neoth.gold.wave2179.matrix-lock-stability.v1",
+  "base": "027f0270f517aef5c010715d7d45c0b55134c2ff",
+  "status": "EXACT_LOCK_PREPARATION_HOSTED_RETRY_PENDING",
+  "workflow": {
+    "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+    "blob": "17c774b97d13e20c521f087bc369a41316016264",
+    "sha256": "CBA1CCEF2956953D9E91158877812EC9689DCAB541867A8DF4231E7EC7BC792F"
+  },
+  "review": {
+    "path": "work/gold-20260906/wave2178-matrix-lock-stability/review/LOCK_STABILITY_REBIND.json",
+    "sha256": "BA37CAF81AD05D76A9A2116246FCA7ED3686E5243C5207B8E7EC5DB41E9481C6"
+  },
+  "previousRun": {
+    "sourceGatePassed": true,
+    "sha256": "FC48542D1F2FE306DFACB2838EA7FE654C2474B3CAED97B3EAE050618143E4F8",
+    "blockChangeCause": "not established; no transitive version-upgrade claim",
+    "run": 37043131615,
+    "custody": "work/gold-20260906/wave2177-matrix-hosted-candidate/failure-custody/FAILURE_CUSTODY.json",
+    "unrelatedLockBlocks": [
+      "hyper-util",
+      "iana-time-zone",
+      "imbl-sized-chunks",
+      "noq",
+      "noq-udp",
+      "prost-derive",
+      "quinn",
+      "quinn-udp",
+      "tree-sitter-rust"
+    ],
+    "gateTestsPassed": 6
+  },
+  "change": "Replace two cargo update calls with a guarded hosted transformation of the exact Matrix SDK, crypto and anymap2 lock blocks, preserving complete separators and all other bytes. Cargo metadata --locked remains mandatory before the independent block/graph/provenance/build/audit/deny checks.",
+  "localExecutableValidationRan": false,
+  "actualDependencyImport": false,
+  "hostedMatrixAccepted": false,
+  "fullNativeAccepted": false,
+  "releaseAccepted": false
+}
