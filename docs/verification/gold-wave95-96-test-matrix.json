@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Hosted formatting imported;372 focused cases pending",
+  "status": "Exact five hosted compile diagnostics repaired statically;372 focused cases pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 291598,
-    "sha256": "90603FBFD58F3820F1C726907F3E5351F90420879A79E0A830F9ECB028995FD7"
+    "bytes": 291822,
+    "sha256": "31F6E7367CEEF1CD784B8F313FC59BA7DFDE0A7ED05B9EAF67A56AA9F9F97207"
   },
-  "sourceInputs": 1621,
+  "sourceInputs": 1622,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1836,7 +1836,7 @@
     {
       "test": "providers::fallback::tests::authorized_fallback_persists_one_usage_event_per_leaf_attempt",
       "sourcePath": "SRC/neothd/src/providers/fallback.rs",
-      "sourceSha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "sourceSha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
       "junitClass": "neoth"
     },
     {
@@ -5076,7 +5076,7 @@
     {
       "test": "providers::fallback::tests::cancellable_authorized_completion_forwards_to_primary_leaf",
       "sourcePath": "SRC/neothd/src/providers/fallback.rs",
-      "sourceSha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "sourceSha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
       "junitClass": "neoth"
     },
     {
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
@@ -6036,7 +6036,7 @@
     {
       "test": "providers::fallback::tests::direct_retry_entrypoint_preserves_configured_fallback_hops",
       "sourcePath": "SRC/neothd/src/providers/fallback.rs",
-      "sourceSha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "sourceSha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
       "junitClass": "neoth"
     },
     {
@@ -15282,7 +15282,7 @@
     {
       "test": "providers::fallback::tests::authorized_fallback_rebinds_wal_identity_for_the_successful_named_leaf",
       "sourcePath": "SRC/neothd/src/providers/fallback.rs",
-      "sourceSha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "sourceSha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
       "junitClass": "neoth"
     },
     {
@@ -15522,55 +15522,55 @@
     {
       "test": "cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "sourceSha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
       "junitClass": "neoth"
     },
     {
       "test": "providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys",
       "sourcePath": "SRC/neothd/src/providers/fallback.rs",
-      "sourceSha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "sourceSha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
       "junitClass": "neoth"
     }
   ],
@@ -67044,6 +67044,38 @@
       }
     ],
     "note": "Exact format patch from Preflight36986423117 on4a942d8c, original ZIP/API and inner SHA256 verified; no local rustfmt.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2111CompileRepair": {
+    "base": "a35ca331529db84ea79818226e02cfea028ac2fa",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2111-hosted-compile-repair.json",
+        "bytes": 2343,
+        "sha256": "9413867CC7F48EA39208F9A3CA1ECCD046ABADB159B955FEC02F6AC5453BC998",
+        "blob": "db832d549efb1a68cc2b0a5cbbecea7c4d50c877"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2286812,
+        "sha256": "2AEDF3D156402E2EDFE07A0FC5042D49A5075ABB272941C9A94EC330AC161FE3",
+        "blob": "a9ea948b09b6dcfdb113358ea6be7a4d725e8c42"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 100574,
+        "sha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
+        "blob": "ad4086ce05a37e326a8600ad6fe655013be9d596"
+      },
+      {
+        "path": "SRC/neothd/src/providers/fallback.rs",
+        "bytes": 95600,
+        "sha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
+        "blob": "27256c689156f85af0f4ad8bda105eb53b243ad5"
+      }
+    ],
+    "note": "No Rust case executed in36986899750. Match append u64, retain negative assertion without Debug, borrow ConsentRoute endpoints; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

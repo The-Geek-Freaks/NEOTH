@@ -1258,7 +1258,7 @@ async fn emit_resolved_rebind_audit_to(
     match (append_result, completion_result) {
         (Ok(_), Ok(())) => Ok(segment),
         (Err(append_error), Ok(())) => Err(append_error),
-        (Ok(()), Err(completion_error)) => Err(completion_error),
+        (Ok(_), Err(completion_error)) => Err(completion_error),
         (Err(append_error), Err(completion_error)) => Err(anyhow::anyhow!(
             "named hemisphere selection audit append failed: {append_error}; writer completion also failed: {completion_error}"
         )),
@@ -1823,9 +1823,10 @@ inference:
                 .await
                 .is_err()
         );
-        let unknown = select_named_instance_at(home.path(), "right", "compat_missing")
-            .await
-            .expect_err("unknown instance must not publish");
+        let unknown = match select_named_instance_at(home.path(), "right", "compat_missing").await {
+            Ok(_) => panic!("unknown instance must not publish"),
+            Err(error) => error,
+        };
         assert!(format!("{unknown:#}").contains("unknown provider_instance_id"));
         assert_eq!(std::fs::read(&freedom).unwrap(), before);
         assert!(!home.path().join("wal").exists());

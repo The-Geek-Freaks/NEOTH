@@ -890,7 +890,7 @@ mod tests {
             behavior,
             consent_route: Some(crate::consent::ConsentRoute::new(
                 crate::cli::init::ProviderKind::OpenaiCompat,
-                Some(endpoint.to_owned()),
+                Some(endpoint),
             )),
         })
     }
@@ -1121,7 +1121,7 @@ mod tests {
             dir.path(),
             &crate::consent::ConsentRoute::new(
                 crate::cli::init::ProviderKind::OpenaiCompat,
-                Some(primary_endpoint.to_owned()),
+                Some(primary_endpoint),
             ),
         )
         .unwrap();
@@ -1129,7 +1129,7 @@ mod tests {
             dir.path(),
             &crate::consent::ConsentRoute::new(
                 crate::cli::init::ProviderKind::OpenaiCompat,
-                Some(secondary_endpoint.to_owned()),
+                Some(secondary_endpoint),
             ),
         )
         .unwrap();

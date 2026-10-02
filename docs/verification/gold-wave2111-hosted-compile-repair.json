@@ -1,0 +1,46 @@
+{
+  "schema": "neoth-gold-wave2111-hosted-compile-repair/v1",
+  "capturedUtc": "2026-10-02T09:02:51.8561419Z",
+  "base": "a35ca331529db84ea79818226e02cfea028ac2fa",
+  "run": "36986899750",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "failure": "Five compile diagnostics E0308/E0277; no Rust regression case executed",
+  "fixes": [
+    {
+      "path": "SRC/neothd/src/cli/hemispheres.rs",
+      "errors": [
+        "line 1261: append_result is Result<u64, anyhow::Error>, so the completed-writer arm must match Ok(_).",
+        "line 1828: expect_err requires Debug for NamedRoleSelectionResult; preserve the negative assertion with an explicit match instead."
+      ],
+      "base_git_blob_sha1": "b9b294165e7144c6f55bdfa3b1135e830e0fa128",
+      "base_sha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305",
+      "candidate_git_blob_sha1": "ad4086ce05a37e326a8600ad6fe655013be9d596",
+      "candidate_sha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED",
+      "changes": [
+        "Match the successful WAL append byte count without changing append or completion error handling.",
+        "Keep the unknown-instance failure assertion and inspect its error without deriving Debug on the result type."
+      ]
+    },
+    {
+      "path": "SRC/neothd/src/providers/fallback.rs",
+      "errors": [
+        "lines 893, 1124, and 1132: ConsentRoute::new expects Option<&str>; test endpoints are already borrowed string slices."
+      ],
+      "base_git_blob_sha1": "1410bb6c9820cd59c5e5736afbbad4e3f2183037",
+      "base_sha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77",
+      "candidate_git_blob_sha1": "27256c689156f85af0f4ad8bda105eb53b243ad5",
+      "candidate_sha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E",
+      "changes": [
+        "Pass the existing test endpoint references directly to ConsentRoute::new.",
+        "Preserve explicit consent grants, named-instance quota behavior, and WAL assertions."
+      ]
+    }
+  ],
+  "review": "Root reviewed complete minimal two-file diff against hosted diagnostics; no assertion or production error path relaxed",
+  "focusedCases": 372,
+  "portableCases": 2594,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

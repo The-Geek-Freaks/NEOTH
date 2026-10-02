@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T08:52:09.4907443Z",
-  "validationStatus": "Hosted formatting imported;372 focused cases pending",
+  "capturedUtc": "2026-10-02T09:02:53.0011500Z",
+  "validationStatus": "Exact five hosted compile diagnostics repaired statically;372 focused cases pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3052,6 +3052,11 @@
       "sha256": "A62380E2E3A064AA9ADE8EE68A6CEF2A9A265B2991DE9BC169C244F9948292BB"
     },
     {
+      "path": "docs/verification/gold-wave2111-hosted-compile-repair.json",
+      "bytes": 2343,
+      "sha256": "9413867CC7F48EA39208F9A3CA1ECCD046ABADB159B955FEC02F6AC5453BC998"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4153,8 +4158,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2285980,
-      "sha256": "C7992109CD777FC9D0AB37E6608056DAF37AAA472CCADE1D59B07AF13711EFE3"
+      "bytes": 2286812,
+      "sha256": "2AEDF3D156402E2EDFE07A0FC5042D49A5075ABB272941C9A94EC330AC161FE3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5228,8 +5233,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 100532,
-      "sha256": "7506B7320FB49EFCCDCA7D71BCE53D89D70169783808473E8840A129CFBD5305"
+      "bytes": 100574,
+      "sha256": "4E9E550457749875E08F75A61C81FC94D31308817782221BFB0F5C3752E7A8ED"
     },
     {
       "path": "SRC/neothd/src/cli/identity.rs",
@@ -7148,8 +7153,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
-      "bytes": 95633,
-      "sha256": "90AA765ECED33587DFC7721D6BD55C45604F31F31FB77AB649D6A38DBCACAE77"
+      "bytes": 95600,
+      "sha256": "A4B9169949D6E28665D9D0B9F1F9FDD11016C48C0E7903EA6ADF999B710B0D1E"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
