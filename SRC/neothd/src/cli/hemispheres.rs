@@ -361,7 +361,17 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
     .iter()
     .map(|r| {
         let binding = topo.resolve_role_binding(*r)?;
-        Ok((*r, binding.slot, binding.provider_instance_id))
+        let catalog_key = crate::cli::init::catalog_key_for_resolved_binding(&binding);
+        let catalog_default = crate::cli::init::catalog_recommended_for_resolved_binding(&binding);
+        let catalog_models = crate::cli::init::catalog_model_ids_for_resolved_binding(&binding);
+        Ok((
+            *r,
+            binding.slot,
+            binding.provider_instance_id,
+            catalog_key,
+            catalog_default,
+            catalog_models,
+        ))
     })
     .collect::<Result<Vec<_>>>()?;
 
@@ -370,10 +380,13 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
             let body = serde_json::json!({
                 "mode": topo.mode.as_str(),
                 "single_provider_fallback": cfg.provider_kind.as_ref().map(|p| format!("{p:?}")),
-                "roles": rows.iter().map(|(role, slot, provider_instance_id)| serde_json::json!({
+                "roles": rows.iter().map(|(role, slot, provider_instance_id, catalog_key, catalog_default, catalog_models)| serde_json::json!({
                     "role": role.as_str(),
                     "provider": slot.provider.map(|p| p.as_str()),
                     "provider_instance_id": provider_instance_id,
+                    "catalog_key": catalog_key,
+                    "catalog_default": catalog_default,
+                    "catalog_models": catalog_models,
                     "model": slot.model,
                     "endpoint": slot.endpoint,
                     "has_key": slot.key.is_some(),
@@ -395,7 +408,7 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                         .unwrap_or_else(|| "Skip".into())
                 );
             }
-            for (role, slot, provider_instance_id) in &rows {
+            for (role, slot, provider_instance_id, catalog_key, catalog_default, catalog_models) in &rows {
                 let provider = slot.provider.map(|p| p.as_str()).unwrap_or("(default)");
                 let model = slot.model.as_deref().unwrap_or("(default)");
                 let endpoint = slot.endpoint.as_deref().unwrap_or("");
@@ -409,6 +422,11 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                     model,
                     voice,
                 );
+                if let Some(default) = catalog_default {
+                    println!("             catalog={catalog_key} default={default}");
+                } else if !catalog_models.is_empty() {
+                    println!("             catalog={catalog_key} models={}", catalog_models.join(", "));
+                }
             }
         }
     }

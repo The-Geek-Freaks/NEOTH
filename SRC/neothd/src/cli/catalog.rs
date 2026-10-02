@@ -191,7 +191,15 @@ fn validate_catalog_snapshot(catalog: &ModelsCatalog) -> Result<()> {
                     | discovery::GEMINI_CATALOG_PROVIDER
                     | discovery::OPENAI_COMPAT_CATALOG_PROVIDER
                     | discovery::BEDROCK_CATALOG_PROVIDER
-            ),
+            ) || provider.split_once("__").is_some_and(|(descriptor, instance)| {
+                crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
+                    && matches!(descriptor,
+                        discovery::ANTHROPIC_CATALOG_PROVIDER
+                            | discovery::OPENAI_CATALOG_PROVIDER
+                            | discovery::GEMINI_CATALOG_PROVIDER
+                            | discovery::OPENAI_COMPAT_CATALOG_PROVIDER
+                            | discovery::BEDROCK_CATALOG_PROVIDER)
+            }),
             "catalog snapshot contains unknown provider key `{provider}`"
         );
         if !entry.models.is_empty() {
@@ -239,7 +247,7 @@ impl CatalogRefreshResult {
 }
 
 fn validate_report_partition(report: &discovery::DiscoveryReport, stale_only: bool) -> Result<()> {
-    let canonical_provider = |provider: &str| {
+    let recognized_report_prefix = |provider: &str| {
         matches!(
             provider,
             discovery::ANTHROPIC_CATALOG_PROVIDER
@@ -257,6 +265,12 @@ fn validate_report_partition(report: &discovery::DiscoveryReport, stale_only: bo
                 | "copilot_api"
                 | "none"
         )
+    };
+    let canonical_provider = |provider: &str| {
+        recognized_report_prefix(provider) || provider.split_once("__").is_some_and(|(descriptor, instance)| {
+            crate::config::inference::ProviderInstanceId::parse(instance).is_ok()
+                && recognized_report_prefix(descriptor)
+        })
     };
     let mut configured = std::collections::HashSet::new();
     for provider in &report.configured {
@@ -857,6 +871,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn refresh_receipt_accepts_named_unsupported_report_keys_but_rejects_unknown_or_invalid_ones() {
+        let path = std::path::Path::new("state/models_catalog.json");
+        let named_unsupported = discovery::DiscoveryReport {
+            configured: vec!["local_qwen__local_a".into(), "cohere_api__cohere_b".into()],
+            unsupported: vec!["local_qwen__local_a".into(), "cohere_api__cohere_b".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            CatalogRefreshReceipt::from_report(path, false, &named_unsupported)
+                .unwrap()
+                .result,
+            CatalogRefreshResult::NoDiscoverableSources
+        );
+        for invalid in [
+            discovery::DiscoveryReport {
+                configured: vec!["unknown_descriptor__local_a".into()],
+                unsupported: vec!["unknown_descriptor__local_a".into()],
+                ..Default::default()
+            },
+            discovery::DiscoveryReport {
+                configured: vec!["local_qwen__INVALID".into()],
+                unsupported: vec!["local_qwen__INVALID".into()],
+                ..Default::default()
+            },
+        ] {
+            assert!(CatalogRefreshReceipt::from_report(path, false, &invalid).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn refresh_without_configured_sources_returns_nonzero_after_receipt_creation() {
         let home = tempdir().unwrap();
@@ -978,6 +1022,62 @@ mod tests {
             .expect("filtered list ok");
         run_list(&path, false, Some("absent"), OutputFormat::Json)
             .expect("absent provider → empty ok");
+    }
+
+    #[test]
+    fn named_catalog_keys_validate_and_list_show_only_the_exact_instance() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("models_catalog.json");
+        let receipt = CatalogRefreshReceipt::from_report(
+            &path,
+            false,
+            &discovery::DiscoveryReport {
+                catalog_changed: true,
+                catalog_generation: Some(2),
+                catalog_hash: Some(test_catalog_hash()),
+                configured: vec![
+                    "openai_compat__compat_a".into(),
+                    "openai_compat__compat_b".into(),
+                ],
+                refreshed: vec![
+                    "openai_compat__compat_a".into(),
+                    "openai_compat__compat_b".into(),
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("receipt preserves both exact named identities");
+        assert_eq!(
+            receipt.refreshed,
+            vec!["openai_compat__compat_a", "openai_compat__compat_b"]
+        );
+        let mut cat = ModelsCatalog::default().with_path(path.clone());
+        cat.upsert(
+            "openai_compat__compat_a",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("a-model")],
+        );
+        cat.upsert(
+            "openai_compat__compat_b",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("b-model")],
+        );
+        validate_catalog_snapshot(&cat).expect("named catalog key grammar is accepted");
+        let a = select_providers(&cat, Some("openai_compat__compat_a"));
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].0, "openai_compat__compat_a");
+        assert_eq!(a[0].1.models[0].id, "a-model");
+        assert!(select_providers(&cat, Some("openai_compat")).is_empty());
+        cat.save().unwrap();
+        run_list(
+            &path,
+            false,
+            Some("openai_compat__compat_a"),
+            OutputFormat::Json,
+        )
+        .expect("exact named list key succeeds");
+        run_show(&path, "openai_compat__compat_a", OutputFormat::Json)
+            .expect("exact named show key succeeds");
     }
 
     #[test]

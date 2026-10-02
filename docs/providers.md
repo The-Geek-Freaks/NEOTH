@@ -167,6 +167,16 @@ The same selection applies to Profile, installed Skills, Channel/MCP and
 Council role or sub-role requests, including their cost and audit identities.
 Inline slots and named instances without local aliases retain global behavior.
 
+`neoth catalog refresh` keeps a separate model catalog for each selected named
+instance. Its key combines the catalog provider and instance ID, for example
+`openai_compat__compat_a`; `neoth catalog list` and `neoth catalog show` expose
+these exact entries. Claude CLI uses the shared `anthropic_api` catalog prefix.
+Legacy inline routes keep their existing provider-only catalog keys.
+
+`neoth hemispheres show` includes each role's catalog key, cached recommendation,
+and model choices. A missing named entry produces no recommendation or choices
+from another instance. This display does not change the configured request model.
+
 Cron execution through a named instance requires an explicit
 `execution.hemisphere_role`. A no-role provider or fallback lookup by coarse
 provider enum refuses a matching named instance, even when only one exists, so

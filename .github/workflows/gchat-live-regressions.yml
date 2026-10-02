@@ -173,6 +173,9 @@ jobs:
             SRC/neothd/src/memory/hindsight.rs \
             SRC/neothd/src/cli/eval.rs \
             SRC/neothd/src/models/discovery.rs \
+            SRC/neothd/src/models/catalog.rs \
+            SRC/neothd/src/models/refresh_task.rs \
+            SRC/neothd/src/cli/catalog.rs \
             SRC/neothd/src/cli/serve_pipeline.rs \
             SRC/neothd/src/cli/profile.rs \
             SRC/neothd/src/config/inference.rs \
@@ -626,9 +629,21 @@ jobs:
           run_case 342 lib providers::tests::w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract providers::tests::w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract --lib
           run_case 343 lib cli::chat::tests::w2078_named_council_role_sends_local_alias_wire_model cli::chat::tests::w2078_named_council_role_sends_local_alias_wire_model --lib
           run_case 344 lib cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 344
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 344
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 344
+          run_case 345 lib models::discovery::tests::named_same_descriptor_sources_publish_separate_catalog_entries_and_receipts models::discovery::tests::named_same_descriptor_sources_publish_separate_catalog_entries_and_receipts --lib
+          run_case 346 lib models::discovery::tests::consented_named_compat_endpoints_plan_and_refresh_as_separate_catalog_identities models::discovery::tests::consented_named_compat_endpoints_plan_and_refresh_as_separate_catalog_identities --lib
+          run_case 347 lib models::discovery::tests::named_identity_keeps_identical_transport_instances_separate_but_coalesces_repeated_id models::discovery::tests::named_identity_keeps_identical_transport_instances_separate_but_coalesces_repeated_id --lib
+          run_case 348 lib models::discovery::tests::fresh_named_instance_a_never_suppresses_discovery_for_instance_b models::discovery::tests::fresh_named_instance_a_never_suppresses_discovery_for_instance_b --lib
+          run_case 349 lib models::discovery::tests::delayed_or_drifted_instance_a_cas_never_mutates_instance_b models::discovery::tests::delayed_or_drifted_instance_a_cas_never_mutates_instance_b --lib
+          run_case 350 lib cli::catalog::tests::named_catalog_keys_validate_and_list_show_only_the_exact_instance cli::catalog::tests::named_catalog_keys_validate_and_list_show_only_the_exact_instance --lib
+          run_case 351 lib cli::catalog::tests::refresh_receipt_accepts_named_unsupported_report_keys_but_rejects_unknown_or_invalid_ones cli::catalog::tests::refresh_receipt_accepts_named_unsupported_report_keys_but_rejects_unknown_or_invalid_ones --lib
+          run_case 352 lib cli::init::catalog::tests::named_binding_catalog_default_and_choices_never_fall_back_to_coarse_or_peer_instance cli::init::catalog::tests::named_binding_catalog_default_and_choices_never_fall_back_to_coarse_or_peer_instance --lib
+          run_case 353 lib cli::init::catalog::tests::resolved_claude_bindings_use_discovery_catalog_normalization_for_named_and_inline_routes cli::init::catalog::tests::resolved_claude_bindings_use_discovery_catalog_normalization_for_named_and_inline_routes --lib
+          run_case 354 lib models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed --lib
+          run_case 355 lib models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce --lib
+          run_case 356 lib models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 356
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 356
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 356
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

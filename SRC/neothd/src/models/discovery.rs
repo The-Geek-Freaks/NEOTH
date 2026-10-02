@@ -128,17 +128,20 @@ enum PlannedSourceState {
     BlockedNoConsent,
 }
 
-type RunnableSources = Vec<(&'static str, String, Box<dyn ModelSource>)>;
+/// `(catalog_identity, coarse_source_descriptor, binding_hash, source)`.
+/// The first value owns persisted/CAS identity; the second only verifies that
+/// a source did not return a result for a different transport descriptor.
+type RunnableSources = Vec<(String, &'static str, String, Box<dyn ModelSource>)>;
 
 enum CatalogUpdate {
     Refreshed {
-        provider: &'static str,
+        provider: String,
         attempt_token: String,
         binding_hash: String,
         result: super::sources::FetchResult,
     },
     Failed {
-        provider: &'static str,
+        provider: String,
         attempt_token: String,
         binding_hash: String,
         error: String,
@@ -146,9 +149,9 @@ enum CatalogUpdate {
 }
 
 enum CatalogApplyOutcome {
-    Refreshed(&'static str),
-    Failed(&'static str),
-    Superseded(&'static str),
+    Refreshed(String),
+    Failed(String),
+    Superseded(String),
 }
 
 /// One canonical provider in a discovery plan. Kept private so callers cannot
@@ -245,7 +248,7 @@ impl SourcePlan {
                 PlannedSourceState::Runnable {
                     source,
                     binding_hash,
-                } => runnable.push((source.provider(), binding_hash, source)),
+                } => runnable.push((entry.provider, source.provider(), binding_hash, source)),
                 PlannedSourceState::Fresh => report.fresh.push(entry.provider),
                 PlannedSourceState::SkippedNoCredentials => {
                     report.skipped_no_creds.push(entry.provider)
@@ -272,6 +275,9 @@ impl SourcePlan {
 #[derive(Clone)]
 struct RouteBinding {
     kind: ProviderKind,
+    /// Durable named-instance identity keeps same-descriptor catalogs apart.
+    /// Inline routes deliberately retain the legacy coarse key.
+    provider_instance_id: Option<String>,
     key: Option<SecretString>,
     endpoint: Option<String>,
     region: Option<String>,
@@ -285,6 +291,13 @@ impl RouteBinding {
         self.kind
             .catalog_key()
             .unwrap_or_else(|| self.kind.as_provider_id())
+    }
+
+    fn catalog_identity(&self) -> String {
+        match self.provider_instance_id.as_deref() {
+            Some(instance) => format!("{}__{}", self.provider_id(), instance),
+            None => self.provider_id().to_owned(),
+        }
     }
 
     fn same_catalog_identity(&self, other: &Self) -> bool {
@@ -316,6 +329,7 @@ impl RouteBinding {
 
     fn same_exact_route(&self, other: &Self) -> bool {
         self.kind == other.kind
+            && self.provider_instance_id == other.provider_instance_id
             && self.endpoint.as_deref().map(str::trim) == other.endpoint.as_deref().map(str::trim)
             && self.region.as_deref().map(str::trim) == other.region.as_deref().map(str::trim)
             && self.binary.as_deref().map(str::trim) == other.binary.as_deref().map(str::trim)
@@ -373,23 +387,9 @@ fn build_sources_with_bedrock_resolver_at(
     let mut plan = SourcePlan::default();
     let mut resolver = Some(bedrock_resolver);
 
-    let mut provider_ids = Vec::new();
-    for provider in [
-        ANTHROPIC_CATALOG_PROVIDER,
-        OPENAI_CATALOG_PROVIDER,
-        GEMINI_CATALOG_PROVIDER,
-        OPENAI_COMPAT_CATALOG_PROVIDER,
-        BEDROCK_CATALOG_PROVIDER,
-    ] {
-        if bindings
-            .iter()
-            .any(|binding| binding.provider_id() == provider)
-        {
-            provider_ids.push(provider);
-        }
-    }
+    let mut provider_ids = Vec::<String>::new();
     for binding in &bindings {
-        let provider = binding.provider_id();
+        let provider = binding.catalog_identity();
         if !provider_ids.contains(&provider) {
             provider_ids.push(provider);
         }
@@ -398,14 +398,14 @@ fn build_sources_with_bedrock_resolver_at(
     for provider in provider_ids {
         let grouped: Vec<&RouteBinding> = bindings
             .iter()
-            .filter(|binding| binding.provider_id() == provider)
+            .filter(|binding| binding.catalog_identity() == provider)
             .collect();
         let first = grouped[0];
         let state = if grouped.iter().any(|binding| !binding.consented) {
             PlannedSourceState::BlockedNoConsent
         } else if grouped.iter().any(|binding| binding.runtime_rejected) {
             PlannedSourceState::ConfigurationFailure
-        } else if provider == ANTHROPIC_CATALOG_PROVIDER {
+        } else if first.provider_id() == ANTHROPIC_CATALOG_PROVIDER {
             state_for_anthropic_group(&grouped, binding_key)
         } else if grouped
             .iter()
@@ -418,7 +418,7 @@ fn build_sources_with_bedrock_resolver_at(
         } else {
             state_for_binding(config, first, binding_key, &mut resolver)
         };
-        plan.push(provider, state);
+        plan.push(&provider, state);
     }
 
     if invalid_auxiliary {
@@ -641,6 +641,7 @@ fn effective_route_bindings(
             config,
             &binding.slot,
             binding.is_named_instance,
+            binding.provider_instance_id.as_deref(),
             home,
         ),
         Err(_) => invalid_auxiliary = true,
@@ -655,6 +656,7 @@ fn effective_route_bindings(
                     config,
                     &binding.slot,
                     binding.is_named_instance,
+                    binding.provider_instance_id.as_deref(),
                     home,
                 ),
                 Err(_) => invalid_auxiliary = true,
@@ -669,6 +671,7 @@ fn effective_route_bindings(
                             config,
                             &binding.slot,
                             binding.is_named_instance,
+                            binding.provider_instance_id.as_deref(),
                             home,
                         ),
                         Err(_) => invalid_auxiliary = true,
@@ -763,6 +766,7 @@ fn effective_route_bindings(
                 kind,
                 &binding.slot,
                 binding.is_named_instance,
+                binding.provider_instance_id.as_deref(),
                 false,
                 home,
             );
@@ -777,6 +781,7 @@ fn push_slot_binding(
     config: &FreedomConfig,
     slot: &HemisphereSlot,
     is_named_instance: bool,
+    provider_instance_id: Option<&str>,
     home: Option<&Path>,
 ) {
     match slot.provider {
@@ -786,6 +791,7 @@ fn push_slot_binding(
             provider.to_provider_kind(),
             slot,
             is_named_instance,
+            provider_instance_id,
             false,
             home,
         ),
@@ -806,6 +812,7 @@ fn push_top_level_binding(
         bindings,
         RouteBinding {
             kind,
+            provider_instance_id: None,
             key: nonempty_key(config.provider_key.as_ref()),
             endpoint: nonempty(config.provider_endpoint.as_deref()),
             region: region.clone(),
@@ -837,6 +844,7 @@ fn push_auxiliary_binding(
         bindings,
         RouteBinding {
             kind,
+            provider_instance_id: None,
             key: same_vendor
                 .then(|| nonempty_key(config.provider_key.as_ref()))
                 .flatten(),
@@ -855,6 +863,7 @@ fn push_explicit_binding(
     kind: ProviderKind,
     slot: &HemisphereSlot,
     is_named_instance: bool,
+    provider_instance_id: Option<&str>,
     runtime_rejected: bool,
     home: Option<&Path>,
 ) {
@@ -864,6 +873,7 @@ fn push_explicit_binding(
         bindings,
         RouteBinding {
             kind,
+            provider_instance_id: provider_instance_id.map(str::to_owned),
             key: nonempty_key(slot.key.as_ref()),
             endpoint: endpoint.clone(),
             region: region.clone(),
@@ -1075,14 +1085,14 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
     // lock for network I/O. A later refresh replaces this token; completion
     // below compares it atomically and refuses to publish stale responses.
     let mut attempts = Vec::with_capacity(sources.len());
-    for (provider, binding_hash, _) in &sources {
-        attempts.push((*provider, binding_hash.clone(), mint_refresh_token()?));
+    for (provider, source_provider, binding_hash, _) in &sources {
+        attempts.push((provider.clone(), *source_provider, binding_hash.clone(), mint_refresh_token()?));
     }
     ModelsCatalog::update_at_with_clear_epoch(catalog_path, |catalog, clear_epoch| {
-        for (provider, binding_hash, token) in &attempts {
+        for (provider, _, binding_hash, token) in &attempts {
             let entry = catalog
                 .providers
-                .entry((*provider).to_string())
+                .entry(provider.clone())
                 .or_default();
             entry.refresh_attempt = Some(CatalogRefreshAttempt {
                 token: token.clone(),
@@ -1095,13 +1105,13 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
 
     // Network discovery deliberately happens outside the catalog lock. Only
     // the already-fetched outcomes enter the short locked CAS merge below.
-    let futures = sources.iter().map(|(_, _, source)| source.fetch());
+    let futures = sources.iter().map(|(_, _, _, source)| source.fetch());
     let results = join_all(futures).await;
     let mut updates = Vec::with_capacity(results.len());
 
-    for ((provider, binding_hash, attempt_token), result) in attempts.into_iter().zip(results) {
+    for ((provider, source_provider, binding_hash, attempt_token), result) in attempts.into_iter().zip(results) {
         match result {
-            Ok(fr) if fr.provider == provider => {
+            Ok(fr) if fr.provider == source_provider => {
                 updates.push(CatalogUpdate::Refreshed {
                     provider,
                     attempt_token,
@@ -1152,7 +1162,7 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
                         attempt_token,
                         binding_hash,
                         ..
-                    } => (*provider, attempt_token, binding_hash),
+                    } => (provider, attempt_token, binding_hash),
                 };
                 let is_current = catalog
                     .provider(provider)
@@ -1163,17 +1173,18 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
                             && attempt.clear_epoch.as_deref() == Some(clear_epoch)
                     });
                 if !is_current {
-                    outcomes.push(CatalogApplyOutcome::Superseded(provider));
+                    outcomes.push(CatalogApplyOutcome::Superseded(provider.clone()));
                     continue;
                 }
                 match update {
                     CatalogUpdate::Refreshed {
+                        provider,
                         binding_hash,
                         result,
                         ..
                     } => {
                         catalog.upsert_bound(
-                            result.provider,
+                            provider.clone(),
                             result.origin,
                             result.models,
                             binding_hash,
@@ -1184,7 +1195,7 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
                     CatalogUpdate::Failed {
                         provider, error, ..
                     } => {
-                        catalog.record_error(provider, error);
+                        catalog.record_error(&provider, error);
                         changed = true;
                         outcomes.push(CatalogApplyOutcome::Failed(provider));
                     }
@@ -1264,8 +1275,8 @@ mod tests {
         let (_, sources) = plan.into_execution();
         sources
             .into_iter()
-            .find(|(candidate, _, _)| *candidate == provider)
-            .map(|(_, binding_hash, _)| binding_hash)
+            .find(|(candidate, _, _, _)| candidate == provider)
+            .map(|(_, _, binding_hash, _)| binding_hash)
             .unwrap_or_else(|| panic!("missing runnable catalog source `{provider}`"))
     }
 
@@ -1414,6 +1425,153 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn named_same_descriptor_sources_publish_separate_catalog_entries_and_receipts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("models_catalog.json");
+        let mut plan = SourcePlan::default();
+        for (identity, model, hash) in [
+            ("openai_compat__compat_a", "a-model", "a".repeat(64)),
+            ("openai_compat__compat_b", "b-model", "b".repeat(64)),
+        ] {
+            plan.push(
+                identity,
+                PlannedSourceState::Runnable {
+                    source: Box::new(MockSource::ok(OPENAI_COMPAT_CATALOG_PROVIDER, vec![model])),
+                    binding_hash: hash,
+                },
+            );
+        }
+
+        let report = discover_with_plan(&path, plan).await.unwrap();
+        assert_eq!(
+            report.refreshed,
+            vec!["openai_compat__compat_a", "openai_compat__compat_b"]
+        );
+        let catalog = ModelsCatalog::load_strict_from(&path).unwrap().unwrap();
+        assert_eq!(catalog.provider("openai_compat__compat_a").unwrap().models[0].id, "a-model");
+        assert_eq!(catalog.provider("openai_compat__compat_b").unwrap().models[0].id, "b-model");
+    }
+
+    #[tokio::test]
+    async fn consented_named_compat_endpoints_plan_and_refresh_as_separate_catalog_identities() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let home = tempdir().unwrap();
+        let server_a = MockServer::start().await;
+        let server_b = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer compat-a-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "a-model", "owned_by": "vendor-a"}]
+            })))
+            .mount(&server_a)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer compat-b-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "b-model", "owned_by": "vendor-b"}]
+            })))
+            .mount(&server_b)
+            .await;
+
+        let endpoint_a = format!("{}/v1", server_a.uri());
+        let endpoint_b = format!("{}/v1", server_b.uri());
+        let mut config = base_config();
+        config.council.disabled = Some(false);
+        config.council.mode = crate::config::inference::CouncilMode::Council;
+        config.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - {{ id: compat_a, descriptor: openai_compat, endpoint: {endpoint_a}, key: compat-a-key }}\n  - {{ id: compat_b, descriptor: openai_compat, endpoint: {endpoint_b}, key: compat-b-key }}\nleft: {{ provider_instance_id: compat_a }}\nright: {{ provider_instance_id: compat_b }}\n",
+        ))
+        .unwrap();
+        for endpoint in [&endpoint_a, &endpoint_b] {
+            crate::consent::grant_route(
+                home.path(),
+                &crate::consent::route_for_provider_config(
+                    ProviderKind::OpenaiCompat,
+                    Some(endpoint),
+                    None,
+                ),
+            )
+            .unwrap();
+        }
+
+        let catalog_path = home.path().join("models_catalog.json");
+        let report = discover_with_plan(
+            &catalog_path,
+            build_sources_from_config_at(&config, home.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.refreshed,
+            vec!["openai_compat__compat_a", "openai_compat__compat_b"]
+        );
+        let catalog = ModelsCatalog::load_strict_from(&catalog_path).unwrap().unwrap();
+        assert_eq!(catalog.provider("openai_compat__compat_a").unwrap().models[0].id, "a-model");
+        assert_eq!(catalog.provider("openai_compat__compat_b").unwrap().models[0].id, "b-model");
+        assert_eq!(server_a.received_requests().await.unwrap().len(), 1);
+        assert_eq!(server_b.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn named_identity_keeps_identical_transport_instances_separate_but_coalesces_repeated_id() {
+        let mut bindings = Vec::new();
+        for instance in ["compat_a", "compat_b", "compat_a"] {
+            push_binding(
+                &mut bindings,
+                RouteBinding {
+                    kind: ProviderKind::OpenaiCompat,
+                    provider_instance_id: Some(instance.into()),
+                    key: Some(crate::secret::SecretString::new("same-key".into())),
+                    endpoint: Some("https://same.example/v1".into()),
+                    region: None,
+                    binary: None,
+                    consented: true,
+                    runtime_rejected: false,
+                },
+            );
+        }
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0].catalog_identity(), "openai_compat__compat_a");
+        assert_eq!(bindings[1].catalog_identity(), "openai_compat__compat_b");
+    }
+
+    #[test]
+    fn fresh_named_instance_a_never_suppresses_discovery_for_instance_b() {
+        let mut catalog = ModelsCatalog::default();
+        let a_hash = "a".repeat(64);
+        catalog.providers.insert(
+            "openai_compat__compat_a".into(),
+            crate::models::catalog::ProviderCatalog {
+                fetched_at_unix: 1_000_000,
+                binding_hash: Some(a_hash.clone()),
+                ..Default::default()
+            },
+        );
+        let mut plan = SourcePlan::default();
+        for (identity, hash) in [
+            ("openai_compat__compat_a", a_hash),
+            ("openai_compat__compat_b", "b".repeat(64)),
+        ] {
+            plan.push(
+                identity,
+                PlannedSourceState::Runnable {
+                    source: Box::new(MockSource::ok(OPENAI_COMPAT_CATALOG_PROVIDER, vec!["model"])),
+                    binding_hash: hash,
+                },
+            );
+        }
+        let (report, runnable) = plan.stale_only(&catalog, 1_000_001).into_execution();
+        assert_eq!(report.fresh, vec!["openai_compat__compat_a"]);
+        assert_eq!(report.configured, vec!["openai_compat__compat_a", "openai_compat__compat_b"]);
+        assert_eq!(runnable.len(), 1);
+        assert_eq!(runnable[0].0.as_str(), "openai_compat__compat_b");
+    }
+
+    #[tokio::test]
     async fn one_failure_does_not_block_other_sources() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("models_catalog.json");
@@ -1517,6 +1675,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delayed_or_drifted_instance_a_cas_never_mutates_instance_b() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("models_catalog.json");
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut slow_a = SourcePlan::default();
+        slow_a.push(
+            "openai_compat__compat_a",
+            PlannedSourceState::Runnable {
+                source: Box::new(DelayedSource {
+                    name: OPENAI_COMPAT_CATALOG_PROVIDER,
+                    model: "late-a-model",
+                    started: Arc::clone(&started),
+                    release: Arc::clone(&release),
+                }),
+                binding_hash: "a".repeat(64),
+            },
+        );
+        let slow_path = path.clone();
+        let slow_run = tokio::spawn(async move { discover_with_plan(&slow_path, slow_a).await });
+        started.notified().await;
+
+        let mut b = SourcePlan::default();
+        b.push(
+            "openai_compat__compat_b",
+            PlannedSourceState::Runnable {
+                source: Box::new(MockSource::ok(OPENAI_COMPAT_CATALOG_PROVIDER, vec!["b-model"])),
+                binding_hash: "b".repeat(64),
+            },
+        );
+        let b_report = discover_with_plan(&path, b).await.unwrap();
+        assert_eq!(b_report.refreshed, vec!["openai_compat__compat_b"]);
+        let b_generation = b_report.catalog_generation;
+
+        release.notify_one();
+        let a_report = slow_run.await.unwrap().unwrap();
+        assert_eq!(a_report.refreshed, vec!["openai_compat__compat_a"]);
+        let catalog = ModelsCatalog::load_strict_from(&path).unwrap().unwrap();
+        assert!(catalog.generation > b_generation.unwrap());
+        let b_entry = catalog.provider("openai_compat__compat_b").unwrap();
+        assert_eq!(b_entry.models[0].id, "b-model");
+        let expected_b_hash = "b".repeat(64);
+        assert_eq!(b_entry.binding_hash.as_deref(), Some(expected_b_hash.as_str()));
+    }
+
+    #[tokio::test]
     async fn clear_supersedes_in_flight_fetch_without_resurrecting_catalog() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("models_catalog.json");
@@ -1566,7 +1770,7 @@ mod tests {
         config.provider_kind = Some(ProviderKind::ClaudeCli);
         config.provider_key = Some(crate::secret::SecretString::new("sk-ant".into()));
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _)| *provider).collect();
+        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
         assert!(names.contains(&"anthropic_api"));
     }
 
@@ -1583,7 +1787,7 @@ mod tests {
             ..Default::default()
         };
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _)| *provider).collect();
+        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
         assert!(names.contains(&"openai_api"));
     }
 
@@ -1600,7 +1804,7 @@ mod tests {
             ..Default::default()
         };
         let (_, sources) = build_sources_from_config(&config).into_execution();
-        let names: Vec<_> = sources.iter().map(|(provider, _, _)| *provider).collect();
+        let names: Vec<_> = sources.iter().map(|(provider, _, _, _)| provider.as_str()).collect();
         assert!(names.contains(&"gemini_api"));
     }
 
@@ -1663,7 +1867,7 @@ mod tests {
         assert_eq!(
             sources
                 .iter()
-                .map(|(provider, _, _)| *provider)
+                .map(|(provider, _, _, _)| provider.as_str())
                 .collect::<Vec<_>>(),
             vec![OPENAI_CATALOG_PROVIDER, GEMINI_CATALOG_PROVIDER]
         );
@@ -1686,7 +1890,7 @@ mod tests {
         assert_eq!(
             sources
                 .iter()
-                .map(|(provider, _, _)| *provider)
+                .map(|(provider, _, _, _)| provider.as_str())
                 .collect::<Vec<_>>(),
             vec![ANTHROPIC_CATALOG_PROVIDER]
         );
@@ -2182,7 +2386,7 @@ mod tests {
         assert_eq!(
             runnable
                 .iter()
-                .map(|(provider, _, _)| *provider)
+                .map(|(provider, _, _, _)| provider.as_str())
                 .collect::<Vec<_>>(),
             vec![OPENAI_CATALOG_PROVIDER]
         );

@@ -1,0 +1,97 @@
+{
+  "schema": "neoth-gold-wave2090-instance-catalog/v1",
+  "capturedUtc": "2026-10-02T07:25:25.8401522Z",
+  "baseline": "9ec805d16c84c6bca58341a6b8b45a6120a8fbd1",
+  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "behavior": [
+    "Named bindings retain independent catalog identity while transport descriptors remain unchanged",
+    "Discovery consent, endpoint/key binding, freshness, refresh leases, CAS, persistence and receipts keep instances separate",
+    "Distinct durable instances with identical transport fields remain separate; repeated references to one instance coalesce",
+    "Catalog list/show selects exact named keys; unsupported named providers remain valid report outcomes",
+    "Hemispheres show displays the exact role catalog key, cached recommendation and model choices without peer/coarse fallback",
+    "Claude CLI uses the same anthropic_api catalog normalization as discovery; configured request model selection is unchanged"
+  ],
+  "review": {
+    "reviewer": "/root/w2078_alias_review",
+    "status": "APPROVED_STATIC",
+    "candidateManifestSHA256": "555E1BFEC02701F3CF473C4985822D79679077F7E1D0D67DE98F466A5EBE31A7",
+    "changedSourcePaths": 4,
+    "rootCommentCorrection": "Clarify cached display without claiming freshness filtering"
+  },
+  "regressions": [
+    {
+      "test": "models::discovery::tests::named_same_descriptor_sources_publish_separate_catalog_entries_and_receipts",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::consented_named_compat_endpoints_plan_and_refresh_as_separate_catalog_identities",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::named_identity_keeps_identical_transport_instances_separate_but_coalesces_repeated_id",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::fresh_named_instance_a_never_suppresses_discovery_for_instance_b",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::delayed_or_drifted_instance_a_cas_never_mutates_instance_b",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "cli::catalog::tests::named_catalog_keys_validate_and_list_show_only_the_exact_instance",
+      "sourcePath": "SRC/neothd/src/cli/catalog.rs"
+    },
+    {
+      "test": "cli::catalog::tests::refresh_receipt_accepts_named_unsupported_report_keys_but_rejects_unknown_or_invalid_ones",
+      "sourcePath": "SRC/neothd/src/cli/catalog.rs"
+    },
+    {
+      "test": "cli::init::catalog::tests::named_binding_catalog_default_and_choices_never_fall_back_to_coarse_or_peer_instance",
+      "sourcePath": "SRC/neothd/src/cli/init/catalog.rs"
+    },
+    {
+      "test": "cli::init::catalog::tests::resolved_claude_bindings_use_discovery_catalog_normalization_for_named_and_inline_routes",
+      "sourcePath": "SRC/neothd/src/cli/init/catalog.rs"
+    },
+    {
+      "test": "models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    },
+    {
+      "test": "models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs"
+    }
+  ],
+  "registrations": {
+    "portable": 2579,
+    "focused": 356,
+    "newTests": 9,
+    "retainedTestsNewlyRegistered": 3,
+    "guards": 20,
+    "focusedSourceBindings": 172
+  },
+  "precedingHosted": {
+    "run": "36975996502",
+    "producer": "9ec805d16c84c6bca58341a6b8b45a6120a8fbd1",
+    "conclusion": "failure",
+    "executed": 344,
+    "passed": 337,
+    "failed": 7,
+    "originalArchives": 3,
+    "rawSourceBindings": 169,
+    "partialChecksSHA256": "537A337A269B44B4F1B5CD26A513324BDC586AAA18C1B2B558C524DBC1C4A474",
+    "catalogChangesIncluded": false,
+    "productAndGuardAcceptance": false
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "priorPlanBytesPreserved": true
+}

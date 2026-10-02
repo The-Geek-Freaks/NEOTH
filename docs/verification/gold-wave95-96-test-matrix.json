@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "ALIAS_COMPILATION_REPAIR_HOSTED_PENDING",
+  "status": "INSTANCE_CATALOG_HOSTED_VALIDATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 290469,
-    "sha256": "9E3DAC696529EF7F464A01B0BC0445878B791A3AB48E1808A07D3C10F911C3CC"
+    "bytes": 290826,
+    "sha256": "7D735F9BE808C281E8B0A37023646D32F91DA1C43D34EA29F80FF1074691B957"
   },
-  "sourceInputs": 1615,
+  "sourceInputs": 1617,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "3745066FE38255550274C9969B34CDC38BA759B84842B011B97F1261E9ACA0B2",
+      "sourceSha256": "F489BD3E37F6CCE828010DD3C29BE1CDCB36EE0B85D0A8FEB4DC858F5677BE3F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "3745066FE38255550274C9969B34CDC38BA759B84842B011B97F1261E9ACA0B2",
+      "sourceSha256": "F489BD3E37F6CCE828010DD3C29BE1CDCB36EE0B85D0A8FEB4DC858F5677BE3F",
       "junitClass": "neoth"
     },
     {
@@ -14952,7 +14952,7 @@
     {
       "test": "models::discovery::tests::explicit_profile_provider_registers_its_effective_catalog_route",
       "sourcePath": "SRC/neothd/src/models/discovery.rs",
-      "sourceSha256": "9770FEBBA97A7DCAEBCB47B42CE868C7798EC068D469E49C6A22C4AF776FC4C1",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
       "junitClass": "neoth"
     },
     {
@@ -15258,13 +15258,13 @@
     {
       "test": "models::discovery::tests::named_bedrock_discovery_does_not_inherit_the_legacy_global_region",
       "sourcePath": "SRC/neothd/src/models/discovery.rs",
-      "sourceSha256": "9770FEBBA97A7DCAEBCB47B42CE868C7798EC068D469E49C6A22C4AF776FC4C1",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
       "junitClass": "neoth"
     },
     {
       "test": "models::discovery::tests::named_bedrock_fallback_inventory_requires_its_exact_regional_consent",
       "sourcePath": "SRC/neothd/src/models/discovery.rs",
-      "sourceSha256": "9770FEBBA97A7DCAEBCB47B42CE868C7798EC068D469E49C6A22C4AF776FC4C1",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
       "junitClass": "neoth"
     },
     {
@@ -15409,6 +15409,78 @@
       "test": "cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "5AE185F6D314653781F4399FCC008AA58DD16C82D2DD101CA123000AECADF159",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::named_same_descriptor_sources_publish_separate_catalog_entries_and_receipts",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::consented_named_compat_endpoints_plan_and_refresh_as_separate_catalog_identities",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::named_identity_keeps_identical_transport_instances_separate_but_coalesces_repeated_id",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::fresh_named_instance_a_never_suppresses_discovery_for_instance_b",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::delayed_or_drifted_instance_a_cas_never_mutates_instance_b",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::catalog::tests::named_catalog_keys_validate_and_list_show_only_the_exact_instance",
+      "sourcePath": "SRC/neothd/src/cli/catalog.rs",
+      "sourceSha256": "B24BFC5CC566380EAB7C3988079B21DC4D15732FF1FE4341C43FB79C7E2AD5AF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::catalog::tests::refresh_receipt_accepts_named_unsupported_report_keys_but_rejects_unknown_or_invalid_ones",
+      "sourcePath": "SRC/neothd/src/cli/catalog.rs",
+      "sourceSha256": "B24BFC5CC566380EAB7C3988079B21DC4D15732FF1FE4341C43FB79C7E2AD5AF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::catalog::tests::named_binding_catalog_default_and_choices_never_fall_back_to_coarse_or_peer_instance",
+      "sourcePath": "SRC/neothd/src/cli/init/catalog.rs",
+      "sourceSha256": "A00E9BFF2AEBC526FFA0738627D1ED8D6FE65EA3C9CF7599BA5D628D96BD7952",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::init::catalog::tests::resolved_claude_bindings_use_discovery_catalog_normalization_for_named_and_inline_routes",
+      "sourcePath": "SRC/neothd/src/cli/init/catalog.rs",
+      "sourceSha256": "A00E9BFF2AEBC526FFA0738627D1ED8D6FE65EA3C9CF7599BA5D628D96BD7952",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::compat_endpoint_and_key_are_atomic_and_conflicting_slots_fail_closed",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::equivalent_compat_endpoints_and_credentials_coalesce",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "models::discovery::tests::empty_plan_observes_v2_snapshot_and_migrates_v1_fail_closed",
+      "sourcePath": "SRC/neothd/src/models/discovery.rs",
+      "sourceSha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
       "junitClass": "neoth"
     }
   ],
@@ -66532,6 +66604,62 @@
       }
     ],
     "note": "Fix three hosted lib-test compile diagnostics; cost regression exercises named alias over conflicting global alias. 344 focused cases remain unexecuted; BSOD hold respected.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2090InstanceCatalog": {
+    "base": "9ec805d16c84c6bca58341a6b8b45a6120a8fbd1",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 101994,
+        "sha256": "08FC1CD1AD54C5631604AA1FF1F124F51CB2759DF58D45F1E719978A7411DBDC",
+        "blob": "43f2b4c476e0d46e78d40a8fc23e2f6c01263081"
+      },
+      {
+        "path": "docs/providers.md",
+        "bytes": 17934,
+        "sha256": "B2E1DC2B034EB90588D398E7E77FE09C30A20FBC90CA79208115B2F6926FC0EA",
+        "blob": "63c2cbe1f3314ca75cec91dd157cc0f2aa5e9c0a"
+      },
+      {
+        "path": "docs/verification/gold-wave2090-instance-catalog.json",
+        "bytes": 4294,
+        "sha256": "738407BB5D7821301C302D940E064643E5CB9B0C5645045855BA836E40027DFA",
+        "blob": "6e780dff1e0976a8bdf8749a13ea616677bc6670"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2279915,
+        "sha256": "D97769927E86DC4EB103AF2CC4CF559FC4E4711A191433A2F18B4EFA5DA799CE",
+        "blob": "5b994240adf081f2cb96266696abff473698f2b3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/catalog.rs",
+        "bytes": 42300,
+        "sha256": "B24BFC5CC566380EAB7C3988079B21DC4D15732FF1FE4341C43FB79C7E2AD5AF",
+        "blob": "6d3cc41cf07d86bf725b920da716c9038e28c1a0"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 68130,
+        "sha256": "F489BD3E37F6CCE828010DD3C29BE1CDCB36EE0B85D0A8FEB4DC858F5677BE3F",
+        "blob": "f49a55db5eace0c7fd2d56fe6d2133d38f3ed5ad"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/catalog.rs",
+        "bytes": 51252,
+        "sha256": "A00E9BFF2AEBC526FFA0738627D1ED8D6FE65EA3C9CF7599BA5D628D96BD7952",
+        "blob": "e413569db2d0c58eafb4ca2e3f2ccc546d4b8879"
+      },
+      {
+        "path": "SRC/neothd/src/models/discovery.rs",
+        "bytes": 99384,
+        "sha256": "139CC65B863B715F84CE4CB3E1EF4CEE2DF48AD1BF4A1CDFB6F342CC43E845AB",
+        "blob": "6274cfa27ef460693cb8e9a41f043edc65bc8742"
+      }
+    ],
+    "note": "Static-reviewed named catalog identity, CAS isolation and cached role display. 356 focused/2579 portable registered; no local execution or fresh hosted acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

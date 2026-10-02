@@ -616,6 +616,91 @@ pub(crate) fn catalog_recommended_for_provider_kind_at(
         .map(|m| m.id.clone())
 }
 
+/// Binding-aware catalog lookup for non-GUI named-provider selection.  A
+/// selected named instance is never allowed to fall back to another instance
+/// with the same descriptor; only legacy inline bindings retain the coarse
+/// descriptor key.
+pub(crate) fn catalog_recommended_for_resolved_binding_at(
+    catalog_path: &std::path::Path,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> Option<String> {
+    use crate::models::catalog::ModelsCatalog;
+
+    let key = catalog_key_for_resolved_binding(binding);
+    ModelsCatalog::load_from(catalog_path)
+        .provider(&key)
+        .and_then(|pc| pc.recommended_default())
+        .map(|m| m.id.clone())
+}
+
+/// Return the persisted catalog key for one resolved binding. Named bindings
+/// have a durable instance identity; legacy inline bindings deliberately keep
+/// their historic descriptor-only key.
+pub(crate) fn catalog_key_for_resolved_binding(
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> String {
+    // Match discovery's RouteBinding::provider_id(): Claude CLI and Anthropic
+    // API share `anthropic_api`; non-discoverable adapters keep their report
+    // descriptor (`local_qwen`, `cohere_api`, ...). A provider-less legacy
+    // binding has no typed normalization authority, so retain its descriptor.
+    let descriptor = binding
+        .slot
+        .provider
+        .map(|provider| {
+            let kind = provider.to_provider_kind();
+            kind.catalog_key().unwrap_or_else(|| kind.as_provider_id())
+        })
+        .unwrap_or(binding.provider_descriptor_id.as_str());
+    match binding.provider_instance_id.as_deref() {
+        Some(instance) => format!("{descriptor}__{instance}"),
+        None => descriptor.to_owned(),
+    }
+}
+
+/// Production binding-aware default lookup against the operator catalog.
+pub(crate) fn catalog_recommended_for_resolved_binding(
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> Option<String> {
+    use crate::config::FreedomConfig;
+    use crate::models::catalog::ModelsCatalog;
+
+    let home = FreedomConfig::default_neoth_home();
+    let path = ModelsCatalog::default_path(&home);
+    catalog_recommended_for_resolved_binding_at(&path, binding)
+}
+
+/// Binding-aware cached model choices for a non-GUI consumer. There is no coarse
+/// fallback for named bindings: a missing entry is an empty choice list.
+pub(crate) fn catalog_model_ids_for_resolved_binding_at(
+    catalog_path: &std::path::Path,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> Vec<String> {
+    use crate::models::catalog::ModelsCatalog;
+
+    ModelsCatalog::load_from(catalog_path)
+        .provider(&catalog_key_for_resolved_binding(binding))
+        .map(|pc| {
+            pc.models
+                .iter()
+                .filter(|model| !model.deprecated)
+                .map(|model| model.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Production binding-aware choice lookup against the operator catalog.
+pub(crate) fn catalog_model_ids_for_resolved_binding(
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> Vec<String> {
+    use crate::config::FreedomConfig;
+    use crate::models::catalog::ModelsCatalog;
+
+    let home = FreedomConfig::default_neoth_home();
+    let path = ModelsCatalog::default_path(&home);
+    catalog_model_ids_for_resolved_binding_at(&path, binding)
+}
+
 /// Production wrapper for [`catalog_recommended_for_provider_kind_at`]
 /// against the operator's actual `~/.neoth/models_catalog.json`.
 pub(crate) fn catalog_recommended_for_provider_kind(kind: ProviderKind) -> Option<String> {
@@ -1055,5 +1140,62 @@ mod tests {
     async fn ping_provider_key_is_runtime_safe() {
         ping_provider_key("irrelevant", ProviderKind::LocalQwen, None).await;
         ping_provider_key("irrelevant", ProviderKind::ClaudeCli, None).await;
+    }
+
+    #[test]
+    fn named_binding_catalog_default_and_choices_never_fall_back_to_coarse_or_peer_instance() {
+        use crate::config::inference::{HemisphereRole, InferenceTopology};
+        use crate::models::catalog::{ModelEntry, ModelsCatalog, SourceOrigin};
+
+        let topology: InferenceTopology = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: compat_a, descriptor: openai_compat, endpoint: https://a.example/v1 }\n  - { id: compat_b, descriptor: openai_compat, endpoint: https://b.example/v1 }\nleft: { provider_instance_id: compat_a }\nright: { provider_instance_id: compat_b }\n",
+        )
+        .unwrap();
+        let a = topology.resolve_role_binding(HemisphereRole::Left).unwrap();
+        let b = topology.resolve_role_binding(HemisphereRole::Right).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("catalog.json");
+        let mut catalog = ModelsCatalog::default().with_path(path.clone());
+        catalog.upsert(
+            "openai_compat",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("legacy-coarse")],
+        );
+        catalog.upsert(
+            "openai_compat__compat_a",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("a-default"), ModelEntry::new("a-choice")],
+        );
+        catalog.upsert(
+            "openai_compat__compat_b",
+            SourceOrigin::Api,
+            vec![ModelEntry::new("b-default")],
+        );
+        catalog.save().unwrap();
+
+        assert_eq!(catalog_key_for_resolved_binding(&a), "openai_compat__compat_a");
+        assert_eq!(catalog_recommended_for_resolved_binding_at(&path, &a), Some("a-default".into()));
+        assert_eq!(catalog_model_ids_for_resolved_binding_at(&path, &a), vec!["a-default", "a-choice"]);
+        assert_eq!(catalog_recommended_for_resolved_binding_at(&path, &b), Some("b-default".into()));
+        assert_eq!(catalog_model_ids_for_resolved_binding_at(&path, &b), vec!["b-default"]);
+
+        catalog.providers.remove("openai_compat__compat_b");
+        catalog.save().unwrap();
+        assert_eq!(catalog_recommended_for_resolved_binding_at(&path, &b), None);
+        assert!(catalog_model_ids_for_resolved_binding_at(&path, &b).is_empty());
+    }
+
+    #[test]
+    fn resolved_claude_bindings_use_discovery_catalog_normalization_for_named_and_inline_routes() {
+        use crate::config::inference::{HemisphereRole, InferenceTopology};
+
+        let topology: InferenceTopology = serde_yaml::from_str(
+            "mode: custom\nprovider_instances:\n  - { id: named_claude, descriptor: claude_cli }\nleft: { provider_instance_id: named_claude }\nright: { provider: claude_cli }\n",
+        )
+        .unwrap();
+        let named = topology.resolve_role_binding(HemisphereRole::Left).unwrap();
+        let inline = topology.resolve_role_binding(HemisphereRole::Right).unwrap();
+        assert_eq!(catalog_key_for_resolved_binding(&named), "anthropic_api__named_claude");
+        assert_eq!(catalog_key_for_resolved_binding(&inline), "anthropic_api");
     }
 }
