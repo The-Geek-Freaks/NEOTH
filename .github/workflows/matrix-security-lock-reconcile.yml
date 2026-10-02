@@ -69,6 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           exec > >(tee "$MATRIX_EVIDENCE/source-custody.log") 2>&1
+          cp THIRD_PARTY_LICENSES "$MATRIX_EVIDENCE/THIRD_PARTY_LICENSES.pre"
+          sha256sum packaging/generate_rust_notices.py packaging/rust-license-snapshots.json > "$MATRIX_EVIDENCE/notice-generator-source.SHA256"
           test -f packaging/vendor-provenance/matrix-sdk-0.18.0.crate
           test -f packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate
           test -f packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch
@@ -270,6 +272,10 @@ jobs:
               "all_required_dependency_ids_reachable": True,
           }, indent=2) + "\n", encoding="utf-8")
           PY
+          python3 packaging/generate_rust_notices.py --write
+          python3 packaging/generate_rust_notices.py --check
+          final_expected=$'SRC/.cargo/audit.toml\nSRC/Cargo.lock\nSRC/Cargo.toml\nSRC/deny.toml\nTHIRD_PARTY_LICENSES'
+          test "$(git diff --name-only | LC_ALL=C sort)" = "$final_expected"
           cargo check --manifest-path SRC/neothd/Cargo.toml --locked --features matrix-channel
           (
             set -euo pipefail
@@ -337,10 +343,12 @@ jobs:
           set -euo pipefail
           printf '%s\n' 'success' > "$MATRIX_EVIDENCE/outcome.txt"
           cp SRC/Cargo.toml SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml "$MATRIX_EVIDENCE/"
+          cp THIRD_PARTY_LICENSES "$MATRIX_EVIDENCE/"
           cp -a SRC/vendor/matrix-sdk SRC/vendor/matrix-sdk-crypto "$MATRIX_EVIDENCE/"
           cp packaging/vendor-provenance/matrix-sdk-0.18.0.crate packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate "$MATRIX_EVIDENCE/"
           cp packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch "$MATRIX_EVIDENCE/"
-          git diff --binary --full-index -- SRC/Cargo.toml SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml > "$MATRIX_EVIDENCE/workspace.patch"
+          git diff --binary --full-index -- SRC/Cargo.toml SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml THIRD_PARTY_LICENSES > "$MATRIX_EVIDENCE/workspace.patch"
+          git diff --binary --full-index -- THIRD_PARTY_LICENSES > "$MATRIX_EVIDENCE/THIRD_PARTY_LICENSES.patch"
           python3 - <<'PY'
           import json, os
           from pathlib import Path

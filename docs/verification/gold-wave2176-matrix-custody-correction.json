@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.gold.wave2176.matrix-custody-correction.v1",
+  "base": "e6604d7953ab918f6f5513208cf1cf9fab7a64ea",
+  "status": "CORRECTED_PREPARATION_HOSTED_RETRY_PENDING",
+  "sources": [
+    {
+      "candidateBlob": "32f6b2414e04da1cda9b651993074c060e3e3655",
+      "path": "packaging/matrix_backport_provenance_gate.py",
+      "candidate": "work/gold-20260906/wave2174-matrix-custody-repair/post/matrix_backport_provenance_gate.py",
+      "baseSha": "3A7910A051979BBDC9571DB8980E01F1ED7310C375BA8D6E2EC74BD77FAE3410",
+      "sha": "0D9C38D739451C0197B04B55D01144238D58E2881D0CDBCC76B0C411DDE0A8E4"
+    },
+    {
+      "candidateBlob": "e2e853304239901dbe02f5c4c8f5e9593995c49e",
+      "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+      "candidate": "work/gold-20260906/wave2175-matrix-notice-candidate/.github/workflows/matrix-security-lock-reconcile.yml",
+      "baseSha": "598720D690E38F8002DCF77576A48BF051EC211C078414941700A4C27EFE3DA2",
+      "sha": "26E3E17ABC78BEB345F3CBD3FF44405EBFB38D99B15C4D4BC0DE8B673BEBFD7E"
+    }
+  ],
+  "failure": {
+    "message": "matrix-sdk-crypto archive member inventory mismatch",
+    "custody": "work/gold-20260906/wave2172-matrix-hosted-candidate/failure-custody/FAILURE_CUSTODY.json",
+    "run": 37041706205,
+    "stage": "Materialize reviewed vendor postimages and source-custody gate",
+    "producer": "e6604d7953ab918f6f5513208cf1cf9fab7a64ea",
+    "sha256": "2D26B10B44B0169C5788FAD58D4FB385034D004DE93E01314B67E60E0ED60FE1"
+  },
+  "correctedInventory": {
+    "sdk": 203,
+    "evidence": "work/gold-20260906/wave2174-matrix-custody-repair/evidence/authenticated-archive-members.SHA256",
+    "total": 343,
+    "crypto": 140,
+    "archiveSha256": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF",
+    "excludedCacheMarker": ".cargo-ok",
+    "supersedes": "Earlier W2167/W2171 claims of 141 authenticated crypto archive members included the local Cargo extraction marker. The historical 141-file candidate tree remains unchanged as evidence.",
+    "evidenceSha256": "68991E9A2A3774FB3895AE9A80C6454D901B103C2F529FE6D322F207F8A7B805"
+  },
+  "changes": [
+    "Remove only the cache-generated .cargo-ok literal from crypto archive membership. Full authentic member/hash equality and both reviewed crypto fixed hashes are unchanged.",
+    "Generate and check exact distribution notices on the hosted candidate after strict provenance/metadata acceptance, before compilation. Seal baseline, generator inputs, regenerated notices and patch. Preserve four-file lock-stage allowlist, then require exact five-file final diff."
+  ],
+  "review": {
+    "sha256": "5C4155717705B1C1531716CD7FAACB506CB56164428C3ABFF240046B6FCC2BA7",
+    "path": "work/gold-20260906/wave2175-matrix-notice-candidate/review/NOTICE_AND_GATE_WIRING_REVIEW.json"
+  },
+  "localExecutableValidationRan": false,
+  "workspaceDependenciesChanged": false,
+  "advisoryExceptionsActivated": false,
+  "hostedMatrixAccepted": false,
+  "fullNativeAccepted": false,
+  "releaseAccepted": false
+}

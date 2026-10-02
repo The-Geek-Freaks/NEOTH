@@ -306,7 +306,6 @@ PACKAGES = {
         "checksum": "c54afd2a326f51c13a6ad44ec86315a688fffeb3f1e287fb343e0e1836a3bdaf",
         "upstream": {
     '.cargo_vcs_info.json': '7205b8da9a5eee62d76da48b05a3230191e745bd2154fd931af2abe09e9cc768',
-    '.cargo-ok': 'afbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91',
     'Cargo.lock': 'a5d7e872d3cbe3d1fdb5f2fb1aacf0647ad08774e939d19c4dd07103464686e9',
     'Cargo.toml': '98ce2b8539759300ebc3d29dec537801bd689473d51bb29b9570bcad335d565e',
     'Cargo.toml.orig': 'a55e288337569a13de7d9d76d66d79e49cf5961fe3027686cf74ea25c64e33eb',
