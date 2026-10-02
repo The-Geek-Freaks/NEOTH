@@ -7215,7 +7215,7 @@ mod tests {
         let server = MockServer::start().await;
         let mut config = FreedomConfig::default();
         config.inference = serde_yaml::from_str(&format!(
-            "mode: custom\nprovider_instances:\n  - id: profile_compat_2061\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: { '@fast': profile-local-fast }\n    key: profile-secret-2061\nprofile_provider_instance_id: profile_compat_2061\n",
+            "mode: custom\nprovider_instances:\n  - id: profile_compat_2061\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: {{ '@fast': profile-local-fast }}\n    key: profile-secret-2061\nprofile_provider_instance_id: profile_compat_2061\n",
             server.uri(),
         ))
         .expect("parse named explicit profile provider");

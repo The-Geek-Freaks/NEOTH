@@ -879,10 +879,13 @@ mod tests {
     fn council_cost_binding_uses_named_instance_model_and_endpoint() {
         let mut config = crate::config::FreedomConfig::default();
         config.inference = serde_yaml::from_str(
-            "mode: custom\nprovider_instances:\n  - id: compat_b\n    descriptor: openai_compat\n    endpoint: https://b.example/v1\n    model: gpt-4o-mini\nleft: { provider_instance_id: compat_b }\n",
+            "mode: custom\nprovider_instances:\n  - id: compat_b\n    descriptor: openai_compat\n    endpoint: https://b.example/v1\n    model: '@fast'\n    models_aliases: { '@fast': compat-b-local-fast }\nleft: { provider_instance_id: compat_b }\n",
         )
         .unwrap();
-        let (kind, model, endpoint) = configured_leaf_binding(
+        config
+            .models_aliases
+            .insert("@fast".to_owned(), "global-fast-must-not-win".to_owned());
+        let (kind, model, endpoint, instance_models_aliases) = configured_leaf_binding(
             &config,
             config
                 .inference
@@ -890,8 +893,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kind, crate::cli::init::ProviderKind::OpenaiCompat);
-        assert_eq!(model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(model.as_deref(), Some("@fast"));
         assert_eq!(endpoint.as_deref(), Some("https://b.example/v1"));
+        assert_eq!(
+            instance_models_aliases.get("@fast").map(String::as_str),
+            Some("compat-b-local-fast")
+        );
+        assert_eq!(
+            configured_leaf_wire_model(
+                &config,
+                kind,
+                model.as_deref(),
+                &instance_models_aliases,
+                None,
+            )
+            .unwrap(),
+            "compat-b-local-fast"
+        );
     }
 
     #[test]

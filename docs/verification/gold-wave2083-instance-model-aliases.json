@@ -2,7 +2,7 @@
   "schema": "neoth-gold-wave2083-instance-model-aliases/v1",
   "capturedUtc": "2026-10-02T06:34:59.8909931Z",
   "baseline": "7bb6daaba08d7c66af31e8831fa216d9da203782",
-  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "status": "HOSTED_ALIAS_COMPILATION_DIAGNOSTICS_REPAIRED_EXECUTION_PENDING",
   "behavior": [
     "Named provider instances retain optional models_aliases in resolved bindings",
     "Selected instance aliases override matching global aliases; missing entries retain global fallback",
@@ -74,5 +74,25 @@
   "hostedAcceptance": false,
   "nativeAcceptance": false,
   "releaseAcceptance": false,
-  "priorPlanBytesPreserved": true
+  "priorPlanBytesPreserved": true,
+  "hostedRepair2088": {
+    "run": "36974925017",
+    "producer": "6f394197deaa3ca7c22be15fc7e250479521b219",
+    "conclusion": "failure",
+    "phase": "Rust lib-test compilation",
+    "diagnostics": [
+      "Two YAML map literal braces not escaped in Rust format strings",
+      "Cost test destructured prior three-field tuple instead of four-field alias binding"
+    ],
+    "executed": 0,
+    "passed": 0,
+    "custodySHA256": "28584462407877DAD2C918D037C7108E07E4125A7221B1A89BE544393ADAD89F",
+    "repairs": [
+      "Escape only the two format-string map literals",
+      "Bind instance alias map and verify actual configured @fast resolves locally against a conflicting global alias"
+    ],
+    "manifestSHA256": "7691F48B889FD35EBA8AD948E110A3B31D9F5B96D74AAB02B36D512E817097C3",
+    "localExecutableValidationRan": false,
+    "hostedRevalidation": "pending"
+  }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T06:38:23.6081306Z",
-  "validationStatus": "INSTANCE_MODEL_ALIASES_HOSTED_VALIDATION_PENDING",
+  "capturedUtc": "2026-10-02T06:51:23.2891817Z",
+  "validationStatus": "ALIAS_COMPILATION_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3023,8 +3023,8 @@
     },
     {
       "path": "docs/verification/gold-wave2083-instance-model-aliases.json",
-      "bytes": 3383,
-      "sha256": "BCFE69F92CD661AC74579CE29F574EED5CB2D7E4996CD4DF431470EDCD46F847"
+      "bytes": 4275,
+      "sha256": "1A847B6958C3053975550A728A54AA2F8EA929D7DD270FB8BDDE6D434CBE6549"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4128,8 +4128,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2277178,
-      "sha256": "28896B3220630D3E86A489B147475549D6016504730D3A99B2D3E16AD42AF542"
+      "bytes": 2278020,
+      "sha256": "F9E2226A32D68CACAA8194EC21B2C2DEE1F3096E104261DD379288127FF82F29"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5043,8 +5043,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1215212,
-      "sha256": "EE4560170B8AC80F023B67D36FBC0DD9F407D9042E54B828E434B9F0F3DEC500"
+      "bytes": 1215214,
+      "sha256": "5AE185F6D314653781F4399FCC008AA58DD16C82D2DD101CA123000AECADF159"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -7113,8 +7113,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
-      "bytes": 61380,
-      "sha256": "11332B637F9113987AD4F19EEC3ABAE7868313FC0E11713140F7B37C4FB489A7"
+      "bytes": 62000,
+      "sha256": "91D21B9313AE4DFAEEAC7A5BEE6886F1FCA251286BF3E4A2228D8D315986CEB2"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -7143,8 +7143,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 318493,
-      "sha256": "149E286AE625ED1270771C150D0D3ED69AD15D7D39BC21729DF478D318EACF69"
+      "bytes": 318495,
+      "sha256": "E7902CB3EAFE37D9163D4B9F73D69AFDCD01E4033877B4438C823F95963DCB84"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",

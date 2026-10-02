@@ -19971,7 +19971,7 @@ modes:
         config.chat_onboarding_completed = true;
         config.skills.enabled.push(skill_id.to_owned());
         config.inference = serde_yaml::from_str(&format!(
-            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: { '@fast': skill-local-fast }\n    key: skill-secret\n",
+            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: {{ '@fast': skill-local-fast }}\n    key: skill-secret\n",
             selected.uri(),
         )).expect("parse named skill provider topology");
         config
