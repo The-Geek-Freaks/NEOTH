@@ -342,6 +342,40 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             with self.assertRaisesRegex(canary.Failure, "daemon_pidfile_inode_changed"):
                 canary.wait_for_daemon_ready(process, Path("/tmp/neoth-home"), Path("/tmp/neoth"), {})
 
+    def test_reload_adoption_waits_for_sentinel_consumer_after_authenticated_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            reload = home / canary.RELOAD
+            reload.write_text("reload\n", encoding="utf-8")
+            services = canary.LoopbackServices()
+            self.addCleanup(services.stop)
+            counts = {name: 0 for name in canary.TRAFFIC_COUNTERS}
+            counts["empty_poll"] = 1
+
+            def consume_sentinel(_: float) -> None:
+                reload.unlink()
+
+            with patch.object(services, "counts", return_value=counts), patch.object(
+                canary.time, "monotonic", side_effect=[0, 0, 1]
+            ), patch.object(canary.time, "sleep", side_effect=consume_sentinel) as slept:
+                canary.wait_for_reload_adoption(home, self._Process(4242), services, 0)
+            slept.assert_called_once_with(0.2)
+            self.assertFalse(reload.exists())
+
+    def test_reload_adoption_times_out_when_sentinel_stays_visible_after_authenticated_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / canary.RELOAD).write_text("reload\n", encoding="utf-8")
+            services = canary.LoopbackServices()
+            self.addCleanup(services.stop)
+            counts = {name: 0 for name in canary.TRAFFIC_COUNTERS}
+            counts["empty_poll"] = 1
+            with patch.object(services, "counts", return_value=counts), patch.object(
+                canary.time, "monotonic", side_effect=[0, 0, 26]
+            ), patch.object(canary.time, "sleep"):
+                with self.assertRaisesRegex(canary.Failure, "daemon_adoption_timeout"):
+                    canary.wait_for_reload_adoption(home, self._Process(4242), services, 0)
+
     def test_offline_cluster_status_dictionary_is_rejected(self):
         with self.assertRaisesRegex(canary.Failure, "daemon_status_envelope_invalid"):
             canary.validate_daemon_status({"status": "offline", "membership": {}})

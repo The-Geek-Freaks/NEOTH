@@ -609,9 +609,7 @@ def wait_for_reload_adoption(home: Path, process: subprocess.Popen[bytes], servi
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
         require_live(process)
-        if services.counts()["empty_poll"] > baseline:
-            if (home / RELOAD).exists():
-                raise Failure("reload_not_consumed_after_poll")
+        if services.counts()["empty_poll"] > baseline and not (home / RELOAD).exists():
             return
         time.sleep(0.2)
     raise Failure("daemon_adoption_timeout")

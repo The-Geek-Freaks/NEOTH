@@ -1,0 +1,64 @@
+{
+  "schema": "neoth-gold-wave2147-bluebubbles-adoption-order/v1",
+  "base": "7ef951c1289ae18cf6037c79f2a8d3e21f5ab339",
+  "status": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "failedRun": "37011330821",
+  "priorEvidence": {
+    "rustPassed": 398,
+    "rustFailed": 0,
+    "guardsPassed": 20,
+    "pythonPassed": 61,
+    "productPassed": 3,
+    "productFailed": 1,
+    "failure": "reload_not_consumed_after_poll",
+    "originalArchives": 7,
+    "entries": 827,
+    "workflowSourceBindings": 180,
+    "partialCustodySha256": "DAAA44A954E53CB2794B2F9D977ED1B8EA37610F5ACD5A8284EA5FA70B76BDEC",
+    "extraProductSourceBindings": "not fully verified on failed product receipt"
+  },
+  "rootCause": "The credential-aware channel supervisor can start an authenticated poll before the separate two-second public reload-sentinel poller consumes the marker. The previous canary rejected this intermediate state immediately.",
+  "evidenceLimit": "The failed archive retains diagnostics and a daemon-log hash, not the raw daemon timeline. Actual tick ordering and subsequent sentinel consumption in that run cannot be reconstructed.",
+  "changes": [
+    "Within the unchanged 25-second deadline, require both an authenticated post-baseline empty poll and absence of the public reload sentinel.",
+    "Add delayed-consumer success and never-consumed timeout regressions with deterministic clocks; both register loopback server cleanup immediately."
+  ],
+  "productionSourceChanged": false,
+  "deadlineSeconds": 25,
+  "pollIntervalSeconds": 0.2,
+  "traceSha256": "7B6D8675AE4A5C2B61BDBB0696489488974C273E9E13485553C2596A877FCD51",
+  "manifestSha256": "A751F5D8FE964AD35857D7CEE68EBD9744982A35AD5E30322D5A91DD32C7754A",
+  "reviewSha256": "0A5121049B3C7B55331BBCBD21681173250D03FA1EFB2F9BED79A8E19BA0189A",
+  "sources": [
+    {
+      "repo_path": "packaging/bluebubbles_daemon_adoption_canary.py",
+      "base_git_blob": "959bca9e57959d16e5e97c2ec47da9281cdeea9a",
+      "base_raw_sha256": "D2B1B02D63B06FDAFECC15CA436862A93D1D76E71877064211EC1A0B102B1F59",
+      "candidate_path": "candidate/packaging_bluebubbles_daemon_adoption_canary.py",
+      "candidate_git_blob": "eb16dcf97d303266996d3ae8383daf127a2263ef",
+      "candidate_raw_sha256": "A4F230B604944A035D2B44F301D32A24C1D45E4CD7C69A3AAC1C18C8FA0A579C"
+    },
+    {
+      "repo_path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+      "base_git_blob": "96334c681b158b4ee7c83efce75997c38c800478",
+      "base_raw_sha256": "0A57536E7DB8F80CB6796AD24A71E481BDB974CC87AA55E63D49FA6102EA9B4E",
+      "candidate_path": "candidate/packaging_tests_test_bluebubbles_daemon_adoption_canary.py",
+      "candidate_git_blob": "9d5e2f45c6a58057bbc8519019b20afb381a8998",
+      "candidate_raw_sha256": "5A3C21B09D7D4382C9FEBAF7FF32BE82B06DEEC03E647874BD1520290A98FEBF"
+    }
+  ],
+  "focusedRustCases": 398,
+  "portableRustIdentities": 2618,
+  "workflowSourceBindings": 180,
+  "pythonContractGroups": [
+    10,
+    18,
+    8,
+    27
+  ],
+  "pythonContracts": 63,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

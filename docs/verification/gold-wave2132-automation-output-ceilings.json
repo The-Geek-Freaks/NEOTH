@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2132-automation-output-ceilings/v1",
   "base": "88655e0d5946bec57bc5ba61d2a859a13e8299da",
-  "status": "W2143_PAID_FIXTURE_STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "status": "W2144_ALL398_RUST_PASSED_BLUEBUBBLES_PRODUCT_BOUNDARY_OPEN",
   "requirement": "GOLD-R4-14a n8n and Cron caller schema/status parity",
   "behavior": [
     "n8n optional max_output_tokens JSON binds the final Request before existing provider control/cost/WAL authorization; response shows requested and adapter-authorized effective ceiling",
@@ -150,6 +150,20 @@
     "traceSha256": "BC305120A238356AF761BCEA9B6DFD7C7AFBA538E0029E8662B078CC9BC161CF",
     "testsUnchanged": 398,
     "localExecutableValidationRan": false,
-    "hostedRerun": "pending"
+    "hostedRerun": "37011330821: all398 Rust passed including both repaired n8n cost-WAL cases; whole workflow failed only BlueBubbles daemon canary"
+  },
+  "wave2144HostedEvidence": {
+    "rustPassed": 398,
+    "rustFailed": 0,
+    "guardsPassed": 20,
+    "pythonPassed": 61,
+    "productPassed": 3,
+    "productFailed": 1,
+    "failure": "reload_not_consumed_after_poll",
+    "originalArchives": 7,
+    "entries": 827,
+    "workflowSourceBindings": 180,
+    "partialCustodySha256": "DAAA44A954E53CB2794B2F9D977ED1B8EA37610F5ACD5A8284EA5FA70B76BDEC",
+    "extraProductSourceBindings": "not fully verified on failed product receipt"
   }
 }

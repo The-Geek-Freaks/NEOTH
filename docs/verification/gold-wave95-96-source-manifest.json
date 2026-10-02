@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T13:05:30.7886775Z",
-  "validationStatus": "W2143_STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "capturedUtc": "2026-10-02T13:54:08.8083499Z",
+  "validationStatus": "W2147_STATIC_REVIEWED_HOSTED_RERUN_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3083,8 +3083,13 @@
     },
     {
       "path": "docs/verification/gold-wave2132-automation-output-ceilings.json",
-      "bytes": 8796,
-      "sha256": "DAD8B83169F32945D729E71A681564A55E841F002DD7AE8D9C77CE47C4212E34"
+      "bytes": 9403,
+      "sha256": "41E87BBF1EFA0429BF2B489E764F95C0AD0C2EBE8D3B8CCABA43F19B42399410"
+    },
+    {
+      "path": "docs/verification/gold-wave2147-bluebubbles-adoption-order.json",
+      "bytes": 3137,
+      "sha256": "49780CE829837B7FFA339A05572A9ACECF96796483E9033CD12BA8F207243598"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -3918,8 +3923,8 @@
     },
     {
       "path": "packaging/bluebubbles_daemon_adoption_canary.py",
-      "bytes": 45153,
-      "sha256": "A3BE87ADED851FB956C79A8E0D63596D6876B3D17A798153DDDD32EF0E948404"
+      "bytes": 45081,
+      "sha256": "7CC34662D013E677163BF37D74B74D14E9F87DC49E8BFA2B5F7609B95D4FCD19"
     },
     {
       "path": "packaging/converted_channel_relink_product_canary.py",
@@ -4038,8 +4043,8 @@
     },
     {
       "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
-      "bytes": 27961,
-      "sha256": "4958C858A5815A5DDF0E2F1EC87F5E84FF5C4DBFAB158A576A94C4DA5E227D0B"
+      "bytes": 29794,
+      "sha256": "4A815129EAF25B7BE75716F2C53CF6C1063872B5B32307CAB6F10058E5153D42"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -4188,8 +4193,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2295863,
-      "sha256": "1F5DEEB0EC4B5A6B75913627FEC5AF8C8B16A93B3AFB5FAB1F371469A971446B"
+      "bytes": 2297465,
+      "sha256": "11054E1E1E54AEC7F0F99B2F2888E783BC7AC267B87FF3A70776EC8BD5D98CAA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
