@@ -653,9 +653,13 @@ jobs:
           run_case 365 lib cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops --lib
           run_case 366 lib cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite --lib
           run_case 367 lib cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 367
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 367
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 367
+          run_case 368 lib cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity --lib
+          run_case 369 lib cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation --lib
+          run_case 370 lib cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots --lib
+          run_case 371 lib cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 371
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 371
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 371
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Static-reviewed Buddy provider/fallback controls;367 focused cases pending",
+  "status": "Static-reviewed named role selection;371 focused cases pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 291241,
-    "sha256": "F3A5459B01B0F34501DA7FA96AF9BADE8304E4228B21DBD63808B0A28EC447B2"
+    "bytes": 291421,
+    "sha256": "D3393B79F6E06782FB86222DA340DB8DCDDC4207354B1B5522A1C11AB20FCE52"
   },
-  "sourceInputs": 1619,
+  "sourceInputs": 1620,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1110,7 +1110,7 @@
     {
       "test": "cli::buddy::tests::status_json_shape_has_base_keys_and_provider_routes",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
@@ -2946,13 +2946,13 @@
     {
       "test": "cli::buddy::tests::vault_mirror_surface_parses_status_and_repair_without_a_bypass_flag",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::unresolved_vault_mirror_repair_ack_is_not_success",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
@@ -4782,19 +4782,19 @@
     {
       "test": "cli::buddy::tests::buddy_embedding_parses_all_actions_and_rejects_unknown_action",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_embedding_select_mutates_only_supplied_config_and_preserves_unknown_fields",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_embedding_qwen_actions_fail_before_lifecycle_side_effects",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     },
     {
@@ -7098,13 +7098,13 @@
     {
       "test": "cli::buddy::tests::buddy_task_delegate_parses_scope_and_outbound_cas_arguments_losslessly",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_task_delegate_executes_the_canonical_cluster_dispatch",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
@@ -15486,61 +15486,85 @@
     {
       "test": "cli::buddy::tests::buddy_status_routes_keep_named_alias_shadowing_and_global_fallback_once",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_provider_and_fallback_parsers_preserve_existing_status_surface",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_fallback_replace_requires_named_selectors_and_rejects_inline_flags",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+      "sourceSha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
       "junitClass": "neoth"
     }
   ],
@@ -66876,6 +66900,50 @@
       }
     ],
     "note": "W2100 two-file candidate independently reviewed; selector-only fallback transaction+WAL completion+CAS and six tests registered.No local execution, no GUI changes.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2106NamedRoleSelection": {
+    "base": "c7eb93ccc9385113a874645ceb2e827f22843ccc",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 105361,
+        "sha256": "17B5669100FED1A696CFD06EFF009875F6F349B981CB2BBD28A47157E0837ADF",
+        "blob": "e5b1d86b0a2e6c7293bf7a5f73954c7c52d02d66"
+      },
+      {
+        "path": "docs/providers.md",
+        "bytes": 20159,
+        "sha256": "97C55584056C91AE46F9841701156DED52A7FCE5973234B1608DD54FA27C50F2",
+        "blob": "b687f611184b604583bbcac594838b7c0e1f6eb1"
+      },
+      {
+        "path": "docs/verification/gold-wave2106-named-role-selection.json",
+        "bytes": 3388,
+        "sha256": "EFC07C8313255148D261A3F3FA7A9AD57ED2626E8FD03F7691FE606DB629EC92",
+        "blob": "19fb688ef9f69b0169e66f66cd3b1b41ccb6acbc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2284383,
+        "sha256": "32DA91702E3F1C9508856B24CEF3D57CE9882CB81136936AF76BF4003F43F442",
+        "blob": "0b8dbe3700eef24990a9fadc661eb3b4229ae163"
+      },
+      {
+        "path": "SRC/neothd/src/cli/buddy.rs",
+        "bytes": 67632,
+        "sha256": "536EB4FD7C0C4DBEE83E6C38A44208C30CC45BEE2EF56EF0E6911508CBAB0C71",
+        "blob": "782c780cfc63d0e9eac155add9cf6613ade737ab"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 99882,
+        "sha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2",
+        "blob": "ed201185db9d15448bb32915270cb887e046c431"
+      }
+    ],
+    "note": "Four new regressions plus extended Buddy parser; preserveeffectiveSingle neighbors/scoped modelaudits and truthfulpostcommiterrors.No localruntime orSlintchange.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

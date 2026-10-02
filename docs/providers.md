@@ -412,7 +412,7 @@ a provider or making a network call.
 ### Change Buddy routes
 
 `neoth buddy provider` exposes the canonical `hemispheres` actions: `show`,
-`set`, `mode`, `preset` and `test`. Existing role validation, configuration
+`set`, `select`, `mode`, `preset` and `test`. Existing role validation, configuration
 transactions, rollback handling and audit behavior apply unchanged.
 
 To set a quota-fallback order using instances already defined in configuration:
@@ -427,3 +427,18 @@ grant provider consent. Unknown or duplicate instance IDs are rejected before
 publication. JSON output includes previous/new counts and the rollback snapshot
 receipt, which is subject to the configured rollback policy. Runtime fallback
 continues to use the existing HTTP-429 and per-hop consent rules.
+
+To select an existing named instance for a role, use the same canonical action
+through either CLI surface:
+
+```bash
+neoth hemispheres select --role right --provider-instance-id compat_secondary
+neoth buddy provider select --role right --provider-instance-id compat_secondary
+```
+
+The role stores the instance ID; its endpoint, credentials, model and alias scope
+remain owned by the registry entry. Other roles retain their effective routes
+when leaving Single mode. The result identifies the selected instance and the
+resolved configured model; missing models remain unconfigured. Selection does
+not grant provider consent. An audit failure after publication explicitly reports
+that the configuration was already committed.

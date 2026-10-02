@@ -14,7 +14,7 @@
 //! - `neoth buddy proactive --enable | --disable [--output json]`
 //!   Toggle `proactive.enabled` in freedom.yaml, same mechanism.
 //!
-//! - `neoth buddy provider {show,set,mode,preset,test} …`
+//! - `neoth buddy provider {show,set,select,mode,preset,test} …`
 //!   Delegate provider/model route control to the canonical hemisphere command.
 //!
 //! - `neoth buddy fallback {replace,clear} …`
@@ -965,6 +965,41 @@ mod tests {
                 },
             } if role == "right" && provider == "openai_compat" && model == "selected-model"
         ));
+
+        let select = BuddyCli::try_parse_from([
+            "buddy",
+            "provider",
+            "select",
+            "--role",
+            "right",
+            "--provider-instance-id",
+            "compat_secondary",
+        ])
+        .expect("canonical provider select action parses through Buddy");
+        assert!(matches!(
+            select.args.action,
+            BuddyAction::Provider {
+                action: crate::cli::hemispheres::HemisphereAction::Select {
+                    ref role,
+                    ref provider_instance_id,
+                },
+            } if role == "right" && provider_instance_id == "compat_secondary"
+        ));
+        assert!(
+            BuddyCli::try_parse_from([
+                "buddy",
+                "provider",
+                "select",
+                "--role",
+                "right",
+                "--provider-instance-id",
+                "compat_secondary",
+                "--provider",
+                "openai_compat",
+            ])
+            .is_err(),
+            "named selection accepts no inline provider authority"
+        );
 
         let replace = BuddyCli::try_parse_from([
             "buddy",

@@ -1,0 +1,74 @@
+{
+  "schema": "neoth-gold-wave2106-named-role-selection/v1",
+  "capturedUtc": "2026-10-02T08:15:44.9481704Z",
+  "baseline": "c7eb93ccc9385113a874645ceb2e827f22843ccc",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "commands": [
+    "hemispheres select --role <role> --provider-instance-id <id>",
+    "buddy provider select --role <role> --provider-instance-id <id>"
+  ],
+  "behavior": [
+    "Named role selection stores only durable registry selector after canonical validation",
+    "Leaving Single materializes prior default for untouched roles to preserve their effective routes",
+    "Snapshot uses exact prepared bytes and complete writer drain before CAS publication",
+    "Audit and result use resolved named local-before-global aliases once and project providerless legacy globals",
+    "Post-commit audit failure explicitly identifies the already-committed role, instance and path",
+    "No credential, consent or provider registry mutation"
+  ],
+  "review": {
+    "candidateFiles": [
+      {
+        "repository_path": "SRC/neothd/src/cli/buddy.rs",
+        "base_copy": "base/buddy.rs",
+        "base_blob": "ff9c7a890a02198798093f3d79a5a075efbb0564",
+        "base_sha256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+        "candidate_copy": "candidate/buddy.rs",
+        "candidate_blob": "c69c3f3a8e0fa24a1ba0f943eda78cc6adaa94a3",
+        "candidate_sha256": "2DE4D6A99970EC72BE508A4D73FAA404054FC587CE7ED375A7B238429D6D676B"
+      },
+      {
+        "repository_path": "SRC/neothd/src/cli/hemispheres.rs",
+        "base_copy": "base/hemispheres.rs",
+        "base_blob": "d4d10da88fb91a2d2c32ccb738089af912f04982",
+        "base_sha256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+        "candidate_copy": "candidate/hemispheres.rs",
+        "candidate_blob": "ed201185db9d15448bb32915270cb887e046c431",
+        "candidate_sha256": "1CB9BE91F3F97E9B517779A5F4B7E509EFF544AA684152462E8A348CEEAD3EB2"
+      }
+    ],
+    "reviewer": "/root/w2078_alias_review",
+    "status": "APPROVED_STATIC",
+    "rootAdjustment": "Buddy module command documentation includes select"
+  },
+  "newTests": [
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    }
+  ],
+  "extendedTest": "cli::buddy::tests::buddy_provider_and_fallback_parsers_preserve_existing_status_surface",
+  "registrations": {
+    "portable": 2593,
+    "guards": 20,
+    "focusedSourceBindings": 173,
+    "focused": 371
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "guiChangesMade": false,
+  "guiSlintDecision": "pending user answer; existing no-Slint constraint remains binding"
+}

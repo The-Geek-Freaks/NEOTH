@@ -76,6 +76,17 @@ pub enum HemisphereAction {
         #[arg(long)]
         endpoint: Option<String>,
     },
+    /// Select an existing named provider instance for one role. The persisted
+    /// role slot is a selector only; provider authority remains in the
+    /// registry entry.
+    Select {
+        /// Role to rebind: `left` / `right` / `cerebellum`.
+        #[arg(long)]
+        role: String,
+        /// Existing `inference.provider_instances[].id` to select.
+        #[arg(long)]
+        provider_instance_id: String,
+    },
     /// Sanity-check the provider bound to a role. Default behaviour:
     /// build the adapter + report load latency only. Pass `--question
     /// "X"` to additionally fire a live LLM round-trip against the
@@ -276,6 +287,10 @@ pub async fn run_hemispheres(args: HemispheresArgs) -> Result<()> {
             key,
             endpoint,
         } => run_set(&role, &provider, model, key, endpoint, &args.output).await,
+        HemisphereAction::Select {
+            role,
+            provider_instance_id,
+        } => run_select(&role, &provider_instance_id, &args.output).await,
         HemisphereAction::Test {
             role,
             question,
@@ -739,6 +754,54 @@ async fn run_set(
     Ok(())
 }
 
+async fn run_select(
+    role_str: &str,
+    provider_instance_id: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let result = select_named_instance_at(
+        &FreedomConfig::default_neoth_home(),
+        role_str,
+        provider_instance_id,
+    )
+    .await?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "role": result.role.as_str(),
+                "prior_provider": result.prior_provider.as_deref(),
+                "prior_model": result.prior_model.as_deref(),
+                "prior_provider_instance_id": result.prior_provider_instance_id.as_deref(),
+                "new_provider": result.new_provider.as_str(),
+                "new_model": result.new_model.as_deref(),
+                "provider_instance_id": result.provider_instance_id,
+                "mode": result.mode.as_str(),
+                "snapshot_segment": result.snapshot_segment.display().to_string(),
+                "snapshot_offset": result.snapshot_offset,
+                "audit_segment": result.audit_segment.display().to_string(),
+            }))?
+        ),
+        OutputFormat::Table => {
+            println!(
+                "# Hemisphere named-instance selection: {} → {}",
+                result.role.as_str(),
+                result.provider_instance_id
+            );
+            println!(
+                "  provider/model: {} / {}",
+                result.new_provider.as_str(),
+                result.new_model.as_deref().unwrap_or("(unconfigured)")
+            );
+            println!("  mode: {}", result.mode.as_str());
+            println!("  snapshot: {}", result.snapshot_segment.display());
+            println!("  audit: {}", result.audit_segment.display());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct RebindResult {
     pub role: HemisphereRole,
     pub provider: InferenceProvider,
@@ -746,6 +809,189 @@ pub(crate) struct RebindResult {
     pub new_slot: crate::config::inference::HemisphereSlot,
     pub mode: crate::config::inference::TopologyMode,
     pub audit_segment: std::path::PathBuf,
+}
+
+pub(crate) struct NamedRoleSelectionResult {
+    pub role: HemisphereRole,
+    pub prior_provider: Option<String>,
+    pub prior_model: Option<String>,
+    pub prior_provider_instance_id: Option<String>,
+    pub new_provider: InferenceProvider,
+    pub new_model: Option<String>,
+    pub provider_instance_id: String,
+    pub mode: crate::config::inference::TopologyMode,
+    pub snapshot_segment: std::path::PathBuf,
+    pub snapshot_offset: Option<u64>,
+    pub audit_segment: std::path::PathBuf,
+}
+
+#[derive(Clone)]
+struct ResolvedAuditRoute {
+    provider: Option<InferenceProvider>,
+    display_model: Option<String>,
+    provider_instance_id: Option<String>,
+}
+
+/// Project a resolved route for operator receipts and audit fields. Named
+/// aliases shadow the global namespace once; a provider-less legacy slot uses
+/// the same global transport fallback that the canonical provider factory uses.
+fn resolved_audit_route(
+    cfg: &FreedomConfig,
+    binding: &crate::config::inference::ResolvedProviderBinding,
+) -> ResolvedAuditRoute {
+    let providerless_legacy = !binding.is_named_instance && binding.slot.provider.is_none();
+    let configured_model = if providerless_legacy {
+        cfg.provider_model.clone()
+    } else {
+        binding.slot.model.clone()
+    };
+    let display_model = configured_model.as_deref().map(|model| {
+        binding
+            .models_aliases
+            .get(model)
+            .cloned()
+            .unwrap_or_else(|| cfg.resolve_model_alias(model).to_owned())
+    });
+    ResolvedAuditRoute {
+        provider: binding
+            .slot
+            .provider
+            .or_else(|| {
+                if providerless_legacy {
+                    cfg.provider_kind.map(|kind| kind.to_inference())
+                } else {
+                    None
+                }
+            }),
+        display_model,
+        provider_instance_id: binding.provider_instance_id.clone(),
+    }
+}
+
+/// Select a declared provider instance without copying its authority into a
+/// role slot or modifying the credential/consent stores.
+pub(crate) async fn select_named_instance_at(
+    home: &std::path::Path,
+    role_str: &str,
+    provider_instance_id: &str,
+) -> Result<NamedRoleSelectionResult> {
+    let role = parse_role(role_str)?;
+    let id = crate::config::inference::ProviderInstanceId::parse(provider_instance_id)?;
+    let selector = crate::config::inference::HemisphereSlot {
+        provider_instance_id: Some(id),
+        ..Default::default()
+    };
+    let path = home.join("freedom.yaml");
+    let (prepared, (rollback, prior_route, new_route, mode)) =
+        FreedomConfig::prepare_update_at(&path, |cfg| {
+            cfg.inference.validate_provider_instances()?;
+            let prior_binding = cfg.inference.resolve_role_binding(role)?;
+            let new_binding = cfg.inference.resolve_explicit_slot_binding(&selector)?;
+            anyhow::ensure!(
+                new_binding.is_named_instance,
+                "selected provider instance must resolve to a named registry entry"
+            );
+            let prior_route = resolved_audit_route(cfg, &prior_binding);
+            let new_route = resolved_audit_route(cfg, &new_binding);
+            if matches!(cfg.inference.mode, crate::config::inference::TopologyMode::Single) {
+                let single_default = cfg.inference.default_slot.clone();
+                cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
+                match role {
+                    HemisphereRole::Left => {
+                        cfg.inference.right = single_default.clone();
+                        cfg.inference.cerebellum = single_default;
+                    }
+                    HemisphereRole::Right => {
+                        cfg.inference.left = single_default.clone();
+                        cfg.inference.cerebellum = single_default;
+                    }
+                    HemisphereRole::Cerebellum => {
+                        cfg.inference.left = single_default.clone();
+                        cfg.inference.right = single_default;
+                    }
+                }
+            }
+            match role {
+                HemisphereRole::Left => cfg.inference.left = selector.clone(),
+                HemisphereRole::Right => cfg.inference.right = selector.clone(),
+                HemisphereRole::Cerebellum => cfg.inference.cerebellum = selector.clone(),
+            }
+            Ok((cfg.rollback.clone(), prior_route, new_route, cfg.inference.mode))
+        })
+        .context("prepare named hemisphere instance selection")?;
+    let prior_yaml_bytes = prepared
+        .source_bytes()
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
+    let now_unix = crate::time::now_unix_i64();
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for named hemisphere selection")?;
+    let snapshot_segment = crate::wal::writer::unique_standalone_segment_path(
+        &wal_dir,
+        "hemisphere-select-snapshot",
+    );
+    let (snapshot_writer, snapshot_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(
+            snapshot_segment.clone(),
+            home.to_path_buf(),
+        )
+            .context("spawn WAL writer for named hemisphere selection snapshot")?;
+    let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(
+        &snapshot_writer,
+        &rollback,
+        crate::wal::snapshot::MutationKind::ConfigWrite,
+        path.display().to_string(),
+        prior_yaml_bytes,
+        now_unix,
+        Some(format!("hemispheres select --role {} via CLI", role.as_str())),
+    )
+    .await
+    .context("emit pre-mutation snapshot for named hemisphere selection");
+    drop(snapshot_writer);
+    let completion_result = snapshot_completion
+        .wait()
+        .await
+        .context("complete named hemisphere selection snapshot WAL writer");
+    let snapshot_offset = match (snapshot_result, completion_result) {
+        (Ok(offset), Ok(())) => offset,
+        (Err(snapshot_error), Ok(())) => return Err(snapshot_error),
+        (Ok(_), Err(completion_error)) => return Err(completion_error),
+        (Err(snapshot_error), Err(completion_error)) => {
+            return Err(anyhow::anyhow!(
+                "named hemisphere selection snapshot emission failed: {snapshot_error}; writer completion also failed: {completion_error}"
+            ));
+        }
+    };
+    prepared
+        .commit()
+        .with_context(|| format!("publish reviewed named selection in {}", path.display()))?;
+
+    let selected_id = new_route
+        .provider_instance_id
+        .clone()
+        .context("selected named provider instance lost its durable identity")?;
+    let audit_segment = emit_resolved_rebind_audit_to(home, role, &prior_route, &new_route, now_unix)
+        .await
+        .with_context(|| format!(
+            "named selection already committed to {} for role `{}` and provider instance `{selected_id}`; rebind audit failed",
+            path.display(),
+            role.as_str()
+        ))?;
+    let new_provider = new_route
+        .provider
+        .context("selected named provider instance has no provider descriptor")?;
+    Ok(NamedRoleSelectionResult {
+        role,
+        prior_provider: prior_route.provider.map(|provider| provider.as_str().to_string()),
+        prior_model: prior_route.display_model,
+        prior_provider_instance_id: prior_route.provider_instance_id,
+        new_provider,
+        new_model: new_route.display_model,
+        provider_instance_id: selected_id,
+        mode,
+        snapshot_segment,
+        snapshot_offset,
+        audit_segment,
+    })
 }
 
 /// Shared hemisphere rebind used by CLI and slash dispatch. Config mutation is
@@ -959,6 +1205,58 @@ async fn emit_rebind_audit_to(
     let _ = join.await;
 
     Ok(segment)
+}
+
+/// Emit a rebind audit from canonical resolved bindings so named-instance
+/// selection records the durable ID and the descriptor/model it actually
+/// selects, rather than the selector-only persisted role slot.
+async fn emit_resolved_rebind_audit_to(
+    home: &std::path::Path,
+    role: HemisphereRole,
+    prior: &ResolvedAuditRoute,
+    new: &ResolvedAuditRoute,
+    now_unix: i64,
+) -> Result<std::path::PathBuf> {
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .context("create WAL dir for named hemisphere selection audit")?;
+    let segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemisphere-rebind");
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "role": role.as_str(),
+        "prior_provider": prior.provider.map(|provider| provider.as_str()),
+        "prior_model": prior.display_model.as_deref(),
+        "prior_provider_instance_id": prior.provider_instance_id.as_deref(),
+        "new_provider": new.provider.map(|provider| provider.as_str()),
+        "new_model": new.display_model.as_deref(),
+        "new_provider_instance_id": new.provider_instance_id.as_deref(),
+        "source": "cli",
+        "ts_unix": now_unix,
+    }))
+    .context("serialize resolved HEMISPHERE_REBOUND payload")?;
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HEMISPHERE_REBOUND, &payload)
+            .build();
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment.clone(), home.to_path_buf())
+            .context("spawn WAL writer for named hemisphere selection audit")?;
+    let append_result = writer
+        .append(header, payload)
+        .await
+        .context("append resolved HEMISPHERE_REBOUND frame");
+    drop(writer);
+    let completion_result = completion
+        .wait()
+        .await
+        .context("complete named hemisphere selection audit WAL writer");
+    match (append_result, completion_result) {
+        (Ok(_), Ok(())) => Ok(segment),
+        (Err(append_error), Ok(())) => Err(append_error),
+        (Ok(()), Err(completion_error)) => Err(completion_error),
+        (Err(append_error), Err(completion_error)) => Err(anyhow::anyhow!(
+            "named hemisphere selection audit append failed: {append_error}; writer completion also failed: {completion_error}"
+        )),
+    }
 }
 
 async fn run_test(
@@ -1374,6 +1672,205 @@ fallback:
         let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
         assert!(persisted.fallback.chain.is_empty());
         assert_eq!(persisted.fallback.max_hops, 5);
+    }
+
+    #[tokio::test]
+    async fn select_named_instance_persists_selector_and_audits_resolved_identity() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"future_extension: preserve-me
+models_aliases: { '@fast': global-fast }
+inference:
+  mode: custom
+  provider_instances:
+    - id: compat_a
+      descriptor: openai_compat
+      endpoint: https://a.example/v1
+      model: '@fast'
+    - id: compat_b
+      descriptor: openai_compat
+      endpoint: https://b.example/v1
+      model: '@fast'
+      models_aliases: { '@fast': local-fast }
+  left: { provider_instance_id: compat_a }
+  right: { provider_instance_id: compat_a }
+  cerebellum: { provider_instance_id: compat_a }
+"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&freedom).unwrap();
+
+        let result = select_named_instance_at(home.path(), "right", "compat_b")
+            .await
+            .expect("select declared named instance");
+        assert_eq!(result.prior_provider.as_deref(), Some("openai_compat"));
+        assert_eq!(result.prior_model.as_deref(), Some("global-fast"));
+        assert_eq!(result.prior_provider_instance_id.as_deref(), Some("compat_a"));
+        assert_eq!(result.new_provider, InferenceProvider::OpenAiCompat);
+        assert_eq!(result.new_model.as_deref(), Some("local-fast"));
+        assert_eq!(result.provider_instance_id, "compat_b");
+        assert!(result.snapshot_offset.is_some());
+        let snapshot_bytes = std::fs::read(&result.snapshot_segment).unwrap();
+        let mut snapshot_cursor =
+            &snapshot_bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut snapshot_before_state = None;
+        while !snapshot_cursor.is_empty() {
+            let frame = crate::wal::frame::decode_frame(snapshot_cursor)
+                .expect("decode selection snapshot frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                let snapshot: crate::wal::snapshot::PreMutationSnapshot =
+                    serde_json::from_slice(frame.payload).expect("decode selection snapshot payload");
+                snapshot_before_state = Some(snapshot.before_state_bytes().unwrap());
+                break;
+            }
+            snapshot_cursor = &snapshot_cursor[frame.header.total_len as usize..];
+        }
+        assert_eq!(
+            snapshot_before_state.expect("selection writes a pre-mutation snapshot"),
+            before,
+            "selection snapshot retains exact prepared source bytes"
+        );
+
+        let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
+        let right = &persisted.inference.right;
+        assert_eq!(right.provider_instance_id.as_ref().map(|id| id.as_str()), Some("compat_b"));
+        assert!(right.provider.is_none() && right.model.is_none() && right.endpoint.is_none());
+        assert_eq!(
+            persisted.inference.left.provider_instance_id.as_ref().map(|id| id.as_str()),
+            Some("compat_a")
+        );
+        assert_eq!(persisted.inference.provider_instances.len(), 2);
+        let resolved = persisted
+            .inference
+            .resolve_role_binding(HemisphereRole::Right)
+            .expect("selected role resolves through registry");
+        assert_eq!(resolved.slot.provider, Some(InferenceProvider::OpenAiCompat));
+        assert_eq!(resolved.slot.model.as_deref(), Some("@fast"));
+        assert_eq!(resolved.provider_instance_id.as_deref(), Some("compat_b"));
+        let raw: serde_yaml::Value = serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
+        assert_eq!(raw["future_extension"].as_str(), Some("preserve-me"));
+
+        let bytes = std::fs::read(&result.audit_segment).unwrap();
+        let mut cursor = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut audit = None;
+        while !cursor.is_empty() {
+            let frame = crate::wal::frame::decode_frame(cursor).expect("decode selection audit frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_HEMISPHERE_REBOUND {
+                audit = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        let audit = audit.expect("selection emits rebind audit");
+        assert_eq!(audit["prior_provider_instance_id"], "compat_a");
+        assert_eq!(audit["new_provider_instance_id"], "compat_b");
+        assert_eq!(audit["new_provider"], "openai_compat");
+        assert_eq!(audit["prior_model"], "global-fast");
+        assert_eq!(audit["new_model"], "local-fast");
+    }
+
+    #[tokio::test]
+    async fn select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"inference:
+  provider_instances:
+    - id: compat_a
+      descriptor: openai_compat
+      endpoint: https://a.example/v1
+      model: model-a
+  right: { provider_instance_id: compat_a }
+"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&freedom).unwrap();
+        assert!(select_named_instance_at(home.path(), "right", "Invalid-ID").await.is_err());
+        let unknown = select_named_instance_at(home.path(), "right", "compat_missing")
+            .await
+            .expect_err("unknown instance must not publish");
+        assert!(format!("{unknown:#}").contains("unknown provider_instance_id"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before);
+        assert!(!home.path().join("wal").exists());
+    }
+
+    #[tokio::test]
+    async fn select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"inference:
+  mode: single
+  provider_instances:
+    - id: compat_a
+      descriptor: openai_compat
+      endpoint: https://a.example/v1
+      model: model-a
+    - id: compat_b
+      descriptor: openai_compat
+      endpoint: https://b.example/v1
+      model: model-b
+  default_slot: { provider_instance_id: compat_a }
+  left: { provider: local_qwen, model: stale-left }
+  right: { provider_instance_id: compat_a }
+  cerebellum: { provider: gemini_api, model: stale-cerebellum }
+"#,
+        )
+        .unwrap();
+
+        select_named_instance_at(home.path(), "right", "compat_b")
+            .await
+            .expect("leave single mode through named selection");
+        let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
+        assert_eq!(
+            persisted.inference.mode,
+            crate::config::inference::TopologyMode::Custom
+        );
+        for role in [HemisphereRole::Left, HemisphereRole::Cerebellum] {
+            let resolved = persisted
+                .inference
+                .resolve_role_binding(role)
+                .expect("untouched role retains prior single route");
+            assert_eq!(resolved.provider_instance_id.as_deref(), Some("compat_a"));
+            assert_eq!(resolved.slot.model.as_deref(), Some("model-a"));
+        }
+        let right = persisted
+            .inference
+            .resolve_role_binding(HemisphereRole::Right)
+            .expect("selected role resolves new named route");
+        assert_eq!(right.provider_instance_id.as_deref(), Some("compat_b"));
+    }
+
+    #[tokio::test]
+    async fn select_named_instance_projects_providerless_legacy_prior_with_global_alias() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"provider_kind: openai_compat
+provider_model: '@legacy'
+models_aliases: { '@legacy': global-wire-model }
+inference:
+  mode: custom
+  provider_instances:
+    - id: compat_b
+      descriptor: openai_compat
+      endpoint: https://b.example/v1
+      model: model-b
+  right: {}
+"#,
+        )
+        .unwrap();
+
+        let result = select_named_instance_at(home.path(), "right", "compat_b")
+            .await
+            .expect("select named route from providerless legacy prior");
+        assert_eq!(result.prior_provider.as_deref(), Some("openai_compat"));
+        assert_eq!(result.prior_model.as_deref(), Some("global-wire-model"));
     }
 
     #[test]
