@@ -17694,3 +17694,9 @@ The n8n provider-call JSON accepts optional `max_output_tokens`, binds it into t
 Cron accepts `execution.max_output_tokens` through validated YAML and Add/Edit/Clear/List JSON. The same value survives the final Request and briefing retry. JOB_FIRED carries the execution policy; terminal records separate requested and effective ceilings, and failures before Request construction retain a null effective ceiling. The shared provider, cost and WAL boundary remains authoritative.
 
 Both caller candidates passed independent static review, including repair of initially insufficient n8n helper-only tests. Eleven additional focused and portable registrations produce 398 focused cases, 2618 portable identities and 180 source bindings. Hosted regression and whole-surface native qualification remain required before the broader GOLD-R4-14a acceptance claim. No local runtime was executed under the BSOD hold.
+
+## W2139 - n8n legacy response and correlated WAL evidence
+
+Focused run 37002415746 on 81adadbf executed 398 exact cases: 396 passed and two n8n cases failed. Three original archives, 802 entries and 180 producer source bindings were independently verified. The response projection exposed an internal default ceiling to legacy callers; it now omits that status field unless a ceiling was requested, preserving the existing provider/cost/WAL default semantics.
+
+The WAL regression had looked for the effective ceiling on PROVIDER_REQUEST. Its authoritative record is COST_ESTIMATE_SHOWN. Both tests now require the requested cap, effective ceiling and matching nonempty 64-character hexadecimal request binding across the actual durable events. No provider, authorization, consent or cost guard was weakened. Independent static review approved the final candidate; the unchanged 398-case hosted rerun and subsequent full qualification remain pending. No local runtime was executed.

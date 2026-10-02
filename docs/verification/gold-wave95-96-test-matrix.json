@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2136 hosted formatting imported; focused398 acceptance pending",
+  "status": "W2139 n8n legacy/WAL hosted failures repaired; focused398 rerun pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 293140,
-    "sha256": "0AC297F6C89F85D47F83CE186880BA0F3CA1CB8B2088FC2DB5CD89729051F682"
+    "bytes": 293148,
+    "sha256": "5F80F4A4150952BAA2ADBFE6DD537DABFCBE938BE596BAFA71FB4DA82F9E7B3C"
   },
   "sourceInputs": 1629,
   "requiredNativeTests": [
@@ -3678,25 +3678,25 @@
     {
       "test": "n8n_api::handlers::tests::n8n_provider_request_includes_exactly_one_guarded_registry_without_route_leaks",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_registry_excludes_eval_and_pinned_hash_mismatch_skills",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_registry_refuses_absent_foreign_or_stale_daemon_registry",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_provider_request_retains_registry_a_after_later_accepted_b",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
@@ -10296,37 +10296,37 @@
     {
       "test": "n8n_api::handlers::tests::memory_drift_request_defaults_limit_to_none_and_rejects_wrong_type",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_reads_seeded_rows_with_limit_and_exact_counts",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_missing_store_is_structured_and_does_not_create_database",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_handler_default_cap_and_zero_keep_exact_counts",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_handler_missing_store_is_structured_without_creation",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
@@ -15654,37 +15654,37 @@
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_json_reaches_exact_final_request_and_response",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0",
+      "sourceSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
       "junitClass": "neoth"
     },
     {
@@ -67550,6 +67550,32 @@
       }
     ],
     "note": "Exact three-file rustfmt patch from preflight37001715834/artifact11223819040 on5b714ff0; original API/ZIP/inner checksums and full pre/post Git blobs verified. No local formatter or runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2139N8nHostedRepair": {
+    "base": "81adadbf9826649c0dc7051cbc9c0920c39f0158",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2132-automation-output-ceilings.json",
+        "bytes": 7336,
+        "sha256": "13A53588E486ECB42B790AD01A6A7C2A93E51E16D27BAD4CCF7836ECCEE8FF30",
+        "blob": "567a304bca6536e272b3774acf60a62f61fcd9d6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2294737,
+        "sha256": "90834C53AF3D65B02ECD4C32E88B43CC5E5BF6FBEF94F469B0F96203EBF48776",
+        "blob": "551ba72b7c09d021b5ceae0a9433b1b17b791f27"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers.rs",
+        "bytes": 88392,
+        "sha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
+        "blob": "b1cd4b5724a84c26098084d1ed29c13f43fadeb5"
+      }
+    ],
+    "note": "W2135 exact398 executed396passed2failed. Preserve legacy status omission; verify actual cost-estimate ceiling with strict correlated provider-request binding. Independent static review, no guard weakening or local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

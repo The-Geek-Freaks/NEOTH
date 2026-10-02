@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2132-automation-output-ceilings/v1",
   "base": "88655e0d5946bec57bc5ba61d2a859a13e8299da",
-  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "W2139_HOSTED_FAILURE_REPAIRED_STATIC_REVIEWED_RERUN_PENDING",
   "requirement": "GOLD-R4-14a n8n and Cron caller schema/status parity",
   "behavior": [
     "n8n optional max_output_tokens JSON binds the final Request before existing provider control/cost/WAL authorization; response shows requested and adapter-authorized effective ceiling",
@@ -106,5 +106,26 @@
       "SRC/neothd/src/wal/master_key.rs"
     ],
     "missing": []
+  },
+  "wave2139HostedRepair": {
+    "base": "81adadbf9826649c0dc7051cbc9c0920c39f0158",
+    "failedRun": "37002415746",
+    "expected": 398,
+    "executed": 398,
+    "actualPassed": 396,
+    "actualFailed": 2,
+    "failureCustodySha256": "096AE6040A4A70DB5B32C3F358502E045A073C0DDE5A63A9105D2CF33AEDC3B1",
+    "changes": [
+      "Preserve legacy n8n response shape by projecting effective ceiling only when max_output_tokens was requested; internal leaf defaults remain unchanged.",
+      "Verify requested ceiling in PROVIDER_REQUEST and effective ceiling in COST_ESTIMATE_SHOWN, correlated by required nonempty 64-character hexadecimal request_binding_sha256."
+    ],
+    "path": "SRC/neothd/src/n8n_api/handlers.rs",
+    "candidateBlob": "b1cd4b5724a84c26098084d1ed29c13f43fadeb5",
+    "candidateRawSha256": "3CF704BEDFBD30FB564E731B98E20659AE2614D8DE1427CF49A74BEA5C80BBF6",
+    "manifestSha256": "AFF535046AB0400A7E905C8E7DC104D7C3BA6F063F24AA81FD9C2C2540939DE1",
+    "reviewSha256": "92B13FE6786367DF37C5531A341B04B2F8EDA0760A085796A17A323DE52A3D33",
+    "testsUnchanged": 398,
+    "localExecutableValidationRan": false,
+    "hostedRerun": "pending"
   }
 }

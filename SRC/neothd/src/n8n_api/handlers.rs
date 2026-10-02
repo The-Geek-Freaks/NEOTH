@@ -885,7 +885,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // its mandatory boundary, which keeps cost and WAL bindings anchored to
     // this unchanged `request`, not to n8n-side response metadata.
     let requested_max_output_tokens = request.max_output_tokens;
-    let effective_output_token_ceiling = match n8n_output_ceiling_preflight(&provider, &request) {
+    let proven_output_token_ceiling = match n8n_output_ceiling_preflight(&provider, &request) {
         Ok(ceiling) => ceiling,
         Err(error) => {
             return HandlerOutcome::error(
@@ -895,6 +895,10 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
             );
         }
     };
+    // A legacy caller did not ask the n8n status surface for a ceiling. Keep
+    // its response shape unchanged while preserving the leaf-proven default
+    // ceiling inside the existing AuthorizedProvider cost/WAL boundary.
+    let effective_output_token_ceiling = requested_max_output_tokens.and(proven_output_token_ceiling);
     match provider.complete(request).await {
         Ok(comp) => {
             let model = comp.identity.wire_model.clone();
@@ -1122,7 +1126,7 @@ mod tests {
         }
     }
 
-    fn provider_request_wal_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
+    fn wal_payloads(segment: &std::path::Path, event_type: u8) -> Vec<serde_json::Value> {
         let bytes = std::fs::read(segment).expect("read provider WAL");
         let header =
             crate::wal::segment_header::parse_segment_header(&bytes).expect("parse WAL header");
@@ -1131,7 +1135,7 @@ mod tests {
         while cursor < bytes.len() {
             let frame =
                 crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
-            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+            if frame.header.event_type == event_type {
                 payloads.push(
                     serde_json::from_slice::<serde_json::Value>(frame.payload)
                         .expect("provider request JSON"),
@@ -1140,6 +1144,14 @@ mod tests {
             cursor += frame.header.total_len as usize;
         }
         payloads
+    }
+
+    fn provider_request_wal_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
+        wal_payloads(segment, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST)
+    }
+
+    fn cost_estimate_wal_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
+        wal_payloads(segment, crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN)
     }
 
     fn pin_preference(
@@ -1600,8 +1612,22 @@ mod tests {
         let payloads = provider_request_wal_payloads(&segment);
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["requested_max_output_tokens"], 321);
-        assert_eq!(payloads[0]["output_token_ceiling"], 320);
         assert!(payloads[1]["requested_max_output_tokens"].is_null());
+        let estimates = cost_estimate_wal_payloads(&segment);
+        assert_eq!(estimates.len(), 2);
+        assert_eq!(estimates[0]["requested_max_output_tokens"], 321);
+        assert_eq!(estimates[0]["output_token_ceiling"], 320);
+        let request_binding = payloads[0]["request_binding_sha256"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .expect("provider request carries a nonempty binding");
+        let estimate_binding = estimates[0]["request_binding_sha256"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .expect("cost estimate carries a nonempty binding");
+        assert_eq!(request_binding.len(), 64);
+        assert!(request_binding.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(request_binding, estimate_binding);
     }
 
     #[tokio::test]
@@ -1696,26 +1722,25 @@ mod tests {
         drop(writer);
         join.await.expect("WAL writer drains");
 
-        let bytes = std::fs::read(&segment).expect("read provider WAL");
-        let header =
-            crate::wal::segment_header::parse_segment_header(&bytes).expect("parse WAL header");
-        let mut cursor = header.header_len();
-        let mut request_payload = None;
-        while cursor < bytes.len() {
-            let frame =
-                crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
-            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
-                request_payload = Some(
-                    serde_json::from_slice::<serde_json::Value>(frame.payload)
-                        .expect("provider request JSON"),
-                );
-                break;
-            }
-            cursor += frame.header.total_len as usize;
-        }
-        let request_payload = request_payload.expect("durable provider request");
+        let requests = provider_request_wal_payloads(&segment);
+        assert_eq!(requests.len(), 1);
+        let request_payload = &requests[0];
         assert_eq!(request_payload["requested_max_output_tokens"], 321);
-        assert_eq!(request_payload["output_token_ceiling"], 320);
+        let estimates = cost_estimate_wal_payloads(&segment);
+        assert_eq!(estimates.len(), 1);
+        assert_eq!(estimates[0]["requested_max_output_tokens"], 321);
+        assert_eq!(estimates[0]["output_token_ceiling"], 320);
+        let request_binding = request_payload["request_binding_sha256"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .expect("provider request carries a nonempty binding");
+        let estimate_binding = estimates[0]["request_binding_sha256"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .expect("cost estimate carries a nonempty binding");
+        assert_eq!(request_binding.len(), 64);
+        assert!(request_binding.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(request_binding, estimate_binding);
     }
 
     #[test]
