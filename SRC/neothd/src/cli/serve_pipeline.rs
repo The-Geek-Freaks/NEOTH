@@ -11829,7 +11829,7 @@ mod tests {
                 let replies = Arc::new(std::sync::Mutex::new(
                     std::collections::VecDeque::from([
                         serde_json::json!({
-                            "choices": [{"message": {"content": "```mcp-tool-call\\n{\\\"server\\\":\\\"neoth-codegraph\\\",\\\"tool\\\":\\\"codegraph_recall_v1\\\",\\\"arguments\\\":{\\\"prompt\\\":\\\"leaf_w2062\\\",\\\"limit\\\":1}}\\n```"}}],
+                            "choices": [{"message": {"content": "```mcp-tool-call\n{\"server\":\"neoth-codegraph\",\"tool\":\"codegraph_recall_v1\",\"arguments\":{\"prompt\":\"leaf_w2062\",\"limit\":1}}\n```"}}],
                             "model": WIRE_MODEL,
                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}
                         }),
@@ -11924,7 +11924,11 @@ mod tests {
                     "wrong consent route cannot reach the captured upstream provider"
                 );
                 assert!(
-                    selected.received_requests().await.is_empty(),
+                    selected
+                        .received_requests()
+                        .await
+                        .expect("record W2062 selected endpoint requests")
+                        .is_empty(),
                     "the selected named endpoint receives zero requests while only a wrong route is granted"
                 );
 

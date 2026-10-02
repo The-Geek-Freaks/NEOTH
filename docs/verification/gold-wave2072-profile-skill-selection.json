@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-wave2072-named-profile-skill/v1",
-  "capturedUtc": "2026-10-01T19:06:47.5575320Z",
+  "capturedUtc": "2026-10-01T19:06:47.557532Z",
   "baseline": "394aef54b4af9e47e747b06f112c44158083a7ee",
-  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "status": "HOSTED_339_COMPILE_DIAGNOSTICS_REPAIRED_EXECUTION_PENDING",
   "behavior": [
     "Explicit profile provider_instance_id resolves exact endpoint, key, model, profile and audit identity",
     "Installed Skills retain one admitted route through public Chat and Channel/MCP requests",
@@ -141,5 +141,27 @@
   "hostedAcceptance": false,
   "nativeAcceptance": false,
   "releaseAcceptance": false,
-  "priorPlanBytesPreserved": true
+  "priorPlanBytesPreserved": true,
+  "hostedRepair2079": {
+    "producer": "ff45dcdb74181cfb4c263aeaa7e3d7a866cad72e",
+    "run": 36972214882,
+    "conclusion": "failure",
+    "phase": "Rust lib-test compilation",
+    "diagnostics": [
+      "E0308 retained skill admission reference versus owned Option",
+      "E0599 Wiremock optional request recording",
+      "E0716 borrowed temporary counting provider"
+    ],
+    "executed": 0,
+    "passed": 0,
+    "custodySHA256": "B22B516211A4C524F4849873460082A839F3E72A7B24A19B098F1D3074181B26",
+    "repairs": [
+      "Clone retained immutable admission without consuming retry state",
+      "Require Wiremock request recording before asserting empty requests",
+      "Keep counting provider alive through authorization wrapper",
+      "Root static finding: emit real fenced MCP JSON in Channel fixture"
+    ],
+    "localExecutableValidationRan": false,
+    "hostedRevalidation": "pending"
+  }
 }

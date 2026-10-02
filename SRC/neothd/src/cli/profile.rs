@@ -3951,8 +3951,9 @@ mod tests {
             &cfg,
         )
         .expect("named profile authorizer must not inherit Left policy");
+        let counting_provider = W301CountingProvider(calls.clone());
         let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &W301CountingProvider(calls.clone()),
+            &counting_provider,
             authorizer,
             None,
             "profile.named.2061",

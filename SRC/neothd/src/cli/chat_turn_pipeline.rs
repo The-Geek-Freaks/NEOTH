@@ -849,7 +849,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             slash_skill_name: slash_skill_name.clone(),
             // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
             persona_override_from_tweaks: tweaks.persona_override.clone(),
-            retained_skill_admission,
+            retained_skill_admission: retained_skill_admission.clone(),
             replay_skill_registry: replay_context.as_ref().map(|context| {
                 (
                     context.installed_skill_home.clone(),
