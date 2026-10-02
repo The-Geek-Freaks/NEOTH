@@ -1,0 +1,386 @@
+name: Matrix security lock reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main commit to reconcile
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matrix-security-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+
+      - name: Require exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+
+      - name: Initialize immutable evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/matrix-security-lock-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          printf '%s\n' 'pending' > "$evidence/outcome.txt"
+          printf 'MATRIX_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+
+      - name: Set up Rust 1.93.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.93.0'
+
+      - name: Set up Python for provenance gate
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: Materialize reviewed vendor postimages and source-custody gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$MATRIX_EVIDENCE/source-custody.log") 2>&1
+          test -f packaging/vendor-provenance/matrix-sdk-0.18.0.crate
+          test -f packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate
+          test -f packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch
+          test -f packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch
+          test -f packaging/matrix_backport_provenance_gate.py
+          test -f packaging/tests/test_matrix_backport_provenance_gate.py
+          test ! -e SRC/vendor/matrix-sdk
+          test ! -e SRC/vendor/matrix-sdk-crypto
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import tarfile
+
+          def extract_regular(archive: str, prefix: str, destination: str) -> None:
+              target = Path(destination)
+              seen: set[str] = set()
+              with tarfile.open(archive, "r:gz") as bundle:
+                  members = bundle.getmembers()
+                  for member in members:
+                      if member.name.startswith("/") or ".." in Path(member.name).parts:
+                          raise SystemExit(f"unsafe archive member: {member.name!r}")
+                      if not member.name.startswith(prefix + "/"):
+                          raise SystemExit(f"member outside reviewed prefix: {member.name!r}")
+                      relative = member.name.removeprefix(prefix + "/")
+                      if not relative:
+                          continue
+                      if member.isdir():
+                          continue
+                      if not member.isfile() or relative in seen:
+                          raise SystemExit(f"non-regular or duplicate archive member: {relative!r}")
+                      seen.add(relative)
+                      output = target / relative
+                      output.parent.mkdir(parents=True, exist_ok=True)
+                      stream = bundle.extractfile(member)
+                      if stream is None:
+                          raise SystemExit(f"unreadable archive member: {relative!r}")
+                      with output.open("xb") as handle:
+                          handle.write(stream.read())
+
+          extract_regular("packaging/vendor-provenance/matrix-sdk-0.18.0.crate", "matrix-sdk-0.18.0", "SRC/vendor/matrix-sdk")
+          extract_regular("packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate", "matrix-sdk-crypto-0.18.0", "SRC/vendor/matrix-sdk-crypto")
+          PY
+          git apply --check --directory=SRC/vendor/matrix-sdk packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch
+          git apply --directory=SRC/vendor/matrix-sdk packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch
+          git apply --check --directory=SRC/vendor/matrix-sdk-crypto packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch
+          git apply --directory=SRC/vendor/matrix-sdk-crypto packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch
+          python3 packaging/matrix_backport_provenance_gate.py --root . --source-only
+          python3 packaging/tests/test_matrix_backport_provenance_gate.py
+
+      - name: Reconcile only Matrix path identities and synchronized exception
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$MATRIX_EVIDENCE/reconcile.log") 2>&1
+          cp SRC/Cargo.lock "$MATRIX_EVIDENCE/Cargo.lock.pre"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("SRC/Cargo.toml")
+          source = manifest.read_text(encoding="utf-8")
+          anchor = 'peeroxide-dht = { path = "vendor/peeroxide-dht" }\n'
+          additions = (
+              'matrix-sdk = { path = "vendor/matrix-sdk", version = "=0.18.0" }\n'
+              'matrix-sdk-crypto = { path = "vendor/matrix-sdk-crypto", version = "=0.18.0" }\n'
+          )
+          if source.count(anchor) != 1 or "matrix-sdk = { path =" in source or "matrix-sdk-crypto = { path =" in source:
+              raise SystemExit("workspace patch-table preimage is absent or ambiguous")
+          manifest.write_text(source.replace(anchor, anchor + additions), encoding="utf-8", newline="\n")
+
+          audit = Path("SRC/.cargo/audit.toml")
+          audit_source = audit.read_text(encoding="utf-8")
+          audit_anchor = '    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac\n'
+          audit_addition = '    "RUSTSEC-2026-0318", # reviewed source-bound matrix-sdk-crypto 0.18.0 backport; expires 2026-11-01\n'
+          if audit_source.count(audit_anchor) != 1 or "RUSTSEC-2026-0318" in audit_source:
+              raise SystemExit("audit exception preimage is absent or ambiguous")
+          audit.write_text(audit_source.replace(audit_anchor, audit_anchor + audit_addition), encoding="utf-8", newline="\n")
+
+          deny = Path("SRC/deny.toml")
+          deny_source = deny.read_text(encoding="utf-8")
+          deny_anchor = '    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac; no vuln, no safe direct upgrade. Re-evaluate with next Matrix stack bump." },\n'
+          deny_addition = '    { id = "RUSTSEC-2026-0318", reason = "Reviewed source-bound matrix-sdk-crypto 0.18.0 vendor backport; expires 2026-11-01 and must be removed or re-reviewed then." },\n'
+          if deny_source.count(deny_anchor) != 1 or "RUSTSEC-2026-0318" in deny_source:
+              raise SystemExit("deny exception preimage is absent or ambiguous")
+          deny.write_text(deny_source.replace(deny_anchor, deny_anchor + deny_addition), encoding="utf-8", newline="\n")
+          PY
+          cargo update --manifest-path SRC/Cargo.toml -p matrix-sdk --precise 0.18.0
+          cargo update --manifest-path SRC/Cargo.toml -p matrix-sdk-crypto --precise 0.18.0
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features matrix-channel > "$MATRIX_EVIDENCE/matrix-metadata.after-resolution.json"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+
+          before = (Path(os.environ["MATRIX_EVIDENCE"]) / "Cargo.lock.pre").read_text(encoding="utf-8")
+          after = Path("SRC/Cargo.lock").read_text(encoding="utf-8")
+          def packages(lock: str) -> dict[str, list[str]]:
+              chunks = re.split(r"(?=^\[\[package\]\]$)", lock, flags=re.MULTILINE)
+              result: dict[str, list[str]] = {}
+              for chunk in chunks:
+                  match = re.search(r'^name = "([^"]+)"$', chunk, flags=re.MULTILINE)
+                  if match:
+                      result.setdefault(match.group(1), []).append(chunk)
+              return result
+          old, new = packages(before), packages(after)
+          allowed = {"matrix-sdk", "matrix-sdk-crypto", "anymap2"}
+          names = set(old) | set(new)
+          changed = {name for name in names if old.get(name) != new.get(name)}
+          if changed - allowed:
+              raise SystemExit(f"unrelated Cargo.lock package blocks changed: {sorted(changed - allowed)}")
+          if "anymap2" in new:
+              raise SystemExit("anymap2 remained in resolved workspace lock")
+          if old.get("anymap3") != new.get("anymap3"):
+              raise SystemExit("existing canonical anymap3 block changed")
+          PY
+          expected=$'SRC/.cargo/audit.toml\nSRC/Cargo.lock\nSRC/Cargo.toml\nSRC/deny.toml'
+          test "$(git diff --name-only | LC_ALL=C sort)" = "$expected"
+
+      - name: Require final provenance and Rust 1.93 Matrix feature check
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$MATRIX_EVIDENCE/final-validation.log") 2>&1
+          python3 packaging/matrix_backport_provenance_gate.py --root .
+          cargo metadata --manifest-path SRC/neothd/Cargo.toml --locked --format-version 1 --features matrix-channel > "$MATRIX_EVIDENCE/matrix-metadata.final.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ["MATRIX_EVIDENCE"])
+          metadata = json.loads((evidence / "matrix-metadata.final.json").read_text(encoding="utf-8"))
+          packages = metadata.get("packages")
+          resolve = metadata.get("resolve")
+          if not isinstance(packages, list) or not isinstance(resolve, dict):
+              raise SystemExit("Cargo metadata lacks packages or resolve graph")
+          nodes = resolve.get("nodes")
+          if not isinstance(nodes, list):
+              raise SystemExit("Cargo metadata resolve graph lacks nodes")
+
+          expected_manifests = {
+              "matrix-sdk": Path("SRC/vendor/matrix-sdk/Cargo.toml").resolve(),
+              "matrix-sdk-crypto": Path("SRC/vendor/matrix-sdk-crypto/Cargo.toml").resolve(),
+          }
+          selected = {}
+          for name, manifest_path in expected_manifests.items():
+              matches = [package for package in packages if package.get("name") == name]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected exactly one resolved {name} package, found {len(matches)}")
+              package = matches[0]
+              if package.get("version") != "0.18.0" or package.get("source") is not None:
+                  raise SystemExit(f"{name} must be source-null version 0.18.0")
+              if Path(package.get("manifest_path", "")).resolve() != manifest_path:
+                  raise SystemExit(f"{name} manifest path is not the reviewed vendor manifest")
+              if not isinstance(package.get("id"), str) or not package["id"]:
+                  raise SystemExit(f"{name} package lacks a resolved package ID")
+              selected[name] = package["id"]
+
+          if any(package.get("name") == "anymap2" for package in packages):
+              raise SystemExit("anymap2 remained in final metadata")
+          anymap3 = [package for package in packages if package.get("name") == "anymap3"]
+          if len(anymap3) != 1 or anymap3[0].get("version") != "1.1.0" or not anymap3[0].get("id"):
+              raise SystemExit("final metadata does not contain exactly one canonical anymap3 package")
+
+          node_by_id = {node.get("id"): node for node in nodes if isinstance(node, dict) and isinstance(node.get("id"), str)}
+          for name, package_id in selected.items():
+              if package_id not in node_by_id:
+                  raise SystemExit(f"final resolve graph lacks {name} package ID")
+          anymap3_id = anymap3[0]["id"]
+          if anymap3_id not in node_by_id:
+              raise SystemExit("final resolve graph lacks anymap3 package ID")
+          sdk_dependencies = node_by_id[selected["matrix-sdk"]].get("dependencies")
+          if not isinstance(sdk_dependencies, list) or anymap3_id not in sdk_dependencies:
+              raise SystemExit("matrix-sdk resolve node does not directly depend on canonical anymap3")
+
+          reachable = set()
+          pending = [selected["matrix-sdk"]]
+          while pending:
+              package_id = pending.pop()
+              if package_id in reachable:
+                  continue
+              reachable.add(package_id)
+              dependencies = node_by_id[package_id].get("dependencies")
+              if not isinstance(dependencies, list) or not all(isinstance(dep, str) and dep in node_by_id for dep in dependencies):
+                  raise SystemExit(f"resolve node {package_id} has incomplete dependency IDs")
+              pending.extend(dependencies)
+          for name, package_id in (("anymap3", anymap3_id), ("matrix-sdk-crypto", selected["matrix-sdk-crypto"])):
+              if package_id not in reachable:
+                  raise SystemExit(f"matrix-sdk resolved dependency closure lacks {name}")
+
+          (evidence / "matrix-metadata-assertion.json").write_text(json.dumps({
+              "schema": "neoth.matrix_security_lock_metadata_assertion.v1",
+              "matrix_sdk_id": selected["matrix-sdk"],
+              "matrix_sdk_crypto_id": selected["matrix-sdk-crypto"],
+              "anymap3_id": anymap3_id,
+              "matrix_sdk_manifest_path": str(expected_manifests["matrix-sdk"]),
+              "matrix_sdk_crypto_manifest_path": str(expected_manifests["matrix-sdk-crypto"]),
+              "source": None,
+              "matrix_sdk_direct_anymap3_id": anymap3_id,
+              "all_required_dependency_ids_reachable": True,
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+          cargo check --manifest-path SRC/neothd/Cargo.toml --locked --features matrix-channel
+          (
+            set -euo pipefail
+            test_root="$RUNNER_TEMP/matrix-sdk-crypto-regression"
+            source_root="$GITHUB_WORKSPACE/SRC/vendor/matrix-sdk-crypto"
+            cp -a "$source_root" "$test_root"
+            (
+              cd "$source_root"
+              find . -path ./target -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+            ) > "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-source-tree.SHA256"
+            cd "$test_root"
+            (
+              find . -path ./target -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+            ) > "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-copy-before.SHA256"
+            cmp "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-source-tree.SHA256" "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-copy-before.SHA256"
+            cargo test --locked --lib -- --list | tee "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-list.txt"
+            mapfile -t selected_tests < <(sed -n -E 's/^([[:alnum:]_][^[:space:]]*::test_share_strategy_prevents_encryption): test$/\1/p' "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-list.txt")
+            test "${#selected_tests[@]}" -eq 1
+            [[ "${selected_tests[0]}" == *::test_share_strategy_prevents_encryption ]]
+            cargo test --locked --lib "${selected_tests[0]}" -- --exact | tee "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-exact.log"
+            grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-exact.log"
+            (
+              find . -path ./target -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+            ) > "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-copy-tree.SHA256"
+            cmp "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-source-tree.SHA256" "$MATRIX_EVIDENCE/matrix-sdk-crypto-test-copy-tree.SHA256"
+            cmp Cargo.lock "$source_root/Cargo.lock"
+          )
+
+      - name: Run cargo-audit with synchronized source-bound exception
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo audit --json | tee "$MATRIX_EVIDENCE/cargo-audit.json"
+          cargo audit | tee "$MATRIX_EVIDENCE/cargo-audit.txt"
+
+      - name: Run cargo-deny with synchronized source-bound exception
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: SRC/Cargo.toml
+          command: check
+          arguments: --workspace --all-features --locked --config SRC/deny.toml
+          command-arguments: --deny yanked
+          rust-version: '1.93'
+
+      - name: Seal cargo-deny success receipt
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$MATRIX_EVIDENCE/cargo-deny-receipt.txt" <<'EOF'
+          action=EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+          manifest-path=SRC/Cargo.toml
+          command=check
+          arguments=--workspace --all-features --locked --config SRC/deny.toml
+          command-arguments=--deny yanked
+          rust-version=1.93
+          result=success
+          EOF
+
+      - name: Seal successful candidate postimages
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'success' > "$MATRIX_EVIDENCE/outcome.txt"
+          cp SRC/Cargo.toml SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml "$MATRIX_EVIDENCE/"
+          cp -a SRC/vendor/matrix-sdk SRC/vendor/matrix-sdk-crypto "$MATRIX_EVIDENCE/"
+          cp packaging/vendor-provenance/matrix-sdk-0.18.0.crate packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate "$MATRIX_EVIDENCE/"
+          cp packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch "$MATRIX_EVIDENCE/"
+          git diff --binary --full-index -- SRC/Cargo.toml SRC/Cargo.lock SRC/.cargo/audit.toml SRC/deny.toml > "$MATRIX_EVIDENCE/workspace.patch"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          evidence = Path(os.environ["MATRIX_EVIDENCE"])
+          (evidence / "metadata.json").write_text(json.dumps({
+              "schema": "neoth.matrix_security_lock_candidate.v1",
+              "source_head": (evidence / "source-head.txt").read_text(encoding="utf-8").strip(),
+              "rust_toolchain": "1.93.0",
+              "matrix_sdk_archive_sha256": "7083d580527511ac5d9369e03b9f2b20902e76949f1b3964051f978e4d3756ae",
+              "matrix_sdk_crypto_archive_sha256": "c54afd2a326f51c13a6ad44ec86315a688fffeb3f1e287fb343e0e1836a3bdaf",
+              "advisory": "RUSTSEC-2026-0318",
+              "advisory_expiry": "2026-11-01",
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+          find "$MATRIX_EVIDENCE" -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$MATRIX_EVIDENCE/SHA256SUMS"
+
+      - name: Seal failure diagnostic
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'failed' > "$MATRIX_EVIDENCE/outcome.txt"
+          git status --short > "$MATRIX_EVIDENCE/git-status.txt" || true
+          sha256sum "$MATRIX_EVIDENCE"/* > "$MATRIX_EVIDENCE/SHA256SUMS" || true
+
+      - name: Upload successful immutable candidate
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: matrix-security-lock-candidate-${{ github.sha }}
+          path: ${{ env.MATRIX_EVIDENCE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+      - name: Upload distinct failure diagnostic
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: matrix-security-lock-failure-${{ github.sha }}
+          path: ${{ env.MATRIX_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14

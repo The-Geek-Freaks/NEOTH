@@ -592,7 +592,7 @@ async fn run_one_task_execution_inner(
             result: None,
             provider_name: Some(provider_name),
             requested_max_output_tokens: job.max_output_tokens,
-            effective_output_token_ceiling: effective_output_token_ceiling,
+            effective_output_token_ceiling,
         }
         .into();
     }
@@ -625,7 +625,7 @@ async fn run_one_task_execution_inner(
                 result: None,
                 provider_name: Some(provider_name),
                 requested_max_output_tokens: job.max_output_tokens,
-                effective_output_token_ceiling: effective_output_token_ceiling,
+                effective_output_token_ceiling,
             }
             .into();
         }
@@ -644,7 +644,7 @@ async fn run_one_task_execution_inner(
                 result: None,
                 provider_name: Some(provider_name),
                 requested_max_output_tokens: job.max_output_tokens,
-                effective_output_token_ceiling: effective_output_token_ceiling,
+                effective_output_token_ceiling,
             }
             .into();
         }
@@ -692,7 +692,7 @@ async fn run_one_task_execution_inner(
                 result: None,
                 provider_name: Some(provider_name),
                 requested_max_output_tokens: job.max_output_tokens,
-                effective_output_token_ceiling: effective_output_token_ceiling,
+                effective_output_token_ceiling,
             });
         }
         outcome = &mut provider_call => outcome,

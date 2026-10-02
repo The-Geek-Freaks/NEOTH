@@ -1,0 +1,118 @@
+{
+  "schema": "neoth.gold.wave2171.matrix-preparation.v1",
+  "base": "d7e323e16b632fadefad2f54852cfe52e25adbf3",
+  "status": "REVIEWED_PREPARATION_HOSTED_CANDIDATE_PENDING",
+  "focusedAcceptance": {
+    "rust": 414,
+    "python": 63,
+    "guards": 20,
+    "receipt": "work/gold-20260906/wave2161-focused414-validation/ROOT_CHECKS.json",
+    "run": 37034494395,
+    "products": 4,
+    "sha256": "C008B6F9783D2933F9CDA0D001612B200E69EA56BB01B411D1A0762ADAC88466",
+    "producer": "d7e323e16b632fadefad2f54852cfe52e25adbf3",
+    "daemonAdoptions": 2
+  },
+  "fullRun": {
+    "linuxDiagnostic": "four redundant_field_names in cluster/executor.rs",
+    "freshAcceptance": false,
+    "producer": "d7e323e16b632fadefad2f54852cfe52e25adbf3",
+    "run": 37036343155
+  },
+  "dependencyFindings": {
+    "vulnerability": "RUSTSEC-2026-0318",
+    "maintenanceAdvisory": "RUSTSEC-2026-0319",
+    "securityAcceptance": false,
+    "run": 37036159230
+  },
+  "changes": [
+    "Apply four behavior-preserving Rust field shorthands reported by the current full Linux workspace Clippy job.",
+    "Publish authenticated Matrix 0.18 archive and exact reviewed backport inputs, provenance gate and six gate tests.",
+    "Provide an exact-source hosted-only candidate workflow; it alone materializes and resolves the candidate before atomic Root import."
+  ],
+  "sourceInputs": [
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "sha": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
+      "candidate": "work/gold-20260906/wave2168-linux-workspace-lints/candidate/SRC/neothd/src/cluster/executor.rs",
+      "candidateBlob": "4199907907db99ecf97d2543ac75e51a1c4220d2"
+    },
+    {
+      "path": "packaging/matrix_backport_provenance_gate.py",
+      "sha": "3A7910A051979BBDC9571DB8980E01F1ED7310C375BA8D6E2EC74BD77FAE3410",
+      "candidate": "work/gold-20260906/wave2171-matrix-preparation/inputs/matrix_backport_provenance_gate.py",
+      "candidateBlob": "9c55f29cb4e3fbe4991547068175b62e23d613b3"
+    },
+    {
+      "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+      "sha": "77EBF7F732461768333E143715BD32543A2C6664ACA48ED255CC7A58555D86BD",
+      "candidate": "work/gold-20260906/wave2171-matrix-preparation/inputs/test_matrix_backport_provenance_gate.py",
+      "candidateBlob": "2723ff8d83d7501b161fefe060fd8c34c51fbe0b"
+    },
+    {
+      "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+      "sha": "598720D690E38F8002DCF77576A48BF051EC211C078414941700A4C27EFE3DA2",
+      "candidate": "work/gold-20260906/wave2170-matrix-hosted-workflow-candidate/.github/workflows/matrix-security-lock-reconcile.yml",
+      "candidateBlob": "896378e5cd896e84cf5c4ec069bf607e6ae0916b"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-0.18.0.crate",
+      "sha": "7083D580527511AC5D9369E03B9F2B20902E76949F1B3964051F978E4D3756AE",
+      "candidate": "work/gold-20260906/wave2166-matrix-sdk-backport/matrix-sdk-0.18.0.crate",
+      "candidateBlob": "1b1c92d09a8ebc8abdabe96b056da92d9411f8b2"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate",
+      "sha": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF",
+      "candidate": "work/gold-20260906/wave2167-matrix-crypto-backport/archive/matrix-sdk-crypto-0.18.0.crate",
+      "candidateBlob": "443f1fc353d5cb7676124a2d191f1dc5e5a06740"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch",
+      "sha": "C2C4C6DFB466FD1DFDE96F6D9027769A78956004E19690FB37CFFB6274BC3067",
+      "candidate": "work/gold-20260906/wave2171-matrix-preparation/inputs/matrix-sdk-0.18.0-anymap3.patch",
+      "candidateBlob": "9c54050931ec4af85098896d3432dc5290629ec3"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch",
+      "sha": "3F626F88D765B6288BA5E82E03580087932483D34FFA5A8462FEB95238BFEE44",
+      "candidate": "work/gold-20260906/wave2167-matrix-crypto-backport/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch",
+      "candidateBlob": "9581583eebc19df3c9102e7b426487593b84e27e"
+    }
+  ],
+  "review": {
+    "sha256": "37477943552D31C281B1E0138543570ED59D58C0AB1AED18D34BA5821A8C1078",
+    "path": "work/gold-20260906/wave2169-matrix-provenance-candidate/review/FINAL_WORKFLOW_REBIND.json"
+  },
+  "patchPostimages": {
+    "cryptoFiles": 141,
+    "path": "work/gold-20260906/wave2171-matrix-preparation/PATCH_POSTIMAGE_CHECKS.json",
+    "sdkFiles": 203,
+    "sha256": "B3AA50857640EA70FCC5EFB712B56B33015DE6D12BA3F2CDA418B7CB993EB715"
+  },
+  "boundaries": [
+    "This preparation does not change the workspace Cargo manifest, lock, vendor sources or advisory ignores.",
+    "Candidate resolution, metadata identity, Matrix Rust 1.93 build, exact upstream regression, audit and deny must pass before integration.",
+    "Core/public plugin Rust 1.91 and Matrix scoped Rust 1.93 remain unchanged.",
+    "Full CI remains bound to its earlier producer. CodeQL runner shutdown and signed native release qualification remain unresolved."
+  ],
+  "localExecutableValidationRan": false,
+  "matrixBackportIntegrated": false,
+  "hostedMatrixCandidateAccepted": false,
+  "nativeAccepted": false,
+  "releaseAccepted": false,
+  "rootWhitespaceNormalization": [
+    {
+      "path": "packaging/matrix_backport_provenance_gate.py",
+      "reviewedSha256": "1FABA001C6DF96B58F29ADC72D243A3D66D33089485D33CC3F84EDD2668A5321",
+      "finalSha256": "3A7910A051979BBDC9571DB8980E01F1ED7310C375BA8D6E2EC74BD77FAE3410",
+      "change": "Remove only surplus terminal blank lines."
+    },
+    {
+      "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+      "reviewedSha256": "8710AF8230D2954995A47E05F8369F0247C51C543D6A33E983F18102FBE050AA",
+      "finalSha256": "77EBF7F732461768333E143715BD32543A2C6664ACA48ED255CC7A58555D86BD",
+      "change": "Remove only surplus terminal blank lines."
+    }
+  ]
+}

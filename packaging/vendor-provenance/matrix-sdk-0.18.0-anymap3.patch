@@ -1,0 +1,57 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index ac38b7d5..eb70dfad 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -151,8 +151,9 @@ version = "1.0.100"
+ optional = true
+ default-features = false
+ 
+-[dependencies.anymap2]
+-version = "0.13.0"
++[dependencies.anymap3]
++version = "1.1.0"
++features = ["std"]
+ default-features = false
+ 
+ [dependencies.aquamarine]
+diff --git a/Cargo.toml.orig b/Cargo.toml.orig
+index fe4e3da6..4a04b09d 100644
+--- a/Cargo.toml.orig
++++ b/Cargo.toml.orig
+@@ -93,7 +93,7 @@ experimental-element-recent-emojis = ["matrix-sdk-base/experimental-element-rece
+ 
+ [dependencies]
+ anyhow = { workspace = true, optional = true }
+-anymap2 = { version = "0.13.0", default-features = false }
++anymap3 = { version = "1.1.0", default-features = false, features = ["std"] }
+ aquamarine.workspace = true
+ as_variant.workspace = true
+ assert_matches2 = { workspace = true, optional = true }
+diff --git a/src/event_handler/mod.rs b/src/event_handler/mod.rs
+index 946066d2..4e9ac6c8 100644
+--- a/src/event_handler/mod.rs
++++ b/src/event_handler/mod.rs
+@@ -45,10 +45,7 @@ use std::{
+     task::{Context, Poll},
+ };
+ 
+-#[cfg(target_family = "wasm")]
+-use anymap2::any::CloneAny;
+-#[cfg(not(target_family = "wasm"))]
+-use anymap2::any::CloneAnySendSync;
++use anymap3::CloneAny;
+ use eyeball::{SharedObservable, Subscriber};
+ use futures_core::Stream;
+ use futures_util::stream::{FuturesUnordered, StreamExt};
+@@ -84,9 +81,9 @@ type EventHandlerFn = dyn Fn(EventHandlerData<'_>) -> EventHandlerFut + Send + S
+ type EventHandlerFn = dyn Fn(EventHandlerData<'_>) -> EventHandlerFut;
+ 
+ #[cfg(not(target_family = "wasm"))]
+-type AnyMap = anymap2::Map<dyn CloneAnySendSync + Send + Sync>;
++type AnyMap = anymap3::Map<dyn CloneAny + Send + Sync>;
+ #[cfg(target_family = "wasm")]
+-type AnyMap = anymap2::Map<dyn CloneAny>;
++type AnyMap = anymap3::Map<dyn CloneAny>;
+ 
+ #[derive(Default)]
+ pub(crate) struct EventHandlerStore {

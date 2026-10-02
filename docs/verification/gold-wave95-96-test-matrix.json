@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "status": "REVIEWED_PREPARATION_HOSTED_CANDIDATE_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 293702,
-    "sha256": "A1D838D1AE8B8039D79EF251B9ED0639FB8CC7AA69C20F699E759EA34A7E63EA"
+    "bytes": 295247,
+    "sha256": "68D00846184E35473349C54BBCF306E375E377A2B2B6EA26CA33773F8F62B687"
   },
-  "sourceInputs": 1632,
+  "sourceInputs": 1640,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4986,73 +4986,73 @@
     {
       "test": "cluster::executor::tests::no_provider_yields_honest_failure_not_fake_ok",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_classifies_locally_aborted_provider_as_indeterminate",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::provider_error_is_redacted_failure",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::completion_is_returned_as_completed",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_remote_ollama_rechecks_live_consent_before_dispatch",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_task_blocks_when_built_cloud_fallback_consent_was_revoked",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::protected_cluster_request_fails_closed_when_fixed_layers_exceed_leaf_cap",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::executor_shutdown_cancels_inference_and_releases_wal_sender",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
@@ -6582,13 +6582,13 @@
     {
       "test": "cluster::executor::tests::scoped_assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::scoped_assignment_revoke_winning_final_authority_gate_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF",
+      "sourceSha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
       "junitClass": "neoth"
     },
     {
@@ -67886,6 +67886,74 @@
       }
     ],
     "note": "Sixteen Windows failure identities repaired; 414 focused / 2630 portable / 181 bound sources / 63 Python, hosted rerun required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2171MatrixPreparation": {
+    "base": "d7e323e16b632fadefad2f54852cfe52e25adbf3",
+    "sources": [
+      {
+        "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+        "bytes": 20762,
+        "sha256": "598720D690E38F8002DCF77576A48BF051EC211C078414941700A4C27EFE3DA2",
+        "blob": "896378e5cd896e84cf5c4ec069bf607e6ae0916b"
+      },
+      {
+        "path": "docs/verification/gold-wave2171-matrix-preparation.json",
+        "bytes": 5930,
+        "sha256": "B42020BB2828B00AD170F43DBDD40671F3E2D99289E3244E14BC42F05179E529",
+        "blob": "510167cac88f2309137c8cdbe86902ef41185088"
+      },
+      {
+        "path": "packaging/matrix_backport_provenance_gate.py",
+        "bytes": 52495,
+        "sha256": "0ED6121741F0163C120FF8C68F590D2A2F386D11CE5A7541F1A5AB88CF4D7FB8",
+        "blob": "9c55f29cb4e3fbe4991547068175b62e23d613b3"
+      },
+      {
+        "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+        "bytes": 7394,
+        "sha256": "77EBF7F732461768333E143715BD32543A2C6664ACA48ED255CC7A58555D86BD",
+        "blob": "2723ff8d83d7501b161fefe060fd8c34c51fbe0b"
+      },
+      {
+        "path": "packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch",
+        "bytes": 1916,
+        "sha256": "C2C4C6DFB466FD1DFDE96F6D9027769A78956004E19690FB37CFFB6274BC3067",
+        "blob": "9c54050931ec4af85098896d3432dc5290629ec3"
+      },
+      {
+        "path": "packaging/vendor-provenance/matrix-sdk-0.18.0.crate",
+        "bytes": 927421,
+        "sha256": "7083D580527511AC5D9369E03B9F2B20902E76949F1B3964051F978E4D3756AE",
+        "blob": "1b1c92d09a8ebc8abdabe96b056da92d9411f8b2"
+      },
+      {
+        "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch",
+        "bytes": 3807,
+        "sha256": "3F626F88D765B6288BA5E82E03580087932483D34FFA5A8462FEB95238BFEE44",
+        "blob": "9581583eebc19df3c9102e7b426487593b84e27e"
+      },
+      {
+        "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate",
+        "bytes": 521545,
+        "sha256": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF",
+        "blob": "443f1fc353d5cb7676124a2d191f1dc5e5a06740"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2303568,
+        "sha256": "7CC72FB35BD8FDB9674730570F2E4A69AAA7F828B260B95977215AF15D8A8914",
+        "blob": "8f6f4dbf256bfe4af8219fe37efab5021a8252fd"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/executor.rs",
+        "bytes": 82126,
+        "sha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
+        "blob": "4199907907db99ecf97d2543ac75e51a1c4220d2"
+      }
+    ],
+    "note": "Four Linux lint shorthands; Matrix backport custody/workflow preparation only, real dependency graph import pending hosted proof.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

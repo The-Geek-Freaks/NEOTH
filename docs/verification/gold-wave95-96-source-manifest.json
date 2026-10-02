@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T16:23:20.1735750Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "capturedUtc": "2026-10-02T17:29:34.4014971Z",
+  "validationStatus": "REVIEWED_PREPARATION_HOSTED_CANDIDATE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -80,6 +80,11 @@
       "path": ".github/workflows/managed-browser-provenance.yml",
       "bytes": 17337,
       "sha256": "94E4597AF87EE91EF422753839D1515F6A54FABBDEAC4DA2A3E5750C97EF2306"
+    },
+    {
+      "path": ".github/workflows/matrix-security-lock-reconcile.yml",
+      "bytes": 20762,
+      "sha256": "598720D690E38F8002DCF77576A48BF051EC211C078414941700A4C27EFE3DA2"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
@@ -3102,6 +3107,11 @@
       "sha256": "4327314CA903CA5F889F60466D36603964FE709FC0C51775B28F09176B8A878D"
     },
     {
+      "path": "docs/verification/gold-wave2171-matrix-preparation.json",
+      "bytes": 5930,
+      "sha256": "B42020BB2828B00AD170F43DBDD40671F3E2D99289E3244E14BC42F05179E529"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -3972,6 +3982,11 @@
       "sha256": "07B2D707F738CC100C78FC7C5644B17EBA2067E64B9F67C8DDE596389A0B4CE7"
     },
     {
+      "path": "packaging/matrix_backport_provenance_gate.py",
+      "bytes": 52495,
+      "sha256": "0ED6121741F0163C120FF8C68F590D2A2F386D11CE5A7541F1A5AB88CF4D7FB8"
+    },
+    {
       "path": "packaging/n8n_bootstrap_canary.py",
       "bytes": 33214,
       "sha256": "23118857E4655BAD3FEDBB702E4D0840AEC9114482386AAB5FEE783EF688500A"
@@ -4082,6 +4097,11 @@
       "sha256": "D1EDD75E2976FF1BF68B6A1A75F86009D84E7EAF6961A40FD375273A96845C04"
     },
     {
+      "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+      "bytes": 7394,
+      "sha256": "77EBF7F732461768333E143715BD32543A2C6664ACA48ED255CC7A58555D86BD"
+    },
+    {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
       "bytes": 16835,
       "sha256": "424D31FE33CADE5D0FB1DC23D3910EA5B0DFE722AED5BB03A4F5FE4B157ED056"
@@ -4172,6 +4192,26 @@
       "sha256": "0FADE8AE6828627AD1FA094A891ECCFB25150B383047190A3648D66D06186501"
     },
     {
+      "path": "packaging/vendor-provenance/matrix-sdk-0.18.0-anymap3.patch",
+      "bytes": 1916,
+      "sha256": "C2C4C6DFB466FD1DFDE96F6D9027769A78956004E19690FB37CFFB6274BC3067"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-0.18.0.crate",
+      "bytes": 927421,
+      "sha256": "7083D580527511AC5D9369E03B9F2B20902E76949F1B3964051F978E4D3756AE"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0-rustsec-2026-0318.patch",
+      "bytes": 3807,
+      "sha256": "3F626F88D765B6288BA5E82E03580087932483D34FFA5A8462FEB95238BFEE44"
+    },
+    {
+      "path": "packaging/vendor-provenance/matrix-sdk-crypto-0.18.0.crate",
+      "bytes": 521545,
+      "sha256": "C54AFD2A326F51C13A6AD44EC86315A688FFFEB3F1E287FB343E0E1836A3BDAF"
+    },
+    {
       "path": "packaging/windows/smoke-installer.ps1",
       "bytes": 52630,
       "sha256": "376C113510BC09BEE2F6439DF5F14A5DDB001248E85553B8B4CF500A1D975877"
@@ -4203,8 +4243,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2301345,
-      "sha256": "72A3B08C2D7E28085100B984D63C941B19A0E20D3BC3DCBFCE5FDF76F4B65492"
+      "bytes": 2303568,
+      "sha256": "7CC72FB35BD8FDB9674730570F2E4A69AAA7F828B260B95977215AF15D8A8914"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5593,8 +5633,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 82254,
-      "sha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF"
+      "bytes": 82126,
+      "sha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF"
     },
     {
       "path": "SRC/neothd/src/cluster/gossip_wire.rs",
