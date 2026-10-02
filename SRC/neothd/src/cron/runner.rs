@@ -185,7 +185,10 @@ async fn run_job_at_inner(
         );
     }
     if job.execution.max_output_tokens.is_some()
-        && !provider.get().request_controls().supports_max_output_tokens()
+        && !provider
+            .get()
+            .request_controls()
+            .supports_max_output_tokens()
     {
         anyhow::bail!(
             "Cron job `{}` requests max_output_tokens but provider `{}` cannot wire it",
@@ -949,8 +952,8 @@ async fn run_job_with_paths(
         }
     };
     let requested_max_output_tokens = req.max_output_tokens;
-    let effective_output_token_ceiling = requested_max_output_tokens
-        .and_then(|_| provider.output_token_ceiling(&req));
+    let effective_output_token_ceiling =
+        requested_max_output_tokens.and_then(|_| provider.output_token_ceiling(&req));
     let timeout_dur = Duration::from_secs(job.timeout_seconds.max(1) as u64);
     let provider_deadline = tokio::time::Instant::now() + timeout_dur;
     let result = tokio::time::timeout_at(

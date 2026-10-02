@@ -855,9 +855,10 @@ impl ExecutionPolicy {
         if self.thinking_budget == Some(0) {
             anyhow::bail!("execution.thinking_budget must be greater than zero");
         }
-        if self.max_output_tokens.is_some_and(|value| {
-            value == 0 || value > crate::providers::MAX_REQUEST_OUTPUT_TOKENS
-        }) {
+        if self
+            .max_output_tokens
+            .is_some_and(|value| value == 0 || value > crate::providers::MAX_REQUEST_OUTPUT_TOKENS)
+        {
             anyhow::bail!(
                 "execution.max_output_tokens must be in 1..={}",
                 crate::providers::MAX_REQUEST_OUTPUT_TOKENS,

@@ -77,8 +77,7 @@ type N8nTestDependencyStore = std::sync::Mutex<N8nTestDependencies>;
 
 #[cfg(test)]
 fn n8n_test_dependencies() -> &'static N8nTestDependencyStore {
-    static DEPENDENCIES: std::sync::OnceLock<N8nTestDependencyStore> =
-        std::sync::OnceLock::new();
+    static DEPENDENCIES: std::sync::OnceLock<N8nTestDependencyStore> = std::sync::OnceLock::new();
     DEPENDENCIES.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
 }
 
@@ -886,8 +885,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // its mandatory boundary, which keeps cost and WAL bindings anchored to
     // this unchanged `request`, not to n8n-side response metadata.
     let requested_max_output_tokens = request.max_output_tokens;
-    let effective_output_token_ceiling = match n8n_output_ceiling_preflight(&provider, &request)
-    {
+    let effective_output_token_ceiling = match n8n_output_ceiling_preflight(&provider, &request) {
         Ok(ceiling) => ceiling,
         Err(error) => {
             return HandlerOutcome::error(
@@ -1056,7 +1054,9 @@ mod tests {
                 .push(request.clone());
             Ok(crate::providers::Completion {
                 text: "bounded n8n completion".to_owned(),
-                model: request.model.unwrap_or_else(|| "n8n-ceiling-probe".to_owned()),
+                model: request
+                    .model
+                    .unwrap_or_else(|| "n8n-ceiling-probe".to_owned()),
                 latency: Duration::ZERO,
                 ..Default::default()
             })
@@ -1124,12 +1124,13 @@ mod tests {
 
     fn provider_request_wal_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
         let bytes = std::fs::read(segment).expect("read provider WAL");
-        let header = crate::wal::segment_header::parse_segment_header(&bytes)
-            .expect("parse WAL header");
+        let header =
+            crate::wal::segment_header::parse_segment_header(&bytes).expect("parse WAL header");
         let mut cursor = header.header_len();
         let mut payloads = Vec::new();
         while cursor < bytes.len() {
-            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
+            let frame =
+                crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
                 payloads.push(
                     serde_json::from_slice::<serde_json::Value>(frame.payload)
@@ -1474,8 +1475,8 @@ mod tests {
 
     #[test]
     fn provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape() {
-        let request: ProviderCallRequest = parse_body(br#"{"prompt":"legacy"}"#)
-            .expect("legacy n8n JSON parses");
+        let request: ProviderCallRequest =
+            parse_body(br#"{"prompt":"legacy"}"#).expect("legacy n8n JSON parses");
         assert_eq!(request.max_output_tokens, None);
         let response = serde_json::to_value(ProviderCallResponse {
             completion: "legacy".to_owned(),
@@ -1554,9 +1555,11 @@ mod tests {
             calls: AtomicUsize::new(0),
             requests: std::sync::Mutex::new(Vec::new()),
         });
-        let (state, writer, writer_join) =
-            n8n_ceiling_handler_state(home.path(), Arc::clone(&inner) as Arc<dyn crate::providers::Provider>)
-                .await;
+        let (state, writer, writer_join) = n8n_ceiling_handler_state(
+            home.path(),
+            Arc::clone(&inner) as Arc<dyn crate::providers::Provider>,
+        )
+        .await;
         let outcome = provider_call(
             &n8n_ceiling_provider_call_ctx(
                 br#"{"prompt":"bounded automation","incognito":true,"max_output_tokens":321}"#,
@@ -1694,12 +1697,13 @@ mod tests {
         join.await.expect("WAL writer drains");
 
         let bytes = std::fs::read(&segment).expect("read provider WAL");
-        let header = crate::wal::segment_header::parse_segment_header(&bytes)
-            .expect("parse WAL header");
+        let header =
+            crate::wal::segment_header::parse_segment_header(&bytes).expect("parse WAL header");
         let mut cursor = header.header_len();
         let mut request_payload = None;
         while cursor < bytes.len() {
-            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
+            let frame =
+                crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
                 request_payload = Some(
                     serde_json::from_slice::<serde_json::Value>(frame.payload)

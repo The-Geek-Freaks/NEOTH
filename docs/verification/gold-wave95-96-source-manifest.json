@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T11:30:40.3638652Z",
-  "validationStatus": "W2132 n8n/Cron output-ceiling callers statically reviewed; hosted acceptance pending",
+  "capturedUtc": "2026-10-02T11:35:56.0391976Z",
+  "validationStatus": "W2136 hosted formatting imported; focused398 acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5958,13 +5958,13 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 188454,
-      "sha256": "C7537E5FAD57A17E4454F12777607180CAC432B404761BE32404D6E2953953FE"
+      "bytes": 188492,
+      "sha256": "D6A4AA74531859553E05AE5A696BAD2AB0B30F5D7E108A8110BC29D66208814C"
     },
     {
       "path": "SRC/neothd/src/cron/schema.rs",
-      "bytes": 53832,
-      "sha256": "DBC0A469B2933B6B9B8E0380B7DBA089DEAC19607FE84DF05D200537442B42CD"
+      "bytes": 53842,
+      "sha256": "69648AA80132AA64988896CCD65876AB9EB91DB7ACF7478B352CA3D5A5A7F9C7"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -6928,8 +6928,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 86903,
-      "sha256": "84E3F6C068D7226A8313161F3630674C7C945E5252E3F9655210F1976E2D340F"
+      "bytes": 86977,
+      "sha256": "CF68A62EC6E11BB98BF7FB78C7F51C499E92CABE57BD9CDABE266AEE9DF168F0"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
