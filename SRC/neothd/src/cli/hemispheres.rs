@@ -152,6 +152,118 @@ pub enum PresetName {
     Single,
 }
 
+/// Receipt for one selector-only fallback-chain replacement.  The rollback
+/// receipt refers to the exact source generation reviewed before CAS commit;
+/// it is intentionally separate from role-specific rebind audit records.
+#[derive(Debug, Clone)]
+pub(crate) struct FallbackReplaceResult {
+    pub prior_count: usize,
+    pub fallback_count: usize,
+    pub snapshot_segment: std::path::PathBuf,
+    pub snapshot_offset: Option<u64>,
+    pub prior_source_sha256: String,
+}
+
+fn fallback_selectors_from_named_ids(
+    named_ids: &[String],
+) -> Result<Vec<crate::config::inference::HemisphereSlot>> {
+    let mut seen = std::collections::BTreeSet::new();
+    named_ids
+        .iter()
+        .map(|raw| {
+            let id = crate::config::inference::ProviderInstanceId::parse(raw)?;
+            anyhow::ensure!(
+                seen.insert(id.as_str().to_owned()),
+                "duplicate provider_instance_id `{}` in fallback replacement",
+                id.as_str()
+            );
+            Ok(crate::config::inference::HemisphereSlot {
+                provider_instance_id: Some(id),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+/// Replace the HTTP-429 fallback chain with named-instance selectors only.
+/// All selector validation completes while preparing the CAS-bound target;
+/// WAL snapshot failure or a stale source prevents publication.
+pub(crate) async fn replace_fallback_at(
+    home: &std::path::Path,
+    named_ids: Vec<String>,
+) -> Result<FallbackReplaceResult> {
+    let selectors = fallback_selectors_from_named_ids(&named_ids)
+        .context("validate fallback provider-instance selectors")?;
+    let path = home.join("freedom.yaml");
+    let (prepared, (rollback, prior_count, fallback_count)) =
+        FreedomConfig::prepare_update_at(&path, |cfg| {
+            cfg.inference.validate_provider_instances()?;
+            for selector in &selectors {
+                let binding = cfg.inference.resolve_explicit_slot_binding(selector)?;
+                anyhow::ensure!(
+                    binding.is_named_instance,
+                    "fallback selector must resolve to a named provider instance"
+                );
+            }
+            let prior_count = cfg.fallback.chain.len();
+            cfg.fallback.chain = selectors.clone();
+            Ok((cfg.rollback.clone(), prior_count, cfg.fallback.chain.len()))
+        })
+        .context("prepare selector-only fallback replacement")?;
+    let prior_yaml_bytes = prepared
+        .source_bytes()
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
+    let prior_source_sha256 = prepared.source_sha256();
+    let now_unix = crate::time::now_unix_i64();
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for fallback rollback snapshot")?;
+    let snapshot_segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fallback-replace-snapshot");
+    let (snap_writer, snap_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(
+            snapshot_segment.clone(),
+            home.to_path_buf(),
+        )
+            .context("spawn WAL writer for fallback rollback snapshot")?;
+    let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(
+        &snap_writer,
+        &rollback,
+        crate::wal::snapshot::MutationKind::ConfigWrite,
+        path.display().to_string(),
+        prior_yaml_bytes,
+        now_unix,
+        Some("hemispheres fallback replace via Buddy CLI".to_string()),
+    )
+    .await
+    .context("emit pre-mutation snapshot for fallback replacement");
+    drop(snap_writer);
+    let completion_result = snap_completion
+        .wait()
+        .await
+        .context("complete fallback rollback snapshot WAL writer");
+    let snapshot_offset = match (snapshot_result, completion_result) {
+        (Ok(offset), Ok(())) => offset,
+        (Err(snapshot_error), Ok(())) => return Err(snapshot_error),
+        (Ok(_), Err(completion_error)) => return Err(completion_error),
+        (Err(snapshot_error), Err(completion_error)) => {
+            return Err(anyhow::anyhow!(
+                "fallback rollback snapshot emission failed: {snapshot_error}; writer completion also failed: {completion_error}"
+            ));
+        }
+    };
+    prepared
+        .commit()
+        .with_context(|| format!("publish reviewed {} fallback replacement", path.display()))?;
+
+    Ok(FallbackReplaceResult {
+        prior_count,
+        fallback_count,
+        snapshot_segment,
+        snapshot_offset,
+        prior_source_sha256,
+    })
+}
+
 pub async fn run_hemispheres(args: HemispheresArgs) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
@@ -1143,6 +1255,156 @@ mod tests {
             }],
         });
         cfg
+    }
+
+    #[tokio::test]
+    async fn replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"proactive:
+  enabled: true
+future_extension: preserve-me
+inference:
+  mode: custom
+  provider_instances:
+    - id: fallback_a
+      descriptor: openai_compat
+      endpoint: https://a.example/v1
+      model: a-model
+    - id: fallback_b
+      descriptor: openai_compat
+      endpoint: https://b.example/v1
+      model: b-model
+    - id: fallback_old
+      descriptor: openai_compat
+      endpoint: https://old.example/v1
+      model: old-model
+  left: { provider_instance_id: fallback_a }
+fallback:
+  max_hops: 7
+  chain:
+    - { provider_instance_id: fallback_old }
+"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&freedom).unwrap();
+
+        let receipt = replace_fallback_at(
+            home.path(),
+            vec!["fallback_b".into(), "fallback_a".into()],
+        )
+        .await
+        .expect("replace named fallback selectors");
+        assert_eq!(receipt.prior_count, 1);
+        assert_eq!(receipt.fallback_count, 2);
+        assert!(receipt.snapshot_offset.is_some());
+        assert!(!receipt.prior_source_sha256.is_empty());
+        let snapshot_segment = std::fs::read(&receipt.snapshot_segment).unwrap();
+        let mut cursor = &snapshot_segment[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut snapshot_before_state = None;
+        while !cursor.is_empty() {
+            let frame = crate::wal::frame::decode_frame(cursor).expect("decode fallback snapshot frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                let snapshot: crate::wal::snapshot::PreMutationSnapshot =
+                    serde_json::from_slice(frame.payload).expect("decode fallback snapshot payload");
+                snapshot_before_state = Some(snapshot.before_state_bytes().unwrap());
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        assert_eq!(
+            snapshot_before_state.expect("fallback replacement writes a pre-mutation snapshot"),
+            before,
+            "rollback frame uses exact PreparedFreedomUpdate source bytes"
+        );
+        let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
+        assert_eq!(persisted.fallback.max_hops, 7);
+        assert!(persisted.proactive.enabled);
+        let persisted_raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
+        assert_eq!(persisted_raw["future_extension"].as_str(), Some("preserve-me"));
+        assert_eq!(
+            persisted.inference.left.provider_instance_id.as_ref().map(|id| id.as_str()),
+            Some("fallback_a")
+        );
+        assert_eq!(
+            persisted
+                .fallback
+                .chain
+                .iter()
+                .map(|slot| slot.provider_instance_id.as_ref().map(|id| id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![Some("fallback_b"), Some("fallback_a")]
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"inference:
+  provider_instances:
+    - id: fallback_known
+      descriptor: openai_compat
+      endpoint: https://known.example/v1
+      model: known-model
+fallback:
+  max_hops: 5
+  chain:
+    - { provider_instance_id: fallback_known }
+"#,
+        )
+        .unwrap();
+        let before = std::fs::read(&freedom).unwrap();
+        let unknown = replace_fallback_at(home.path(), vec!["fallback_missing".into()])
+            .await
+            .expect_err("unknown named selector fails before snapshot or commit");
+        assert!(format!("{unknown:#}").contains("unknown provider_instance_id"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before);
+
+        let cleared = replace_fallback_at(home.path(), Vec::new())
+            .await
+            .expect("clear existing fallback chain");
+        assert_eq!(cleared.prior_count, 1);
+        assert_eq!(cleared.fallback_count, 0);
+        let persisted = FreedomConfig::load_from_path(&freedom).unwrap();
+        assert!(persisted.fallback.chain.is_empty());
+        assert_eq!(persisted.fallback.max_hops, 5);
+    }
+
+    #[test]
+    fn fallback_preparation_cas_rejects_a_newer_generation_without_overwrite() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(&freedom, "operator_id: before\nfuture_extension: preserve\n").unwrap();
+        let (prepared, ()) = FreedomConfig::prepare_update_at(&freedom, |cfg| {
+            cfg.fallback.chain = fallback_selectors_from_named_ids(&["fallback_a".into()])?;
+            Ok(())
+        })
+        .unwrap();
+
+        FreedomConfig::update_at(&freedom, |cfg| {
+            cfg.language_primary = Some("de".to_string());
+            Ok(())
+        })
+        .unwrap();
+        let winning_generation = std::fs::read(&freedom).unwrap();
+
+        let error = prepared.commit().expect_err("stale fallback target must not publish");
+        assert!(error.to_string().contains("changed after review"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), winning_generation);
+    }
+
+    #[test]
+    fn fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids() {
+        assert!(fallback_selectors_from_named_ids(&["Invalid-ID".into()]).is_err());
+        let duplicate = fallback_selectors_from_named_ids(&["fallback_a".into(), "fallback_a".into()])
+            .expect_err("duplicate fallback selectors are rejected");
+        assert!(duplicate.to_string().contains("duplicate provider_instance_id"));
     }
 
     #[tokio::test]

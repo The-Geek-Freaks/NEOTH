@@ -1,0 +1,84 @@
+{
+  "schema": "neoth-gold-wave2101-buddy-controls/v1",
+  "capturedUtc": "2026-10-02T08:05:51.8101762Z",
+  "baseline": "e6f6b7dafe780d4c17dc3955538ba8262107b349",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "commands": [
+    "buddy provider {show,set,mode,preset,test}",
+    "buddy fallback replace --provider-instance-id <id> [--provider-instance-id <id> ...]",
+    "buddy fallback clear"
+  ],
+  "behavior": [
+    "Provider actions delegate to canonical hemispheres without a second writer",
+    "Fallback replacement persists only validated named-instance selectors in supplied order",
+    "Preserves max_hops, neighboring roles and unknown YAML; no credential or consent mutation",
+    "Exact prepared raw source is submitted for policy-governed rollback snapshot; writer completion is awaited on success and failure before CAS publication",
+    "Stale source, emission failure and writer completion failure prevent publication"
+  ],
+  "review": {
+    "files": [
+      {
+        "path": "SRC/neothd/src/cli/buddy.rs",
+        "reviewedCandidateSHA256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+        "mergedPath": "work/gold-20260906/wave2101-buddy-controls-publication/merged/buddy.rs",
+        "mergedSHA256": "111628AA3244180D3C13645167C110E0D10ACA31C88D880F9D2297A540D4A50E",
+        "mergedBlob": "ff9c7a890a02198798093f3d79a5a075efbb0564"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "reviewedCandidateSHA256": "2928D8C8E140673D64FAFA7AA14BDE7C76B5D21FA305A73EC6A6B1D07FC4B13D",
+        "mergedPath": "work/gold-20260906/wave2101-buddy-controls-publication/merged/hemispheres.rs",
+        "mergedSHA256": "5C3DD87CC864433A3387EEC835ED6C2F653341DDB414906CAEA9E19072F24E5B",
+        "mergedBlob": "d4d10da88fb91a2d2c32ccb738089af912f04982"
+      }
+    ],
+    "rootAdjustment": "One boolean assertion uses assert! instead of assert_eq!(...,true)",
+    "status": "APPROVED_STATIC",
+    "reviewer": "/root/w2078_alias_review"
+  },
+  "tests": [
+    {
+      "test": "cli::buddy::tests::buddy_provider_and_fallback_parsers_preserve_existing_status_surface",
+      "sourcePath": "SRC/neothd/src/cli/buddy.rs"
+    },
+    {
+      "test": "cli::buddy::tests::buddy_fallback_replace_requires_named_selectors_and_rejects_inline_flags",
+      "sourcePath": "SRC/neothd/src/cli/buddy.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    },
+    {
+      "test": "cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs"
+    }
+  ],
+  "registrations": {
+    "portable": 2589,
+    "focusedSourceBindings": 173,
+    "focused": 367,
+    "guards": 20
+  },
+  "precedingHosted": {
+    "newControlsIncluded": false,
+    "run": "36980128028",
+    "producer": "e6f6b7dafe780d4c17dc3955538ba8262107b349",
+    "remainingFailures": "Two named fallback cases, public chat stack overflow and channel MCP second-round assertion; independent original-artifact custody pending",
+    "conclusion": "failure"
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "namedRoleSelectionImplemented": false,
+  "guiChangesMade": false
+}

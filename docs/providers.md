@@ -408,3 +408,22 @@ Providerless legacy roles use the global route fields; named instances use only
 their own fields. Missing models remain unset. Endpoint credentials, query strings
 and fragments are omitted. This command reads configuration without constructing
 a provider or making a network call.
+
+### Change Buddy routes
+
+`neoth buddy provider` exposes the canonical `hemispheres` actions: `show`,
+`set`, `mode`, `preset` and `test`. Existing role validation, configuration
+transactions, rollback handling and audit behavior apply unchanged.
+
+To set a quota-fallback order using instances already defined in configuration:
+
+```bash
+neoth buddy fallback replace --provider-instance-id compat_primary --provider-instance-id compat_secondary
+neoth buddy fallback clear
+```
+
+Replacement changes only `fallback.chain`; it preserves `max_hops` and does not
+grant provider consent. Unknown or duplicate instance IDs are rejected before
+publication. JSON output includes previous/new counts and the rollback snapshot
+receipt, which is subject to the configured rollback policy. Runtime fallback
+continues to use the existing HTTP-429 and per-hop consent rules.

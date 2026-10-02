@@ -647,9 +647,15 @@ jobs:
           run_case 359 lib cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once cli::buddy::tests::buddy_status_routes_project_providerless_legacy_global_route_once --lib
           run_case 360 lib cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver cli::buddy::tests::buddy_status_routes_reject_unknown_named_reference_like_canonical_resolver --lib
           run_case 361 lib cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable cli::buddy::tests::buddy_status_routes_redact_endpoint_secrets_and_keep_table_projection_stable --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 361
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 361
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 361
+          run_case 362 lib cli::buddy::tests::buddy_provider_and_fallback_parsers_preserve_existing_status_surface cli::buddy::tests::buddy_provider_and_fallback_parsers_preserve_existing_status_surface --lib
+          run_case 363 lib cli::buddy::tests::buddy_fallback_replace_requires_named_selectors_and_rejects_inline_flags cli::buddy::tests::buddy_fallback_replace_requires_named_selectors_and_rejects_inline_flags --lib
+          run_case 364 lib cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors --lib
+          run_case 365 lib cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops --lib
+          run_case 366 lib cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite --lib
+          run_case 367 lib cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 367
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 367
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 367
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

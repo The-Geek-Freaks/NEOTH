@@ -14,6 +14,12 @@
 //! - `neoth buddy proactive --enable | --disable [--output json]`
 //!   Toggle `proactive.enabled` in freedom.yaml, same mechanism.
 //!
+//! - `neoth buddy provider {show,set,mode,preset,test} …`
+//!   Delegate provider/model route control to the canonical hemisphere command.
+//!
+//! - `neoth buddy fallback {replace,clear} …`
+//!   Replace or clear selector-only HTTP-429 fallback bindings atomically.
+//!
 //! ## Separately gated fields
 //!
 //! `sovereign_buddy` and `smart_approve_any` are surfaced by `status` but
@@ -126,6 +132,22 @@ pub enum BuddyAction {
         disable: bool,
     },
 
+    /// Rebind or inspect a provider/model route through the canonical
+    /// `neoth hemispheres` command.  This facade owns no validation, config,
+    /// credential, rollback, or audit implementation of its own.
+    Provider {
+        #[command(subcommand)]
+        action: crate::cli::hemispheres::HemisphereAction,
+    },
+
+    /// Replace or clear the HTTP-429 fallback chain with named provider
+    /// selectors.  The selector-only transaction lives in `hemispheres` so
+    /// Buddy cannot create a second configuration writer.
+    Fallback {
+        #[command(subcommand)]
+        action: BuddyFallbackAction,
+    },
+
     /// Read or reconcile the same private vault-mirror service used by
     /// `neoth backup mirror`; this surface has no policy bypass.
     #[command(name = "vault-mirror")]
@@ -149,6 +171,18 @@ pub enum BuddyVaultMirrorAction {
     Status,
     /// Reconcile only a durable ambiguous push receipt against its exact ref.
     Repair,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum BuddyFallbackAction {
+    /// Replace the full chain in order. Each selector must name an existing
+    /// provider instance; inline provider/model/endpoint authority is absent.
+    Replace {
+        #[arg(long = "provider-instance-id", required = true)]
+        provider_instance_ids: Vec<String>,
+    },
+    /// Clear every configured fallback while preserving `fallback.max_hops`.
+    Clear,
 }
 
 #[cfg(feature = "cluster")]
@@ -229,10 +263,54 @@ pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
             run_self_activation(enable, disable, args.output)
         }
         BuddyAction::Proactive { enable, disable } => run_proactive(enable, disable, args.output),
+        BuddyAction::Provider { action } => {
+            crate::cli::hemispheres::run_hemispheres(crate::cli::hemispheres::HemispheresArgs {
+                action,
+                output: args.output,
+            })
+            .await
+        }
+        BuddyAction::Fallback { action } => run_fallback(action, args.output).await,
         BuddyAction::VaultMirror { action } => run_vault_mirror(action, args.output).await,
         #[cfg(feature = "cluster")]
         BuddyAction::Cluster { action } => run_cluster(action, args.output).await,
     }
+}
+
+async fn run_fallback(action: BuddyFallbackAction, output: OutputFormat) -> Result<()> {
+    let named_ids = match action {
+        BuddyFallbackAction::Replace {
+            provider_instance_ids,
+        } => provider_instance_ids,
+        BuddyFallbackAction::Clear => Vec::new(),
+    };
+    let result = crate::cli::hemispheres::replace_fallback_at(
+        &FreedomConfig::default_neoth_home(),
+        named_ids,
+    )
+    .await?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            json!({
+                "prior_fallback_count": result.prior_count,
+                "fallback_count": result.fallback_count,
+                "snapshot_segment": result.snapshot_segment.display().to_string(),
+                "snapshot_offset": result.snapshot_offset,
+                "prior_source_sha256": result.prior_source_sha256,
+            })
+        ),
+        OutputFormat::Table => {
+            println!(
+                "fallback_count          : {} -> {}",
+                result.prior_count, result.fallback_count
+            );
+            println!("snapshot_segment        : {}", result.snapshot_segment.display());
+            println!("snapshot_offset         : {:?}", result.snapshot_offset);
+            println!("prior_source_sha256     : {}", result.prior_source_sha256);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "cluster")]
@@ -859,6 +937,85 @@ mod tests {
         assert_eq!(v["autonomy"], "standard");
         assert_eq!(v["proactive_enabled"], false);
         assert!(v["skill_autonomy_caps"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn buddy_provider_and_fallback_parsers_preserve_existing_status_surface() {
+        let provider = BuddyCli::try_parse_from([
+            "buddy",
+            "provider",
+            "set",
+            "--role",
+            "right",
+            "--provider",
+            "openai_compat",
+            "--model",
+            "selected-model",
+        ])
+        .expect("canonical provider set action parses through Buddy");
+        assert!(matches!(
+            provider.args.action,
+            BuddyAction::Provider {
+                action: crate::cli::hemispheres::HemisphereAction::Set {
+                    ref role,
+                    ref provider,
+                    model: Some(ref model),
+                    key: None,
+                    endpoint: None,
+                },
+            } if role == "right" && provider == "openai_compat" && model == "selected-model"
+        ));
+
+        let replace = BuddyCli::try_parse_from([
+            "buddy",
+            "fallback",
+            "replace",
+            "--provider-instance-id",
+            "compat_primary",
+            "--provider-instance-id",
+            "compat_secondary",
+        ])
+        .expect("ordered named fallback selectors parse");
+        assert!(matches!(
+            replace.args.action,
+            BuddyAction::Fallback {
+                action: BuddyFallbackAction::Replace { ref provider_instance_ids },
+            } if provider_instance_ids == &vec![
+                "compat_primary".to_string(),
+                "compat_secondary".to_string(),
+            ]
+        ));
+
+        let clear = BuddyCli::try_parse_from(["buddy", "fallback", "clear"])
+            .expect("fallback clear parses");
+        assert!(matches!(
+            clear.args.action,
+            BuddyAction::Fallback {
+                action: BuddyFallbackAction::Clear,
+            }
+        ));
+        let status = BuddyCli::try_parse_from(["buddy", "status"])
+            .expect("existing Buddy status remains available");
+        assert!(matches!(status.args.action, BuddyAction::Status));
+    }
+
+    #[test]
+    fn buddy_fallback_replace_requires_named_selectors_and_rejects_inline_flags() {
+        assert!(
+            BuddyCli::try_parse_from(["buddy", "fallback", "replace"]).is_err(),
+            "replace requires at least one provider-instance-id"
+        );
+        assert!(
+            BuddyCli::try_parse_from([
+                "buddy",
+                "fallback",
+                "replace",
+                "--provider",
+                "openai_compat",
+            ])
+            .is_err(),
+            "fallback replacement accepts selector ids only, never inline authority"
+        );
     }
 
     #[test]
