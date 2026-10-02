@@ -3474,10 +3474,10 @@ fn restore_private_fallback_slots(
 
         for name in SLOT_KEYS {
             let key = serde_yaml::Value::String(name.to_string());
-            if !source_slot.contains_key(&key) {
-                if let Some(mut removed) = target_slot.remove(&key) {
-                    zeroize_public_yaml_value(&mut removed);
-                }
+            if !source_slot.contains_key(&key)
+                && let Some(mut removed) = target_slot.remove(&key)
+            {
+                zeroize_public_yaml_value(&mut removed);
             }
         }
         for (key, value) in std::mem::take(source_slot) {

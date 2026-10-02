@@ -445,15 +445,12 @@ fn project_terminal(wal: &Path, route: Route, stream_requested: bool) -> Result<
                 .and_then(serde_json::Value::as_u64);
             if value.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
                 && trace == value.get("request_id").and_then(serde_json::Value::as_u64)
+                && let Some(trace) = trace
             {
-                if let Some(trace) = trace {
-                    if frame.header.event_type
-                        == crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START
-                    {
-                        local_stream_starts.insert(trace);
-                    } else {
-                        local_stream_ends.insert(trace);
-                    }
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START {
+                    local_stream_starts.insert(trace);
+                } else {
+                    local_stream_ends.insert(trace);
                 }
             }
             return Ok(());

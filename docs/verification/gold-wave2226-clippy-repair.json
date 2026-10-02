@@ -1,0 +1,57 @@
+{
+  "schema": "neoth.gold.wave2226.clippy-repair.v1",
+  "status": "static-reviewed-hosted-pending",
+  "base": "1fc806bd2895f7b6cebd768cd5cdcc233df0121e",
+  "failedRun": 37075073595,
+  "failedJob": "Linux quality / Rust 1.91",
+  "diagnostics": [
+    "nct_baseline.rs446 clippy::collapsible_if",
+    "config/mod.rs3477 clippy::collapsible_if"
+  ],
+  "originalLogSha256": "0B2A3C6DBE249D48461E7506DC47574C910794B9A46681082B01B5FDA25832A4",
+  "changes": [
+    "Preserve stream, matching trace and Some admission order in let chain",
+    "Preserve missing private slot check, removal and zeroization order in let chain"
+  ],
+  "candidateProof": {
+    "base_commit": "1fc806bd2895f7b6cebd768cd5cdcc233df0121e",
+    "targets_match_head": true,
+    "base_git_blob_ids": {
+      "SRC/neothd/src/cli/nct_baseline.rs": "c375fd785bcff8d9081192de95bd069c73a18d5c",
+      "SRC/neothd/src/config/mod.rs": "6ecd6cc46b24a725bc3f06a54bb23ee664ee8138"
+    },
+    "files": [
+      {
+        "path": "SRC/neothd/src/cli/nct_baseline.rs",
+        "source_equals_base_sha256": true,
+        "base_sha256": "5f6d532b4852638dcf277f2eaf79e9af32d3d8c9836afc2a9835b764c524b873",
+        "post_sha256": "b745cdd8c2719d071b8afed8190b40242d1634007e74c4dfd3df87627d297782"
+      },
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "source_equals_base_sha256": true,
+        "base_sha256": "6f2cb3c2ef5424dd4196b45efba053b379b357ca444760605f6b30a71f3dc94d",
+        "post_sha256": "561b1da2b00f62eb560da8d2169a2ef1185ea16873dac798913b680a7df96ef7"
+      }
+    ]
+  },
+  "finalSourceHashes": [
+    {
+      "path": "SRC/neothd/src/cli/nct_baseline.rs",
+      "sha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "sha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
+    }
+  ],
+  "macOS135": {
+    "run": 37074184851,
+    "producer": "1fc806bd2895f7b6cebd768cd5cdcc233df0121e",
+    "passed": 135,
+    "sourcePaths": 33,
+    "admissionSha256": "6500DE0E98EB2F55A6D026BB7A10A9EC1CB7DCD0EEF57326D10BA6D1D6591AA8"
+  },
+  "localExecutableValidationRan": false,
+  "fullAcceptance": false
+}

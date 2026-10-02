@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T22:40:23.6333848Z",
-  "validationStatus": "hosted-format-imported-runtime-pending",
+  "capturedUtc": "2026-10-02T23:07:51.4518489Z",
+  "validationStatus": "static-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3167,6 +3167,11 @@
       "sha256": "C7C3B0C4533FE8516E2ECFEC8943333643F120E615F398FCE82A187460E3660C"
     },
     {
+      "path": "docs/verification/gold-wave2226-clippy-repair.json",
+      "bytes": 2174,
+      "sha256": "3289CEB2775D51D9B2C2CF137AE7BB7E94BD9CF78DC49C604A17C90B123EBA53"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4308,8 +4313,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2320939,
-      "sha256": "32FA6CDD6316DF84137ABC19403D4F1D05391418F97F16D1B38A51942FA37553"
+      "bytes": 2322066,
+      "sha256": "34F4EFC756C17258D26E74644BF2833BCDDE2104D01DDC89E46751B5B1B09AD3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5488,8 +5493,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/nct_baseline.rs",
-      "bytes": 58405,
-      "sha256": "5F6D532B4852638DCF277F2EAF79E9AF32D3D8C9836AFC2A9835B764C524B873"
+      "bytes": 58321,
+      "sha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E"
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
@@ -5998,8 +6003,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 202693,
-      "sha256": "6F2CB3C2EF5424DD4196B45EFBA053B379B357CA444760605F6B30A71F3DC94D"
+      "bytes": 202681,
+      "sha256": "561B1DA2B00F62EB560DA8D2169A2EF1185EA16873DAC798913B680A7DF96EF7"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
