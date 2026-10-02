@@ -7210,6 +7210,20 @@ mod tests {
             .expect("primary quota response must dispatch the exact named fallback leaf");
         assert_eq!(completion.text, "named fallback success");
         assert_eq!(completion.identity.dispatch_route, vec![1]);
+        let quota = crate::providers::quota::QuotaTracker::load_from(&home.path().join("quota.json"))
+            .expect("load named fallback quota state");
+        assert!(
+            quota
+                .backoff_remaining_for("instance:compat_primary", crate::time::now_unix_secs())
+                .is_some(),
+            "a primary named leaf 429 must be retained under its exact instance identity"
+        );
+        assert!(
+            quota
+                .backoff_remaining_for("instance:compat_fallback", crate::time::now_unix_secs())
+                .is_none(),
+            "the healthy named fallback leaf must not inherit its sibling's quota backoff"
+        );
         drop(chain);
         drop(authorizer);
         drop(writer);

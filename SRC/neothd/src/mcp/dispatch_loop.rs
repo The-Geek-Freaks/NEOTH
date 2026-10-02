@@ -1309,6 +1309,38 @@ where
                 }
                 Err(reason) => {
                     failed_calls += 1;
+                    #[cfg(test)]
+                    {
+                        const W2105_DIAGNOSTIC_FIELD_MAX_BYTES: usize = 512;
+                        let cap_sanitized_diagnostic = |value: &str| {
+                            let mut capped = String::new();
+                            for character in value.chars() {
+                                if capped.len() + character.len_utf8()
+                                    > W2105_DIAGNOSTIC_FIELD_MAX_BYTES
+                                {
+                                    break;
+                                }
+                                capped.push(character);
+                            }
+                            capped
+                        };
+                        let sanitized_server = crate::security::redact::sanitize_tool_output(&call.server);
+                        let diagnostic_server = cap_sanitized_diagnostic(&sanitized_server);
+                        let sanitized_tool = crate::security::redact::sanitize_tool_output(&call.tool);
+                        let diagnostic_tool = cap_sanitized_diagnostic(&sanitized_tool);
+                        let sanitized_reason = crate::security::redact::sanitize_tool_output(&reason);
+                        let diagnostic_reason = cap_sanitized_diagnostic(&sanitized_reason);
+                        warn!(
+                            target: "neothd::mcp::dispatch_loop",
+                            server = %diagnostic_server,
+                            tool = %diagnostic_tool,
+                            reason = %diagnostic_reason,
+                            server_truncated = diagnostic_server.len() < sanitized_server.len(),
+                            tool_truncated = diagnostic_tool.len() < sanitized_tool.len(),
+                            reason_truncated = diagnostic_reason.len() < sanitized_reason.len(),
+                            "W2105 diagnostic: MCP dispatch failed before loop progress"
+                        );
+                    }
                     // REVFIX-EXCERPTS-01 — record failed calls too so the
                     // digest reflects the full picture (success=false).
                     tool_call_records.push(ToolCallRecord {

@@ -351,6 +351,13 @@ neoth quota status
 neoth quota reset <provider>
 ```
 
+Fallback backoff is isolated by provider instance. Named routes use the quota
+key `instance:<provider_instance_id>`; legacy routes retain their provider
+descriptor key. A 429 from one named OpenAI-compatible endpoint therefore does
+not suppress another instance using the same transport. Existing legacy backoff
+entries remain active. Use the key shown by `quota status` when resetting an
+individual entry.
+
 ## Metering
 
 NEOTH records provider usage so operators can control cost and route intelligently.

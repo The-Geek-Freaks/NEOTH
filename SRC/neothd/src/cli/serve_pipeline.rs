@@ -11722,11 +11722,39 @@ mod tests {
     #[test]
     fn channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds() {
         let _env = crate::test_env::lock();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build W2062 named channel current-thread runtime")
-            .block_on(async {
+        let w2105_dispatch_trace = Arc::new(std::sync::Mutex::new(Vec::new()));
+        struct W2105TraceWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for W2105TraceWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("lock W2105 trace buffer")
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let w2105_subscriber = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "off,neothd::mcp::dispatch_loop=warn",
+            ))
+            .with_target(false)
+            .without_time()
+            .with_ansi(false)
+            .with_writer({
+                let trace = Arc::clone(&w2105_dispatch_trace);
+                move || W2105TraceWriter(Arc::clone(&trace))
+            })
+            .finish();
+        tracing::subscriber::with_default(w2105_subscriber, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build W2062 named channel current-thread runtime")
+                .block_on(async {
                 use wiremock::matchers::{header, method, path};
                 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -11952,24 +11980,29 @@ mod tests {
                     .await
                     .expect("authorized W2062 named channel route completes")
                     .expect("authorized W2062 named channel emits reply");
-                assert_eq!(reply.text, "W2062 named selected channel final");
-                assert_eq!(upstream.calls.load(Ordering::SeqCst), 0);
-                selected.verify().await;
-                assert!(
-                    replies.lock().expect("inspect W2062 response queue").is_empty(),
-                    "two MCP completion rounds must use the selected named endpoint"
-                );
-
                 drop(handler);
                 drop(writer);
                 writer_join.await.expect("drain W2062 channel WAL");
                 let mut selected_leaf_receipts = 0;
                 let mut mcp_calls = 0;
+                let mut mcp_rejections = Vec::new();
                 crate::wal::scan::for_each_frame(
                     &std::fs::read(&wal_path).expect("read W2062 channel WAL"),
                     |_, frame| {
                         if frame.header.event_type == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED {
                             mcp_calls += 1;
+                        }
+                        if frame.header.event_type
+                            == crate::wal::events::EVENT_TYPE_MCP_TOOL_REJECTED
+                        {
+                            let rejection: serde_json::Value = serde_json::from_slice(frame.payload)
+                                .expect("decode W2062 MCP rejection receipt");
+                            mcp_rejections.push(format!(
+                                "{}::{}: {}",
+                                rejection["server_id"].as_str().unwrap_or("<missing-server>"),
+                                rejection["tool"].as_str().unwrap_or("<missing-tool>"),
+                                rejection["reason"].as_str().unwrap_or("<missing-reason>"),
+                            ));
                         }
                         if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
                             let receipt: serde_json::Value = serde_json::from_slice(frame.payload)
@@ -11983,8 +12016,41 @@ mod tests {
                     },
                 )
                 .expect("scan W2062 channel WAL");
+                let selected_http_calls = selected
+                    .received_requests()
+                    .await
+                    .expect("record W2062 selected endpoint requests")
+                    .len();
+                let remaining_scripted_responses = replies
+                    .lock()
+                    .expect("inspect W2062 response queue")
+                    .len();
+                let w2105_dispatch_warnings = String::from_utf8(
+                    w2105_dispatch_trace
+                        .lock()
+                        .expect("read W2105 trace buffer")
+                        .clone(),
+                )
+                .expect("W2105 trace output is UTF-8");
+                assert_eq!(
+                    reply.text,
+                    "W2062 named selected channel final",
+                    "W2105 diagnostic (not a repair): selected_http_calls={selected_http_calls}; \
+                     remaining_scripted_responses={remaining_scripted_responses}; \
+                     selected_leaf_receipts={selected_leaf_receipts}; mcp_calls={mcp_calls}; \
+                     mcp_rejections={mcp_rejections:?}; \
+                     dispatch_warnings={w2105_dispatch_warnings:?}"
+                );
+                assert_eq!(upstream.calls.load(Ordering::SeqCst), 0);
+                selected.verify().await;
+                assert_eq!(
+                    remaining_scripted_responses,
+                    0,
+                    "two MCP completion rounds must use the selected named endpoint"
+                );
                 assert_eq!(selected_leaf_receipts, 2, "both MCP provider leaves retain selected identity");
                 assert_eq!(mcp_calls, 1, "only the Skill-allowed MCP tool reaches the real MCP dispatch path");
-            });
+                });
+        });
     }
 }

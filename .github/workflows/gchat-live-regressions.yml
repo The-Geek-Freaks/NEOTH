@@ -178,6 +178,7 @@ jobs:
             SRC/neothd/src/cli/catalog.rs \
             SRC/neothd/src/cli/buddy.rs \
             SRC/neothd/src/cli/serve_pipeline.rs \
+            SRC/neothd/src/mcp/dispatch_loop.rs \
             SRC/neothd/src/cli/profile.rs \
             SRC/neothd/src/config/inference.rs \
             SRC/neothd/src/config/role_policy.rs \
@@ -657,9 +658,10 @@ jobs:
           run_case 369 lib cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation --lib
           run_case 370 lib cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots --lib
           run_case 371 lib cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 371
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 371
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 371
+          run_case 372 lib providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 372
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 372
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 372
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

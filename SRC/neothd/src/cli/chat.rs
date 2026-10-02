@@ -20049,7 +20049,7 @@ modes:
             iterations: None,
             until: vec![],
         };
-        let result = run_chat(args).await;
+        let result = Box::pin(run_chat(args)).await;
         result.expect("public chat must construct only the admitted named Skill leaf");
         assert!(
             !crate::consent::is_route_granted(&home, &route),

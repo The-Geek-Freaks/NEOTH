@@ -1,0 +1,84 @@
+{
+  "schema": "neoth-gold-wave2107-runtime-repair/v1",
+  "capturedUtc": "2026-10-02T08:48:30.1828490Z",
+  "baseline": "4cd55c787bb178997217f692e0b95a92472fa2c4",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "previousRun": {
+    "id": "36980128028",
+    "producer": "e6f6b7dafe780d4c17dc3955538ba8262107b349",
+    "expected": 361,
+    "executed": 361,
+    "passed": 357,
+    "failed": 4,
+    "sourceBindings": 173,
+    "originalArchives": 3,
+    "custodySha256": "60352BE708CA8637421B947F137B9B37B2AA764FFCD9713F5BCFF2E401DC60EA",
+    "productOrGuardAcceptance": false
+  },
+  "behavior": [
+    "Named fallback quota isolation uses instance:<id>; legacy descriptor keys and retained backoff remain unchanged",
+    "Strict response descriptor matching, concrete per-leaf consent and local-provider exemption remain intact",
+    "Named fallback fixture grants both exact concrete endpoints before invocation",
+    "Public Chat fixture heap-pins its existing public future; stack-size hypothesis awaits hosted validation",
+    "MCP overlay adds only test-scoped sanitized bounded failure diagnostics; it is not yet a repair"
+  ],
+  "review": {
+    "reviewer": "/root/w2078_alias_review",
+    "status": "APPROVED_STATIC",
+    "approvedRepairs": [
+      {
+        "path": "SRC/neothd/src/providers/fallback.rs",
+        "base": "132aee647e65b60809b96f674892973de84beb5a",
+        "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2103-fallback-consent-repair/SRC/neothd/src/providers/fallback.rs",
+        "sha256": "90aa765eced33587dfc7721d6bd55c45604f31f31fb77ab649d6a38dbcacae77",
+        "blob": "1410bb6c9820cd59c5e5736afbbad4e3f2183037"
+      },
+      {
+        "path": "SRC/neothd/src/providers/mod.rs",
+        "base": "34abf5cea35b9ee9345cba9281c9cd6104cf1e81",
+        "candidate": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave2103-fallback-consent-repair/SRC/neothd/src/providers/mod.rs",
+        "sha256": "39e6fef6a8351b508b012dffc76d2a80cf3cbe7bd64c873b9c144722efe1d57c",
+        "blob": "0378f9205dd312a1bb09909a1a7e940aeeaef6e7"
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat.rs",
+        "base": "dd408bfbfe85003e52707b5b34f04774e7df70b0",
+        "candidate": "work/gold-20260906/wave2104-chat-stack-repair/candidate/SRC/neothd/src/cli/chat.rs",
+        "sha256": "e61006790f1e590921f2ea504453f9140bdd4c26d386895539d9ff022d3685fb",
+        "blob": "13df03255746f26ac784c039238ed615abd96e87"
+      }
+    ],
+    "approvedDiagnostics": [
+      {
+        "target": "SRC/neothd/src/mcp/dispatch_loop.rs",
+        "base": "99b3f6a246909ea4314c824815ebd3e4b53cba66",
+        "sha256": "E2CAC48949E6C48A297A063D211456CC5336FE7683B50597DADA3AC77D38D2C3",
+        "rawBlob": "01aa0911c34130003e8425f529f63b2d4ff72eaa",
+        "normalizedBlob": "f3813cce73b4cca6e99548cdc63a85cfe4a054dd",
+        "reviewer": "/root/w2078_alias_review",
+        "status": "APPROVED_STATIC_IMPORTED"
+      },
+      {
+        "target": "SRC/neothd/src/cli/serve_pipeline.rs",
+        "base": "a2506a41e12ff268bca0bd2b925564f9459948d6",
+        "sha256": "FAADEEAFAED928E0C146A684F2068F008BD462E02AB8D945428FF682FBDA21DF",
+        "rawBlob": "a8bc7619d1825f95ba54df1701f363b757026e52",
+        "normalizedBlob": "a8bc7619d1825f95ba54df1701f363b757026e52",
+        "reviewer": "/root/w2078_alias_review",
+        "status": "APPROVED_STATIC_IMPORTED"
+      }
+    ]
+  },
+  "newTest": "providers::fallback::tests::named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys",
+  "registrations": {
+    "portable": 2594,
+    "focused": 372,
+    "guards": 20,
+    "focusedSourceBindings": 174
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "guiChangesMade": false
+}

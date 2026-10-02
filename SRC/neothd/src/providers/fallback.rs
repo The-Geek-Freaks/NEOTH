@@ -203,6 +203,13 @@ impl FallbackProvider {
         )
     }
 
+    fn quota_key_for_candidate(&self, index: usize, candidate: &dyn Provider) -> String {
+        match self.bindings[index].provider_instance_id.as_deref() {
+            Some(instance_id) => format!("instance:{instance_id}"),
+            None => candidate.name().to_owned(),
+        }
+    }
+
     /// Per-candidate hop decision for a fallback slot (`i > 0`). A candidate
     /// already in a 429 backoff window is skipped *without* consuming a hop
     /// (`hops_used` unchanged) — otherwise two backed-off slots would burn
@@ -271,13 +278,14 @@ impl FallbackProvider {
     async fn persist_quota_error(
         &self,
         provider_name: &'static str,
+        quota_key: &str,
         retry_after: Option<std::time::Duration>,
         now: u64,
         audit_authorizer: Option<&crate::providers::cost_authorization::ProviderCallAuthorizer>,
     ) -> Result<QuotaTracker> {
         let (snapshot, effective, state) = QuotaTracker::update_at(&self.quota_path, |tracker| {
-            let effective = tracker.record_429(provider_name, retry_after, now);
-            let state = tracker.get(provider_name).cloned();
+            let effective = tracker.record_429(quota_key, retry_after, now);
+            let state = tracker.get(quota_key).cloned();
             Ok((tracker.clone(), effective, state))
         })
         .with_context(|| {
@@ -292,6 +300,7 @@ impl FallbackProvider {
             crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
             serde_json::json!({
                 "provider": provider_name,
+                "provider_quota_key": quota_key,
                 "retry_after_secs": effective.as_secs(),
                 "requests_today": state.as_ref().map(|value| value.requests_today),
                 "daily_cap": state.as_ref().and_then(|value| value.estimated_daily_cap),
@@ -304,6 +313,7 @@ impl FallbackProvider {
         .await?;
         tracing::warn!(
             provider = provider_name,
+            quota_key,
             retry_after_secs = effective.as_secs(),
             "fallback candidate returned HTTP 429; durable backoff recorded"
         );
@@ -356,11 +366,14 @@ impl FallbackProvider {
         let mut shortest_active_backoff: Option<u64> = None;
 
         for (i, candidate) in self.chain.iter().enumerate() {
+            let quota_key = self.quota_key_for_candidate(i, candidate.as_ref());
             let preflight_now = Self::now_unix();
-            let backoff_remaining = if candidate.handles_nonstream_quota_backoff() {
+            let backoff_remaining = if candidate.handles_nonstream_quota_backoff()
+                || crate::providers::is_local_provider(candidate.name())
+            {
                 None
             } else {
-                tracker.backoff_remaining_for(candidate.name(), preflight_now)
+                tracker.backoff_remaining_for(&quota_key, preflight_now)
             };
             if let Some(remaining) = backoff_remaining {
                 shortest_active_backoff =
@@ -474,6 +487,7 @@ impl FallbackProvider {
                     tracker = self
                         .persist_quota_error(
                             quota.provider,
+                            &quota_key,
                             quota.retry_after,
                             observed_at,
                             authorization.map(|(authorizer, _)| authorizer),
@@ -637,8 +651,10 @@ impl Provider for FallbackProvider {
         let tracker = QuotaTracker::load_from(&self.quota_path)
             .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
         let now = Self::now_unix();
+        let quota_key = self.quota_key_for_candidate(index, candidate.as_ref());
         if !candidate.handles_nonstream_quota_backoff()
-            && let Some(remaining) = tracker.backoff_remaining_for(candidate.name(), now)
+            && !crate::providers::is_local_provider(candidate.name())
+            && let Some(remaining) = tracker.backoff_remaining_for(&quota_key, now)
         {
             return Err(anyhow::Error::new(QuotaError {
                 provider: candidate.name(),
@@ -681,6 +697,7 @@ impl Provider for FallbackProvider {
                 let _persisted = self
                     .persist_quota_error(
                         quota.provider,
+                        &quota_key,
                         quota.retry_after,
                         Self::now_unix(),
                         Some(authorizer),
@@ -817,6 +834,7 @@ mod tests {
     struct MockProvider {
         name: &'static str,
         behavior: Behavior,
+        consent_route: Option<crate::consent::ConsentRoute>,
     }
 
     #[async_trait]
@@ -826,6 +844,9 @@ mod tests {
         }
         fn default_model(&self) -> Option<&str> {
             Some(self.name)
+        }
+        fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+            self.consent_route.clone()
         }
         async fn complete(&self, _req: Request) -> Result<Completion> {
             match self.behavior {
@@ -852,7 +873,26 @@ mod tests {
     }
 
     fn mock(name: &'static str, behavior: Behavior) -> Box<dyn Provider> {
-        Box::new(MockProvider { name, behavior })
+        Box::new(MockProvider {
+            name,
+            behavior,
+            consent_route: None,
+        })
+    }
+
+    fn mock_with_consent_route(
+        name: &'static str,
+        behavior: Behavior,
+        endpoint: &'static str,
+    ) -> Box<dyn Provider> {
+        Box::new(MockProvider {
+            name,
+            behavior,
+            consent_route: Some(crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::OpenaiCompat,
+                Some(endpoint.to_owned()),
+            )),
+        })
     }
 
     fn fallback_at(
@@ -869,6 +909,65 @@ mod tests {
             wal_writer,
             home.join("quota.json"),
         )
+    }
+
+    #[test]
+    fn named_quota_keys_are_namespaced_without_rewriting_legacy_descriptor_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = FallbackProvider::new_with_models_and_bindings_at(
+            vec![
+                mock("openai_compat", Behavior::Quota),
+                mock("openai_compat", Behavior::Ok),
+            ],
+            vec![None, None],
+            vec![
+                FallbackCandidateBinding {
+                    provider_instance_id: Some("openai_compat".into()),
+                    provider_descriptor_id: "openai_compat".into(),
+                },
+                FallbackCandidateBinding {
+                    provider_instance_id: None,
+                    provider_descriptor_id: "openai_compat".into(),
+                },
+            ],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        assert_eq!(
+            provider.quota_key_for_candidate(0, provider.chain[0].as_ref()),
+            "instance:openai_compat"
+        );
+        assert_eq!(
+            provider.quota_key_for_candidate(1, provider.chain[1].as_ref()),
+            "openai_compat"
+        );
+
+        let now = FallbackProvider::now_unix();
+        QuotaTracker::update_at(&provider.quota_path, |tracker| {
+            tracker.record_429(
+                "instance:openai_compat",
+                Some(std::time::Duration::from_secs(19)),
+                now,
+            );
+            tracker.record_429(
+                "openai_compat",
+                Some(std::time::Duration::from_secs(23)),
+                now,
+            );
+            Ok(())
+        })
+        .unwrap();
+        let tracker = QuotaTracker::load_from(&provider.quota_path).unwrap();
+        assert_eq!(
+            tracker.backoff_remaining_for("instance:openai_compat", now),
+            Some(19)
+        );
+        assert_eq!(
+            tracker.backoff_remaining_for("openai_compat", now),
+            Some(23),
+            "legacy descriptor-keyed quota state remains honored"
+        );
     }
 
     struct PendingCompletionProvider {
@@ -1016,10 +1115,28 @@ mod tests {
         let segment = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
+        let primary_endpoint = "https://compat-primary.example/v1";
+        let secondary_endpoint = "https://compat-secondary.example/v1";
+        crate::consent::grant_route(
+            dir.path(),
+            &crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::OpenaiCompat,
+                Some(primary_endpoint.to_owned()),
+            ),
+        )
+        .unwrap();
+        crate::consent::grant_route(
+            dir.path(),
+            &crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::OpenaiCompat,
+                Some(secondary_endpoint.to_owned()),
+            ),
+        )
+        .unwrap();
         let fallback = FallbackProvider::new_with_models_and_bindings_at(
             vec![
-                mock("openai_compat", Behavior::Quota),
-                mock("openai_compat", Behavior::Ok),
+                mock_with_consent_route("openai_compat", Behavior::Quota, primary_endpoint),
+                mock_with_consent_route("openai_compat", Behavior::Ok, secondary_endpoint),
             ],
             vec![Some("model-primary".into()), Some("model-secondary".into())],
             vec![
