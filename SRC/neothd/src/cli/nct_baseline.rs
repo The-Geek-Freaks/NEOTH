@@ -526,8 +526,8 @@ mod tests {
     };
     use std::time::Duration;
 
+    use crate::cli::init::ProviderKind;
     use crate::config::FreedomConfig;
-    use crate::consent::ProviderKind;
     use crate::permissions::AutonomyLevel;
     use crate::providers::{
         Completion, CompletionUsageMeasurements, Provider, ProviderRequestControls, Request,

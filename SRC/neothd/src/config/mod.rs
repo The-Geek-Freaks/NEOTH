@@ -4486,7 +4486,12 @@ mod provider_instance_credential_tests {
         let reloaded = render_fallback(source, &config);
         let slot = &reloaded.fallback.chain[0];
 
-        assert_eq!(slot.provider_instance_id.as_deref(), Some("named_fallback"));
+        assert_eq!(
+            slot.provider_instance_id
+                .as_ref()
+                .map(crate::config::inference::ProviderInstanceId::as_str),
+            Some("named_fallback")
+        );
         assert!(slot.provider.is_none());
         assert!(slot.model.is_none());
         assert!(slot.key.is_none());

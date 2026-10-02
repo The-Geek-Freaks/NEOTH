@@ -17802,3 +17802,10 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Root traced the complete verifier shell program through Rust 1.91 Command.args and its CRT quote escaping. Windows now constructs cmd /D /S /C with an explicitly outer-quoted raw argument and retains the same contained child, pre-resume Job Object assignment, deadline, termination and reap. Non-Windows remains sh -c.
 - Existing regressions cover a quoted batch path containing spaces and a literal ampersand, and a real descendant batch with readiness plus no post-timeout marker. The two-second Windows deadline and every cleanup assertion remain unchanged. Earlier fixture-only R1/R2 candidates were rejected and never integrated.
 - The existing dedicated Windows library lane now selects 1022 exact identities, adding both verifier cases. No test identity was removed. Hosted Windows proof and final full-CI acceptance remain pending; no local fixture, compiler or runtime was executed. Report: docs/verification/gold-wave2210-windows-verifier-command.json.
+
+### W2214 - authentic NCT command reference and exact test-compile repair (2026-10-02)
+
+- Focused run 37067030433 at 126d514a built the actual public CLI and exported its generated command reference successfully. Its test binary failed on exactly two newly added fixture type errors, so this run is not a 429-case acceptance.
+- The test import now uses the public cli::init::ProviderKind re-export. The fallback assertion reads the opaque ProviderInstanceId through as_ref().map(as_str), retaining the same expected named identity. No test identity or behavioral assertion was removed.
+- The original CLI reference archive11253226726 was bound to its API digest, producer head and internal checksum manifest; its exact generated Markdown is imported without manual content edits. Current CLI command definitions were checked against the producer, and the final-producer docgen regression remains mandatory.
+- Final focused429, native Windows1022 and full-CI qualification remain pending. Local BSOD hold and no Slint/Claude work remain in force. Report: docs/verification/gold-wave2214-compile-and-cli-reference.json.

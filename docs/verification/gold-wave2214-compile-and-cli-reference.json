@@ -1,0 +1,71 @@
+{
+  "schema": "neoth.gold.wave2214.compile-reference.v1",
+  "base": "4934bd20c869bd6c06eb2e79ef119170143afe43",
+  "status": "EXACT_HOSTED_COMPILER_DIAGNOSTICS_REPAIRED_REFERENCE_IMPORTED_TESTS_PENDING",
+  "failedRun": 37067030433,
+  "failedProducer": "126d514a06e15a8612734770046b1a8f255af740",
+  "publicCliBuild": "success",
+  "fixtureCompileErrors": [
+    "E0603 private consent::ProviderKind import replaced by public cli::init re-export",
+    "E0599 ProviderInstanceId has as_str but does not implement Deref; test now uses as_ref().map(as_str)"
+  ],
+  "testIdentitiesChanged": false,
+  "sourceImages": [
+    {
+      "path": "SRC/neothd/src/cli/nct_baseline.rs",
+      "sha256": "87CA58A5CC59DBA506B40817B37395BB7B48DC5937A6CFAE7463A27A830C7CEF",
+      "blob": "b3f88145d38723e191450514aa883b25e5595016"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "sha256": "6F2CB3C2EF5424DD4196B45EFBA053B379B357CA444760605F6B30A71F3DC94D",
+      "blob": "6ecd6cc46b24a725bc3f06a54bb23ee664ee8138"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "sha256": "6629C9C342D510A77BFD93A964DC5100F0F329DB14C0340E31DC8657AE4A0A2A",
+      "blob": "64752c09ea59760fecba8247f5432a04f9a633ec"
+    }
+  ],
+  "referenceEvidence": {
+    "producer": "126d514a06e15a8612734770046b1a8f255af740",
+    "run": 37067030433,
+    "artifact": 11253226726,
+    "sourceHeadVerified": true,
+    "internalHashesVerified": true,
+    "referenceSha256": "6629C9C342D510A77BFD93A964DC5100F0F329DB14C0340E31DC8657AE4A0A2A",
+    "currentHead": "4934bd20c869bd6c06eb2e79ef119170143afe43",
+    "commandDefinitionBindings": [
+      {
+        "path": "SRC/neothd/src/cli/mod.rs",
+        "producerBlob": "d815543832ec77c7252b664b690bae0722b9bda9",
+        "currentBlob": "d815543832ec77c7252b664b690bae0722b9bda9"
+      },
+      {
+        "path": "SRC/neothd/src/cli/nct_baseline.rs",
+        "producerBlob": "803b5a99615ea999fe241798341bb9fc932ca919",
+        "currentBlob": "803b5a99615ea999fe241798341bb9fc932ca919"
+      },
+      {
+        "path": "SRC/neothd/src/cli/docgen.rs",
+        "producerBlob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+        "currentBlob": "b56f427938ee1464e6b3df210c33f1288bb34376"
+      }
+    ],
+    "interveningSources": [
+      "SRC/neothd/src/cli/eval.rs"
+    ],
+    "finalProducerDocgenTestRequired": true,
+    "runtimeAccepted": false
+  },
+  "referenceOriginalZipSha256": "8147553271824094F059DE0FB771BE259614D862EA1D4F177428D2FF2EB3B01E",
+  "pending": [
+    "Final producer focused429 compilation and execution",
+    "Native Windows1022 regression proof",
+    "Final full and release acceptance"
+  ],
+  "localExecutableValidationRan": false,
+  "runtimeAccepted": false,
+  "fullCiAccepted": false,
+  "releaseAccepted": false
+}

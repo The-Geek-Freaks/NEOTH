@@ -3102,6 +3102,18 @@ Pull a reviewed immutable target and verify its platform and image identity. Thi
 
 List NEOTH workflow templates bundled in the binary
 
+## `neoth nct-baseline`
+
+Explicit two-route, content-free NCT baseline; --execute is required for provider calls
+
+- `--builtin-recipe` — Use the reviewed public benign two-route recipe shipped with NEOTH
+- `--recipe <RECIPE>` — Operator-reviewed live recipe. It may only use public benign prompts
+- `--execute` — Required: perform the two real provider calls. Without this flag, validate only
+- `--direct-config <DIRECT_CONFIG>` — Direct-route config; its consent, egress and budget remain authoritative
+- `--fallback-config <FALLBACK_CONFIG>` — Fallback-route config; it must contain one approved fallback hop
+- `--receipt-dir <RECEIPT_DIR>` — Directory for content-free receipts and exclusive per-row WAL segments
+- `--output <OUTPUT>`
+
 ## `neoth obsidian`
 
 One-way sync of the session archive into an Obsidian vault. Phase 13 R-5. Idempotent — re-runs skip unchanged files

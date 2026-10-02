@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T21:36:57.8600953Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_WINDOWS_PENDING",
+  "capturedUtc": "2026-10-02T21:43:45.2500793Z",
+  "validationStatus": "HOSTED_DIAGNOSTICS_REPAIRED_AUTHENTIC_REFERENCE_IMPORTED_TESTS_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -263,8 +263,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 264451,
-      "sha256": "71701DFED4E632EE71BE21A62A9E38753D2F6B408149CA810077BF4CBB9F954C"
+      "bytes": 265202,
+      "sha256": "6629C9C342D510A77BFD93A964DC5100F0F329DB14C0340E31DC8657AE4A0A2A"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3157,6 +3157,11 @@
       "sha256": "804D9F959B9885252B924C5C77A26118847B4BE47CE4E0E35F1B178FA9F799B2"
     },
     {
+      "path": "docs/verification/gold-wave2214-compile-and-cli-reference.json",
+      "bytes": 2748,
+      "sha256": "2C65B99DB728549D7D5676323521106C1E4C676FEE35EF23EEFBA7EFD292C1ED"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4298,8 +4303,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2316489,
-      "sha256": "E44FCF671B652755AC28C17B5E04D85E50E14DD25D940F676CA57D428798EC50"
+      "bytes": 2317608,
+      "sha256": "41897A90F992F02C7597ABCD296C4BCB6EE1E7AF6530357EF66FC55CB60852B2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5478,8 +5483,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/nct_baseline.rs",
-      "bytes": 44294,
-      "sha256": "6DA69F90921EB07905EDAF88F33ADC713DC5B6A81C2C6141F92841FC0C8AD8FC"
+      "bytes": 44296,
+      "sha256": "87CA58A5CC59DBA506B40817B37395BB7B48DC5937A6CFAE7463A27A830C7CEF"
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
@@ -5988,8 +5993,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 202569,
-      "sha256": "583796315AA4B4EB5134D0FF3A9472EF27747A9769906C66049FBBF8E5DF90B8"
+      "bytes": 202693,
+      "sha256": "6F2CB3C2EF5424DD4196B45EFBA053B379B357CA444760605F6B30A71F3DC94D"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
