@@ -132,6 +132,9 @@ pub enum CronAction {
         /// Exact thinking-token budget; unsupported providers fail before spend.
         #[arg(long)]
         thinking_budget: Option<u32>,
+        /// Exact output-token ceiling; unsupported providers fail before spend.
+        #[arg(long)]
+        max_output_tokens: Option<u32>,
         /// 429 fallback as PROVIDER or PROVIDER:MODEL. Repeat for ordering.
         #[arg(long = "fallback")]
         fallback: Vec<String>,
@@ -204,13 +207,16 @@ pub enum CronAction {
         profile: Option<String>,
         #[arg(long)]
         thinking_budget: Option<u32>,
+        /// Replace the exact output-token ceiling; unsupported providers fail before spend.
+        #[arg(long)]
+        max_output_tokens: Option<u32>,
         #[arg(long = "fallback")]
         fallback: Vec<String>,
         #[arg(long = "capability")]
         capabilities: Vec<String>,
         #[arg(long = "tool")]
         tools: Vec<String>,
-        /// Clear provider/model/profile/thinking/fallback/MCP execution policy
+        /// Clear provider/model/profile/thinking/output-ceiling/fallback/MCP execution policy
         /// before applying supplied execution fields.
         #[arg(long)]
         clear_execution: bool,
@@ -319,6 +325,7 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             model,
             profile,
             thinking_budget,
+            max_output_tokens,
             fallback,
             capabilities,
             tools,
@@ -348,6 +355,7 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
                         model,
                         profile,
                         thinking_budget,
+                        max_output_tokens,
                         fallback,
                         capabilities,
                         tools,
@@ -386,6 +394,7 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
             model,
             profile,
             thinking_budget,
+            max_output_tokens,
             fallback,
             capabilities,
             tools,
@@ -420,6 +429,7 @@ pub async fn run_cron(args: CronArgs, output: OutputFormat) -> Result<()> {
                     model,
                     profile,
                     thinking_budget,
+                    max_output_tokens,
                     fallback,
                     capabilities,
                     tools,
@@ -524,6 +534,7 @@ struct CronEditPatch {
     model: Option<String>,
     profile: Option<String>,
     thinking_budget: Option<u32>,
+    max_output_tokens: Option<u32>,
     fallback: Vec<String>,
     capabilities: Vec<String>,
     tools: Vec<String>,
@@ -665,6 +676,7 @@ fn build_execution(
     model: Option<String>,
     profile: Option<String>,
     thinking_budget: Option<u32>,
+    max_output_tokens: Option<u32>,
     fallback: Vec<String>,
     capabilities: Vec<String>,
     tools: Vec<String>,
@@ -678,6 +690,7 @@ fn build_execution(
         model,
         profile,
         thinking_budget,
+        max_output_tokens,
         fallback: fallback
             .into_iter()
             .map(parse_fallback)
@@ -738,6 +751,7 @@ fn cron_edit_full(patch: CronEditPatch, file: Option<PathBuf>) -> Result<()> {
         model,
         profile,
         thinking_budget,
+        max_output_tokens,
         fallback,
         capabilities,
         tools,
@@ -850,6 +864,9 @@ fn cron_edit_full(patch: CronEditPatch, file: Option<PathBuf>) -> Result<()> {
         }
         if let Some(thinking_budget) = thinking_budget {
             job.execution.thinking_budget = Some(thinking_budget);
+        }
+        if let Some(max_output_tokens) = max_output_tokens {
+            job.execution.max_output_tokens = Some(max_output_tokens);
         }
         if !fallback.is_empty() {
             job.execution.fallback = fallback
@@ -1510,6 +1527,7 @@ jobs:
                 model: None,
                 profile: None,
                 thinking_budget: None,
+                max_output_tokens: Some(64),
                 fallback: Vec::new(),
                 capabilities: Vec::new(),
                 tools: Vec::new(),
@@ -1526,6 +1544,7 @@ jobs:
         let jf = load_or_create(&path).expect("reload");
         assert_eq!(jf.jobs[0].name, "New Name");
         assert_eq!(jf.jobs[0].timeout_seconds, 120);
+        assert_eq!(jf.jobs[0].execution.max_output_tokens, Some(64));
     }
 
     #[test]
@@ -1551,6 +1570,7 @@ jobs:
             model: Some("qwen3:8b".into()),
             profile: Some("formal".into()),
             thinking_budget: Some(2_048),
+            max_output_tokens: Some(4_096),
             fallback: vec![ProviderTarget {
                 provider: InferenceProvider::LocalQwen,
                 model: Some("Qwen/Qwen3-4B".into()),
@@ -1586,6 +1606,11 @@ jobs:
             Some("operator-room")
         );
         assert_eq!(job.execution.provider, Some(InferenceProvider::LocalOllama));
+        assert_eq!(job.execution.max_output_tokens, Some(4_096));
+        assert_eq!(
+            serde_json::to_value(job).unwrap()["execution"]["max_output_tokens"],
+            4_096
+        );
         assert_eq!(job.execution.fallback.len(), 1);
         assert_eq!(job.execution.capabilities, ["files"]);
         assert_eq!(job.execution.tools, ["read_file"]);
@@ -1625,6 +1650,7 @@ jobs:
                 model: None,
                 profile: None,
                 thinking_budget: None,
+                max_output_tokens: None,
                 fallback: Vec::new(),
                 capabilities: Vec::new(),
                 tools: Vec::new(),

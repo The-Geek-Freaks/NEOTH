@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T10:40:27.5694529Z",
-  "validationStatus": "Exact hosted E0282 fixed by explicit unit test type; 387 focused cases pending",
+  "capturedUtc": "2026-10-02T11:30:40.3638652Z",
+  "validationStatus": "W2132 n8n/Cron output-ceiling callers statically reviewed; hosted acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 109651,
-      "sha256": "978DFBC6854EE01D0F81D90D006F3A211A377ED3CCD592199E2FF5321F4CE91B"
+      "bytes": 112157,
+      "sha256": "AB988A87BB5162D984B704447C6245C0132133B2F778C3604B5606A1239F2353"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -258,8 +258,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 264192,
-      "sha256": "94610F4EDB545EBD7DC50A4C9801F437CF85C9B652F547588AEDBA5C969593E9"
+      "bytes": 264451,
+      "sha256": "71701DFED4E632EE71BE21A62A9E38753D2F6B408149CA810077BF4CBB9F954C"
     },
     {
       "path": "docs/cli-reference.md",
@@ -1403,8 +1403,8 @@
     },
     {
       "path": "docs/providers.md",
-      "bytes": 21875,
-      "sha256": "A51EF2E48CAC0F3F683D7A4A6C42A4E93EAD028FC089E3E9B52F5583F368C104"
+      "bytes": 22840,
+      "sha256": "FC8D5290867A053B55E1D696119E6556899206A01CF2E9DEC76CEF5B6783B7E2"
     },
     {
       "path": "docs/reflection-yearly.md",
@@ -3082,6 +3082,11 @@
       "sha256": "0EE01BA381DCF2E5ACF4FA99297FDAE792B06668DDBE8D34E0846CE377309A36"
     },
     {
+      "path": "docs/verification/gold-wave2132-automation-output-ceilings.json",
+      "bytes": 6150,
+      "sha256": "CE57B322637BD892F02C4994091ADEADE9F8228BAA8C52F84209966DA0F8FD3D"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4183,8 +4188,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2292425,
-      "sha256": "5C3848E3C054F13C62CE016847EA54C1A6796BAA675A42B7BC43C303FAD0D80B"
+      "bytes": 2293754,
+      "sha256": "BF25080FCFFD76F7DBA1E7AA2D3CA1EF210F989BEDE6C98624255480BB0128EB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5173,8 +5178,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cron.rs",
-      "bytes": 57779,
-      "sha256": "C96A154A61C625527F12D7C77B295C202131CA7EDEFDFF93870854E9B813AABF"
+      "bytes": 58899,
+      "sha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C"
     },
     {
       "path": "SRC/neothd/src/cli/dictate.rs",
@@ -5953,8 +5958,13 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 184572,
-      "sha256": "DBBFA4648C3482BA16378A476DD7DC77D80534077516D2FEA0CC89C51C7C83A3"
+      "bytes": 188454,
+      "sha256": "C7537E5FAD57A17E4454F12777607180CAC432B404761BE32404D6E2953953FE"
+    },
+    {
+      "path": "SRC/neothd/src/cron/schema.rs",
+      "bytes": 53832,
+      "sha256": "DBC0A469B2933B6B9B8E0380B7DBA089DEAC19607FE84DF05D200537442B42CD"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -6918,8 +6928,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 64503,
-      "sha256": "8C1298F3041FD898FFC90216BB97123D03CE9D6F315770749AFD79E8391D0786"
+      "bytes": 86903,
+      "sha256": "84E3F6C068D7226A8313161F3630674C7C945E5252E3F9655210F1976E2D340F"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",

@@ -17686,3 +17686,11 @@ Explicit limits use a distinct TaskDelegateCapped frame kind/body, so an older d
 ## W2129 - Public prepared-update negative-test type
 
 Run 36996173618 on 8b6472c52b9c4e8e4429887d064162f6c47766dd stopped at Rust E0282 before any test execution: the error-only closure in the new public prepared-update test left its generic successful return type unconstrained. The existing call now specifies unit via `prepare_public_update_at::<()>`; production behavior and the negative assertion are unchanged. Root checked the exact one-line diff and generic signature. The 387-case focused catalog, 2607 portable identities and 179 focused source bindings are unchanged and require a hosted rerun. No local compiler, formatter or runtime was executed.
+
+## W2132 - n8n and Cron output-ceiling caller contracts
+
+The n8n provider-call JSON accepts optional `max_output_tokens`, binds it into the final existing authorized Request, and returns the requested and adapter-authorized effective ceiling on success. Legacy omission retains the prior response shape. Handler-level regressions cover the real config, registry, consent, provider, cost and WAL path, including zero leaf calls and no provider-request WAL for invalid, unsupported or unproven controls.
+
+Cron accepts `execution.max_output_tokens` through validated YAML and Add/Edit/Clear/List JSON. The same value survives the final Request and briefing retry. JOB_FIRED carries the execution policy; terminal records separate requested and effective ceilings, and failures before Request construction retain a null effective ceiling. The shared provider, cost and WAL boundary remains authoritative.
+
+Both caller candidates passed independent static review, including repair of initially insufficient n8n helper-only tests. Eleven additional focused and portable registrations produce 398 focused cases, 2618 portable identities and 180 source bindings. Hosted regression and whole-surface native qualification remain required before the broader GOLD-R4-14a acceptance claim. No local runtime was executed under the BSOD hold.

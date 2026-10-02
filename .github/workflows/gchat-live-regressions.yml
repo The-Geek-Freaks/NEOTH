@@ -178,6 +178,7 @@ jobs:
             SRC/neothd/src/cli/catalog.rs \
             SRC/neothd/src/cli/buddy.rs \
             SRC/neothd/src/cli/providers.rs \
+            SRC/neothd/src/n8n_api/handlers.rs \
             SRC/neothd/src/cluster/heartbeat.rs \
             SRC/neothd/src/cluster/executor.rs \
             SRC/neothd/src/cluster/outbound_tests.rs \
@@ -691,9 +692,20 @@ jobs:
           run_case 385 lib cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue --lib
           run_case 386 lib cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling --lib
           run_case 387 lib cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 387
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 387
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 387
+          run_case 388 lib n8n_api::handlers::tests::provider_call_output_ceiling_json_reaches_exact_final_request_and_response n8n_api::handlers::tests::provider_call_output_ceiling_json_reaches_exact_final_request_and_response --lib
+          run_case 389 lib n8n_api::handlers::tests::provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape n8n_api::handlers::tests::provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape --lib
+          run_case 390 lib n8n_api::handlers::tests::provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete n8n_api::handlers::tests::provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete --lib
+          run_case 391 lib n8n_api::handlers::tests::provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding n8n_api::handlers::tests::provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding --lib
+          run_case 392 lib n8n_api::handlers::tests::provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal n8n_api::handlers::tests::provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal --lib
+          run_case 393 lib n8n_api::handlers::tests::provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding n8n_api::handlers::tests::provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding --lib
+          run_case 394 lib cron::schema::tests::execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values cron::schema::tests::execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values --lib
+          run_case 395 lib cron::runner::workstream_c_tests::cron_output_ceiling_reaches_leaf_retry_and_terminal_wal cron::runner::workstream_c_tests::cron_output_ceiling_reaches_leaf_retry_and_terminal_wal --lib
+          run_case 396 lib cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call --lib
+          run_case 397 lib cli::cron::tests::edit_updates_name_and_timeout cli::cron::tests::edit_updates_name_and_timeout --lib
+          run_case 398 lib cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 398
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 398
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 398
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle

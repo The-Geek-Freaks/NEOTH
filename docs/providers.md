@@ -58,10 +58,32 @@ request record. A provider that cannot enforce the requested ceiling must reject
 the request; it may not silently omit the wire field or reuse an approval for a
 different ceiling.
 
-This is intentionally not yet a completion claim: the current source changes
-still need integrated regression and exact-head evidence. The remaining v1.0
-work also includes public n8n, Cron and Cluster schema/status parity, so those
-surfaces neither hide nor invent a ceiling. See `GOLD-R4-14a` in the
+The n8n `/api/provider/call` request accepts an optional
+`max_output_tokens` JSON field. It permits an integer from `1` through
+`131072`; omission preserves the legacy request and response shape. When the
+field is supplied, a successful response includes
+`requested_max_output_tokens` and `effective_output_token_ceiling`. The latter
+is the exact adapter and authorization ceiling for the request; it is never a
+claim of observed remote token use.
+
+```json
+{ "prompt": "Prepare the briefing", "max_output_tokens": 2048 }
+```
+
+Cron stores the same optional value as `execution.max_output_tokens` and exposes
+it through `neoth cron add --max-output-tokens` and `neoth cron edit
+--max-output-tokens`. The range is again `1` through `131072`; omission keeps
+legacy job behavior, and `--clear-execution` clears the stored ceiling together
+with the other execution overrides.
+
+```bash
+neoth cron add --id morning --cron "0 7 * * *" --prompt "Prepare briefing" --max-output-tokens 2048
+neoth cron edit --id morning --max-output-tokens 1024
+```
+
+Both caller surfaces use the common provider authorization, cost, and WAL
+boundary. A configured value is rejected before a provider call if the selected
+leaf cannot prove an exact wire-enforced ceiling. See `GOLD-R4-14a` in the
 [authoritative roadmap](../PLAN/ROAD_TO_1_0_GOLD.md).
 
 ## Role routing

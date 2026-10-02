@@ -24,6 +24,115 @@ use super::server::{ApiRequestCtx, ApiState, HandlerOutcome};
 use super::{ApiErrorCode, REQUEST_BODY_LIMIT_BYTES};
 use crate::providers::Provider;
 
+#[cfg(test)]
+#[derive(Clone)]
+struct N8nTestProviderHandle(Arc<dyn crate::providers::Provider>);
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl crate::providers::Provider for N8nTestProviderHandle {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+        self.0.request_controls()
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.0.default_model()
+    }
+
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        self.0.consent_route()
+    }
+
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.0.resolve_model_for_wire(requested_model)
+    }
+
+    fn output_token_ceiling(&self, request: &crate::providers::Request) -> Option<u32> {
+        self.0.output_token_ceiling(request)
+    }
+
+    async fn complete(
+        &self,
+        request: crate::providers::Request,
+    ) -> anyhow::Result<crate::providers::Completion> {
+        self.0.complete(request).await
+    }
+}
+
+#[cfg(test)]
+type N8nTestDependencies = std::collections::BTreeMap<
+    std::path::PathBuf,
+    (
+        Arc<dyn crate::providers::Provider>,
+        Arc<crate::skills::registry::SkillRegistry>,
+    ),
+>;
+
+#[cfg(test)]
+type N8nTestDependencyStore = std::sync::Mutex<N8nTestDependencies>;
+
+#[cfg(test)]
+fn n8n_test_dependencies() -> &'static N8nTestDependencyStore {
+    static DEPENDENCIES: std::sync::OnceLock<N8nTestDependencyStore> =
+        std::sync::OnceLock::new();
+    DEPENDENCIES.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+#[cfg(test)]
+fn install_n8n_test_dependencies(
+    home: &std::path::Path,
+    provider: Arc<dyn crate::providers::Provider>,
+    registry: Arc<crate::skills::registry::SkillRegistry>,
+) {
+    n8n_test_dependencies()
+        .lock()
+        .expect("n8n test dependency mutex")
+        .insert(home.to_path_buf(), (provider, registry));
+}
+
+#[cfg(test)]
+fn remove_n8n_test_dependencies(home: &std::path::Path) {
+    n8n_test_dependencies()
+        .lock()
+        .expect("n8n test dependency mutex")
+        .remove(home);
+}
+
+async fn n8n_provider_from_config(
+    config: &crate::config::FreedomConfig,
+    home: &std::path::Path,
+) -> anyhow::Result<Box<dyn crate::providers::Provider>> {
+    #[cfg(test)]
+    if let Some((provider, _)) = n8n_test_dependencies()
+        .lock()
+        .expect("n8n test dependency mutex")
+        .get(home)
+        .cloned()
+    {
+        return Ok(Box::new(N8nTestProviderHandle(provider)));
+    }
+    crate::providers::from_config_at(config, home).await
+}
+
+fn n8n_provider_call_skill_registry(
+    _home: &std::path::Path,
+) -> Option<Arc<crate::skills::registry::SkillRegistry>> {
+    #[cfg(test)]
+    if let Some((_, registry)) = n8n_test_dependencies()
+        .lock()
+        .expect("n8n test dependency mutex")
+        .get(_home)
+        .cloned()
+    {
+        return Some(registry);
+    }
+    crate::skills::registry::global()
+}
+
 /// `/api/health` response payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
@@ -107,6 +216,12 @@ pub struct ProviderCallRequest {
     pub system: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional caller ceiling carried to the concrete provider request. The
+    /// common provider boundary rejects zero, values above its portable cap,
+    /// and leaves which cannot prove the exact wire enforcement before any
+    /// provider transport begins.
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
     /// Skip every communication-profile read for this request. Defaults false
     /// so existing workflows keep their prior request shape and behavior.
     #[serde(default)]
@@ -120,6 +235,14 @@ pub struct ProviderCallRequest {
 pub struct ProviderCallResponse {
     pub completion: String,
     pub model: Option<String>,
+    /// The caller-provided value from the exact request admitted by the
+    /// provider boundary. Omitted for legacy requests that supplied no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_max_output_tokens: Option<u32>,
+    /// The concrete leaf's proven wire ceiling for that same request. This is
+    /// an adapter/authorization fact, not a claim about remote consumption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_output_token_ceiling: Option<u32>,
 }
 
 /// `/api/channel/send` body. `channel` is the channel-id slug
@@ -470,8 +593,38 @@ fn build_provider_request(
         prompt: budget.prompt,
         system: budget.system,
         model: effective_model,
+        max_output_tokens: req.max_output_tokens,
         ..Default::default()
     })
+}
+
+/// Check caller-owned provider controls before the authorization boundary can
+/// begin a transport. `complete` repeats this common validation immediately
+/// before authorizing its exact request; the early check makes malformed or
+/// unsupported n8n input an ordinary handler refusal and lets the response
+/// retain only a proven, request-bound ceiling.
+fn n8n_output_ceiling_preflight(
+    provider: &dyn crate::providers::Provider,
+    request: &crate::providers::Request,
+) -> anyhow::Result<Option<u32>> {
+    provider.validate_request_controls(request)?;
+    let effective = provider.output_token_ceiling(request);
+    match (request.max_output_tokens, effective) {
+        (Some(requested), Some(ceiling)) if ceiling > 0 && ceiling <= requested => Ok(effective),
+        (Some(requested), Some(0)) => anyhow::bail!(
+            "provider `{}` returned a zero output-token ceiling for requested max_output_tokens={requested}",
+            provider.name()
+        ),
+        (Some(requested), Some(ceiling)) => anyhow::bail!(
+            "provider `{}` cannot prove requested max_output_tokens={requested}: effective wire ceiling is {ceiling}",
+            provider.name()
+        ),
+        (Some(requested), None) => anyhow::bail!(
+            "provider `{}` cannot prove wire enforcement for requested max_output_tokens={requested}",
+            provider.name()
+        ),
+        (None, effective) => Ok(effective),
+    }
 }
 
 /// Resolve the one prompt-visible Skill registry for an n8n provider call.
@@ -608,7 +761,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         live_config.as_ref(),
         &state.reload_controller,
         accepted_config_epoch,
-        crate::skills::registry::global(),
+        n8n_provider_call_skill_registry(&state.home),
     ) {
         Ok(context) => context,
         Err(error) => {
@@ -641,7 +794,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         );
         return refusal;
     }
-    let provider = match crate::providers::from_config_at(live_config.as_ref(), &state.home).await {
+    let provider = match n8n_provider_from_config(live_config.as_ref(), &state.home).await {
         Ok(p) => p,
         Err(e) => {
             return HandlerOutcome::error(
@@ -728,6 +881,22 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         effective_model,
         "n8n.provider_call",
     );
+    // Validate the exact final request before `complete` can authorize or
+    // dispatch it. The same common Provider implementation repeats this at
+    // its mandatory boundary, which keeps cost and WAL bindings anchored to
+    // this unchanged `request`, not to n8n-side response metadata.
+    let requested_max_output_tokens = request.max_output_tokens;
+    let effective_output_token_ceiling = match n8n_output_ceiling_preflight(&provider, &request)
+    {
+        Ok(ceiling) => ceiling,
+        Err(error) => {
+            return HandlerOutcome::error(
+                ApiErrorCode::BadRequest,
+                format!("provider_call output ceiling refused: {error:#}"),
+                "use max_output_tokens within the provider's supported bounded range",
+            );
+        }
+    };
     match provider.complete(request).await {
         Ok(comp) => {
             let model = comp.identity.wire_model.clone();
@@ -735,6 +904,8 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
                 serde_json::to_value(ProviderCallResponse {
                     completion: comp.text,
                     model: Some(model),
+                    requested_max_output_tokens,
+                    effective_output_token_ceiling,
                 })
                 .expect("ProviderCallResponse contains only JSON-safe fields"),
             )
@@ -846,6 +1017,51 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    struct N8nCeilingProbe {
+        controls: crate::providers::ProviderRequestControls,
+        ceiling: Option<u32>,
+        calls: AtomicUsize,
+        requests: std::sync::Mutex<Vec<crate::providers::Request>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for N8nCeilingProbe {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+            self.controls
+        }
+
+        fn output_token_ceiling(&self, _request: &crate::providers::Request) -> Option<u32> {
+            self.ceiling
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("n8n-ceiling-probe")
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.requests
+                .lock()
+                .expect("n8n ceiling probe requests")
+                .push(request.clone());
+            Ok(crate::providers::Completion {
+                text: "bounded n8n completion".to_owned(),
+                model: request.model.unwrap_or_else(|| "n8n-ceiling-probe".to_owned()),
+                latency: Duration::ZERO,
+                ..Default::default()
+            })
+        }
+    }
 
     async fn n8n_test_registry(
         home: &std::path::Path,
@@ -866,6 +1082,63 @@ mod tests {
         .await
         .expect("load n8n test SkillRegistry");
         (controller, registry)
+    }
+
+    async fn n8n_ceiling_handler_state(
+        home: &std::path::Path,
+        provider: Arc<dyn crate::providers::Provider>,
+    ) -> (
+        ApiState,
+        crate::wal::writer::WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let mut config = crate::config::FreedomConfig::default();
+        config.provider_kind = Some(crate::cli::init::ProviderKind::LocalOllama);
+        config.provider_model = Some("n8n-ceiling-probe".to_owned());
+        let (controller, registry) = n8n_test_registry(home, config.clone()).await;
+        install_n8n_test_dependencies(home, provider, registry);
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(home.join("n8n-ceiling-handler.wal")).expect("start WAL");
+        let state = ApiState {
+            writer: writer.clone(),
+            config: Arc::new(config),
+            reload_controller: controller,
+            home: home.to_path_buf(),
+            token: "n8n-ceiling-test-token".to_owned(),
+            cooldown: Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+            boot_instant: std::time::Instant::now(),
+        };
+        (state, writer, writer_join)
+    }
+
+    fn n8n_ceiling_provider_call_ctx(body: &[u8]) -> ApiRequestCtx {
+        ApiRequestCtx {
+            caller: super::super::server::ApiCaller::MasterToken,
+            method: "POST".to_owned(),
+            path: "/api/provider/call".to_owned(),
+            request_id: "n8n-ceiling-handler-test".to_owned(),
+            source_ip: "127.0.0.1".to_owned(),
+            body: body.to_vec(),
+        }
+    }
+
+    fn provider_request_wal_payloads(segment: &std::path::Path) -> Vec<serde_json::Value> {
+        let bytes = std::fs::read(segment).expect("read provider WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse WAL header");
+        let mut cursor = header.header_len();
+        let mut payloads = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                payloads.push(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("provider request JSON"),
+                );
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        payloads
     }
 
     fn pin_preference(
@@ -1115,6 +1388,7 @@ mod tests {
             prompt: "automation task".into(),
             system: Some("CALLER_SYSTEM_LAYER".into()),
             model: None,
+            max_output_tokens: None,
             incognito: false,
         };
 
@@ -1163,6 +1437,281 @@ mod tests {
             std::fs::read(&state_path).expect("read malformed sentinel"),
             b"not valid communication state"
         );
+    }
+
+    #[test]
+    fn provider_call_output_ceiling_json_reaches_exact_final_request_and_response() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        let request: ProviderCallRequest = parse_body(
+            br#"{"prompt":"bounded automation","incognito":true,"max_output_tokens":321}"#,
+        )
+        .expect("bounded n8n JSON parses");
+        let final_request = build_provider_request(home.path(), &config, &request, None, None)
+            .expect("build exact provider request");
+        assert_eq!(final_request.max_output_tokens, Some(321));
+
+        let effective = n8n_output_ceiling_preflight(
+            &N8nCeilingProbe {
+                controls: crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+                ceiling: Some(320),
+                calls: AtomicUsize::new(0),
+                requests: std::sync::Mutex::new(Vec::new()),
+            },
+            &final_request,
+        )
+        .expect("bounded leaf proves its stricter wire ceiling");
+        let response = serde_json::to_value(ProviderCallResponse {
+            completion: "bounded".to_owned(),
+            model: Some("wire-model".to_owned()),
+            requested_max_output_tokens: final_request.max_output_tokens,
+            effective_output_token_ceiling: effective,
+        })
+        .expect("response is JSON");
+        assert_eq!(response["requested_max_output_tokens"], 321);
+        assert_eq!(response["effective_output_token_ceiling"], 320);
+    }
+
+    #[test]
+    fn provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape() {
+        let request: ProviderCallRequest = parse_body(br#"{"prompt":"legacy"}"#)
+            .expect("legacy n8n JSON parses");
+        assert_eq!(request.max_output_tokens, None);
+        let response = serde_json::to_value(ProviderCallResponse {
+            completion: "legacy".to_owned(),
+            model: None,
+            requested_max_output_tokens: None,
+            effective_output_token_ceiling: None,
+        })
+        .expect("legacy response is JSON");
+        assert!(response.get("requested_max_output_tokens").is_none());
+        assert!(response.get("effective_output_token_ceiling").is_none());
+    }
+
+    #[test]
+    fn provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete() {
+        let controls = crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT;
+        for invalid in [
+            Some(0),
+            Some(crate::providers::MAX_REQUEST_OUTPUT_TOKENS + 1),
+        ] {
+            let request = crate::providers::Request {
+                max_output_tokens: invalid,
+                ..Default::default()
+            };
+            assert!(
+                n8n_output_ceiling_preflight(
+                    &N8nCeilingProbe {
+                        controls,
+                        ceiling: Some(64),
+                        calls: AtomicUsize::new(0),
+                        requests: std::sync::Mutex::new(Vec::new()),
+                    },
+                    &request,
+                )
+                .is_err(),
+                "invalid cap {invalid:?} must fail before provider complete"
+            );
+        }
+        let requested = crate::providers::Request {
+            max_output_tokens: Some(64),
+            ..Default::default()
+        };
+        assert!(
+            n8n_output_ceiling_preflight(
+                &N8nCeilingProbe {
+                    controls: crate::providers::ProviderRequestControls::NONE,
+                    ceiling: None,
+                    calls: AtomicUsize::new(0),
+                    requests: std::sync::Mutex::new(Vec::new()),
+                },
+                &requested,
+            )
+            .is_err(),
+            "a leaf without the output-capability cannot receive the request"
+        );
+        assert!(
+            n8n_output_ceiling_preflight(
+                &N8nCeilingProbe {
+                    controls,
+                    ceiling: None,
+                    calls: AtomicUsize::new(0),
+                    requests: std::sync::Mutex::new(Vec::new()),
+                },
+                &requested,
+            )
+            .is_err(),
+            "a nominally-capable leaf must still prove an exact wire ceiling"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding() {
+        let home = tempfile::tempdir().expect("temporary n8n home");
+        let inner = Arc::new(N8nCeilingProbe {
+            controls: crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+            ceiling: Some(320),
+            calls: AtomicUsize::new(0),
+            requests: std::sync::Mutex::new(Vec::new()),
+        });
+        let (state, writer, writer_join) =
+            n8n_ceiling_handler_state(home.path(), Arc::clone(&inner) as Arc<dyn crate::providers::Provider>)
+                .await;
+        let outcome = provider_call(
+            &n8n_ceiling_provider_call_ctx(
+                br#"{"prompt":"bounded automation","incognito":true,"max_output_tokens":321}"#,
+            ),
+            &state,
+        )
+        .await;
+        match outcome {
+            HandlerOutcome::Ok { body } => {
+                assert_eq!(body["requested_max_output_tokens"], 321);
+                assert_eq!(body["effective_output_token_ceiling"], 320);
+            }
+            HandlerOutcome::Err { message, .. } => panic!("unexpected handler refusal: {message}"),
+        }
+        let legacy = provider_call(
+            &n8n_ceiling_provider_call_ctx(br#"{"prompt":"legacy automation","incognito":true}"#),
+            &state,
+        )
+        .await;
+        match legacy {
+            HandlerOutcome::Ok { body } => {
+                assert!(body.get("requested_max_output_tokens").is_none());
+                assert!(body.get("effective_output_token_ceiling").is_none());
+            }
+            HandlerOutcome::Err { message, .. } => panic!("unexpected legacy refusal: {message}"),
+        }
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
+        let requests = inner.requests.lock().expect("recorded request");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].max_output_tokens, Some(321));
+        assert_eq!(requests[1].max_output_tokens, None);
+        drop(requests);
+        let segment = home.path().join("n8n-ceiling-handler.wal");
+        remove_n8n_test_dependencies(home.path());
+        drop(state);
+        drop(writer);
+        writer_join.await.expect("WAL writer drains");
+        let payloads = provider_request_wal_payloads(&segment);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["requested_max_output_tokens"], 321);
+        assert_eq!(payloads[0]["output_token_ceiling"], 320);
+        assert!(payloads[1]["requested_max_output_tokens"].is_null());
+    }
+
+    #[tokio::test]
+    async fn provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal() {
+        for (controls, ceiling, body) in [
+            (
+                crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+                Some(64),
+                br#"{"prompt":"zero","incognito":true,"max_output_tokens":0}"#.as_slice(),
+            ),
+            (
+                crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+                Some(64),
+                br#"{"prompt":"over","incognito":true,"max_output_tokens":131073}"#.as_slice(),
+            ),
+            (
+                crate::providers::ProviderRequestControls::NONE,
+                None,
+                br#"{"prompt":"unsupported","incognito":true,"max_output_tokens":64}"#.as_slice(),
+            ),
+            (
+                crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+                None,
+                br#"{"prompt":"unproven","incognito":true,"max_output_tokens":64}"#.as_slice(),
+            ),
+        ] {
+            let home = tempfile::tempdir().expect("temporary n8n home");
+            let inner = Arc::new(N8nCeilingProbe {
+                controls,
+                ceiling,
+                calls: AtomicUsize::new(0),
+                requests: std::sync::Mutex::new(Vec::new()),
+            });
+            let (state, writer, writer_join) = n8n_ceiling_handler_state(
+                home.path(),
+                Arc::clone(&inner) as Arc<dyn crate::providers::Provider>,
+            )
+            .await;
+            let outcome = provider_call(&n8n_ceiling_provider_call_ctx(body), &state).await;
+            assert_eq!(outcome.error_code(), Some(ApiErrorCode::BadRequest));
+            assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+            assert!(inner.requests.lock().expect("recorded request").is_empty());
+            let segment = home.path().join("n8n-ceiling-handler.wal");
+            remove_n8n_test_dependencies(home.path());
+            drop(state);
+            drop(writer);
+            writer_join.await.expect("WAL writer drains");
+            assert!(
+                provider_request_wal_payloads(&segment).is_empty(),
+                "refused n8n ceiling must not start a provider lifecycle WAL record"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding() {
+        let home = tempfile::tempdir().expect("temporary n8n home");
+        let segment = home.path().join("n8n-output-ceiling.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start WAL writer");
+        let inner = Arc::new(N8nCeilingProbe {
+            controls: crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+            ceiling: Some(320),
+            calls: AtomicUsize::new(0),
+            requests: std::sync::Mutex::new(Vec::new()),
+        });
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        );
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::clone(&inner) as Arc<dyn crate::providers::Provider>,
+            authorizer,
+            Some("n8n-ceiling-probe".to_owned()),
+            "n8n.provider_call",
+        );
+        let exact_request = crate::providers::Request {
+            prompt: "bounded n8n request".to_owned(),
+            max_output_tokens: Some(321),
+            ..Default::default()
+        };
+        assert_eq!(
+            n8n_output_ceiling_preflight(&provider, &exact_request).expect("preflight"),
+            Some(320)
+        );
+        provider
+            .complete(exact_request)
+            .await
+            .expect("authorized capped provider call");
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.expect("WAL writer drains");
+
+        let bytes = std::fs::read(&segment).expect("read provider WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse WAL header");
+        let mut cursor = header.header_len();
+        let mut request_payload = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                request_payload = Some(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("provider request JSON"),
+                );
+                break;
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        let request_payload = request_payload.expect("durable provider request");
+        assert_eq!(request_payload["requested_max_output_tokens"], 321);
+        assert_eq!(request_payload["output_token_ceiling"], 320);
     }
 
     #[test]
@@ -1221,6 +1770,7 @@ mod tests {
             prompt: "machine-generated automation prompt".into(),
             system: None,
             model: None,
+            max_output_tokens: None,
             incognito: false,
         };
 
@@ -1267,6 +1817,7 @@ mod tests {
                 prompt: "automation task".into(),
                 system: None,
                 model: None,
+                max_output_tokens: None,
                 incognito: true,
             },
             Some("wire-model".into()),
@@ -1445,6 +1996,7 @@ mod tests {
                 prompt: "automation task".into(),
                 system: None,
                 model: None,
+                max_output_tokens: None,
                 incognito: true,
             },
             None,

@@ -199,6 +199,10 @@ pub struct ExecutionPolicy {
     pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
+    /// Optional per-request output-token ceiling. The existing provider leaf
+    /// proves its concrete wire enforcement before any transport is allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback: Vec<ProviderTarget>,
     /// Enabled MCP server ids available to this job.
@@ -851,6 +855,14 @@ impl ExecutionPolicy {
         if self.thinking_budget == Some(0) {
             anyhow::bail!("execution.thinking_budget must be greater than zero");
         }
+        if self.max_output_tokens.is_some_and(|value| {
+            value == 0 || value > crate::providers::MAX_REQUEST_OUTPUT_TOKENS
+        }) {
+            anyhow::bail!(
+                "execution.max_output_tokens must be in 1..={}",
+                crate::providers::MAX_REQUEST_OUTPUT_TOKENS,
+            );
+        }
         for (kind, values) in [("capability", &self.capabilities), ("tool", &self.tools)] {
             let mut unique = HashSet::new();
             for value in values {
@@ -1449,5 +1461,24 @@ jobs:
             !ready.contains(&"b".to_string()),
             "b must not be ready when a is incomplete"
         );
+    }
+
+    #[test]
+    fn execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values() {
+        for value in [1, crate::providers::MAX_REQUEST_OUTPUT_TOKENS] {
+            let yaml = format!(
+                "version: 1\njobs:\n  - id: bounded\n    name: Bounded\n    enabled: true\n    schedule:\n      cron: '0 7 * * *'\n    prompt: bounded\n    execution:\n      max_output_tokens: {value}\n"
+            );
+            JobsFile::from_yaml_str(&yaml).expect("inclusive output-token bound is valid");
+        }
+        for value in [0, crate::providers::MAX_REQUEST_OUTPUT_TOKENS + 1] {
+            let yaml = format!(
+                "version: 1\njobs:\n  - id: rejected\n    name: Rejected\n    enabled: true\n    schedule:\n      cron: '0 7 * * *'\n    prompt: rejected\n    execution:\n      max_output_tokens: {value}\n"
+            );
+            assert!(
+                JobsFile::from_yaml_str(&yaml).is_err(),
+                "max_output_tokens={value} must be rejected during YAML validation"
+            );
+        }
     }
 }

@@ -1497,6 +1497,7 @@ Add a new job to jobs.yaml. Validates the schedule and delivery channel, then su
 - `--model <MODEL>` — Final wire model for this job
 - `--profile <PROFILE>` — Built-in profile preset
 - `--thinking-budget <THINKING_BUDGET>` — Exact thinking-token budget; unsupported providers fail before spend
+- `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Exact output-token ceiling; unsupported providers fail before spend
 - `--fallback <FALLBACK>` — 429 fallback as PROVIDER or PROVIDER:MODEL. Repeat for ordering
 - `--capability <CAPABILITIES>` — Enabled MCP server id available to the job. Repeat as needed
 - `--tool <TOOLS>` — Exact MCP tool name. Requires at least one --capability
@@ -1535,10 +1536,11 @@ Edit an existing job by id. Only supplied flags are updated. Validates the resul
 - `--model <MODEL>`
 - `--profile <PROFILE>`
 - `--thinking-budget <THINKING_BUDGET>`
+- `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Replace the exact output-token ceiling; unsupported providers fail before spend
 - `--fallback <FALLBACK>`
 - `--capability <CAPABILITIES>`
 - `--tool <TOOLS>`
-- `--clear-execution` — Clear provider/model/profile/thinking/fallback/MCP execution policy before applying supplied execution fields
+- `--clear-execution` — Clear provider/model/profile/thinking/output-ceiling/fallback/MCP execution policy before applying supplied execution fields
 - `--depends-on <DEPENDS_ON>`
 - `--clear-dependencies` — Clear all dependency edges before applying --depends-on values
 - `--timeout <TIMEOUT>` — Replace the timeout in seconds

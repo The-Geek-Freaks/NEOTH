@@ -184,6 +184,15 @@ async fn run_job_at_inner(
             provider.get().name()
         );
     }
+    if job.execution.max_output_tokens.is_some()
+        && !provider.get().request_controls().supports_max_output_tokens()
+    {
+        anyhow::bail!(
+            "Cron job `{}` requests max_output_tokens but provider `{}` cannot wire it",
+            job.id,
+            provider.get().name()
+        );
+    }
     let proactive_queue_path = home.join("proactive_queue.json");
     let hook_dir = home.join("hooks");
     let once_guard = crate::hooks::SessionOnceGuard::new();
@@ -270,6 +279,7 @@ async fn cron_enriched_request(
     explicit_system: Option<&str>,
     model: String,
     thinking_budget: Option<u32>,
+    max_output_tokens: Option<u32>,
 ) -> Result<Request> {
     let skill_registry_context = cron_session_skill_registry_context(home, config).await?;
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
@@ -296,6 +306,7 @@ async fn cron_enriched_request(
         system: enriched.system,
         model: Some(model),
         thinking_budget,
+        max_output_tokens,
         ..Default::default()
     })
 }
@@ -917,6 +928,7 @@ async fn run_job_with_paths(
         system_prompt.as_deref(),
         request_model,
         job.execution.thinking_budget,
+        job.execution.max_output_tokens,
     )
     .await
     .with_context(|| format!("build Cron request registry for job `{}`", job.id))
@@ -936,6 +948,9 @@ async fn run_job_with_paths(
             .await;
         }
     };
+    let requested_max_output_tokens = req.max_output_tokens;
+    let effective_output_token_ceiling = requested_max_output_tokens
+        .and_then(|_| provider.output_token_ceiling(&req));
     let timeout_dur = Duration::from_secs(job.timeout_seconds.max(1) as u64);
     let provider_deadline = tokio::time::Instant::now() + timeout_dur;
     let result = tokio::time::timeout_at(
@@ -1284,6 +1299,8 @@ async fn run_job_with_paths(
         "duration_ms": elapsed.as_millis() as u64,
         "output_bytes": output_text.len(),
         "error": err_text,
+        "requested_max_output_tokens": requested_max_output_tokens,
+        "effective_output_token_ceiling": effective_output_token_ceiling,
         "delivery_channel": job.delivery.as_ref().map(|delivery| delivery.channel.as_str()),
         "delivery_queued": delivery_queued,
         "delivery_id": delivery_id,
@@ -1622,6 +1639,8 @@ async fn finish_job_fired_failure(
         "duration_ms": duration.as_millis() as u64,
         "output_bytes": 0,
         "error": &error,
+        "requested_max_output_tokens": job.execution.max_output_tokens,
+        "effective_output_token_ceiling": serde_json::Value::Null,
         "failure_stage": "job_fired_hook",
         "failure_kind": failure_kind,
         "delivery_channel": job.delivery.as_ref().map(|delivery| delivery.channel.as_str()),
@@ -1788,7 +1807,7 @@ mod workstream_c_tests {
     use crate::cron::schema::{Delivery, Job, Schedule};
     use crate::profile::estimators::BehaviouralProfile;
     use crate::profile::snapshot::load_snapshot;
-    use crate::providers::{Completion, Provider, Request};
+    use crate::providers::{Completion, Provider, ProviderRequestControls, Request};
     use crate::wal::events::{
         EVENT_TYPE_HOOK_BLOCKED, EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_RAW_TEXT,
     };
@@ -2929,6 +2948,14 @@ channel_accounts:
             "cron-request-recording-mock"
         }
 
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+        }
+
+        fn output_token_ceiling(&self, request: &Request) -> Option<u32> {
+            request.max_output_tokens
+        }
+
         async fn complete(&self, request: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.requests.lock().unwrap().push(request);
@@ -3157,6 +3184,71 @@ channel_accounts:
         assert_eq!(requests[0].system, requests[1].system);
         assert_eq!(requests[0].model, requests[1].model);
         assert_ne!(requests[0].prompt, requests[1].prompt);
+    }
+
+    #[tokio::test]
+    async fn cron_output_ceiling_reaches_leaf_retry_and_terminal_wal() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("cron-output-ceiling-retry.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = authorized(RequestRecordingProvider {
+            calls: Arc::clone(&calls),
+            requests: Arc::clone(&requests),
+            outputs: Mutex::new(std::collections::VecDeque::from([
+                "too short".to_owned(),
+                passing_briefing(),
+            ])),
+        });
+        let mut job = briefing_job();
+        job.execution.max_output_tokens = Some(64);
+
+        run_job_at(home.path(), &job, &provider, &writer)
+            .await
+            .expect("bounded briefing retry completes");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].max_output_tokens, Some(64));
+        assert_eq!(requests[1].max_output_tokens, Some(64));
+        let events = wal_json_events(&segment);
+        let fired = events
+            .iter()
+            .find(|(kind, _)| *kind == EVENT_TYPE_JOB_FIRED)
+            .expect("JOB_FIRED is durable before the provider call");
+        assert_eq!(fired.1["execution"]["max_output_tokens"], 64);
+        let terminal = events
+            .iter()
+            .find(|(kind, _)| *kind == EVENT_TYPE_JOB_SUCCESS)
+            .expect("bounded job has a terminal success receipt");
+        assert_eq!(terminal.1["requested_max_output_tokens"], 64);
+        assert_eq!(terminal.1["effective_output_token_ceiling"], 64);
+    }
+
+    #[tokio::test]
+    async fn cron_output_ceiling_unsupported_provider_fails_before_any_call() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("cron-output-ceiling-denied.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: Arc::clone(&calls),
+        });
+        let mut job = briefing_job();
+        job.execution.max_output_tokens = Some(64);
+
+        let error = run_job_at(home.path(), &job, &provider, &writer)
+            .await
+            .expect_err("unsupported output ceiling must fail before dispatch");
+        drop(writer);
+        let _ = join.await;
+
+        assert!(error.to_string().contains("max_output_tokens"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

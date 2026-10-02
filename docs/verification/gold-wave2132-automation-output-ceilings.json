@@ -1,0 +1,110 @@
+{
+  "schema": "neoth-gold-wave2132-automation-output-ceilings/v1",
+  "base": "88655e0d5946bec57bc5ba61d2a859a13e8299da",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "requirement": "GOLD-R4-14a n8n and Cron caller schema/status parity",
+  "behavior": [
+    "n8n optional max_output_tokens JSON binds the final Request before existing provider control/cost/WAL authorization; response shows requested and adapter-authorized effective ceiling",
+    "n8n legacy omission preserves old response shape; invalid, unsupported and unproven limits reject before the actual leaf or provider-request WAL",
+    "Cron execution.max_output_tokens is validated in YAML and carried by add/edit/clear/list JSON, final Request and briefing retry",
+    "Cron JOB_FIRED retains execution policy; terminal records distinguish requested/effective limits; pre-request failure keeps effective null"
+  ],
+  "sourceCandidates": [
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "baseBlob": "87561717fb5bdaeb5eb9b05bcbc66f59c24cee0d",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\SRC_neothd_src_n8n_api_handlers.rs.candidate",
+      "candidateBlob": "26d6cf3b38448a4732b423bd116ea647cd2f53bc",
+      "candidateRawSha256": "84E3F6C068D7226A8313161F3630674C7C945E5252E3F9655210F1976E2D340F"
+    },
+    {
+      "path": "SRC/neothd/src/cron/schema.rs",
+      "baseBlob": "98a7a2584a6768c3a94ff091f7a9953b104ef94c",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\SRC_neothd_src_cron_schema.rs.candidate",
+      "candidateBlob": "63e3dc32eb1cef2388e853f7d29f6f85f2087d38",
+      "candidateRawSha256": "DBC0A469B2933B6B9B8E0380B7DBA089DEAC19607FE84DF05D200537442B42CD"
+    },
+    {
+      "path": "SRC/neothd/src/cron/runner.rs",
+      "baseBlob": "3fb4824346a7c8752ff01ea1fcb16e0519e1240f",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\SRC_neothd_src_cron_runner.rs.candidate",
+      "candidateBlob": "26d66773050f9749bf1cd8ec0b87fb98cc87001d",
+      "candidateRawSha256": "C7537E5FAD57A17E4454F12777607180CAC432B404761BE32404D6E2953953FE"
+    },
+    {
+      "path": "SRC/neothd/src/cli/cron.rs",
+      "baseBlob": "e6ed389ca9b2f71897e0828032019e1c7918bd42",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\SRC_neothd_src_cli_cron.rs.candidate",
+      "candidateBlob": "2ae31e7870758aca0a056a3e246eea8d1f73588d",
+      "candidateRawSha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C"
+    },
+    {
+      "path": "docs/providers.md",
+      "baseBlob": "07b034871d020378cacf75c5f79b70d3b3380b85",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\docs_providers.md.candidate",
+      "candidateBlob": "1c7e67d45da2bcdf744a06dfbedf37c256aab447",
+      "candidateRawSha256": "FC8D5290867A053B55E1D696119E6556899206A01CF2E9DEC76CEF5B6783B7E2"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "baseBlob": "7e27b3375dd26183eadb30b5da636a820d07441c",
+      "candidatePath": "work\\gold-20260906\\wave2132-caller-ceiling-integration\\docs_cli-commands.md.candidate",
+      "candidateBlob": "c670473b7a0cc9da706b1797c9973ff3f28b0f5d",
+      "candidateRawSha256": "71701DFED4E632EE71BE21A62A9E38753D2F6B408149CA810077BF4CBB9F954C"
+    }
+  ],
+  "tests": [
+    "n8n_api::handlers::tests::provider_call_output_ceiling_json_reaches_exact_final_request_and_response",
+    "n8n_api::handlers::tests::provider_call_output_ceiling_legacy_absence_preserves_request_and_response_shape",
+    "n8n_api::handlers::tests::provider_call_output_ceiling_invalid_or_unproven_is_refused_before_complete",
+    "n8n_api::handlers::tests::provider_call_output_ceiling_handler_returns_exact_request_response_and_wal_binding",
+    "n8n_api::handlers::tests::provider_call_output_ceiling_handler_refuses_invalid_or_unproven_before_leaf_or_wal",
+    "n8n_api::handlers::tests::provider_call_output_ceiling_reuses_authorized_cost_wal_request_binding",
+    "cron::schema::tests::execution_max_output_tokens_yaml_accepts_bounds_and_rejects_invalid_values",
+    "cron::runner::workstream_c_tests::cron_output_ceiling_reaches_leaf_retry_and_terminal_wal",
+    "cron::runner::workstream_c_tests::cron_output_ceiling_unsupported_provider_fails_before_any_call",
+    "cli::cron::tests::edit_updates_name_and_timeout",
+    "cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field"
+  ],
+  "reviews": {
+    "cron": "06998B784241E2500EB22E52913BCEC2D575E7695B74021DFFFE1159277D837A",
+    "n8n": "426E105564D3DB70C7A9531AFD272641801D32B641EFD4D1F6A7C96A8490E220"
+  },
+  "reviewRepair": "n8n helper-only initial coverage replaced/supplemented by actual provider_call handler success, legacy and zero-effect denial tests",
+  "focusedCases": 398,
+  "portableCases": 2618,
+  "focusedSourceBindings": 180,
+  "guards": 20,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "finalStaticCorrection": "Before integration, the cfg(test)-only home parameter was renamed _home and duplicated test dependency store types were factored into aliases; no behavior or test weakening.",
+  "precedingFocusedAcceptance": {
+    "rootChecksSha256": "E0F284A2BB6CCE1AB5EE6D0F1FF5DCAD250D6A6975EE23FC5AA2EDC9A5D4F4EC",
+    "run": "36997319142",
+    "producer": "88655e0d5946bec57bc5ba61d2a859a13e8299da",
+    "focused": 387,
+    "guards": 20,
+    "python": 61,
+    "products": 4,
+    "daemons": 2,
+    "archives": 7,
+    "entries": 806,
+    "workflowSourceBindings": 179,
+    "allSourceBindings": 189,
+    "additionalProductSourceBindings": [
+      "SRC/neoth-openclaw-custody/Cargo.toml",
+      "SRC/neoth-openclaw-custody/src/lib.rs",
+      "SRC/neothd/src/channels/gchat_api.rs",
+      "SRC/neothd/src/channels/mod.rs",
+      "SRC/neothd/src/cli/init/steps_identity.rs",
+      "SRC/neothd/src/cli/init/steps_provider.rs",
+      "SRC/neothd/src/cli/reload.rs",
+      "SRC/neothd/src/config/wal.rs",
+      "SRC/neothd/src/providers/openai_api.rs",
+      "SRC/neothd/src/wal/master_key.rs"
+    ],
+    "missing": []
+  }
+}
