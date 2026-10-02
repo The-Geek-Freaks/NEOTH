@@ -22,9 +22,10 @@ use crate::cli::{Cli, Commands, OutputFormat};
 pub const NCT_LIVE_RECIPE_SCHEMA_V1: &str = "neoth.nct-live-route-recipe.v1";
 const MAX_ROWS: usize = 2;
 const MAX_PROMPT_BYTES: usize = 256;
-// NCT retains a bounded two-row recipe and a 256-token output cap, while this
-// compatible input ceiling leaves room for ordinary protected chat context.
-const NCT_MAX_TOKENS_PER_REQUEST: u32 = 20_000;
+// NCT retains its two public rows, 256-byte prompts, and 256-token output cap.
+// Its input admission matches the ordinary configured default so protected chat
+// context remains intact; a smaller operator-selected cap remains authoritative.
+const NCT_MAX_TOKENS_PER_REQUEST: u32 = 100_000;
 const NCT_MAX_OUTPUT_TOKENS: u32 = 256;
 const BUILTIN_RECIPE: &str =
     include_str!("../../tests/fixtures/nct_baseline/nct_live_recipe_v1.json");
@@ -789,6 +790,64 @@ mod tests {
         assert!(!root.path().join("direct/wal").exists());
         assert!(!root.path().join("fallback/wal").exists());
         assert_eq!(std::fs::read(preserved).unwrap(), b"prior receipt");
+    }
+
+    #[tokio::test]
+    async fn wrapper_preserves_lower_operator_input_cap_before_provider_dispatch() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+
+        let root = tempfile::tempdir().unwrap();
+        let direct_home = root.path().join("direct");
+        let fallback_home = root.path().join("fallback");
+        std::fs::create_dir_all(&direct_home).unwrap();
+        std::fs::create_dir_all(&fallback_home).unwrap();
+        crate::consent::grant(&direct_home, ProviderKind::ClaudeCli).unwrap();
+        crate::consent::grant(&fallback_home, ProviderKind::ClaudeCli).unwrap();
+        let mut direct_config = normal_config();
+        direct_config.tokens.max_per_request = 1;
+        let mut fallback_config = direct_config.clone();
+        fallback_config.fallback.max_hops = 1;
+        fallback_config.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            model: Some(NCT_TEST_MODEL.into()),
+            ..Default::default()
+        });
+        let direct_path = direct_home.join("freedom.yaml");
+        let fallback_path = fallback_home.join("freedom.yaml");
+        std::fs::write(&direct_path, direct_config.public_yaml().unwrap()).unwrap();
+        std::fs::write(&fallback_path, fallback_config.public_yaml().unwrap()).unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let leaf = CountingLeaf {
+            calls: Arc::clone(&calls),
+            output_caps: Arc::new(Mutex::new(Vec::new())),
+        };
+        let args = executing_args(root.path(), direct_path, fallback_path);
+        let result = Box::pin(run_nct_baseline_with(
+            args,
+            NctRunner::Hermetic {
+                direct: &leaf,
+                fallback: &leaf,
+            },
+        ))
+        .await
+        .expect_err("the lower operator input cap must remain authoritative");
+        let rendered = format!("{result:#}");
+        assert!(rendered.contains("conservative input-token upper bound"));
+        assert!(rendered.contains("effective cap 1"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            !root
+                .path()
+                .join("receipts/nct-live-direct-public-v1.receipt.json")
+                .exists()
+        );
+        assert!(
+            !root
+                .path()
+                .join("receipts/nct-live-fallback-public-v1.receipt.json")
+                .exists()
+        );
     }
 
     #[tokio::test]

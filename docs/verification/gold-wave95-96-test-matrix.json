@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 365535,
-    "sha256": "7B7650A3950D8D7E189E86E25CE7752D3A7E5E00FCD6A4C3EF2A697B338A0259"
+    "bytes": 365725,
+    "sha256": "33669816C7A68A913095D4D2820FF1CD5CC71995A4FEF53905B4EB75F6FF601D"
   },
-  "sourceInputs": 2000,
+  "sourceInputs": 2001,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -15792,70 +15792,70 @@
     {
       "test": "cli::nct_baseline::tests::existing_second_receipt_prevents_every_provider_and_wal_effect",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::unexpected_provider_error_retains_actual_blocked_receipt",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::bounded_production_entry_rejects_loaded_config_drift_before_wal",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::output_bound_does_not_leak_into_following_ordinary_chat",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::builtin_recipe_is_one_public_direct_and_one_public_fallback",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::row_ids_are_unique_safe_slugs_and_receipts_refuse_overwrite",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::malformed_recipe_and_missing_execute_config_fail_before_receipt_directory_creation",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::wrapper_runs_two_admitted_rows_with_private_receipts_and_real_fallback",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::hermetic_normal_chat_direct_emits_lifecycle_identity_native_usage_and_private_receipt",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::hermetic_normal_chat_fallback_projects_actual_leaf_and_fallback_event",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
@@ -15897,14 +15897,14 @@
     {
       "test": "cli::nct_baseline::tests::wrapper_streaming_runs_local_leaf_and_binds_private_receipt",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
     {
       "test": "cli::nct_baseline::tests::nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair",
       "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
-      "sourceSha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     },
@@ -15912,6 +15912,13 @@
       "test": "updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback",
       "sourcePath": "SRC/neothd/src/updater/self_update.rs",
       "sourceSha256": "CAC8F302CCF68B62076FE218F0E042505014EF1875FC7D1297A6CE9356462B03",
+      "junitClass": "neoth",
+      "platform": "all"
+    },
+    {
+      "test": "cli::nct_baseline::tests::wrapper_preserves_lower_operator_input_cap_before_provider_dispatch",
+      "sourcePath": "SRC/neothd/src/cli/nct_baseline.rs",
+      "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
     }
@@ -70718,6 +70725,38 @@
       }
     ],
     "note": "Exact two collapsible_if repairs from original Linux job37075073595; preserve stream trace admission and secret removal/zeroization. Historical1fc mac135 accepted; new producer full/focused pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2230NctProtectedContextBudget": {
+    "base": "885f786ff9527fcd70ab1ea1c953ccc87c80a175",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 121093,
+        "sha256": "62EA6B959437FCE53E522BF6CF90F28EEB3F75B54EE451FBE340FD5E1363C6A1",
+        "blob": "f0034933ab1c8a8eac4a2ea9ef860a853d935cd0"
+      },
+      {
+        "path": "docs/verification/gold-wave2230-nct-context-budget.json",
+        "bytes": 1811,
+        "sha256": "79D6CCD3B91CFE731E0B8F1CEC715A1CED6ACB2B0713B8A8DE89A3DCCD388D66",
+        "blob": "577492be7fd857a72a40971bf1bde30d7dd1f73a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2323762,
+        "sha256": "EEDD3E08A68DAF7162BA6DC3E2E9B651CD1D2E154AF2BB85D0FC170D07CD8EE9",
+        "blob": "eecf2bb60609fbb50d7beb9322f277ca919fa843"
+      },
+      {
+        "path": "SRC/neothd/src/cli/nct_baseline.rs",
+        "bytes": 60874,
+        "sha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
+        "blob": "656ed093cbcedc19175131ca6cd31f6046fdc7a0"
+      }
+    ],
+    "note": "Authentic protected input47350/47808 exceeded artificialNCT20000; admit ordinary100000 max without changing configured caps. One real lowercap1 regression and early failure diagnostics. Focused433/full pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

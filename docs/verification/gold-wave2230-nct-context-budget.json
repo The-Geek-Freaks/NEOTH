@@ -1,0 +1,54 @@
+{
+  "schema": "neoth.gold.wave2230.nct-context-budget.v1",
+  "status": "static-reviewed-hosted-pending",
+  "base": "885f786ff9527fcd70ab1ea1c953ccc87c80a175",
+  "originalFailure": {
+    "run": 37074182133,
+    "producer": "1fc806bd2895f7b6cebd768cd5cdcc233df0121e",
+    "selected": 432,
+    "passed": 429,
+    "failed": 3,
+    "stackOverflowCasesNowPassed": 3,
+    "protectedInputBounds": [
+      47350,
+      47808
+    ],
+    "cap": 20000,
+    "custodySha256": "3ABFDEFB6990A0F2C2EB919BF1EDC5C3BF8DC9CD888F8ADB9AB725B8DF48A93D"
+  },
+  "changes": [
+    "NCT admission maximum100000 matches the ordinary configured default; each selected configuration retains its own effective cap",
+    "Real wrapper regression cap1 requires pre-provider rejection, zero leaf calls, no synthetic receipts",
+    "Failure-only core diagnostic upload precedes later GoogleChat builds; final success artifact contract unchanged"
+  ],
+  "preserved": [
+    "two rows",
+    "256-byte recipe prompts",
+    "256-token output ceiling",
+    "protected context",
+    "consent and request binding",
+    "paired authoritative terminal",
+    "885f Clippy let chains"
+  ],
+  "staticReviewSha256": "BC6FE1D7916CD54BBB820C0CEAE28E2A94B5A838B54400EA063654443A155A71",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/nct_baseline.rs",
+      "sha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "sha256": "62EA6B959437FCE53E522BF6CF90F28EEB3F75B54EE451FBE340FD5E1363C6A1"
+    }
+  ],
+  "registered": {
+    "portable": 2649,
+    "focused": 433,
+    "workflowSources": 185,
+    "combinedProducerSources": 195
+  },
+  "localExecutableValidationRan": false,
+  "runtimeAccepted": false,
+  "fullCiAccepted": false,
+  "releaseAccepted": false
+}

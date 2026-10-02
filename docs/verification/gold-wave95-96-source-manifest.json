@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T23:07:51.4518489Z",
+  "capturedUtc": "2026-10-02T23:33:58.2191100Z",
   "validationStatus": "static-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 120346,
-      "sha256": "CBDBEE3791AE539593E056385F4EF52565C924A3C280CDAF5F50510BEC3D8EBA"
+      "bytes": 121093,
+      "sha256": "62EA6B959437FCE53E522BF6CF90F28EEB3F75B54EE451FBE340FD5E1363C6A1"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3172,6 +3172,11 @@
       "sha256": "3289CEB2775D51D9B2C2CF137AE7BB7E94BD9CF78DC49C604A17C90B123EBA53"
     },
     {
+      "path": "docs/verification/gold-wave2230-nct-context-budget.json",
+      "bytes": 1811,
+      "sha256": "79D6CCD3B91CFE731E0B8F1CEC715A1CED6ACB2B0713B8A8DE89A3DCCD388D66"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4313,8 +4318,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2322066,
-      "sha256": "34F4EFC756C17258D26E74644BF2833BCDDE2104D01DDC89E46751B5B1B09AD3"
+      "bytes": 2323762,
+      "sha256": "EEDD3E08A68DAF7162BA6DC3E2E9B651CD1D2E154AF2BB85D0FC170D07CD8EE9"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5493,8 +5498,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/nct_baseline.rs",
-      "bytes": 58321,
-      "sha256": "C70BA69E612468E53A10C2F57714891E23EE3EA2AE5E2EFDDACECE09FD7D238E"
+      "bytes": 60874,
+      "sha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65"
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
