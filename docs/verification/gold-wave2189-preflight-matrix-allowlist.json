@@ -1,0 +1,28 @@
+{
+  "candidateSha256": "CA34DB9294C0F576586F535A2EEE860D8EBCFB743E06AEDEE0E1D565303790AF",
+  "status": "STATIC_REVIEWED_HOSTED_PREFLIGHT_PENDING",
+  "candidateBlob": "0638a780950356e34274284472cf818f30dc70bf",
+  "review": {
+    "path": "work/gold-20260906/wave2189-preflight-matrix-allowlist/review/PREFLIGHT_ALLOWLIST_REVIEW.json",
+    "sha256": "1FC181A90ECAFF7EE5B1A2FAF7E12EB750E518A55CF9B95806728B9409EF176C"
+  },
+  "fullNativeAccepted": false,
+  "base": "4d3ba8532de3a99da7647972647588cd2e3c5c33",
+  "localExecutableValidationRan": false,
+  "target": "packaging/tests/test_ci_cadence_contract.py",
+  "failure": {
+    "job": 110984063434,
+    "test": "CiCadenceContractTests.test_preflight_only_runs_allowlisted_noncompiling_commands",
+    "cause": "Strict expected command list omitted both newly integrated Matrix provenance commands",
+    "run": 37050994731,
+    "alreadyPassed": [
+      "six Matrix gate tests",
+      "strict final Matrix gate",
+      "locked metadata",
+      "Rust formatting"
+    ]
+  },
+  "schema": "neoth.gold.wave2189.preflight-matrix-allowlist.v1",
+  "releaseAccepted": false,
+  "change": "Add exactly the two already reviewed and executed Matrix noncompiling commands in their actual order; preserve exact list equality and every existing compiler/runtime exclusion."
+}
