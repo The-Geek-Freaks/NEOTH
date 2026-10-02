@@ -494,6 +494,7 @@ fn configured_leaf_binding(
     crate::cli::init::ProviderKind,
     Option<String>,
     Option<String>,
+    crate::models::catalog::ModelAliasMap,
 )> {
     let binding = config.inference.resolve_explicit_slot_binding(slot)?;
     if let Some(provider) = binding.slot.provider {
@@ -501,6 +502,7 @@ fn configured_leaf_binding(
             provider.to_provider_kind(),
             binding.slot.model,
             binding.slot.endpoint,
+            binding.models_aliases,
         ));
     }
 
@@ -511,6 +513,7 @@ fn configured_leaf_binding(
         kind,
         config.provider_model.clone(),
         config.provider_endpoint.clone(),
+        Default::default(),
     ))
 }
 
@@ -518,6 +521,7 @@ fn configured_leaf_wire_model(
     config: &crate::config::FreedomConfig,
     kind: crate::cli::init::ProviderKind,
     configured_model: Option<&str>,
+    instance_models_aliases: &crate::models::catalog::ModelAliasMap,
     home: Option<&std::path::Path>,
 ) -> anyhow::Result<String> {
     use crate::cli::init::ProviderKind;
@@ -572,11 +576,16 @@ fn configured_leaf_wire_model(
             anyhow::bail!("local Council leaf has no model")
         }
     };
-    let aliased = config.resolve_model_alias(&raw);
+    // The already selected named binding owns local aliases; retain global
+    // lookup as the compatibility fallback and resolve exactly one level.
+    let aliased = instance_models_aliases
+        .get(&raw)
+        .cloned()
+        .unwrap_or_else(|| config.resolve_model_alias(&raw).to_owned());
     Ok(if kind == ProviderKind::ClaudeCli {
-        super::claude_cli::normalise_model(aliased)
+        super::claude_cli::normalise_model(&aliased)
     } else {
-        aliased.to_owned()
+        aliased
     })
 }
 
@@ -603,7 +612,8 @@ fn council_leaf_authorization_bound_usd(
 ) -> anyhow::Result<f64> {
     use crate::cli::init::ProviderKind;
 
-    let (kind, configured_model, endpoint) = configured_leaf_binding(config, slot)?;
+    let (kind, configured_model, endpoint, instance_models_aliases) =
+        configured_leaf_binding(config, slot)?;
     let provider = if kind == ProviderKind::LocalOllama {
         effective_ollama_provider(endpoint.as_deref())?
     } else {
@@ -613,7 +623,13 @@ fn council_leaf_authorization_bound_usd(
         return Ok(0.0);
     }
 
-    let model = configured_leaf_wire_model(config, kind, configured_model.as_deref(), home)?;
+    let model = configured_leaf_wire_model(
+        config,
+        kind,
+        configured_model.as_deref(),
+        &instance_models_aliases,
+        home,
+    )?;
     let output_ceiling = match kind {
         ProviderKind::ClaudeCli | ProviderKind::RecursiveMas => None,
         ProviderKind::LocalQwen | ProviderKind::LocalOuro => None,

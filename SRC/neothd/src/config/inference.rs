@@ -427,6 +427,11 @@ pub struct ProviderInstance {
     pub id: ProviderInstanceId,
     pub descriptor: String,
     pub model: Option<String>,
+    /// Per-instance aliases take precedence over the legacy global map for
+    /// this selected transport only.  The default keeps existing named and
+    /// inline configuration wire-compatible.
+    #[serde(default)]
+    pub models_aliases: crate::models::catalog::ModelAliasMap,
     pub key: Option<SecretString>,
     pub endpoint: Option<String>,
     #[serde(default, alias = "open_ai_compat_profile")]
@@ -485,6 +490,9 @@ fn deserialize_provider_instances<'de, D: Deserializer<'de>>(
 #[derive(Clone, Debug)]
 pub struct ResolvedProviderBinding {
     pub slot: HemisphereSlot,
+    /// Immutable alias authority retained from the selected named instance.
+    /// An empty map means use the existing global namespace unchanged.
+    pub models_aliases: crate::models::catalog::ModelAliasMap,
     /// Only configured named instances have this durable identity. Legacy
     /// inline slots intentionally retain no fabricated instance identifier.
     pub provider_instance_id: Option<String>,
@@ -1507,6 +1515,7 @@ impl InferenceTopology {
             })?;
             return Ok(ResolvedProviderBinding {
                 slot: instance.resolved_slot(provider),
+                models_aliases: instance.models_aliases.clone(),
                 provider_instance_id: Some(id.as_str().to_owned()),
                 provider_descriptor_id: provider.as_str().to_owned(),
                 is_named_instance: true,
@@ -1518,6 +1527,7 @@ impl InferenceTopology {
             .unwrap_or("legacy_primary");
         Ok(ResolvedProviderBinding {
             slot: slot.clone(),
+            models_aliases: Default::default(),
             provider_instance_id: None,
             provider_descriptor_id: descriptor.to_owned(),
             is_named_instance: false,
@@ -1569,6 +1579,7 @@ impl InferenceTopology {
                     provider: Some(provider),
                     ..Default::default()
                 },
+                models_aliases: Default::default(),
                 provider_instance_id: None,
                 provider_descriptor_id: provider.as_str().to_owned(),
                 is_named_instance: false,
@@ -2505,6 +2516,29 @@ model: claude-opus-4-7
         let unknown: InferenceTopology =
             serde_yaml::from_str("profile_provider_instance_id: absent\n").unwrap();
         assert!(unknown.resolve_profile_provider_binding().is_err());
+    }
+
+    #[test]
+    fn w2078_named_instance_aliases_round_trip_and_shadow_global_only_when_selected() {
+        let topology: InferenceTopology = serde_yaml::from_str(
+            "provider_instances:\n  - id: compat_a\n    descriptor: openai_compat\n    model: '@fast'\n    models_aliases: { '@fast': vendor-a-fast }\n  - id: compat_b\n    descriptor: openai_compat\n    model: '@fast'\n    models_aliases: { '@fast': vendor-b-fast }\n",
+        )
+        .expect("parse W2078 instance aliases");
+        let a = topology
+            .resolve_explicit_slot_binding(
+                &serde_yaml::from_str("provider_instance_id: compat_a").expect("parse a"),
+            )
+            .expect("resolve a");
+        let b = topology
+            .resolve_explicit_slot_binding(
+                &serde_yaml::from_str("provider_instance_id: compat_b").expect("parse b"),
+            )
+            .expect("resolve b");
+        assert_eq!(a.models_aliases.get("@fast"), Some(&"vendor-a-fast".to_owned()));
+        assert_eq!(b.models_aliases.get("@fast"), Some(&"vendor-b-fast".to_owned()));
+        let yaml = serde_yaml::to_string(&topology).expect("serialize W2078 aliases");
+        assert!(yaml.contains("models_aliases:"), "public topology output retains aliases: {yaml}");
+        assert!(yaml.contains("vendor-a-fast") && yaml.contains("vendor-b-fast"));
     }
 
     // ── Ouro O-2: LocalOuro InferenceProvider wiring ──────────────────

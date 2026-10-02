@@ -1,0 +1,78 @@
+{
+  "schema": "neoth-gold-wave2083-instance-model-aliases/v1",
+  "capturedUtc": "2026-10-02T06:34:59.8909931Z",
+  "baseline": "7bb6daaba08d7c66af31e8831fa216d9da203782",
+  "status": "STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
+  "behavior": [
+    "Named provider instances retain optional models_aliases in resolved bindings",
+    "Selected instance aliases override matching global aliases; missing entries retain global fallback",
+    "Resolution remains one level with no alias chaining",
+    "Profile, public Chat Skills, Channel/MCP and Council role/sub-role request models retain selected-instance aliases",
+    "Council cost and request/response audit identities use the selected wire model",
+    "Legacy inline slots and named instances without local aliases preserve global alias behavior"
+  ],
+  "review": {
+    "reviewer": "/root/w2078_alias_review",
+    "status": "APPROVED_STATIC",
+    "candidateBase": "ff45dcdb74181cfb4c263aeaa7e3d7a866cad72e",
+    "candidateManifestSHA256": "642D75CCB4824F54F728DAD4285F6C41C888058CD2D101607D1853C534C5E75B",
+    "sourcePaths": 6,
+    "integration": "Three-way merge onto 7bb6 preserves W2079 repairs; W2082 one-line responder signature applied"
+  },
+  "regressionRegistrations": [
+    {
+      "test": "config::inference::tests::w2078_named_instance_aliases_round_trip_and_shadow_global_only_when_selected",
+      "sourcePath": "SRC/neothd/src/config/inference.rs"
+    },
+    {
+      "test": "providers::tests::w2078_named_instances_apply_distinct_local_aliases_before_global_fallback",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs"
+    },
+    {
+      "test": "providers::tests::w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs"
+    },
+    {
+      "test": "cli::chat::tests::w2078_named_council_role_sends_local_alias_wire_model",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs"
+    },
+    {
+      "test": "cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs"
+    }
+  ],
+  "existingRegressionExtensions": [
+    "providers::tests::explicit_named_profile_factory_keeps_wire_identity_and_lifecycle_receipt_bound",
+    "cli::chat::tests::public_chat_admits_named_skill_before_unconfigured_left_factory",
+    "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds"
+  ],
+  "counts": {
+    "portable": 2567,
+    "focused": 344,
+    "guards": 20,
+    "focusedSourceBindings": 169,
+    "newPortableRegistrations": 5,
+    "newTests": 4,
+    "existingTestNewlyRegistered": 1
+  },
+  "precedingHosted": {
+    "run": "36973573692",
+    "producer": "7bb6daaba08d7c66af31e8831fa216d9da203782",
+    "conclusion": "failure",
+    "phase": "Rust lib-test compilation",
+    "diagnostics": [
+      "FnOnce is not general enough",
+      "Fn is not general enough"
+    ],
+    "executed": 0,
+    "passed": 0,
+    "originalArchives": 3,
+    "custodySHA256": "0C501DE7BEB1E62418855A4E47D0BE2E2B28C1ED9FCEF675D7542A2D3894A9E0",
+    "repair": "Type captured Wiremock responder argument as &wiremock::Request; preserve owned response queue and MCP behavior"
+  },
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "priorPlanBytesPreserved": true
+}

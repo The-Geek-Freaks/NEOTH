@@ -4299,8 +4299,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         .and_then(|binding| binding.slot.model.clone())
                 })
                 .or_else(|| config_for_handler.provider_model.clone());
+            // The selected named Skill carries its alias namespace through
+            // the same config seam used by the final request, budgeting and
+            // receipt paths.  Local keys shadow global keys only here.
+            let mut channel_model_config = config_for_handler.as_ref().clone();
+            if let Some(binding) = channel_skill_provider_binding.as_ref() {
+                channel_model_config
+                    .models_aliases
+                    .extend(binding.models_aliases.clone());
+            }
             let channel_effective_model = match crate::cli::chat::resolve_provider_call_wire_model(
-                config_for_handler.as_ref(),
+                &channel_model_config,
                 provider.as_ref(),
                 channel_requested_model.as_deref(),
             ) {
@@ -11723,7 +11732,8 @@ mod tests {
 
                 const SKILL_ID: &str = "w2062_channel_named";
                 const INSTANCE_ID: &str = "w2062_compat";
-                const WIRE_MODEL: &str = "w2062-wire-model";
+                const CONFIG_MODEL: &str = "@fast";
+                const WIRE_MODEL: &str = "channel-local-fast";
                 let selected = MockServer::start().await;
                 let home = crate::test_env::canonical_tempdir()
                     .expect("create isolated W2062 named channel home");
@@ -11787,10 +11797,14 @@ mod tests {
                 config.memory.recall_shortcut = false;
                 config.skills.enabled.push(SKILL_ID.to_owned());
                 config.inference = serde_yaml::from_str(&format!(
-                    "mode: custom\nprovider_instances:\n  - id: {INSTANCE_ID}\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: {WIRE_MODEL}\n    key: w2062-secret\n",
+                    "mode: custom\nprovider_instances:\n  - id: {INSTANCE_ID}\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: {CONFIG_MODEL}\n    models_aliases: {{ '@fast': {WIRE_MODEL} }}\n    key: w2062-secret\n",
                     selected.uri(),
                 ))
                 .expect("parse W2062 named compat topology");
+                config.models_aliases.insert(
+                    CONFIG_MODEL.to_owned(),
+                    "global-fast-must-not-reach-channel".to_owned(),
+                );
                 let config_path = home.path().join("freedom.yaml");
                 std::fs::write(
                     &config_path,
@@ -11845,7 +11859,7 @@ mod tests {
                     .and(header("authorization", "Bearer w2062-secret"))
                     .respond_with({
                         let replies = Arc::clone(&replies);
-                        move |_| {
+                        move |_: &wiremock::Request| {
                             let body = replies
                                 .lock()
                                 .expect("pop W2062 selected wire response")

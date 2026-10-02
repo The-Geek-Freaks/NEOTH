@@ -12308,8 +12308,10 @@ async fn build_hemisphere(
     // default) is the contract for this leaf. Resolve aliases now so request
     // budgeting sees the same canonical model that `complete_authorized`
     // binds again at the exact paid-call boundary.
+    let mut model_config = config.clone();
+    model_config.models_aliases.extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
-        config,
+        &model_config,
         provider.as_ref(),
         binding.slot.model.as_deref(),
     )?);
@@ -12380,8 +12382,10 @@ async fn build_hemisphere_with_config(
     // `outer_role: None` and skip this, so recursion doesn't double-inject.
     // Best-effort → leaves base_req untouched on empty recall.
     let mut base_req = req.clone();
+    let mut model_config = config.as_ref().clone();
+    model_config.models_aliases.extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
-        config.as_ref(),
+        &model_config,
         provider.as_ref(),
         binding.slot.model.as_deref(),
     )?);
@@ -12443,8 +12447,10 @@ async fn build_sub_hemisphere_with_config(
     // outer-level slot voice (never the parent hemisphere's — no leak).
     let voice = binding.slot.voice;
     let mut base_req = req.clone();
+    let mut model_config = config.as_ref().clone();
+    model_config.models_aliases.extend(binding.models_aliases.clone());
     base_req.model = Some(resolve_provider_call_wire_model(
-        config.as_ref(),
+        &model_config,
         provider.as_ref(),
         binding.slot.model.as_deref(),
     )?);
@@ -19959,9 +19965,10 @@ modes:
         config.chat_onboarding_completed = true;
         config.skills.enabled.push(skill_id.to_owned());
         config.inference = serde_yaml::from_str(&format!(
-            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: skill-wire-model\n    key: skill-secret\n",
+            "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: { '@fast': skill-local-fast }\n    key: skill-secret\n",
             selected.uri(),
         )).expect("parse named skill provider topology");
+        config.models_aliases.insert("@fast".into(), "global-fast-must-not-reach-skill".into());
         std::fs::write(
             &config_path,
             serde_yaml::to_string(&config).expect("serialize named skill config"),
@@ -19998,11 +20005,11 @@ modes:
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer skill-secret"))
             .and(body_partial_json(
-                serde_json::json!({"model":"skill-wire-model"}),
+                serde_json::json!({"model":"skill-local-fast"}),
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices":[{"message":{"content":"named skill complete"}}],
-                "model":"skill-wire-model",
+                "model":"skill-local-fast",
                 "usage":{"prompt_tokens":1,"completion_tokens":1}
             })))
             .expect(1)
@@ -20014,7 +20021,9 @@ modes:
             message: Some("named-skill".into()),
             workflow: None,
             changing_facts: false,
-            model: None,
+            // Explicit caller override still resolves in the selected named
+            // Skill's one-level alias namespace.
+            model: Some("@fast".into()),
             skill: Some(skill_id.into()),
             system: None,
             edit: false,
@@ -20051,7 +20060,7 @@ modes:
             "provider receipt retains selected descriptor"
         );
         assert!(
-            receipt.contains("skill-wire-model"),
+            receipt.contains("skill-local-fast"),
             "provider receipt retains final selected wire model"
         );
     }
@@ -24405,19 +24414,33 @@ template = "[REDACTED]"
     #[tokio::test]
     async fn recursive_council_subslot_overrides_parent_model_with_alias_resolved_model() {
         use crate::config::inference::{
-            HemisphereRole, HemisphereSlot, InferenceProvider, SubHemisphereSlots, TopologyMode,
+            HemisphereRole, HemisphereSlot, ProviderInstance, ProviderInstanceId,
+            SubHemisphereSlots, TopologyMode,
         };
         use crate::council::orchestrator::HemisphereProvider;
 
         let mut cfg = FreedomConfig::default();
         cfg.inference.mode = TopologyMode::Custom;
         cfg.models_aliases
-            .insert("@inner-right".into(), "inner-right-wire".into());
+            .insert("@inner-right".into(), "global-inner-right-wire".into());
+        let mut local_aliases = crate::models::catalog::ModelAliasMap::new();
+        local_aliases.insert("@inner-right".into(), "local-inner-right-wire".into());
+        cfg.inference.provider_instances.push(ProviderInstance {
+            id: ProviderInstanceId::parse("w2078_sub_right").expect("valid W2078 instance id"),
+            descriptor: "openai_compat".into(),
+            model: Some("@inner-right".into()),
+            models_aliases: local_aliases,
+            key: None,
+            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            openai_compat_profile: None,
+            region: None,
+            api_version: None,
+        });
         let mut sub_slots = SubHemisphereSlots::default();
         sub_slots.right = HemisphereSlot {
-            provider: Some(InferenceProvider::OpenAiCompat),
-            model: Some("@inner-right".into()),
-            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            provider_instance_id: Some(
+                ProviderInstanceId::parse("w2078_sub_right").expect("valid W2078 selector"),
+            ),
             ..Default::default()
         };
         cfg.inference
@@ -24446,7 +24469,7 @@ template = "[REDACTED]"
         .expect("configured recursive sub-slot must build");
         assert_eq!(
             hemisphere.base_req.model.as_deref(),
-            Some("inner-right-wire"),
+            Some("local-inner-right-wire"),
             "sub-slot model must replace the recursive parent request model"
         );
         hemisphere.provider = Box::new(CouncilModelCapturingProvider {
@@ -24458,7 +24481,7 @@ template = "[REDACTED]"
             .expect("capturing recursive leaf must dispatch");
         assert_eq!(
             *seen_models.lock().unwrap(),
-            vec!["inner-right-wire".to_string()],
+            vec!["local-inner-right-wire".to_string()],
             "captured recursive request must carry the sub-slot model, not the parent model"
         );
     }
@@ -24680,6 +24703,49 @@ template = "[REDACTED]"
             Some("OPERATOR SYSTEM"),
             "voice must NOT be baked into base_req (else it leaks into recursion)"
         );
+    }
+
+    #[tokio::test]
+    async fn w2078_named_council_role_sends_local_alias_wire_model() {
+        use crate::config::inference::HemisphereRole;
+        use crate::council::orchestrator::HemisphereProvider;
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut cfg = FreedomConfig::default();
+        cfg.models_aliases.insert("@fast".into(), "global-fast-must-not-reach-council".into());
+        cfg.inference = serde_yaml::from_str(&format!(
+            "mode: custom\nprovider_instances:\n  - id: council_local_alias\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: '@fast'\n    models_aliases: {{ '@fast': council-local-fast }}\n    key: council-secret\nleft: {{ provider_instance_id: council_local_alias }}\n",
+            server.uri(),
+        )).expect("parse W2078 named Council topology");
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_partial_json(serde_json::json!({ "model": "council-local-fast" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{ "message": { "content": "council local alias" } }],
+                "model": "council-local-fast",
+                "usage": { "prompt_tokens": 1, "completion_tokens": 1 }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().expect("create W2078 council home");
+        let hemisphere = super::build_hemisphere(
+            &cfg,
+            home.path(),
+            HemisphereRole::Left,
+            &Request::default(),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+        ).await.expect("build selected named Council leaf");
+        assert_eq!(hemisphere.base_req.model.as_deref(), Some("council-local-fast"));
+        let reply = hemisphere.ask("prove selected Council wire").await
+            .expect("call selected named Council leaf");
+        assert_eq!(reply.text, "council local alias");
+        server.verify().await;
     }
 
     /// Provider that records the `system` of the last request it received,

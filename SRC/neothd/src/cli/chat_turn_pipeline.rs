@@ -971,6 +971,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let config = if let Some(binding) = skill_provider_binding.as_ref() {
         let mut selected = config.clone();
         selected.provider_model = binding.slot.model.clone();
+        // Keep the selected instance's one-level alias authority attached to
+        // every later request/cost/WAL consumer in this Skill turn.
+        selected.models_aliases.extend(binding.models_aliases.clone());
         selected
     } else {
         config
@@ -1520,6 +1523,7 @@ mod tests {
         };
         let selected = crate::config::inference::ResolvedProviderBinding {
             slot: crate::config::inference::HemisphereSlot::default(),
+            models_aliases: Default::default(),
             provider_instance_id: Some("skill-retry-instance".to_owned()),
             provider_descriptor_id: "openai_compat".to_owned(),
             is_named_instance: true,

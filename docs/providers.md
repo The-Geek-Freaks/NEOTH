@@ -136,11 +136,13 @@ inference:
     - id: compat_a
       descriptor: openai_compat
       endpoint: https://vendor-a.example/v1
-      model: vendor-a-chat
+      model: '@fast'
+      models_aliases: { '@fast': vendor-a-chat }
     - id: compat_b
       descriptor: openai_compat
       endpoint: https://vendor-b.example/v1
-      model: vendor-b-chat
+      model: '@fast'
+      models_aliases: { '@fast': vendor-b-chat }
   left: { provider_instance_id: compat_a }
   right: { provider_instance_id: compat_b }
 ```
@@ -156,6 +158,14 @@ inline field as `null`; `provider_instance_id: null` is also invalid.
 
 Legacy inline slots remain supported. Use either the existing inline form or a
 single named reference for one slot, never a mixture.
+
+Each instance can define its own `models_aliases` map. After selecting that
+instance, its entries take precedence over the global `models_aliases` map;
+missing entries still use the global map. Resolution remains one level: an
+alias value is sent as the model rather than expanded through another alias.
+The same selection applies to Profile, installed Skills, Channel/MCP and
+Council role or sub-role requests, including their cost and audit identities.
+Inline slots and named instances without local aliases retain global behavior.
 
 Cron execution through a named instance requires an explicit
 `execution.hemisphere_role`. A no-role provider or fallback lookup by coarse

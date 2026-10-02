@@ -621,9 +621,14 @@ jobs:
           run_case 337 lib cli::chat_turn_pipeline::tests::selected_skill_binding_suppresses_left_authority_for_post_reply_recovery cli::chat_turn_pipeline::tests::selected_skill_binding_suppresses_left_authority_for_post_reply_recovery --lib
           run_case 338 lib cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds --lib
           run_case 339 lib providers::tests::named_profile_and_explicit_factories_reject_missing_bedrock_region providers::tests::named_profile_and_explicit_factories_reject_missing_bedrock_region --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 339
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 339
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 339
+          run_case 340 lib config::inference::tests::w2078_named_instance_aliases_round_trip_and_shadow_global_only_when_selected config::inference::tests::w2078_named_instance_aliases_round_trip_and_shadow_global_only_when_selected --lib
+          run_case 341 lib providers::tests::w2078_named_instances_apply_distinct_local_aliases_before_global_fallback providers::tests::w2078_named_instances_apply_distinct_local_aliases_before_global_fallback --lib
+          run_case 342 lib providers::tests::w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract providers::tests::w2078_instance_alias_merge_keeps_global_fallback_and_one_level_contract --lib
+          run_case 343 lib cli::chat::tests::w2078_named_council_role_sends_local_alias_wire_model cli::chat::tests::w2078_named_council_role_sends_local_alias_wire_model --lib
+          run_case 344 lib cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 344
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 344
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 344
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Build exact public CLI for relink lifecycle
