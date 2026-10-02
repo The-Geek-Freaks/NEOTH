@@ -1359,8 +1359,13 @@ async fn handle_peeroxide_connection(
         // provider / lease / autonomy access). TaskDelegate runs the accept
         // gate + dispatches to the executor; TaskResult (we were the master) is
         // audited. Both `continue` — they never reach handle_inbound_frame.
-        if matches!(frame.kind, FrameKind::TaskDelegate | FrameKind::TaskDelegateCapped) {
-            if let FrameBody::TaskDelegate(delegate) | FrameBody::TaskDelegateCapped(delegate) = frame.body {
+        if matches!(
+            frame.kind,
+            FrameKind::TaskDelegate | FrameKind::TaskDelegateCapped
+        ) {
+            if let FrameBody::TaskDelegate(delegate) | FrameBody::TaskDelegateCapped(delegate) =
+                frame.body
+            {
                 let autonomy_policy = reload_controller.autonomy_policy();
                 handle_task_delegate(
                     delegate,
@@ -3374,11 +3379,17 @@ mod tests {
         )
         .await;
 
-        assert!(rx.try_recv().is_err(), "invalid cap must not enqueue provider work");
+        assert!(
+            rx.try_recv().is_err(),
+            "invalid cap must not enqueue provider work"
+        );
         let ledger =
             crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
                 .expect("invalid prefilter leaves an inspectable empty ledger");
-        assert!(ledger.entries.is_empty(), "invalid cap must not enter the Gate");
+        assert!(
+            ledger.entries.is_empty(),
+            "invalid cap must not enter the Gate"
+        );
         drop(writer);
         writer_join.await.unwrap();
     }

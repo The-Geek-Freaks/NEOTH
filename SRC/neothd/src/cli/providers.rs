@@ -329,9 +329,7 @@ pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
 /// A read-only registry record for a named provider authority.  This is a
 /// configuration projection only: it never constructs an adapter, consults
 /// credentials, grants consent, or starts model discovery.
-fn provider_instance_records(
-    cfg: &crate::config::FreedomConfig,
-) -> Result<Vec<serde_json::Value>> {
+fn provider_instance_records(cfg: &crate::config::FreedomConfig) -> Result<Vec<serde_json::Value>> {
     use crate::config::inference::{HemisphereRole, HemisphereSlot};
     use std::collections::BTreeMap;
 
@@ -369,10 +367,12 @@ fn provider_instance_records(
         .provider_instances
         .iter()
         .map(|instance| {
-            let binding = cfg.inference.resolve_explicit_slot_binding(&HemisphereSlot {
-                provider_instance_id: Some(instance.id.clone()),
-                ..Default::default()
-            })?;
+            let binding = cfg
+                .inference
+                .resolve_explicit_slot_binding(&HemisphereSlot {
+                    provider_instance_id: Some(instance.id.clone()),
+                    ..Default::default()
+                })?;
             let configured_model = instance.model.clone();
             let display_model = configured_model.as_deref().map(|model| {
                 binding
@@ -421,8 +421,9 @@ pub fn run_instance_list(output: &OutputFormat) -> Result<()> {
             for record in &records {
                 let id = record["id"].as_str().unwrap_or("(invalid)");
                 let descriptor = record["descriptor"].as_str().unwrap_or("(invalid)");
-                let configured_model =
-                    record["configured_model"].as_str().unwrap_or("(unconfigured)");
+                let configured_model = record["configured_model"]
+                    .as_str()
+                    .unwrap_or("(unconfigured)");
                 let model = record["display_model"].as_str().unwrap_or("(unconfigured)");
                 let endpoint = record["endpoint"].as_str().unwrap_or("");
                 let region = record["region"].as_str().unwrap_or("");
@@ -484,7 +485,6 @@ pub fn run_instance_show(id: &str, output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderInstanceAddRequest {
     id: crate::config::inference::ProviderInstanceId,
@@ -504,73 +504,200 @@ pub(crate) struct ProviderInstanceAddResult {
     pub prior_source_sha256: String,
 }
 
-fn parse_openai_compat_profile(profile: Option<&str>) -> Result<Option<crate::config::inference::OpenAiCompatibleProfile>> {
+fn parse_openai_compat_profile(
+    profile: Option<&str>,
+) -> Result<Option<crate::config::inference::OpenAiCompatibleProfile>> {
     use crate::config::inference::OpenAiCompatibleProfile;
-    profile.map(|value| match value {
-        "generic" => Ok(OpenAiCompatibleProfile::Generic),
-        "openrouter" | "open_router" => Ok(OpenAiCompatibleProfile::OpenRouter),
-        "deepseek" | "deep_seek" => Ok(OpenAiCompatibleProfile::DeepSeek),
-        "moonshot_kimi" | "moonshot" | "kimi" => Ok(OpenAiCompatibleProfile::MoonshotKimi),
-        "qwen_chat" | "qwen" | "qwen_openai_compat" => Ok(OpenAiCompatibleProfile::QwenChat),
-        "qwen_responses" => Ok(OpenAiCompatibleProfile::QwenResponses),
-        "qwen_anthropic_compat" | "qwen_anthropic" => Ok(OpenAiCompatibleProfile::QwenAnthropicCompat),
-        "qwen_dash_scope" | "dashscope" => Ok(OpenAiCompatibleProfile::QwenDashScope),
-        _ => anyhow::bail!("unknown OpenAI-compatible profile `{value}`"),
-    }).transpose()
+    profile
+        .map(|value| match value {
+            "generic" => Ok(OpenAiCompatibleProfile::Generic),
+            "openrouter" | "open_router" => Ok(OpenAiCompatibleProfile::OpenRouter),
+            "deepseek" | "deep_seek" => Ok(OpenAiCompatibleProfile::DeepSeek),
+            "moonshot_kimi" | "moonshot" | "kimi" => Ok(OpenAiCompatibleProfile::MoonshotKimi),
+            "qwen_chat" | "qwen" | "qwen_openai_compat" => Ok(OpenAiCompatibleProfile::QwenChat),
+            "qwen_responses" => Ok(OpenAiCompatibleProfile::QwenResponses),
+            "qwen_anthropic_compat" | "qwen_anthropic" => {
+                Ok(OpenAiCompatibleProfile::QwenAnthropicCompat)
+            }
+            "qwen_dash_scope" | "dashscope" => Ok(OpenAiCompatibleProfile::QwenDashScope),
+            _ => anyhow::bail!("unknown OpenAI-compatible profile `{value}`"),
+        })
+        .transpose()
 }
 
-fn provider_instance_add_request(id: &str, descriptor: &str, model: Option<String>, endpoint: Option<String>, openai_compat_profile: Option<String>, region: Option<String>, api_version: Option<String>) -> Result<ProviderInstanceAddRequest> {
-    let id = crate::config::inference::ProviderInstanceId::parse(id).context("validate named provider instance id")?;
-    let provider = crate::config::inference::provider_descriptor(descriptor).ok_or_else(|| anyhow::anyhow!("unknown provider descriptor `{descriptor}` for instance `{}`", id.as_str()))?;
-    Ok(ProviderInstanceAddRequest { id, descriptor: provider.as_str().to_owned(), model, endpoint, openai_compat_profile: parse_openai_compat_profile(openai_compat_profile.as_deref())?, region, api_version })
+fn provider_instance_add_request(
+    id: &str,
+    descriptor: &str,
+    model: Option<String>,
+    endpoint: Option<String>,
+    openai_compat_profile: Option<String>,
+    region: Option<String>,
+    api_version: Option<String>,
+) -> Result<ProviderInstanceAddRequest> {
+    let id = crate::config::inference::ProviderInstanceId::parse(id)
+        .context("validate named provider instance id")?;
+    let provider = crate::config::inference::provider_descriptor(descriptor).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown provider descriptor `{descriptor}` for instance `{}`",
+            id.as_str()
+        )
+    })?;
+    Ok(ProviderInstanceAddRequest {
+        id,
+        descriptor: provider.as_str().to_owned(),
+        model,
+        endpoint,
+        openai_compat_profile: parse_openai_compat_profile(openai_compat_profile.as_deref())?,
+        region,
+        api_version,
+    })
 }
 
-fn prepare_provider_instance_add_at(path: &std::path::Path, request: &ProviderInstanceAddRequest) -> Result<(crate::config::PreparedFreedomUpdate, (crate::config::RollbackConfig, serde_json::Value))> {
+fn prepare_provider_instance_add_at(
+    path: &std::path::Path,
+    request: &ProviderInstanceAddRequest,
+) -> Result<(
+    crate::config::PreparedFreedomUpdate,
+    (crate::config::RollbackConfig, serde_json::Value),
+)> {
     crate::config::FreedomConfig::prepare_public_update_at(path, |cfg| {
         cfg.inference.validate_provider_instances()?;
-        anyhow::ensure!(!cfg.inference.provider_instances.iter().any(|instance| instance.id == request.id), "provider instance `{}` already exists", request.id.as_str());
-        cfg.inference.provider_instances.push(crate::config::inference::ProviderInstance {
-            id: request.id.clone(), descriptor: request.descriptor.clone(), model: request.model.clone(), models_aliases: Default::default(), key: None, endpoint: request.endpoint.clone(), openai_compat_profile: request.openai_compat_profile, region: request.region.clone(), api_version: request.api_version.clone(),
-        });
+        anyhow::ensure!(
+            !cfg.inference
+                .provider_instances
+                .iter()
+                .any(|instance| instance.id == request.id),
+            "provider instance `{}` already exists",
+            request.id.as_str()
+        );
+        cfg.inference
+            .provider_instances
+            .push(crate::config::inference::ProviderInstance {
+                id: request.id.clone(),
+                descriptor: request.descriptor.clone(),
+                model: request.model.clone(),
+                models_aliases: Default::default(),
+                key: None,
+                endpoint: request.endpoint.clone(),
+                openai_compat_profile: request.openai_compat_profile,
+                region: request.region.clone(),
+                api_version: request.api_version.clone(),
+            });
         cfg.inference.validate_provider_instances()?;
-        let record = find_provider_instance_record(provider_instance_records(cfg)?, request.id.as_str())?;
+        let record =
+            find_provider_instance_record(provider_instance_records(cfg)?, request.id.as_str())?;
         Ok((cfg.rollback.clone(), record))
-    }).context("prepare named provider-instance add")
+    })
+    .context("prepare named provider-instance add")
 }
 
 /// Add one public named provider instance without creating a provider, touching credentials,
 /// binding a role/fallback, granting consent, or starting discovery. The rollback writer drains before CAS.
-pub(crate) async fn add_instance_at(home: &std::path::Path, request: ProviderInstanceAddRequest) -> Result<ProviderInstanceAddResult> {
+pub(crate) async fn add_instance_at(
+    home: &std::path::Path,
+    request: ProviderInstanceAddRequest,
+) -> Result<ProviderInstanceAddResult> {
     let path = home.join("freedom.yaml");
     let (prepared, (rollback, record)) = prepare_provider_instance_add_at(&path, &request)?;
-    let prior_yaml_bytes = prepared.source_bytes().ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
+    let prior_yaml_bytes = prepared
+        .source_bytes()
+        .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
     let prior_source_sha256 = prepared.source_sha256();
     let now_unix = crate::time::now_unix_i64();
     let wal_dir = home.join("wal");
-    std::fs::create_dir_all(&wal_dir).context("create WAL dir for provider-instance rollback snapshot")?;
-    let snapshot_segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "provider-instance-add-snapshot");
-    let (snapshot_writer, snapshot_completion) = crate::wal::writer::spawn_for_home_with_completion(snapshot_segment.clone(), home.to_path_buf()).context("spawn WAL writer for provider-instance add snapshot")?;
-    let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(&snapshot_writer, &rollback, crate::wal::snapshot::MutationKind::ConfigWrite, path.display().to_string(), prior_yaml_bytes, now_unix, Some("provider instance add via CLI".to_string())).await.context("emit pre-mutation snapshot for provider-instance add");
+    std::fs::create_dir_all(&wal_dir)
+        .context("create WAL dir for provider-instance rollback snapshot")?;
+    let snapshot_segment = crate::wal::writer::unique_standalone_segment_path(
+        &wal_dir,
+        "provider-instance-add-snapshot",
+    );
+    let (snapshot_writer, snapshot_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(
+            snapshot_segment.clone(),
+            home.to_path_buf(),
+        )
+        .context("spawn WAL writer for provider-instance add snapshot")?;
+    let snapshot_result = crate::wal::snapshot::emit_if_policy_allows(
+        &snapshot_writer,
+        &rollback,
+        crate::wal::snapshot::MutationKind::ConfigWrite,
+        path.display().to_string(),
+        prior_yaml_bytes,
+        now_unix,
+        Some("provider instance add via CLI".to_string()),
+    )
+    .await
+    .context("emit pre-mutation snapshot for provider-instance add");
     drop(snapshot_writer);
-    let completion_result = snapshot_completion.wait().await.context("complete provider-instance add snapshot WAL writer");
+    let completion_result = snapshot_completion
+        .wait()
+        .await
+        .context("complete provider-instance add snapshot WAL writer");
     let snapshot_offset = match (snapshot_result, completion_result) {
         (Ok(offset), Ok(())) => offset,
         (Err(snapshot_error), Ok(())) => return Err(snapshot_error),
         (Ok(_), Err(completion_error)) => return Err(completion_error),
-        (Err(snapshot_error), Err(completion_error)) => return Err(anyhow::anyhow!("provider-instance rollback snapshot emission failed: {snapshot_error}; writer completion also failed: {completion_error}")),
+        (Err(snapshot_error), Err(completion_error)) => {
+            return Err(anyhow::anyhow!(
+                "provider-instance rollback snapshot emission failed: {snapshot_error}; writer completion also failed: {completion_error}"
+            ));
+        }
     };
-    prepared.commit().with_context(|| format!("publish reviewed provider instance add in {}", path.display()))?;
-    Ok(ProviderInstanceAddResult { record, snapshot_segment, snapshot_offset, prior_source_sha256 })
+    prepared.commit().with_context(|| {
+        format!(
+            "publish reviewed provider instance add in {}",
+            path.display()
+        )
+    })?;
+    Ok(ProviderInstanceAddResult {
+        record,
+        snapshot_segment,
+        snapshot_offset,
+        prior_source_sha256,
+    })
 }
 
-pub async fn run_instance_add(id: &str, descriptor: &str, model: Option<String>, endpoint: Option<String>, openai_compat_profile: Option<String>, region: Option<String>, api_version: Option<String>, output: &OutputFormat) -> Result<()> {
-    let request = provider_instance_add_request(id, descriptor, model, endpoint, openai_compat_profile, region, api_version)?;
-    let result = add_instance_at(&crate::config::FreedomConfig::default_neoth_home(), request).await?;
+pub async fn run_instance_add(
+    id: &str,
+    descriptor: &str,
+    model: Option<String>,
+    endpoint: Option<String>,
+    openai_compat_profile: Option<String>,
+    region: Option<String>,
+    api_version: Option<String>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let request = provider_instance_add_request(
+        id,
+        descriptor,
+        model,
+        endpoint,
+        openai_compat_profile,
+        region,
+        api_version,
+    )?;
+    let result =
+        add_instance_at(&crate::config::FreedomConfig::default_neoth_home(), request).await?;
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string_pretty(&json!({ "instance": result.record, "snapshot_segment": result.snapshot_segment.display().to_string(), "snapshot_offset": result.snapshot_offset, "prior_source_sha256": result.prior_source_sha256 }))?),
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &json!({ "instance": result.record, "snapshot_segment": result.snapshot_segment.display().to_string(), "snapshot_offset": result.snapshot_offset, "prior_source_sha256": result.prior_source_sha256 })
+            )?
+        ),
         OutputFormat::Table => {
             println!("# Added named provider instance: {}", result.record["id"]);
-            for key in ["descriptor", "configured_model", "display_model", "endpoint", "region", "catalog_key", "references"] { println!("  {key}: {}", result.record[key]); }
+            for key in [
+                "descriptor",
+                "configured_model",
+                "display_model",
+                "endpoint",
+                "region",
+                "catalog_key",
+                "references",
+            ] {
+                println!("  {key}: {}", result.record[key]);
+            }
             println!("  snapshot: {}", result.snapshot_segment.display());
         }
     }
@@ -769,7 +896,10 @@ mod tests {
         assert_eq!(second["references"], json!([]));
         let rendered = serde_json::to_string(&records).expect("serialize records");
         for secret in ["user", "secret", "token", "sentinel", "fragment"] {
-            assert!(!rendered.contains(secret), "registry output must redact {secret}");
+            assert!(
+                !rendered.contains(secret),
+                "registry output must redact {secret}"
+            );
         }
         let unknown = find_provider_instance_record(records, "compat_missing")
             .expect_err("show must reject an unknown named instance before output");
@@ -818,15 +948,52 @@ mod tests {
 
     #[test]
     fn provider_instance_add_rejects_invalid_duplicate_and_unknown_before_snapshot() {
-        assert!(provider_instance_add_request("Invalid-ID", "openai_compat", None, None, None, None, None).is_err());
-        assert!(provider_instance_add_request("compat_a", "unknown_descriptor", None, None, None, None, None).is_err());
+        assert!(
+            provider_instance_add_request(
+                "Invalid-ID",
+                "openai_compat",
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            provider_instance_add_request(
+                "compat_a",
+                "unknown_descriptor",
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .is_err()
+        );
         let home = tempfile::tempdir().unwrap();
         let freedom = home.path().join("freedom.yaml");
         std::fs::write(&freedom, "future_extension: preserve\ninference:\n  provider_instances:\n    - id: compat_a\n      descriptor: openai_compat\n").unwrap();
-        let request = provider_instance_add_request("compat_a", "openai_compat", None, None, None, None, None).unwrap();
+        let request = provider_instance_add_request(
+            "compat_a",
+            "openai_compat",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(prepare_provider_instance_add_at(&freedom, &request).is_err());
-        assert!(!home.path().join("wal").exists(), "invalid add must fail before rollback snapshot creation");
-        assert_eq!(std::fs::read_to_string(&freedom).unwrap(), "future_extension: preserve\ninference:\n  provider_instances:\n    - id: compat_a\n      descriptor: openai_compat\n");
+        assert!(
+            !home.path().join("wal").exists(),
+            "invalid add must fail before rollback snapshot creation"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&freedom).unwrap(),
+            "future_extension: preserve\ninference:\n  provider_instances:\n    - id: compat_a\n      descriptor: openai_compat\n"
+        );
     }
 
     #[test]
@@ -834,13 +1001,29 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let freedom = home.path().join("freedom.yaml");
         std::fs::write(&freedom, "future_extension: preserve\ninference: {}\n").unwrap();
-        let request = provider_instance_add_request("compat_a", "openai_compat", Some("vendor-model".into()), Some("https://user:secret@vendor.example/v1?token=sentinel".into()), None, Some("eu-central-1".into()), None).unwrap();
+        let request = provider_instance_add_request(
+            "compat_a",
+            "openai_compat",
+            Some("vendor-model".into()),
+            Some("https://user:secret@vendor.example/v1?token=sentinel".into()),
+            None,
+            Some("eu-central-1".into()),
+            None,
+        )
+        .unwrap();
         let (prepared, (_, record)) = prepare_provider_instance_add_at(&freedom, &request).unwrap();
         assert_eq!(record["id"], "compat_a");
         assert_eq!(record["endpoint"], "https://vendor.example/v1");
-        crate::config::FreedomConfig::update_at(&freedom, |cfg| { cfg.language_primary = Some("de".to_owned()); Ok(()) }).unwrap();
+        crate::config::FreedomConfig::update_at(&freedom, |cfg| {
+            cfg.language_primary = Some("de".to_owned());
+            Ok(())
+        })
+        .unwrap();
         let winning_generation = std::fs::read(&freedom).unwrap();
-        assert!(prepared.commit().is_err(), "a stale add plan must refuse publication");
+        assert!(
+            prepared.commit().is_err(),
+            "a stale add plan must refuse publication"
+        );
         assert_eq!(std::fs::read(&freedom).unwrap(), winning_generation);
     }
 
@@ -853,7 +1036,16 @@ mod tests {
         std::fs::write(&credentials, "unrelated_future_secret: retain\n").unwrap();
         let before = std::fs::read(&freedom).unwrap();
         let credentials_before = std::fs::read(&credentials).unwrap();
-        let request = provider_instance_add_request("compat_a", "openai_compat", Some("vendor-model".into()), Some("https://vendor.example/v1".into()), None, None, None).unwrap();
+        let request = provider_instance_add_request(
+            "compat_a",
+            "openai_compat",
+            Some("vendor-model".into()),
+            Some("https://vendor.example/v1".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let result = add_instance_at(home.path(), request).await.unwrap();
         assert!(result.snapshot_offset.is_some());
         let snapshot_bytes = std::fs::read(&result.snapshot_segment).unwrap();
@@ -862,14 +1054,23 @@ mod tests {
         while !cursor.is_empty() {
             let frame = crate::wal::frame::decode_frame(cursor).unwrap();
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
-                let snapshot: crate::wal::snapshot::PreMutationSnapshot = serde_json::from_slice(frame.payload).unwrap();
+                let snapshot: crate::wal::snapshot::PreMutationSnapshot =
+                    serde_json::from_slice(frame.payload).unwrap();
                 before_state = Some(snapshot.before_state_bytes().unwrap());
                 break;
             }
             cursor = &cursor[frame.header.total_len as usize..];
         }
-        assert_eq!(before_state.unwrap(), before, "rollback frame carries the exact prepared source bytes");
-        assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before, "public add must not mutate private credentials");
+        assert_eq!(
+            before_state.unwrap(),
+            before,
+            "rollback frame carries the exact prepared source bytes"
+        );
+        assert_eq!(
+            std::fs::read(&credentials).unwrap(),
+            credentials_before,
+            "public add must not mutate private credentials"
+        );
         assert_eq!(result.record["references"], json!([]));
     }
 }

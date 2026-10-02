@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T10:23:55.8373006Z",
-  "validationStatus": "Reviewed provider-instance CLI and Cluster output-ceiling parity with exact MCP fixture repair; 387 focused cases hosted pending",
+  "capturedUtc": "2026-10-02T10:29:02.7303903Z",
+  "validationStatus": "Hosted formatter patch verified against producer and exact postimage blobs; 387 focused cases pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5023,8 +5023,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/buddy.rs",
-      "bytes": 67009,
-      "sha256": "967D9C858B8EE4D9F03051789DEF48DE466C309A9446E630A96C5280C5D0F417"
+      "bytes": 67039,
+      "sha256": "80057065E560E7CF6A9F1E25A2046026AB4D83381F0F55B7B0C456669E0E30AC"
     },
     {
       "path": "SRC/neothd/src/cli/calendar.rs",
@@ -5343,8 +5343,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 129588,
-      "sha256": "9ECF080BABCE4CE90D7E37F208EC528114F412EF731CE134A0AF2B479DF154F3"
+      "bytes": 130317,
+      "sha256": "CF003E6D505174A6F1195756C393719C29B784F6AB9FF4C849FBA180773DFDF9"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -5403,8 +5403,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/providers.rs",
-      "bytes": 41171,
-      "sha256": "91E94BB4836ACB2ABBE4210F0835D0B22C49A9D6E4B1B15EE52F456C865CD05C"
+      "bytes": 43390,
+      "sha256": "600930F7945AA5B5E627E61632F128F506D0BEE5B065C0C7C2A8486BFBA603B5"
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
@@ -5568,8 +5568,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 82349,
-      "sha256": "2B6080318B1B0E235AE32F6BF0739B126FF5654E8DB3177A3A0F1B31B2E1FEAB"
+      "bytes": 82254,
+      "sha256": "E8BAD32E62CF669548F2409D1D7F27692D26DF25D0914FFE0481D776557347AF"
     },
     {
       "path": "SRC/neothd/src/cluster/gossip_wire.rs",
@@ -5583,8 +5583,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 151501,
-      "sha256": "58EF5FAE249EFCF292FB0050E3CCE87096D25D1937DCA0A6C08E74B23DAC5960"
+      "bytes": 151631,
+      "sha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
@@ -5598,8 +5598,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 32943,
-      "sha256": "A87B63980AF02FDACFA2F0B9EB38ECF2A999826665C8E0D6F2C9A38188A7AA07"
+      "bytes": 32965,
+      "sha256": "7862261AD0C57303B379BDBC4A5301B9EA107DDA57D4E7BACD53D79BF631A92B"
     },
     {
       "path": "SRC/neothd/src/cluster/peer_streams.rs",
@@ -5863,8 +5863,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 195158,
-      "sha256": "345409F2DC6F8C4443342F0F85D8EFB8E63ECE171D678866F83E0BFFB8B62A0A"
+      "bytes": 195276,
+      "sha256": "F09BE7F560D148FA2748A9CE924C00367ED4FE197CEE49911DDD85675F624A75"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",

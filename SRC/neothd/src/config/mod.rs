@@ -4360,23 +4360,33 @@ mod public_prepared_update_tests {
         let credentials_before = std::fs::read(&credentials).unwrap();
         let source_before = std::fs::read(&freedom).unwrap();
 
-        assert!(FreedomConfig::prepare_public_update_at(&freedom, |_| anyhow::bail!("reject before publication")).is_err());
+        assert!(
+            FreedomConfig::prepare_public_update_at(&freedom, |_| anyhow::bail!(
+                "reject before publication"
+            ))
+            .is_err()
+        );
         assert_eq!(std::fs::read(&freedom).unwrap(), source_before);
         assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
 
         let (stale, ()) = FreedomConfig::prepare_public_update_at(&freedom, |cfg| {
             cfg.language_primary = Some("de".to_owned());
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         std::fs::write(&freedom, "operator_id: newer\ninference: {}\n").unwrap();
-        assert!(stale.commit().is_err(), "public prepared update must retain CAS refusal");
+        assert!(
+            stale.commit().is_err(),
+            "public prepared update must retain CAS refusal"
+        );
         assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
 
         std::fs::write(&freedom, legacy_ssh_source()).unwrap();
         let (prepared, ()) = FreedomConfig::prepare_public_update_at(&freedom, |cfg| {
             cfg.language_primary = Some("de".to_owned());
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         prepared.commit().unwrap();
         let public = std::fs::read_to_string(&freedom).unwrap();
         assert!(public.contains("ssh_tunnels"));

@@ -1941,13 +1941,9 @@ mod tests {
             ),
         );
 
-        let expected = assemble_cluster_request(
-            provider.as_ref(),
-            "delegated work",
-            Some(73),
-            &context,
-        )
-        .unwrap();
+        let expected =
+            assemble_cluster_request(provider.as_ref(), "delegated work", Some(73), &context)
+                .unwrap();
         assert!(
             expected
                 .budget_items
@@ -1973,12 +1969,7 @@ mod tests {
 
         let mut capped_job = job(home.path(), "delegated work");
         capped_job.max_output_tokens = Some(73);
-        let body = run_one_task(
-            Some(Arc::clone(&provider)),
-            capped_job,
-            context,
-        )
-        .await;
+        let body = run_one_task(Some(Arc::clone(&provider)), capped_job, context).await;
         assert!(matches!(body.status, TaskResultStatus::Completed));
         let actual = seen.lock().unwrap().take().expect("provider saw request");
         assert_eq!(actual.prompt, expected.request.prompt);

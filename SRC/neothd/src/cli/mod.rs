@@ -2227,17 +2227,30 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderAction::Test { provider } => providers::run_test(&provider, &global_output)?,
             ProviderAction::Instance { action } => match action {
                 ProviderInstanceAction::List => providers::run_instance_list(&global_output)?,
-                ProviderInstanceAction::Show { id } => providers::run_instance_show(&id, &global_output)?,
-                ProviderInstanceAction::Add { id, descriptor, model, endpoint, openai_compat_profile, region, api_version } => providers::run_instance_add(
-                    &id,
-                    &descriptor,
+                ProviderInstanceAction::Show { id } => {
+                    providers::run_instance_show(&id, &global_output)?
+                }
+                ProviderInstanceAction::Add {
+                    id,
+                    descriptor,
                     model,
                     endpoint,
                     openai_compat_profile,
                     region,
                     api_version,
-                    &global_output,
-                ).await?,
+                } => {
+                    providers::run_instance_add(
+                        &id,
+                        &descriptor,
+                        model,
+                        endpoint,
+                        openai_compat_profile,
+                        region,
+                        api_version,
+                        &global_output,
+                    )
+                    .await?
+                }
             },
         },
         Commands::Usage(args) => {
@@ -2465,15 +2478,48 @@ mod default_invocation_tests {
         ));
         assert!(Cli::try_parse_from(["neoth", "provider", "instance", "show"]).is_err());
         let add = Cli::try_parse_from([
-            "neoth", "provider", "instance", "add", "--id", "compat_a", "--descriptor", "openai_compat", "--model", "vendor-model", "--endpoint", "https://vendor.example/v1", "--region", "eu-central-1", "--api-version", "2024-10-21",
-        ]).unwrap();
+            "neoth",
+            "provider",
+            "instance",
+            "add",
+            "--id",
+            "compat_a",
+            "--descriptor",
+            "openai_compat",
+            "--model",
+            "vendor-model",
+            "--endpoint",
+            "https://vendor.example/v1",
+            "--region",
+            "eu-central-1",
+            "--api-version",
+            "2024-10-21",
+        ])
+        .unwrap();
         assert!(matches!(
             add.command,
             Commands::Provider { action: ProviderAction::Instance { action: ProviderInstanceAction::Add { id, descriptor, model: Some(model), endpoint: Some(endpoint), openai_compat_profile: None, region: Some(region), api_version: Some(api_version) } } }
                 if id == "compat_a" && descriptor == "openai_compat" && model == "vendor-model" && endpoint == "https://vendor.example/v1" && region == "eu-central-1" && api_version == "2024-10-21"
         ));
-        assert!(Cli::try_parse_from(["neoth", "provider", "instance", "add", "--id", "compat_a"]).is_err());
-        assert!(Cli::try_parse_from(["neoth", "provider", "instance", "add", "--id", "compat_a", "--descriptor", "openai_compat", "--key", "secret"]).is_err());
+        assert!(
+            Cli::try_parse_from(["neoth", "provider", "instance", "add", "--id", "compat_a"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "provider",
+                "instance",
+                "add",
+                "--id",
+                "compat_a",
+                "--descriptor",
+                "openai_compat",
+                "--key",
+                "secret"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

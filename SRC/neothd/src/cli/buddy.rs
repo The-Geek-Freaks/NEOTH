@@ -1161,7 +1161,9 @@ mod tests {
             "opaque URLs cannot prove userinfo stripping and must fail closed"
         );
         assert_eq!(
-            crate::cli::providers::safe_operator_endpoint(Some("%%%route-password?api_key=route-query")),
+            crate::cli::providers::safe_operator_endpoint(Some(
+                "%%%route-password?api_key=route-query"
+            )),
             Some("(invalid endpoint)".to_owned()),
             "malformed endpoints must not echo raw source text"
         );

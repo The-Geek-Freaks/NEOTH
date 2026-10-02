@@ -490,7 +490,10 @@ fn capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling() {
         OutboundTaskDelegateState::Accepted
     );
     let delivered = receiver.try_recv().expect("one capped frame delivered");
-    assert_eq!(delivered.kind, super::heartbeat::FrameKind::TaskDelegateCapped);
+    assert_eq!(
+        delivered.kind,
+        super::heartbeat::FrameKind::TaskDelegateCapped
+    );
     match &delivered.body {
         super::heartbeat::FrameBody::TaskDelegateCapped(body) => {
             assert_eq!(body.max_output_tokens, Some(73));
