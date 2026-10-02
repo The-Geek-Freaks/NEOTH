@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T18:26:51.8456802Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_REVALIDATION_PENDING",
+  "capturedUtc": "2026-10-02T18:54:05.7208098Z",
+  "validationStatus": "AUTHENTICATED_HOSTED_CANDIDATE_IMPORTED_FULL_INTEGRATION_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -153,8 +153,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 5844,
-      "sha256": "D52C578B8724DDCD85AF89D716D80B501AD12466FA9F7632D48F566C43ED03CC"
+      "bytes": 6508,
+      "sha256": "0A68215E47A9B631F976B4B706B65BC1F0366E5C7C607F1A77C835F9F8D64DC1"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -193,8 +193,8 @@
     },
     {
       "path": ".github/workflows/security.yml",
-      "bytes": 22968,
-      "sha256": "701CA57774B7E390794E6FFC28E1F963CCD23A12FE475BA0D7AE0909274A8321"
+      "bytes": 23637,
+      "sha256": "B4A56A687110A2BA8B13214801941250F4D9D6DE94C1E97C381BFE5504E59F98"
     },
     {
       "path": ".github/workflows/silero-specialize.yml",
@@ -3127,6 +3127,11 @@
       "sha256": "6303B896D0C13E4EEDF6C556A465D74B3FBC4A12160C02A66BC3C6D0C4CA92F2"
     },
     {
+      "path": "docs/verification/gold-wave2187-matrix-backport-integration.json",
+      "bytes": 4139,
+      "sha256": "214A65CC691411C2B6A44E107526DEA5B90DACBBA20C216BCCE48724DC5F44DF"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4268,8 +4273,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2308638,
-      "sha256": "0F99A53871930E56AA869012754B5388089CB1C285F35DA977BB6612C33CF38A"
+      "bytes": 2310651,
+      "sha256": "AD5200A997B1908964D8BDD1BAC2C874D6C2F1644A263F837F646F9EA42DF02C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4328,8 +4333,8 @@
     },
     {
       "path": "SRC/.cargo/audit.toml",
-      "bytes": 1674,
-      "sha256": "11EA81A3F85613A746BD084F7EFE6C7945E7FD0CD30D4AE5F875B10BA0DDDD79"
+      "bytes": 1777,
+      "sha256": "E6879AEDC7BED5EE6C5A28727A5CA9346E1B4ED12DE0E375E99A45BF031FED72"
     },
     {
       "path": "SRC/.config/nextest.toml",
@@ -4338,18 +4343,18 @@
     },
     {
       "path": "SRC/Cargo.lock",
-      "bytes": 387463,
-      "sha256": "39AADE8CE7F031265A1B8A6FBC6AF2234F23706467E52146F87C28FFD6924095"
+      "bytes": 386985,
+      "sha256": "D9520B9D7B6BBD4E56BBF976623FC596FB987D2B539F08BAC8C7E32C5EF52FCD"
     },
     {
       "path": "SRC/Cargo.toml",
-      "bytes": 2095,
-      "sha256": "D83B470302432C01B612C69438BD909F65F848EC33B2F77C52820CC71244DE36"
+      "bytes": 2239,
+      "sha256": "6124446DACAEA94EAAA1202686E3A9A2AF30A23EA991BBCB9A9C47DCECC8B0B6"
     },
     {
       "path": "SRC/deny.toml",
-      "bytes": 10463,
-      "sha256": "C4EC62043989D0DA6C5006F7E6BE993521D543CE888AA36E383839C4BBD6FCFE"
+      "bytes": 10633,
+      "sha256": "B7F8544BF9BF5557BB54B5AA383D5CA4CEC3F141378857B826FBEAFDDAFD0170"
     },
     {
       "path": "SRC/freedom.yaml.example",
@@ -8217,9 +8222,1724 @@
       "sha256": "A739DE42ADA6407358D1FAEAEF59A2F5D22689F86019E7B59498013B77D036B2"
     },
     {
+      "path": "SRC/vendor/matrix-sdk-crypto/.cargo_vcs_info.json",
+      "bytes": 118,
+      "sha256": "7205B8DA9A5EEE62D76DA48B05A3230191E745BD2154FD931AF2ABE09E9CC768"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/Cargo.lock",
+      "bytes": 92526,
+      "sha256": "A5D7E872D3CBE3D1FDB5F2FB1AACF0647AD08774E939D19C4DD07103464686E9"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/Cargo.toml",
+      "bytes": 7462,
+      "sha256": "98CE2B8539759300EBC3D29DEC537801BD689473D51BB29B9570BCAD335D565E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/Cargo.toml.orig",
+      "bytes": 3687,
+      "sha256": "A55E288337569A13DE7D9D76D66D79E49CF5961FE3027686CF74EA25C64E33EB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/changelog.d/.gitkeep",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/CHANGELOG.md",
+      "bytes": 33591,
+      "sha256": "4DEE8D1608F5FEED888ADBB8252C65EAE3357D791B55312D9AB162035B21A2A7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/README.md",
+      "bytes": 5729,
+      "sha256": "5979F1542CAA62413D6B37A38917FAF117DEB39FAB3A84BCA935628F6BFE92AC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/backups/keys/backup.rs",
+      "bytes": 4985,
+      "sha256": "176AD05FAF3571C0C338535FAA8DEC25F48B8B92DA1216F395CE5759388358C2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/backups/keys/decryption.rs",
+      "bytes": 15633,
+      "sha256": "336C875F4B0D74D3AD89FE3AB73012BF630ABA6344592F61BB2371C7FB14DF36"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/backups/keys/mod.rs",
+      "bytes": 2330,
+      "sha256": "DA18C9FBE68817B4AA6A7F8B928106056D75B5C787B9D4BA4273E7D43A916B73"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/backups/mod.rs",
+      "bytes": 34736,
+      "sha256": "08D1C2058A9523BB36026B49CBEE1331973AD1D014BE673472AA19B97F643A9C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/ciphers.rs",
+      "bytes": 11075,
+      "sha256": "97796AB46A2E39AB830BF677E9023385D164098B59F58836693183E4CDAE9923"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/dehydrated_devices.rs",
+      "bytes": 28267,
+      "sha256": "D26F416E169C0691DCF07F30E528EC42CE109862323C65256AE5A3214228B6F4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/error.rs",
+      "bytes": 18279,
+      "sha256": "4CF8DF71B96FB97912DD3DEE8F9C0BD83C0162543758AFA31E5B064005508B1B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/file_encryption/attachments.rs",
+      "bytes": 11519,
+      "sha256": "4F7DCF9D9241E196EABA949FE6073D66DBDB25FB591DD254842F51A961102A43"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/file_encryption/key_export.rs",
+      "bytes": 12808,
+      "sha256": "98283DECACD5A67FDFB23D32B917327A81ED3F4C4C51C69B8E8C20940437E8C8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/file_encryption/mod.rs",
+      "bytes": 231,
+      "sha256": "E49502B3C6D5B422EDA4380ABCC7E71B7295505B43F47EB352CE503680345BD8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/gossiping/machine.rs",
+      "bytes": 97164,
+      "sha256": "2C05E6131DA0BD4F444FE0256BF93D8805393DAFA8F95DCD8CE6B6D8B62034F1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/gossiping/mod.rs",
+      "bytes": 12423,
+      "sha256": "19B6FF78DFD259BECE954D3F408A8E1AAF25EF420A34883074202FA105D92B54"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/identities/device.rs",
+      "bytes": 46319,
+      "sha256": "5BA8EA85FCAC92D8E964E39462DD355AE64B25B62EA08ED4917C6134FE5DE982"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/identities/manager.rs",
+      "bytes": 103281,
+      "sha256": "FE2E1BBAF3AF0F8EBE830B5477502A161C765649DC2416964F9D1398DF7EE8E4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/identities/mod.rs",
+      "bytes": 2767,
+      "sha256": "E9053ECB75C71C38C4B379740BE465E67AA8385A6C808A78C4A00215A0A1D4C6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/identities/room_identity_state.rs",
+      "bytes": 44411,
+      "sha256": "1B6148899BEEE74605CD26FB0CF55E792C42A90EAF4D4B501443DC237FE57316"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/identities/user.rs",
+      "bytes": 78941,
+      "sha256": "3E4A2B3751EFDD3D7DB0399C23F8AC9248CCB651839195ED898D6D7BDB39EDB2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/lib.rs",
+      "bytes": 44166,
+      "sha256": "BCC6B433612812E05859D1EDBAC2EF7C3C6D172D476D8C4E74DD699159C10354"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/mod.rs",
+      "bytes": 128152,
+      "sha256": "D2B37B4F4D9967F1572BE7436A4F325939BF5087E05EC4D5EB9E29A8FA153083"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/test_helpers.rs",
+      "bytes": 17333,
+      "sha256": "79D3E4286FB84A66092E8A504E4C0E708F6C7F2F9510CEF522070A5B0EF29E64"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/decryption_verification_state.rs",
+      "bytes": 25587,
+      "sha256": "EFE61BC638377E461A52554AF6D010D21225567667F4B8FD0F804A4BA2CFAA1C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/interactive_verification.rs",
+      "bytes": 10087,
+      "sha256": "264DEBDA7FF59F9245F9198B704DF6E604507B37DB2E9656890A52C61BD013CD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/megolm_sender_data.rs",
+      "bytes": 18684,
+      "sha256": "B17D877D116AE94DCD5CB3F1DE24119B8C9EE74F069A7D8641452FB847476FAB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/mod.rs",
+      "bytes": 74800,
+      "sha256": "B4730E24E046584F99D889C369C0639C1A2382413024F64CB54D7FE16999340B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/olm_encryption.rs",
+      "bytes": 10737,
+      "sha256": "0445A5F53E3F061BAD3ED556CBECA05008A98364D66159FF85C857E18A6A9650"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/room_settings.rs",
+      "bytes": 3241,
+      "sha256": "ED653DDF1553CA01F56ED5BD670921EC8A3E438DB350DBC8694279F983F8B4B6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/send_encrypted_to_device.rs",
+      "bytes": 31772,
+      "sha256": "7F27E20D67CCA3E4D558CEF1F9FD699C5422C160EBB05FB27F6AD11C5F167A94"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/snapshots/processed_to_device_variants-2.snap",
+      "bytes": 342,
+      "sha256": "25E2665777734E0D5EAA48FB00C0B457EEBE768C9C9A2F1C1D82B5FBB2F31466"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/snapshots/processed_to_device_variants-3.snap",
+      "bytes": 316,
+      "sha256": "39298D322EE950897EE2D1535DF3D84870FFA250AB2B246A24DD9498C1FC1F85"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/snapshots/processed_to_device_variants-4.snap",
+      "bytes": 452,
+      "sha256": "E19779FA1E1BDD67FBBD6CB1741CEB9EDA8CBBD02443FE8DC9B7F2AE00B29144"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/machine/tests/snapshots/processed_to_device_variants.snap",
+      "bytes": 751,
+      "sha256": "166F7077D916932C71A296C3F903D5A3E7CD7A1B01B03727CC49D9E0C710BFCC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/account.rs",
+      "bytes": 83885,
+      "sha256": "D25BDF9331C9BAD4F2D3B2E5F4E1E9C8FC23CCB58BB608CBC059369854A60419"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/forwarder_data.rs",
+      "bytes": 6279,
+      "sha256": "E6878A5DEEE90615DAA51B712A89D16D37FDCBAB5053F6C8DD8486830E0B21B6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/inbound.rs",
+      "bytes": 61699,
+      "sha256": "66B958E2409E7A6FABDEA18A31AAC588C12A0B9C8AA0D0D59A4EDF193524DD2D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/mod.rs",
+      "bytes": 13636,
+      "sha256": "D18A69419F093C63248580C3844C7279E34A7074BCB8EA99445583B8F43DB058"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/outbound.rs",
+      "bytes": 43683,
+      "sha256": "55BA667EF352F6A67D8114D908B26C9C6225F1AA0EE30A346D306BBE67496049"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/sender_data_finder.rs",
+      "bytes": 43419,
+      "sha256": "6661B19A7EE7CA10C4B15DC865D3792817386222F8E1070EE19BB298BAEB81B2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/sender_data.rs",
+      "bytes": 34342,
+      "sha256": "1190E0CFDA01E13EC7AA1907ADA34AF5D8617AB76B2769F81FFDCC681FF461A0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/InboundGroupSession__test_pickle_snapshot__regression.snap",
+      "bytes": 679,
+      "sha256": "0331EF018DFCE7F74AA7EACCAD93B438BC5D0A591D8DFE611C44D33C2F69CD58"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data-2.snap",
+      "bytes": 228,
+      "sha256": "3FB8722D57411C5E41B7043156FE15C98E1BFB10D3369BCEADB64D4E1A0FDA09"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data-3.snap",
+      "bytes": 938,
+      "sha256": "90F9158AC6E8805AD584A4907ED8F9F2E3E970570470341D1846BEFDEEFB52BB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data-4.snap",
+      "bytes": 481,
+      "sha256": "677AB14912F8A9C765AB5BB77CB628BAE455AE0D4B7E92CA8B5D56ADB5E2C2B5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data-5.snap",
+      "bytes": 438,
+      "sha256": "8FA12528319ABB06DFB60ED757508E4CB833B45734C057FAE44612CAED27A7F8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data-6.snap",
+      "bytes": 434,
+      "sha256": "51FDA8A818E9F1B056663850B00CA53DDBAFB565F3E3622C1A0FDF68D5CAEAA2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/matrix_sdk_crypto__olm__group_sessions__sender_data__tests__snapshot_sender_data.snap",
+      "bytes": 261,
+      "sha256": "DF791DD0EA480E46D35CA802117F24CF85C0E3A356204973ACD8D456F35F9120"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/snapshot_forwarder_data-2.snap",
+      "bytes": 440,
+      "sha256": "8F39C1E79C8E87E7A265B10063743DBF047ADDE0456EB067F4F5E9FBFDAF4ED0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/group_sessions/snapshots/snapshot_forwarder_data.snap",
+      "bytes": 444,
+      "sha256": "40A8ABF8A5C2702D07C840841D92C3BF478714E60965B1594A339378735F26BA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/mod.rs",
+      "bytes": 12170,
+      "sha256": "E0EFD71330CE87A0038A736145C60A5484E2D9DBCEA53203B302572D151928D8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/session.rs",
+      "bytes": 15049,
+      "sha256": "A9FBBA2523D319297E30471A3A87BA3A2446203FDC50BEAE99C308ED7763E781"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/signing/mod.rs",
+      "bytes": 29372,
+      "sha256": "7EC4A15E51665BDAD0CD93885EBB5BC398CAE15177F49175AE29206DC1635E44"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/signing/pk_signing.rs",
+      "bytes": 11868,
+      "sha256": "4CDED1AA14C9F8C9653B40C7C6E4B6034F6C9F1A2FAB4318FB5C3EAB12DF23A8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/olm/utility.rs",
+      "bytes": 8140,
+      "sha256": "AC3FA0B45D4EEA41DB8ECFE98688D27A93E78DD3C99FBDB1C4DC1EDA1A11C410"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/secret_storage.rs",
+      "bytes": 36573,
+      "sha256": "49138C67C5010EF72C05117FA871FB60173CBE76F54BDF02C11CAF40016F613D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/mod.rs",
+      "bytes": 71623,
+      "sha256": "9ACB919E4F19A6D4354F3FAAA9EB8BEADAE7ADCC0D4E2671922E69BFE4CEAB7C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/share_strategy.rs",
+      "bytes": 130428,
+      "sha256": "9DF5B2AAA95D91F5D19DDBFA04DE7E3FD572127909D8F1980F8266626C4DD880"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/prepare_machine_with_dehydrated_device_of_verification_violation_user.snap",
+      "bytes": 2513,
+      "sha256": "A26D642E2CBF88FBC8E88558C2E8A275D205483C23C7E611A4F292961423C3B8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/serialize_device_based_strategy.snap",
+      "bytes": 287,
+      "sha256": "10167B1A46278919B580FF3CDCF206BE3C4FEC05DE537328EEAEFA0785FB20B4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/serialize_strategy_with_encrypted_state.snap",
+      "bytes": 316,
+      "sha256": "8456FA64DBDD637C0DCB934FADB5BA4709B66EB78EC20D39C61D54BB1A0A702C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/should_not_share_with_unverified_dehydrated_device.snap",
+      "bytes": 2356,
+      "sha256": "5FCDC6DF725288C28EB5E5AE8B519F2552CC2100E1747197ADB917F9AF924B39"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/should_share_with_verified_dehydrated_device.snap",
+      "bytes": 2513,
+      "sha256": "24B3A64652FF110803AF8E9F9E7415CC5AD7BFE9ED6F8D3C9CD60359416F27FC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/group_sessions/snapshots/should_share_with_verified_device_of_pin_violation_user.snap",
+      "bytes": 2513,
+      "sha256": "A26D642E2CBF88FBC8E88558C2E8A275D205483C23C7E611A4F292961423C3B8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/mod.rs",
+      "bytes": 972,
+      "sha256": "D907E9CC3221E366157C14D378D92FA438BA0E76AAA418A8277BFD2427C3F5E0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/session_manager/sessions.rs",
+      "bytes": 40847,
+      "sha256": "64C9F755B1E4D53A80A3604BED50A194C1322B460DA1F349AC871BF7729F156E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/snapshots/matrix_sdk_crypto__test__snapshot_decryption_settings.snap",
+      "bytes": 205,
+      "sha256": "9D93BED310201EB6069D3C3A0BF53ED0F823813A0FA20562BA42D02E20FDFE75"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/snapshots/matrix_sdk_crypto__test__snapshot_trust_requirement-2.snap",
+      "bytes": 126,
+      "sha256": "410D4E55978060904C84B5EDCB2B6D566630F2D7FEB2031783F654BEABDDED75"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/snapshots/matrix_sdk_crypto__test__snapshot_trust_requirement-3.snap",
+      "bytes": 110,
+      "sha256": "310C3DEA9DA830572DCFE8D47BAB4A4AE6BD6468C2CF7FFAD532A737CAF407AB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/snapshots/matrix_sdk_crypto__test__snapshot_trust_requirement.snap",
+      "bytes": 106,
+      "sha256": "CEF6AEBADBFD4E20E9E566D7843189B4BAFD269CDFB012EBCC64CC8FC1B07386"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/caches.rs",
+      "bytes": 17147,
+      "sha256": "E641D961ECA67DBCEA4B9CC158E2DEEEAB18234306DF409006846CF1E3872F03"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/crypto_store_wrapper.rs",
+      "bytes": 18146,
+      "sha256": "A54311ADA30951B6DBC3F1654F5DC824336C5AD115DA356984ECF87103B0504F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/error.rs",
+      "bytes": 3617,
+      "sha256": "DF90F1B74B30989C9809668290031507A6762FF6984E620C0AA3B7814CB2F6C0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/integration_tests.rs",
+      "bytes": 74750,
+      "sha256": "85AA9F393123D7F37036CCA1126E9CC9D6CD0F1A54B8A789FDE854DAE270FCFA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/memorystore.rs",
+      "bytes": 61492,
+      "sha256": "30E38F42D26FE663118D93CEBC7C79D60260D06AAFABF8C5A93347C5612FD972"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/mod.rs",
+      "bytes": 98225,
+      "sha256": "3E544DAA00C3F343DA36C47DCA7F050FE4D707D748880550C9EFA4BC6333B3E1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/snapshots/matrix_sdk_crypto__store__tests__build_room_key_bundle.snap",
+      "bytes": 1478,
+      "sha256": "809BD9144E3DDAB3CB7854F14EE38E18A9862A4A9718FB727F7DB4B334996C25"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/traits.rs",
+      "bytes": 27287,
+      "sha256": "33D93B4FA508A8F4D06969BF271DBF7FA501DE59DA8D9CF6C0C4B23EDA2A81C6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/store/types.rs",
+      "bytes": 21450,
+      "sha256": "FFE59FCE804EAFB65C09966F49F458CE19C9F12BFAAC0779FC5B017C49C31A7D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/backup.rs",
+      "bytes": 6905,
+      "sha256": "1E519F61DDA715F8795F15B941703CE624303EDC008B3CADCD5B182C721767B4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/cross_signing/common.rs",
+      "bytes": 6063,
+      "sha256": "89F73103297DA8F5123EEF30BD517887ED6DE074DD7D39301ABEF469D069F7D9"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/cross_signing/master.rs",
+      "bytes": 5131,
+      "sha256": "F7D288BC30D3C89AD2FFADBE53FF4DAD22A5A07A32D9A000976F2083E6864960"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/cross_signing/mod.rs",
+      "bytes": 6606,
+      "sha256": "9B47C800789DE21F03C15EC4AFA252690AC79852BB401E14DE2BDCB996E16600"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/cross_signing/self_signing.rs",
+      "bytes": 3180,
+      "sha256": "F288B535E15371C9F262661AB02D1793038D3E4E861E7BD887AABE97F66A3E70"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/cross_signing/user_signing.rs",
+      "bytes": 2967,
+      "sha256": "6C3ECD631446E748F45F5477FF07E83506ECAEA50DEDFF709B32660B4A7FBCEB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/device_keys.rs",
+      "bytes": 12878,
+      "sha256": "3C7B73B97E346B717AA4E57A42D50B95BC5B23690E5853B1483D3C9B05FC6878"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/dummy.rs",
+      "bytes": 2029,
+      "sha256": "60EBB620A48D3A16539C807820D42DBB8D951CCD95C9311240A428B2661DEF39"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/forwarded_room_key.rs",
+      "bytes": 10096,
+      "sha256": "C4AEB6535A6D8832C9C52C8530CC9EE97C71D71A02FA4B898233A37A030C0AEF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/mod.rs",
+      "bytes": 2041,
+      "sha256": "380B5D901C83DE1F58236CA01F074239EB1C7A846283DDBD9240BBA09ECFC76E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/olm_v1.rs",
+      "bytes": 28522,
+      "sha256": "1D74EDC03AE6649B4A37101239027C58CF900BD1AE44FB80CC13192241B557CA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room_key_bundle.rs",
+      "bytes": 1543,
+      "sha256": "21439A76C6D1672F3C424CA8D455062F7D4ACFF04C067F0853CD9E0E4A129028"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room_key_request.rs",
+      "bytes": 14252,
+      "sha256": "5744D2AC1C1666420378208A847722F49B5832EC9FDC678882C9436A7A57BB84"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room_key_withheld.rs",
+      "bytes": 27843,
+      "sha256": "967C7E318B961E5A5D0619D2261E9549D9A642C6E0B7A0815E5CC0F0FF94A0C9"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room_key.rs",
+      "bytes": 10211,
+      "sha256": "443E6620384B17658CE204AEBAFC73B7A3A692EEDB380BF97C1C90FB60A78C29"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room/encrypted.rs",
+      "bytes": 20326,
+      "sha256": "4982726BA174C3F9FD1D5BBD89CB575EE8ADD1BB756A7B04371B5EF3B587B2F6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/room/mod.rs",
+      "bytes": 2964,
+      "sha256": "C0C08B652E9A5550673F1BF1C8C29145060BB4EDA76976FAC3A7224BEC9C4930"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/secret_push.rs",
+      "bytes": 3289,
+      "sha256": "215C4C550E574DA99BFC682B9179F00C7D17629D45BFD230711AC0C1E03D4EC8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/secret_send.rs",
+      "bytes": 3494,
+      "sha256": "B0218BF091DA853F2ACA6DB39356649B1DF2F2EF5C4383463EA46412B8A2753F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/snapshots/decrypted_to_device_event_snapshot.snap",
+      "bytes": 875,
+      "sha256": "F3FA443195A420122FA754F46A40BFDF4188ED9D89C0732FD68FC75D12BA31BB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/snapshots/sender_device_keys_are_deserialized.snap",
+      "bytes": 1457,
+      "sha256": "5A9E6DE9666B1515700A6635A42A8D39731C3627838DB58AC6425D38C3BC17A4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/to_device.rs",
+      "bytes": 23216,
+      "sha256": "FAF51B659C665B66EA845DD0697F3D0F48E21D38926D7E8D918E50031635E0AF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/events/utd_cause.rs",
+      "bytes": 23335,
+      "sha256": "19A9F42D56BA16949D55C70ED9ED99EE5B8A5364BF4B97AF6D21561E4C5390E7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/mod.rs",
+      "bytes": 21766,
+      "sha256": "C7536236BD3A60B1FA60913C11EB62805DA212DC270BDC03C5A8D135389B376F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/one_time_keys.rs",
+      "bytes": 6614,
+      "sha256": "D5A3ABE18D8AAC6FE739A15E6CE9BD9867BE74D2D3CABCCC322F7DCD5B61C5F8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/qr_login/mod.rs",
+      "bytes": 10003,
+      "sha256": "56C36D540235E5EB3DF369B5FA2A1A188E3FCCBEABBB3DF03B9855943C69B093"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/qr_login/msc_4108.rs",
+      "bytes": 15282,
+      "sha256": "23264A2300622B0221D7D6EA01D1F415C398CDD21440BC2270E6302E6EF2F30F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/qr_login/msc_4388.rs",
+      "bytes": 13186,
+      "sha256": "7F5423D8036CD593A91128BB3E0162E69146882700936E32099A6666769DD066"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/enums.rs",
+      "bytes": 7205,
+      "sha256": "5C48C1E5CD6D3DBA5AFF05242CEECA647F6641D78D3FF581EA45178C508B4317"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/keys_backup.rs",
+      "bytes": 1078,
+      "sha256": "FCFB5D3C85BA57E806FD44E95FD18A969B0DFB355C8079E61DB97619D70505CC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/keys_query.rs",
+      "bytes": 1420,
+      "sha256": "AB35B906DC342B52CD315E0EE9528B82CE3B3C2EA053CE5F683F9343310A3938"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/mod.rs",
+      "bytes": 1652,
+      "sha256": "19807CAA939F8EBECB2D1E4A3029B8E85C765B33F1D320E9CFF4E5B77F496675"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/room_message.rs",
+      "bytes": 1228,
+      "sha256": "B6FEB2645238D2CC8E0FB481CD752916B845FA0054D06E484D5169CF4E03B7C5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/signing_keys.rs",
+      "bytes": 1389,
+      "sha256": "BFB43FA203EF5965EFF279A93AF038FE2185747EED6E0505F0D3456396ED08F0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/to_device.rs",
+      "bytes": 5139,
+      "sha256": "F6E232EB1A4905A1211F958D0D58E4BA7AD20E4E9DC8AC49245DD6F9654618EB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/requests/verification.rs",
+      "bytes": 1696,
+      "sha256": "D15439572344E1BF8EF7A57BB1859404783B0CB06F133CA439636E7764F19883"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/room_history.rs",
+      "bytes": 5627,
+      "sha256": "C4EC6B3DA6BB2B27DC84134E27AA560D34EFAC401FDDD891811FA08EECE0C60A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__backup__tests__snapshot_room_key_backup_info-2.snap",
+      "bytes": 152,
+      "sha256": "0672B144439CB85CB0641EA664C06B34D593BB3BB33F292CC5584CC0F9965DF1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__backup__tests__snapshot_room_key_backup_info.snap",
+      "bytes": 421,
+      "sha256": "50FB5B74AE28AAE24FFAFD8C4CAE466BF49659B47B8236DAA48952A2A39B736D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__room_history__tests__historic_room_key_debug.snap",
+      "bytes": 456,
+      "sha256": "EBE55BA84F8D67311E7BFFDB9390764C3AC8A80692F79BE979BEFAD3FF8CB06E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__test__snapshot_backup_decryption_key-2.snap",
+      "bytes": 119,
+      "sha256": "CEF87AC7D071216C262EEAD113BE04CA1BD2879269EC039C78BF3FD04C59CFBC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__test__snapshot_backup_decryption_key.snap",
+      "bytes": 285,
+      "sha256": "6E910D195FC797B72D7FA2FF165CF187991BDE94217A43609172ABF6E8CED8A6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__test__snapshot_secret_bundle-2.snap",
+      "bytes": 313,
+      "sha256": "20CD8951CFDD34071A4D1493CCA002F7CB54E4EC6782B5CAD248690912E375D8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__test__snapshot_secret_bundle.snap",
+      "bytes": 460,
+      "sha256": "8367EAA1602FE6B01208E9DC79AE7763F68BE117E18D820F4BB07B32614B9AB1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/types/snapshots/matrix_sdk_crypto__types__test__snapshot_signatures.snap",
+      "bytes": 426,
+      "sha256": "8C1AA5B4E364C8C63E8D2300E18B242C449B3DF8255094B76761C54866A4A80B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/utilities.rs",
+      "bytes": 3157,
+      "sha256": "F4729D202866CB7F36B3FCD58931A6294CD412B9290A1240DB492C62626EA83A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/cache.rs",
+      "bytes": 9454,
+      "sha256": "F0DF5ABFEB2D1DDEA891A6B01FCD14BE19D40320A1D45C52AD58FC4959F60652"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/event_enums.rs",
+      "bytes": 27373,
+      "sha256": "F33DB34646F7E05B03A9447B0DA1C88D79CE0D7F1941481753E0C9352C17E70D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/machine.rs",
+      "bytes": 31359,
+      "sha256": "1F450750FC1A81FF92A1432D790AA5958FAB95ADEA9B5FDAA2FA2F6190A7CE64"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/mod.rs",
+      "bytes": 31396,
+      "sha256": "D92C0275EFF050AA80ABAF988D336488E8B09C57D7E20551CB2B80B88627F43A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/qrcode.rs",
+      "bytes": 39866,
+      "sha256": "9BD3892729343A5F6950E929C2B2D370E3461F1B721CC82E2A2762A875EA81BA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/requests.rs",
+      "bytes": 80217,
+      "sha256": "E335024C663DF8A2A7185728FD3AC30B6013E69B6A03E8AB4DC10D89575099AF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/sas/helpers.rs",
+      "bytes": 19057,
+      "sha256": "FF4A996AFC313135384114036AF1179EFFB4F7802183355088FB7F51D7E46DFA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/sas/inner_sas.rs",
+      "bytes": 17215,
+      "sha256": "C359E1B963FDE31508934E0F5C4526FE71620170E62AFCBE03D274AA93483365"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/sas/mod.rs",
+      "bytes": 36577,
+      "sha256": "051FD5A261295EC1555FA0DBD5A1609E825E39C1E20381370B3034AD074EA1DB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/src/verification/sas/sas_state.rs",
+      "bytes": 65579,
+      "sha256": "F903EC02E13674430068CAC0FA2C631BCF1267647EBBEF1C52E9856C2E2FB0E6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk-crypto/uniffi.toml",
+      "bytes": 267,
+      "sha256": "1A294D0E48F8ABF54169910C75166EAF8413DA36CF9F9EDC84BD28070D69D441"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/.cargo_vcs_info.json",
+      "bytes": 111,
+      "sha256": "3222874FF733B64CB21A9AFBF3FD8AD36D01F557C2560AFC0BC7A0D625CAB48B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/build.rs",
+      "bytes": 832,
+      "sha256": "B6B40FFE56A71EC45FEF7F54BC1059C0C935B8DED7458B86A193CCE92E90A200"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/Cargo.lock",
+      "bytes": 147532,
+      "sha256": "DD30F4B99FE8AD212FCA361CA68B2583DDCF806804DBDA5845CCBEEA299D3EBD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/Cargo.toml",
+      "bytes": 12658,
+      "sha256": "BD77F06ABE265570ABD64BC9E73EFA811BB1794801DCB1A2ED749DF6A38E9044"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/Cargo.toml.orig",
+      "bytes": 7118,
+      "sha256": "49813B0D20BEC71F4482B841BE22BEE409E5B1587576B846705BA0B4CC75AAB6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/changelog.d/.gitkeep",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/CHANGELOG.md",
+      "bytes": 77480,
+      "sha256": "45DA510EBF8BF764A958131613ACB487589F1C7E7BA65E6F571DAA04A85C1AC7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/README.md",
+      "bytes": 5366,
+      "sha256": "BD261899277E53EEF8582BE9BC1DE28C9FD23C554E6ED65F192E49EE569C0169"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/account.rs",
+      "bytes": 61197,
+      "sha256": "C42FE74BF08047FCF68B29BC0C7542AF0696D6F7369C0E2C698FECB623B7FA3B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/attachment.rs",
+      "bytes": 10797,
+      "sha256": "6812FEDF21288C1A161BF2DFAF164752FD17337027D6F15787EB38200CC86CAB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/matrix/login_builder.rs",
+      "bytes": 12597,
+      "sha256": "4E6835172EC3DA44148321D4FF3E2AD189EC08FBBC9E13E6FE6B58DA7476CE6E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/matrix/mod.rs",
+      "bytes": 30922,
+      "sha256": "F417123495EF4F777C01935FC765808D9C226BC72A69CB76C97BE9449975E7C9"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/mod.rs",
+      "bytes": 8728,
+      "sha256": "8ABF6B1617AC2B1E54A8347FEFFBA1D832A022BAE8BAAC66AC8B21C1A90D4748"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/auth_code_builder.rs",
+      "bytes": 6882,
+      "sha256": "AA06CFC8F06012B5581A5B2269BF052351D790E4C6D9F4ACF769890EDADC9755"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/cross_process.rs",
+      "bytes": 22694,
+      "sha256": "352BEAB4764D26BC80B7923E0E3E3CF75A18B907CB89A3019D87329CA26C52E6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/error.rs",
+      "bytes": 10248,
+      "sha256": "FABEE5487EA51DAE50F01439317CFB4549D1454D35A51E1D1773D0AB49DDFE6F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/http_client.rs",
+      "bytes": 6821,
+      "sha256": "E667B32B158A77832B08FDBBB3E1ECC4D6B133B25CE594634CA46023358B394C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/mod.rs",
+      "bytes": 72067,
+      "sha256": "B61DC26929B93CF183992E9EA7EECEF8095B44E8CC2A9A3CCEF67786EC421A8E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/grant.rs",
+      "bytes": 126046,
+      "sha256": "A2F350E128A1793E9C91D7782079CFFECB27B114C3B3650398448B4AB32D7C4F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/login.rs",
+      "bytes": 56698,
+      "sha256": "C24767F74B0256E4AAC823905CE5F9D9D5590C4E3BAD2423BCC39525207F9B3C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/messages.rs",
+      "bytes": 11221,
+      "sha256": "BEE7DB488EDF64F12FC1FD0D37BB340118C7465D21E4CD1F2923287D03E22E04"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/mod.rs",
+      "bytes": 13974,
+      "sha256": "EE457E591289998602E4E66254BE8713A14B660CF359243DB9112A2E923A8969"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/rendezvous_channel/mod.rs",
+      "bytes": 3959,
+      "sha256": "F9312C96EBC607CD70BEDF457807BA6A41DC1C909BFEAE325ED0A7BE34028823"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/rendezvous_channel/msc_4108.rs",
+      "bytes": 21442,
+      "sha256": "4BA60E9A5DE27EFB1DBF0DA1C96D354C3638688CC0BC3C8B4E4905CF77782922"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/secure_channel/crypto_channel.rs",
+      "bytes": 4304,
+      "sha256": "459819E8DA8FE926AF123FAC0F7922CF291FA0F859D50B7BABF5D2F2E339E63B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/qrcode/secure_channel/mod.rs",
+      "bytes": 18591,
+      "sha256": "D741233AD3F6330123315B987DD742B8513E227E203BC3CA789E3F11D80793FB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/registration.rs",
+      "bytes": 16201,
+      "sha256": "BD0C9003C2F7F4E322322B69DDCE1FD7F6A76679E9BDC2BDA17FE9C994C682A3"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/authentication/oauth/tests.rs",
+      "bytes": 29128,
+      "sha256": "13CC273FED16B63B9753E1882B01C0CBD564BE379ECFB86F6BF48804BFE13120"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/builder/homeserver_config.rs",
+      "bytes": 10888,
+      "sha256": "3AB7ADCC33D3617A885D0473FA639267D77D686AAEDE5BA851D8CD55FACEB9BB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/builder/mod.rs",
+      "bytes": 43049,
+      "sha256": "1C8503B14010EA4B03542837D9DF942E9AC05AD81046DF7BF35407107E1A2331"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/caches.rs",
+      "bytes": 3763,
+      "sha256": "4D5E4FA7B05A2EB92A4FA711301CCDB904782089E78996BE06FD0CE3E08D7EC6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/futures.rs",
+      "bytes": 8860,
+      "sha256": "B32618385DB1143A9E811965A57E0BC5F52A7D143185BBF79286AF47E778C83B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/homeserver_capabilities.rs",
+      "bytes": 27545,
+      "sha256": "D9719C28FAFABEC7773BBC114D562BFBF09C71B77DF8104D2B269A7BD5ABB197"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/mod.rs",
+      "bytes": 185471,
+      "sha256": "C7BB43A406B790A0C337F792796B9075D479E06786AE8728D14498B933DCFAEB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/client/thread_subscriptions.rs",
+      "bytes": 18210,
+      "sha256": "EEC10515BFC9F828BCED0DD9352E3EFEC682E7A5FC95A88A87C7D29D64E90237"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/config/mod.rs",
+      "bytes": 829,
+      "sha256": "14C4E4863DF5DB415075B1688763E1B99C8AF2276AE438C6D37946855AD58E3E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/config/request.rs",
+      "bytes": 7333,
+      "sha256": "19054666CF1FA3D5A0110ACB632331417150EE1FA240DDE4F63A04444102ACAA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/config/sync.rs",
+      "bytes": 6253,
+      "sha256": "01949FE63E1A05759B878AC0A99FC360D7DA05DF32B564A14B91525852745BAE"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/deduplicating_handler.rs",
+      "bytes": 10407,
+      "sha256": "656EB96C2B64C1D3352EAAD9DCB1052EAEBA5CAC9E87A15113FB370122727CB8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/docs/encryption.md",
+      "bytes": 12998,
+      "sha256": "E711E1987EB99EA40B9C7FF563AF684823A09E03EE08292AC158D87D344BC4B8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/backups/futures.rs",
+      "bytes": 5713,
+      "sha256": "B6491B0ACBD39CC8847F01A9ED524838153BF37D845BD0F68893EE694D90CEC3"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/backups/mod.rs",
+      "bytes": 65907,
+      "sha256": "1911420285AD5A872815BDB01316ED10123305DDF4C9801809F3149C1E3F884A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/backups/types.rs",
+      "bytes": 6420,
+      "sha256": "BA4BBCFA916E9EFC22FB95BE8394C36C7101F18F1A7747C1C834E6DB812CE6D6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/futures.rs",
+      "bytes": 3817,
+      "sha256": "7A14802A8D1A327EB05D5B56849128F5858CD49F3BE662081B84D4DB13487EFA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/identities/devices.rs",
+      "bytes": 25082,
+      "sha256": "682F8470734B8C68627D6365393EAD8AC50332FF183890BE061FF0A13CF5ACF5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/identities/mod.rs",
+      "bytes": 4477,
+      "sha256": "09270CD89DB2265944223025629E66358DE1683EE84F414D662D32F9BE0146D3"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/identities/users.rs",
+      "bytes": 19395,
+      "sha256": "BA05B258D0C8E361A0D19C9D3F4CCBEB1E0952B45B62FAA03B8BB124CE6A0370"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/mod.rs",
+      "bytes": 107007,
+      "sha256": "A96B9858C5D9D1EDE37C9F66C0572D43B646AEAA2979381D16C59C1D1287528E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/recovery/futures.rs",
+      "bytes": 8722,
+      "sha256": "DDCEF057F09ED6C1265625F5B25DC9DEC06F4081534CABE4D3C7056E792EF58D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/recovery/mod.rs",
+      "bytes": 36293,
+      "sha256": "5835F5F9A6FAB814245A31B6061140116FA85956DE4FA7A6843B36EA9BD2CB61"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/recovery/types.rs",
+      "bytes": 4875,
+      "sha256": "61F6C3B41655E1E4A05F8C4385423F92E3FCA7109255046743808D274B563BF8"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/secret_storage/futures.rs",
+      "bytes": 2940,
+      "sha256": "368A35E9695545DEDDEF0A5D43EE3CEBF390838B4B4DF482848E47C83971ED13"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/secret_storage/mod.rs",
+      "bytes": 12902,
+      "sha256": "A56087751533A20DA0E79E944CC2F6A1C74CEB46455BB56D3B5DBA3D3ED29EEC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/secret_storage/secret_store.rs",
+      "bytes": 19838,
+      "sha256": "5EADB0E6F28CE0E58EDB4072D1C679778BF79DC85DD414FAED6B7471D251482B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/tasks.rs",
+      "bytes": 26601,
+      "sha256": "0417116F4BEA9FDCBCFDC5EB3C505A15D55DBBEE94051C3B5F2F1BFA6432637F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/verification/mod.rs",
+      "bytes": 5372,
+      "sha256": "E5161EF91312920D382C047A4E1AF54F3B1F337307DA70ACE10C40A4BE5F5DF6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/verification/qrcode.rs",
+      "bytes": 7904,
+      "sha256": "6713A4A0156E24E8522EBB3809A3B88B1DED740D0A097D591D620EC3F432D648"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/verification/requests.rs",
+      "bytes": 10055,
+      "sha256": "066329C974739BCEE8074C7FD9A7E3D7D94087777C72ADC6BCDF3161C68C06DA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/encryption/verification/sas.rs",
+      "bytes": 11328,
+      "sha256": "F92AE21B896BFCA3A3C911D3C097F5A8ADA4956369E347C5168FB75B4D8584E1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/error.rs",
+      "bytes": 24775,
+      "sha256": "67C7E1237D485965113E079EA5C474A9D8564618B5E0A60FEC52FF164C62897B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/automatic_pagination.rs",
+      "bytes": 12951,
+      "sha256": "3563A9DC3ABC2CBB21CB35068C5EF9E83D7801BCBEF6B6EF2B64D35241B7EB0D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/event_focused/mod.rs",
+      "bytes": 23623,
+      "sha256": "7A680FA29874127C75A37BFD3ED54CB41545B0D8D92066C6E68C2483F0B38626"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/event_linked_chunk.rs",
+      "bytes": 34039,
+      "sha256": "0B91FA8A2650EA932491BFBD33B6F04FF2A9696FA435864DED4DDC6D0764900A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/lock.rs",
+      "bytes": 9566,
+      "sha256": "B447D2989017EDA3BBEE09DA9931239DCBCF8D0109719775EAD29E0DA3CB54EE"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/mod.rs",
+      "bytes": 7344,
+      "sha256": "489352B7E7EFFA110F261BFEEF44B13FFF9BA84668B0B0477283FC117A8E7205"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/pagination.rs",
+      "bytes": 16024,
+      "sha256": "3B5BA20BEF971C9C49EB263234FFB5CDCA8FD7F8599361F963A594FDFBEB830E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/pinned_events/mod.rs",
+      "bytes": 22425,
+      "sha256": "8799136144C871576C349473C8A26F06C702178257CA16B1EAD6B2B773CB893D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/read_receipts.rs",
+      "bytes": 44890,
+      "sha256": "D3E8BA86DAE80AFC3465FDD89E2A28F5005F2D6BD619670844E653DFD4319F4F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/room/mod.rs",
+      "bytes": 108159,
+      "sha256": "C9D8BCD8C047E11C4F5F2DBED09232F173C1939653A9264AB0C4E64FC4EA7DAD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/room/pagination.rs",
+      "bytes": 16565,
+      "sha256": "26AEBBBF0BB4155AC2E62C94C4CC0BACCC43B01189FD2C776B93A9668D78FC4B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/room/state.rs",
+      "bytes": 59732,
+      "sha256": "E756DDC3428D0741F6AE62B2B54CC8A7D31B6F71DA20DD32C81EEA98D3F43C9A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/room/subscriber.rs",
+      "bytes": 4366,
+      "sha256": "72AA684B60980733BC6776F85F70DBFECE7CFA44696C075414091AAC85F339C7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/room/updates.rs",
+      "bytes": 5272,
+      "sha256": "AE9DF7D7CA79E272109B5A035770C6999C307820C133206C1DCD39F1354BC27F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/thread/mod.rs",
+      "bytes": 5756,
+      "sha256": "998B12003A650DD88379E78FCC27E415290E7846047D1163C25F74BA35B04A9D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/thread/pagination.rs",
+      "bytes": 10102,
+      "sha256": "19036A8A88411D596B80A12A584BD42C00ECEE419A57201ADA83996A2BED9336"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/caches/thread/state.rs",
+      "bytes": 11846,
+      "sha256": "410735A3B0CF410556E56EB3379B3888DCE14A7A9B8EB97AD9B5A5B5E643DD5B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/deduplicator.rs",
+      "bytes": 16651,
+      "sha256": "D0C5A164FF5DD57982F67960E0D6FCB964B6FBC1855B70AF0B16E6109402D48F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/mod.rs",
+      "bytes": 42383,
+      "sha256": "270685D940E2B504AD0F9500009B1614105E2008F841A9BD1219C2D97C247FE6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/persistence.rs",
+      "bytes": 5335,
+      "sha256": "C336C3BC3D9A3D87417D960D22D872F5913039EC820FACCCBAE4AC9EEAF76EEF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/redecryptor.rs",
+      "bytes": 75623,
+      "sha256": "8A1D1E49224E836BFB3E653EDC7B76D447549E707EB0C3591D349ED40A6D0D8C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_cache/tasks.rs",
+      "bytes": 19671,
+      "sha256": "4CBFAD0EF200B215054436BF6678869290F18B0CF6912DA81B0EEE9130FEF6C7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_handler/context.rs",
+      "bytes": 4243,
+      "sha256": "528F683D8489EF9CB13AB0572018E2D966435425C0B3E4E32630357F8E85008B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_handler/maps.rs",
+      "bytes": 10589,
+      "sha256": "37F9CEF2FAB6E80F6BF2C9EE5F4840F9BA1B741C8D0725ACC1CD3152639C465E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_handler/mod.rs",
+      "bytes": 46886,
+      "sha256": "1A1740F91ACCFDE1DAED879C96BB39836E86FF894013C509BA5E43518B8E5562"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/event_handler/static_events.rs",
+      "bytes": 7493,
+      "sha256": "D087AFCAF6797A3EF89E9D9D17A710F2AD83EC9515A297EFF9A61815E52C6BFE"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/http_client/mod.rs",
+      "bytes": 16086,
+      "sha256": "22098FDF1A1F94B35B3DDF58071EFECE641B65DE7D42024E5017697FDA1FDA6D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/http_client/native.rs",
+      "bytes": 14700,
+      "sha256": "B7DC7CE75C2FD5084A8915153AFE61825BF59531717A92AF103257A98ECFF317"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/http_client/wasm.rs",
+      "bytes": 2101,
+      "sha256": "35F28273BFE897B8C1017A12862557C121427449E29BAD7798512E77E3A0CCEF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/latest_events/error.rs",
+      "bytes": 883,
+      "sha256": "1695EDDEAE496322A9AFC227D04728ACEFAD0821FE3687537E318C2DA9D256F6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/latest_events/latest_event/builder.rs",
+      "bytes": 149906,
+      "sha256": "1FF4106493A9BC2C5D75847D6840C1CFAF5066F5DD78621BFB7E326E1604792E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/latest_events/latest_event/mod.rs",
+      "bytes": 31219,
+      "sha256": "C3E61512DCB2BD649B09C82096864515D40C0CFBF80A44CCB2E033C51FAAFC5D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/latest_events/mod.rs",
+      "bytes": 60887,
+      "sha256": "CAA0C1CDF505967D23F6F25C711A15C0FE5751C66A9D29FED714F34AA36710D0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/latest_events/room_latest_events.rs",
+      "bytes": 9470,
+      "sha256": "E7937E643414C35DC228DED562E0CC65B4C4CCBDBE0576C0BA833702B91C7B93"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/lib.rs",
+      "bytes": 3629,
+      "sha256": "880A03CC940D7B218507739A8BF533D8DDF70183EE8B893ADFF2AFAC67148B53"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/live_locations_observer.rs",
+      "bytes": 10540,
+      "sha256": "2F3033F5C3756D71A636B0DC00D77A29316A8CA5E8AFDB3A2FB3434662B2FA16"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/media.rs",
+      "bytes": 32076,
+      "sha256": "F2F2DF4DDDE011CE315636DC5D76713D1520B6D48885F5F3D5A39F920C2AFACB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/message_search.rs",
+      "bytes": 22952,
+      "sha256": "6D6B84820ED22F04F5CF80508B66EE9CF26975C44E0A743C863949896A137A47"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/notification_settings/command.rs",
+      "bytes": 3098,
+      "sha256": "2F16FC7B407772CD21398EEF71DA3D77B66BF46E334309D33F11271411F920B2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/notification_settings/mod.rs",
+      "bytes": 64124,
+      "sha256": "3812590C5777A87468078A09C5E12AB4109F24791583F7CADB7AED73FC815109"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/notification_settings/rule_commands.rs",
+      "bytes": 20110,
+      "sha256": "3B6929DA4FA951BD8C34EA83D6488F618A8101A6DC839E1C5AA748DC94DD9F34"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/notification_settings/rules.rs",
+      "bytes": 28693,
+      "sha256": "4D29771C6B831C18742C040E4ECB3D7931649EB8D1AB30AEDA68B9AFE5273136"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/paginators/mod.rs",
+      "bytes": 3345,
+      "sha256": "578EE5428FDD46CCDAF35000C11DFF61FEC985FBA2B2085744489C20EE5BC66B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/paginators/room.rs",
+      "bytes": 39208,
+      "sha256": "C34529E007862DA7FCBC7A84BAB04781CFAD98EE6AAE425D968003AA99FB5139"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/paginators/thread.rs",
+      "bytes": 6811,
+      "sha256": "201D60253D89F45DAF9B8D0180D9287B02F8E45AFF3025649E470734E74A332D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/pusher.rs",
+      "bytes": 4219,
+      "sha256": "FA444CD79D9E0948FCB26DEA6CFC31B709FABEDD25AEAFD709EB24F30B6D6CCD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room_directory_search.rs",
+      "bytes": 18306,
+      "sha256": "D746F2D5C8B184EF3EFF6627D8E31F0710482D527176C8E233D0CAF7E9011177"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room_preview.rs",
+      "bytes": 17277,
+      "sha256": "E0FDA0D8C3D2B40A9196E1264A9FAC55CDB2ED4FC0FB21782B9A20F86A01E1A1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/calls.rs",
+      "bytes": 6517,
+      "sha256": "C94B829CFCB4A9CE0A313C5A537051A5465606977971035D466C524709196259"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/edit.rs",
+      "bytes": 21954,
+      "sha256": "EB17655608B7FFABD7F0CDCC99A4647D6F238AC21ABF5D7490A8C5E64CD015C5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/futures.rs",
+      "bytes": 18561,
+      "sha256": "058A0CEEFC40C57EEF6EC0D41DFEF1E64AD4738F74E72DEAEC917D8B2C69CA30"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/identity_status_changes.rs",
+      "bytes": 37942,
+      "sha256": "8A383FC3ADC5F45861F488BF39DC9079DA895E9E8ACFA25F0BF3E4825F984B04"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/knock_requests.rs",
+      "bytes": 7689,
+      "sha256": "669E9C37D59907D2739C7F83C26FA9FE72574196DE7D1B181B0E68FB46932330"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/member.rs",
+      "bytes": 7541,
+      "sha256": "2A64B39449425D6F890BBC9F6539815548B4FD53DBD7623B5629C83C6FBB7417"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/messages.rs",
+      "bytes": 13286,
+      "sha256": "F9EFD1445AEA6CFE49DD41620C1E6E6E9DB6EA30C0C5B67377F30CACF9154437"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/mod.rs",
+      "bytes": 203943,
+      "sha256": "5DF7D880FF9B6A8C90E49D08DB59874F45070F75E4C8331CDF22B0ACCACA3594"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/power_levels.rs",
+      "bytes": 21192,
+      "sha256": "6D890CB06444591C7CC79D5D9D97EC4DE28A21D37AB376C4BEADF3E865B6314B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/privacy_settings.rs",
+      "bytes": 14477,
+      "sha256": "7AF3B6F5FB873F397CB5E668AB069A753D1917F1F8B0188268A85DFF9DCF9B91"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/reply.rs",
+      "bytes": 19340,
+      "sha256": "DD62DBB35CEB922A825F45395627876D02F6868701E3B09B9316A3C75D408BAB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/room/shared_room_history.rs",
+      "bytes": 15201,
+      "sha256": "3A506A88773DBDBA549FEE07024CB410FDADD2DD0CC4F2CB3D3C6776CB83B6BB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/search_index/mod.rs",
+      "bytes": 15655,
+      "sha256": "7899AE38171ED267D4F5C3C5D03DCABA87AEEBAED2BF5EDBCBD344AF276AB492"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/send_queue/mod.rs",
+      "bytes": 132819,
+      "sha256": "1518EA882423DBFD0843876D34742BFBDAD446561C99926C44C9692475D7F0F6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/send_queue/progress.rs",
+      "bytes": 10499,
+      "sha256": "51F40299620B8501BAB5B163F48356B76F3F3FAE05C2E40C6EEE4F2728768775"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/send_queue/upload.rs",
+      "bytes": 41404,
+      "sha256": "5A675A45A2F8D31F4A01AF49A203C3CFD5E5670F102EF8067354C932E1468BF5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/builder.rs",
+      "bytes": 10521,
+      "sha256": "133414EAB682E1586A4DF446123E9FAC53AD2786678D4A1F814667CB420F7C20"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/cache.rs",
+      "bytes": 14295,
+      "sha256": "A289F971F432F29540158380A41D74626861BC9B60559C2350DD723DDF0022AC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/client.rs",
+      "bytes": 29258,
+      "sha256": "EF4B22636FDF7DD02EE1C4460200B44CD7A4398D81F7286F9ECFDE2EF31A288C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/error.rs",
+      "bytes": 2441,
+      "sha256": "73047B01016B3A20144A20071972943B1F40C4C49805DED1EDB3D30F5AE4374F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/list/builder.rs",
+      "bytes": 9493,
+      "sha256": "96E7D7039DD50B48FC436549B7D05FB4788E5F0892DE8BBB657F5E0D684462DB"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/list/frozen.rs",
+      "bytes": 879,
+      "sha256": "D8BD35959235F25E17139EF5719ADD55FC3857FF141CE7FA1C9A8A21451B2697"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/list/mod.rs",
+      "bytes": 41480,
+      "sha256": "C039B233D6832B3BAEE653AC8E18366DF004FCF36990E225344EED7419416461"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/list/request_generator.rs",
+      "bytes": 17758,
+      "sha256": "F027739F130CE934A7A1A890E45D5AAC677E54FC55718DB6273422051B88B5BA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/mod.rs",
+      "bytes": 93570,
+      "sha256": "0A9E350A3A64D7176E6ECFBA61DDE7B03CFB77C47509864DFA43088847B82130"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sliding_sync/README.md",
+      "bytes": 18102,
+      "sha256": "9F357D2A2145FE05EF8FD33486450A29E1D751595068A33EFFC14846BB2189FD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/sync.rs",
+      "bytes": 13123,
+      "sha256": "BEC31B9863E701F1F1ED5058D0CB55CDAEE6120F0FFE8BCDC381F01DD764AE75"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/test_utils/client.rs",
+      "bytes": 10612,
+      "sha256": "24E1C601D7832603F1CB06CECAA451F7AFB43360B4EE5F753D48170149D37796"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/test_utils/mocks/encryption.rs",
+      "bytes": 32141,
+      "sha256": "221261ED60399F40A6BFB35BC9E106714C75C3D76C6E6A5D7576D6489B582E99"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/test_utils/mocks/mod.rs",
+      "bytes": 183679,
+      "sha256": "FD2FC72D033A4061B640528AB52BB1C3EA183D85AE26C79546C1BCFB316AA12B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/test_utils/mocks/oauth.rs",
+      "bytes": 13720,
+      "sha256": "9B83F08A571D867FA376D140CAAE01E0402AA78C009FABCB6AA8A3135DBE43FD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/test_utils/mod.rs",
+      "bytes": 14590,
+      "sha256": "E708C1C48D19E2F8D427193FF95937AC1D597683A9D2AE7D7AFC52EBBA62BF5B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/utils/local_server.rs",
+      "bytes": 18059,
+      "sha256": "8A608C83F876F1BAE5622A33E237AF060E2E72B3469BE24465CD0FBB39DAE21B"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/utils/mod.rs",
+      "bytes": 13208,
+      "sha256": "1E9296342EB625FE48E5D4B2BCE2A893994883756E128CF0D4394B6666A17AB1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/capabilities.rs",
+      "bytes": 16943,
+      "sha256": "7A47019228BCDA4CDF8450FE01860B7035CDB234573835C24A0749E6ED01F0BA"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/filter.rs",
+      "bytes": 20249,
+      "sha256": "ADFB60404499A4640F6C6727AC3AFD2B3621D821DD457A9BEC0C248E36305DDD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/driver_req.rs",
+      "bytes": 12257,
+      "sha256": "8035F10794FF5F5107DFE9966A8F656BF1E6834A51ECEBC051DA349F6859F682"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/from_widget.rs",
+      "bytes": 10771,
+      "sha256": "256DEE5D5B07D9A91ACECB7FB74C1293294DD2E3DC5EA30B9375F12CE8D2F60A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/incoming.rs",
+      "bytes": 6880,
+      "sha256": "3E0AB7B8F08894F8BAE6E6AF2E78EE254AFCB4C34CD121ED9FF64CA87963E609"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/mod.rs",
+      "bytes": 37680,
+      "sha256": "560B537C1497871AC01E3AA356509B846AB9FE62E7B975527E41CAF553F74102"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/openid.rs",
+      "bytes": 1755,
+      "sha256": "E490D966AE10FD0CE6C22A499F98B7BBF7B3D1E0073621C84353955EECA8D590"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/pending.rs",
+      "bytes": 6579,
+      "sha256": "230A2FBF3F1C9F69195C7C8D41DA69AAAB4CDBEE982D5128437C7DBCEF1917C9"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/api_versions.rs",
+      "bytes": 2043,
+      "sha256": "E3CCD2F42713A95138BD921CDA9AEFF5976D9D7EA5B959D373329EFE585DD8C7"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/capabilities.rs",
+      "bytes": 8430,
+      "sha256": "8F9B939F3E1DC677E5648DCAAC1CC3AD4272BE76B06E52D5D956189547B25D3F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/error.rs",
+      "bytes": 8312,
+      "sha256": "715416F3FA84169CBD6B60D9163486F348E40F0947EBB122F9B11C48F0089314"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/mod.rs",
+      "bytes": 1280,
+      "sha256": "274D068CFF1A737D68734EF714B4E1A4EBCA4DBE883A9A7BC11E81E7286778E4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/openid.rs",
+      "bytes": 5993,
+      "sha256": "938745BD7CE8A76BBF935CD69AD7275C49946DE9F00FE6472298157CAA65FA27"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/tests/send_event.rs",
+      "bytes": 1274,
+      "sha256": "38165A16AAA7E7653022DF5BA0E2181B06A2BDE58A4D57E0E620F71EF38CE4EC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/machine/to_widget.rs",
+      "bytes": 4921,
+      "sha256": "EF770D4D45EE87FEEFBC2C181F43413B9AF4EB5CDBB2A47CEB982CB7C194F914"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/matrix.rs",
+      "bytes": 25488,
+      "sha256": "28F1F07ECDB2905E54104362B24FF5C862FFD9EBD0A970CA81EDF3EDBC2E83DF"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/mod.rs",
+      "bytes": 15660,
+      "sha256": "1C9B05F3E29F9C333AEE32A8D2F0666CCCABB29A0C5433ACFF61201D909AF2C1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/README.md",
+      "bytes": 13169,
+      "sha256": "A85F1FD2775E4CAB31F5224D9E4F79FBCC99EEC83E3BE8F9E54134B81248FB71"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/settings/element_call.rs",
+      "bytes": 32833,
+      "sha256": "CCFE6A8B8CB6B384608528498BA842411930CF05D062431751E5FED371581D28"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/settings/mod.rs",
+      "bytes": 6485,
+      "sha256": "36A1CB25E6C0B9A9B3A81E8F86309B8F6CEC14F2998A3768F0AE98494321B615"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/settings/url_params.rs",
+      "bytes": 5608,
+      "sha256": "294C4A81683243990851E0AF6E3C151FF3A48DD4056EA7BB057D42B011949EE5"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/snapshots/add_room_id_to_raw_override.snap",
+      "bytes": 353,
+      "sha256": "7FBA5F42902B051152D1EE6E047296D9C7DA857B13DC37F138AAE20A3EE613E2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/src/widget/snapshots/add_room_id_to_raw.snap",
+      "bytes": 353,
+      "sha256": "7FBA5F42902B051152D1EE6E047296D9C7DA857B13DC37F138AAE20A3EE613E2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/account.rs",
+      "bytes": 10572,
+      "sha256": "3A1E06C28463B67717B96AAFB6BF9440B0313952205EF81B2CCF2C9979D3766E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/client.rs",
+      "bytes": 83540,
+      "sha256": "EDF9357F911E658B7B76402CB54E16DA0CC5F764EB3BA475610CBEE93E9DBE51"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/edit_validation.rs",
+      "bytes": 6476,
+      "sha256": "5970F1D9BB834EC04C6F10E545C253EB048DF7B3EEAFFC9826D7A38E31897ED2"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption.rs",
+      "bytes": 3912,
+      "sha256": "B9466FD24BCF9C77816272F3ABD2221B5DF374F1FFDF22552E2C3C9614C0B2F4"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/backups.rs",
+      "bytes": 61321,
+      "sha256": "6408F633BD4503568B616A7BE031641E769375D9F362DF7207A694460EC8D969"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/cross_signing.rs",
+      "bytes": 8875,
+      "sha256": "78DFBD48DFED804668B5513EBCFEB9E2539CB601338C5C073070D725D891B8A0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/recovery.rs",
+      "bytes": 36399,
+      "sha256": "16AEE38541E01D8C384CEC94FBC681A68FA7C0B7027890316B523F4E490EA939"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/secret_storage.rs",
+      "bytes": 22694,
+      "sha256": "F3F7809F5419751C3B7B1B8E1F5595BC0CAC7697F6A12855F3444F97D35661EC"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/shared_history.rs",
+      "bytes": 18883,
+      "sha256": "15AD1B440AF4AFFBBAE82C04BC76343B38E9499725DB91EB1FB3AA10751D074C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/state_events.rs",
+      "bytes": 2703,
+      "sha256": "34B8BA7EF9F575FBF166FD7CABBD296B97B060CFD65BA1EC986B87D89E57D13D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/to_device.rs",
+      "bytes": 8301,
+      "sha256": "4E5EB34F7636AD1066491D2124C12CD477812163114C2D9B1AE44FA11F5A1376"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/encryption/verification.rs",
+      "bytes": 12964,
+      "sha256": "A07940FA4F5868927F40050CA6B1F309F2B72E5CD8F97AA4AD5E49017D80BDB6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/event_cache/mod.rs",
+      "bytes": 112298,
+      "sha256": "EAD5972FEFAAFBC017FDE2890A3F98D69BDA71AF72C508C50C8385F9EDB1D73A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/event_cache/read_receipts.rs",
+      "bytes": 34074,
+      "sha256": "F504B08765D24B470474DF1BCA399135FE6B8D3F709A28F9F96FC0306EB2EA9C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/event_cache/threads.rs",
+      "bytes": 39260,
+      "sha256": "11E92D362B197DAF77CC0A757C7390D27C0055B9501082C90E72461BF222C776"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/latest_event.rs",
+      "bytes": 2851,
+      "sha256": "4F04AC64168504F9C184EAFF5172AE81944F9FDCDA62E7E2F7674B39218673AE"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/main.rs",
+      "bytes": 1391,
+      "sha256": "594BA2D8C000CB9173E2E86F83ACB2425EC34C4623F9B7C9C9359D1B47662583"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/matrix_auth.rs",
+      "bytes": 25985,
+      "sha256": "B44299BFCB0CADF68A01F786C897AAA3FBCEB5882FEEDD491BFEA05824EF633F"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/media.rs",
+      "bytes": 9183,
+      "sha256": "CC42A034902135C43A5A1C9B91521A22FB0B805A4E3F5B1583B20F3AE686C293"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/notification.rs",
+      "bytes": 6258,
+      "sha256": "96BA6B4657E81A9863794A7F8CBFEE43D35E88D74024D281B99D385707F9631C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/refresh_token.rs",
+      "bytes": 29761,
+      "sha256": "31B06B4D4F4F45A806AD6CF6B2C887266B64AF8BBAE4DE69624C4138376CF7CE"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room_preview.rs",
+      "bytes": 7351,
+      "sha256": "E46BB0912B9E066F1E57DEEAF867DBA4BAB04E79123415DF3B788E6328B7CBB6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/attachment/mod.rs",
+      "bytes": 21103,
+      "sha256": "CD6BAE25FD86A47E8751F5740013438F232767323EDBF275D345C2B957352E21"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/beacon_info/mod.rs",
+      "bytes": 11136,
+      "sha256": "A0A3348D37066A6DFAC9F449BA79056582555AD9B0CA75F91FCD98201CD4868C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/beacon/mod.rs",
+      "bytes": 22268,
+      "sha256": "CBA6574FA62CCBB0BD80F8921D03916A8A9DF143458ABBA7C689D002264CD7D0"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/calls.rs",
+      "bytes": 5333,
+      "sha256": "3E6519B26F4A037B7455022529DA22D2CC91CF70BA28743F3B3A438B5B7008E6"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/common.rs",
+      "bytes": 37235,
+      "sha256": "B3C95E64ED9DB3C1124BD1573E8E4994556DC32B8F7AF85C6158A41929442C9C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/joined.rs",
+      "bytes": 53080,
+      "sha256": "9A18CFB692ECD8964EF9ED846AF7DED938F7733CC608B6EFE3B6CEE56DDE107E"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/left.rs",
+      "bytes": 9346,
+      "sha256": "53F706686A03DB47C3FF3D852585D3EB6D284870BB671D3AE291FF436CA03012"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/mod.rs",
+      "bytes": 166,
+      "sha256": "FD14F3EF335E1D14D5B2A460A7B902849496F29AC1F963139FD29710A5D14604"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/notification_mode.rs",
+      "bytes": 7106,
+      "sha256": "744DFEA970B2C0C0B599F459975F786644A8CB2A0B83A8A98475DE6A3DC5F6CD"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/pinned_events.rs",
+      "bytes": 15096,
+      "sha256": "7F741B5FECEB763B50608F6725806BE3D0D7E663327141ACE2A96FDBEE805513"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/spaces.rs",
+      "bytes": 14314,
+      "sha256": "6F472FE0316B6CAABFEAAE2998B03337E29C66C96D789F995031325EBAEEE73C"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/tags.rs",
+      "bytes": 7528,
+      "sha256": "426A1ECB89AF87E26E6E45018F57CED9E9140998A4D7349EB32A387A3CA27FB1"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/room/thread.rs",
+      "bytes": 15435,
+      "sha256": "4088AC6E45DD3A8C31507D4B6DD0BFBDBD358BAA7B16BDE22F5337366D115436"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/send_queue.rs",
+      "bytes": 144481,
+      "sha256": "20A0B7BBCF059745C9942D7AB18DC7E565FE9222592A8E7F53BE57E117BEC25A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/sync.rs",
+      "bytes": 100504,
+      "sha256": "CA3EA4DEA0FFF1455B7988EBE806F1F613A9A8AF9053DECFC06D87B1D7B9688A"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/tests/integration/widget.rs",
+      "bytes": 63779,
+      "sha256": "27F641F815F8713CA2E4DE6FAA49A00D9881393FFDA74DF908F5EE574055079D"
+    },
+    {
+      "path": "SRC/vendor/matrix-sdk/uniffi.toml",
+      "bytes": 267,
+      "sha256": "1A294D0E48F8ABF54169910C75166EAF8413DA36CF9F9EDC84BD28070D69D441"
+    },
+    {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2314356,
-      "sha256": "F3554B08870C7EEC623372226281D1858B67250A2CF26E03B26FD732A8AFCD14"
+      "bytes": 2313117,
+      "sha256": "122D7B1C63A52C8CE60608E39CC5AF206494A4EA219E13A73F7C63B2706F0705"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",

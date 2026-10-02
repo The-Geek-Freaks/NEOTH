@@ -50,6 +50,8 @@ imbl = { path = "vendor/imbl", version = "=6.1.0" }
 libudx = { path = "vendor/libudx" }
 peeroxide = { path = "vendor/peeroxide" }
 peeroxide-dht = { path = "vendor/peeroxide-dht" }
+matrix-sdk = { path = "vendor/matrix-sdk", version = "=0.18.0" }
+matrix-sdk-crypto = { path = "vendor/matrix-sdk-crypto", version = "=0.18.0" }
 
 # Cargo profiles must live at workspace root, not in member Cargo.toml.
 [profile.dev]

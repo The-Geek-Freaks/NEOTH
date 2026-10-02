@@ -72,6 +72,17 @@ jobs:
       - name: Verify vendored imbl provenance before Cargo metadata
         run: python3 packaging/imbl_provenance_gate.py
 
+      - name: Test reviewed Matrix backport provenance gate
+        # Six fixture cases cover reviewed postimages, source-only boundaries,
+        # archive and vendor tampering, duplicate/registry identities, and the
+        # canonical anymap3 plus expiring exception constraints.
+        run: python3 packaging/tests/test_matrix_backport_provenance_gate.py
+
+      - name: Verify reviewed Matrix final provenance before Cargo metadata
+        # Final acceptance intentionally validates the integrated lock and both
+        # synchronized advisory exceptions; source-only mode is not acceptance.
+        run: python3 packaging/matrix_backport_provenance_gate.py
+
       - name: Validate locked workspace metadata without dependencies
         working-directory: SRC
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null

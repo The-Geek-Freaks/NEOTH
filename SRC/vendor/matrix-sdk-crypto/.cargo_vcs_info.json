@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "1c44fb66214667c6d00acaf72ab592493653708b"
+  },
+  "path_in_vcs": "crates/matrix-sdk-crypto"
+}

@@ -76,6 +76,17 @@ jobs:
       - name: Verify vendored imbl provenance before Cargo metadata
         run: python3 packaging/imbl_provenance_gate.py
 
+      - name: Test reviewed Matrix backport provenance gate
+        # The six fixture cases exercise authenticated postimages, source-only
+        # boundaries, adversarial vendor/registry identities, and the bounded
+        # anymap3 plus advisory-exception final-acceptance contract.
+        run: python3 packaging/tests/test_matrix_backport_provenance_gate.py
+
+      - name: Verify reviewed Matrix final provenance before Cargo metadata
+        # Do not use --source-only here: audit and deny require this final gate,
+        # including the generated lock and synchronized RUSTSEC-2026-0318 state.
+        run: python3 packaging/matrix_backport_provenance_gate.py
+
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

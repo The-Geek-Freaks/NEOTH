@@ -151,6 +151,7 @@ ignore = [
     # aquamarine/matrix-sdk and matrix-pickle/vodozemac. No safe upgrade is
     # available from NEOTH's side without replacing the Matrix stack.
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac; no vuln, no safe direct upgrade. Re-evaluate with next Matrix stack bump." },
+    { id = "RUSTSEC-2026-0318", reason = "Reviewed source-bound matrix-sdk-crypto 0.18.0 vendor backport; expires 2026-11-01 and must be removed or re-reviewed then." },
     # rustls-pemfile 2.2.0 — unmaintained thin wrapper, transitive via irc.
     # No direct NEOTH use; migrate once irc exposes a rustls-pki-types path or
     # the IRC adapter moves off this dependency chain.

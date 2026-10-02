@@ -17,6 +17,7 @@ ignore = [
     "RUSTSEC-2023-0037", # xsalsa20poly1305 renamed — transitive via peeroxide-dht
     "RUSTSEC-2017-0008", # serial unmaintained — transitive via portable-pty (tmux adapter)
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained — transitive via matrix-sdk/vodozemac
+    "RUSTSEC-2026-0318", # reviewed source-bound matrix-sdk-crypto 0.18.0 backport; expires 2026-11-01
     "RUSTSEC-2025-0134", # rustls-pemfile unmaintained — transitive via irc
     "RUSTSEC-2026-0192", # ttf-parser unmaintained — latest Slint/lopdf graph; no safe upgrade, see deny.toml
     "RUSTSEC-2026-0206", # rustybuzz unmaintained — latest Slint/usvg graph; no safe upgrade, see deny.toml
