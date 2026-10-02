@@ -6530,6 +6530,12 @@ pub(super) async fn dispatch_provider(
         provider_audit_context.provider_instance_id = binding.provider_instance_id;
         provider_audit_context.provider_descriptor_id = Some(provider_descriptor_id);
     }
+    // This trace is minted before the real leaf authorizer. The authorizer
+    // copies it into its request and terminal lifecycle frames, which retain
+    // their authoritative invocation and request-binding identifiers.
+    let local_inference_trace_id =
+        crate::providers::is_local_provider(provider.name()).then(rand_u64_for_trace);
+    provider_audit_context.local_inference_trace_id = local_inference_trace_id;
     let call_authorizer =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
@@ -6634,11 +6640,10 @@ pub(super) async fn dispatch_provider(
     // emission path covers both `provider.complete(req)` and
     // `provider.stream(req)`. The Request is consumed by each call below,
     // so we read its fields once here.
-    let is_local_inference = crate::providers::is_local_provider(provider.name());
-    let inference_id: u64 = if is_local_inference {
-        let id = rand_u64_for_trace();
+    if let Some(inference_id) = local_inference_trace_id {
         let payload = serde_json::to_vec(&serde_json::json!({
-            "request_id": id,
+            "request_id": inference_id,
+            "local_inference_trace_id": inference_id,
             "prompt_hash": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
             "model": req.model.clone(),
             // B22-TWEAKS-MODEL-01: which precedence layer chose this model
@@ -6657,10 +6662,7 @@ pub(super) async fn dispatch_provider(
         if let Err(e) = writer.append(header, payload).await {
             tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
         }
-        id
-    } else {
-        0
-    };
+    }
     let inference_started = std::time::Instant::now();
 
     // SL-00(1c): mark this provider request as in-flight for the cluster
@@ -7787,10 +7789,11 @@ pub(super) async fn dispatch_provider(
     // AP-2 END half: fires for stream + non-stream paths after the model
     // produced a reply. Reads the final accumulated text from the same
     // tuple binding both branches return.
-    if is_local_inference {
+    if let Some(inference_id) = local_inference_trace_id {
         let latency_ns = u64::try_from(inference_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let payload = serde_json::to_vec(&serde_json::json!({
             "request_id": inference_id,
+            "local_inference_trace_id": inference_id,
             "output_hash": xxhash_rust::xxh3::xxh3_64(completion.text.as_bytes()),
             "input_tokens": completion.input_tokens,
             "output_tokens": completion.output_tokens,
@@ -9456,7 +9459,7 @@ pub(crate) async fn run_chat_with_output_cap(
     SCOPED_OUTPUT_TOKEN_CAP
         .scope(
             Some(max_output_tokens),
-            run_chat_with(args, config, provider),
+            Box::pin(run_chat_with(args, config, provider)),
         )
         .await
 }

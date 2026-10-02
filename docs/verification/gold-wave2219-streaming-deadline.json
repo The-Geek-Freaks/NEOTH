@@ -1,0 +1,87 @@
+{
+  "schema": "neoth.gold.wave2219.streaming-deadline.v1",
+  "base": "58f8a8dcbf1f902b81b235b35e6fa3517466fe2c",
+  "status": "STATIC_REVIEWED_IMPLEMENTATION_HOSTED_VALIDATION_PENDING",
+  "changes": [
+    "NCT copies the global stream flag through the inner ordinary ChatArgs boundary and retains the existing output cap and configuration admission",
+    "Content-free stream evidence requires an actual streaming local leaf terminal paired by invocation/request binding and the same local START/END trace",
+    "Native two-row wrapper regression asserts stream dispatch, cap256, native usage, private receipts, and primary-success fallback nonproof; scanner covers seven positive/negative relations",
+    "Owned-stage deadline fixture establishes child readiness and cancellation rendezvous, then retains real DeadlineElapsed, contained reap and independent Unchanged readback; setup errors cancel and join",
+    "NCT heap-pins the nested ordinary-chat future and direct/fallback regression awaits to address hosted stack overflows",
+    "NCT admits configured input caps up to 20000 instead of 1024 to allow protected ordinary-chat context; lower operator caps are never rewritten, and output256/two rows/consent remain enforced",
+    "Missing authoritative terminal still rejects receipt creation and now retains the original chat failure as diagnostic context"
+  ],
+  "sourceImages": [
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "candidateSha256": "CBDBEE3791AE539593E056385F4EF52565C924A3C280CDAF5F50510BEC3D8EBA"
+    },
+    {
+      "path": ".github/workflows/macos-contract-regressions.yml",
+      "candidateSha256": "32E70D44E7B054879B1AA391FF3460B68BCC1E81D7A89E11190534D4969B58DD"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "candidateSha256": "36AB3A38EA15523EF2671A6E391833F741778C3B310A2E2C16A9EF29FCA0F86F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "candidateSha256": "D3711DD474FEBC100FDAA433CF63B64FF478B881513EBB8E25B2E884FF25BFCD"
+    },
+    {
+      "path": "SRC/neothd/src/cli/nct_baseline.rs",
+      "candidateSha256": "EC8DC8DAC7A906C54D149183E2CDDB12F17A7D11F218603E7C45BA088770E47E"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "candidateSha256": "FDD6D898AA04BCD6B63049CEB0EA83591023A7F86CC03960ED36B61189E2B94F"
+    },
+    {
+      "path": "SRC/neothd/src/updater/self_update.rs",
+      "candidateSha256": "836492CC5A335F34B3AFF393B2BB1957C73A405FD607BF576FC9903C35D4D087"
+    }
+  ],
+  "reviewProofs": {
+    "admissionR2": "5DE46E4254BE9060B270435A92E2BA47743FE70E75204D81F5B1124F70BACDF5",
+    "deadlineR4": "EE4A66DE4C2CF8C13EA497DAB2D8773E10F04A6028A60FFF7F8C3C4B09BC7F4B",
+    "streamingR7": "FACBEBDAEA58644C93CD5F6F27A2D8C05BFBD23B3EB7C9C1C68EF41C6789D9F5",
+    "nctHostedRepair": "EB1A7DF0C62640C2D3505E100D20D7E5F68BE31850DEF3A26E545BD714836DF8"
+  },
+  "registered": {
+    "dedicatedMacOS": 135,
+    "focused": 432,
+    "portable": 2648,
+    "workflowSources": 185,
+    "combinedProducerSources": 195
+  },
+  "priorFailure": {
+    "macOSFailed": 1,
+    "failure": "owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback: Indeterminate != Unchanged",
+    "producer": "76f59ed093d2f5be3cc28a46d146cef6a6d7e1dd",
+    "macOSPassed": 19129,
+    "originalEvidenceSha256": "A70951ED2A8D913F1B3404B1FDE4F4BC7899BFD95129600CF281BC134C36313E",
+    "run": 37053490515,
+    "macOSRun": 19130,
+    "coldStartupCause": "timing-consistent inference, not independently reproduced"
+  },
+  "pending": [
+    "Windows1022 run37069539873 succeeded on immutable58f8; original artifact admission is in progress and is not proof of this new producer",
+    "New producer formatting, compilation, focused432, native135 and final full validation",
+    "Actual provider baseline, signing and release acceptance"
+  ],
+  "localExecutableValidationRan": false,
+  "runtimeAccepted": false,
+  "fullCiAccepted": false,
+  "releaseAccepted": false,
+  "focusedFailure": {
+    "run": 37069534339,
+    "producer": "58f8a8dcbf1f902b81b235b35e6fa3517466fe2c",
+    "passed": 424,
+    "failed": 5,
+    "selected": 429,
+    "stackOverflows": 3,
+    "preProviderReceiptFailures": 2,
+    "originalEvidenceSha256": "E6602CD20EC9EB5C7338BDA2D301F4B0D6A0E367C30AC11FFA119DB41AE9E5F3",
+    "inputBudgetCause": "source-consistent inference pending hosted confirmation"
+  }
+}

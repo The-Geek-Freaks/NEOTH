@@ -22,7 +22,9 @@ use crate::cli::{Cli, Commands, OutputFormat};
 pub const NCT_LIVE_RECIPE_SCHEMA_V1: &str = "neoth.nct-live-route-recipe.v1";
 const MAX_ROWS: usize = 2;
 const MAX_PROMPT_BYTES: usize = 256;
-const NCT_MAX_TOKENS_PER_REQUEST: u32 = 1_024;
+// NCT retains a bounded two-row recipe and a 256-token output cap, while this
+// compatible input ceiling leaves room for ordinary protected chat context.
+const NCT_MAX_TOKENS_PER_REQUEST: u32 = 20_000;
 const NCT_MAX_OUTPUT_TOKENS: u32 = 256;
 const BUILTIN_RECIPE: &str =
     include_str!("../../tests/fixtures/nct_baseline/nct_live_recipe_v1.json");
@@ -47,6 +49,8 @@ pub struct NctBaselineArgs {
     /// Directory for content-free receipts and exclusive per-row WAL segments.
     #[arg(long)]
     pub receipt_dir: PathBuf,
+    #[arg(skip)]
+    pub stream: bool,
     #[arg(long, default_value = "json")]
     pub output: OutputFormat,
 }
@@ -122,6 +126,8 @@ struct Receipt<'a> {
     cost_status: &'static str,
     terminal: Terminal,
     route_evidence: &'static str,
+    stream_requested: bool,
+    stream_evidence: &'static str,
 }
 
 /// Validate recipe boundaries before config/provider construction. The recipe
@@ -305,12 +311,17 @@ async fn run_row(
         wal.display().to_string(),
     ];
     argv.extend(["--config".to_owned(), config_path.display().to_string()]);
+    if args.stream {
+        argv.push("--stream".to_owned());
+    }
     argv.push(row.prompt.clone());
     let cli = <Cli as clap::Parser>::try_parse_from(argv)
         .context("build ordinary chat invocation from NCT recipe")?;
-    let Commands::Chat(chat_args) = cli.command else {
+    let Commands::Chat(mut chat_args) = cli.command else {
         unreachable!("NCT argv constructs chat only")
     };
+    // Match cli::run's global-flag transfer before entering ordinary chat.
+    chat_args.stream = cli.stream;
     // Preserve an audited provider failure long enough to project its paired
     // terminal; after the immutable receipt is written, report the failed row.
     let chat_result = match runner {
@@ -336,7 +347,14 @@ async fn run_row(
             .await
         }
     };
-    let projection = project_terminal(&wal, row.route)?;
+    let projection = project_terminal(&wal, row.route, args.stream).with_context(|| {
+        match &chat_result {
+            Ok(()) => "NCT chat completed but its exclusive WAL segment has no admissible provider terminal".to_owned(),
+            Err(error) => format!(
+                "NCT chat failed before an admissible provider terminal; original chat failure: {error:#}"
+            ),
+        }
+    })?;
     let receipt = Receipt {
         schema: "neoth.nct-live-route-receipt.v1",
         recipe_id: &recipe.recipe_id,
@@ -361,6 +379,8 @@ async fn run_row(
         cost_status: "unknown",
         terminal: projection.terminal,
         route_evidence: projection.route_evidence,
+        stream_requested: projection.stream_requested,
+        stream_evidence: projection.stream_evidence,
     };
     write_receipt_new(&args.receipt_dir, &row.id, &receipt)?;
     ensure!(
@@ -399,16 +419,43 @@ struct Projection {
     latency_ms: Option<u64>,
     terminal: Terminal,
     route_evidence: &'static str,
+    stream_requested: bool,
+    stream_evidence: &'static str,
 }
 
 /// Scans only the fresh exclusive segment and accepts a terminal only when it
 /// is the typed v1 provider lifecycle terminal paired to an owned request.
-fn project_terminal(wal: &Path, route: Route) -> Result<Projection> {
+fn project_terminal(wal: &Path, route: Route, stream_requested: bool) -> Result<Projection> {
     let bytes = std::fs::read(wal).with_context(|| format!("read NCT WAL {}", wal.display()))?;
     let mut fallback_seen = false;
     let mut requests = HashSet::new();
     let mut terminal = None;
+    let mut local_stream_starts = HashSet::new();
+    let mut local_stream_ends = HashSet::new();
     crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+        if matches!(
+            frame.header.event_type,
+            crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START
+                | crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_END
+        ) {
+            let value: serde_json::Value =
+                serde_json::from_slice(frame.payload).context("decode local inference payload")?;
+            let trace = value
+                .get("local_inference_trace_id")
+                .and_then(serde_json::Value::as_u64);
+            if value.get("stream").and_then(serde_json::Value::as_bool) == Some(true)
+                && trace == value.get("request_id").and_then(serde_json::Value::as_u64)
+            {
+                if let Some(trace) = trace {
+                    if frame.header.event_type == crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START {
+                        local_stream_starts.insert(trace);
+                    } else {
+                        local_stream_ends.insert(trace);
+                    }
+                }
+            }
+            return Ok(());
+        }
         if !matches!(
             frame.header.event_type,
             crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
@@ -461,6 +508,17 @@ fn project_terminal(wal: &Path, route: Route) -> Result<Projection> {
             .context("missing lifecycle identity")
     };
     let number = |name: &str| value.get(name).and_then(serde_json::Value::as_u64);
+    let terminal_trace = value
+        .get("local_inference_trace_id")
+        .and_then(serde_json::Value::as_u64);
+    let stream_evidence = project_stream_evidence(
+        stream_requested,
+        crate::providers::is_local_provider(&string("provider")?),
+        value.get("streaming").and_then(serde_json::Value::as_bool) == Some(true),
+        terminal_trace,
+        &local_stream_starts,
+        &local_stream_ends,
+    );
     let route_evidence = match route {
         Route::Direct => {
             ensure!(
@@ -490,7 +548,29 @@ fn project_terminal(wal: &Path, route: Route) -> Result<Projection> {
             Terminal::Blocked
         },
         route_evidence,
+        stream_requested,
+        stream_evidence,
     })
+}
+
+fn project_stream_evidence(
+    requested: bool,
+    terminal_is_local: bool,
+    terminal_streaming: bool,
+    terminal_trace: Option<u64>,
+    starts: &HashSet<u64>,
+    ends: &HashSet<u64>,
+) -> &'static str {
+    if !requested {
+        "not_requested"
+    } else if terminal_is_local
+        && terminal_streaming
+        && terminal_trace.is_some_and(|trace| starts.contains(&trace) && ends.contains(&trace))
+    {
+        "observed_local_stream"
+    } else {
+        "requested_unobserved"
+    }
 }
 fn producer_revision() -> String {
     option_env!("NEOTH_SOURCE_HEAD")
@@ -677,6 +757,7 @@ mod tests {
             direct_config: Some(direct),
             fallback_config: Some(fallback),
             receipt_dir: root.join("receipts"),
+            stream: false,
             output: OutputFormat::Json,
         }
     }
@@ -865,6 +946,8 @@ mod tests {
             cost_status: "unknown",
             terminal: Terminal::Success,
             route_evidence: "direct_completed",
+            stream_requested: false,
+            stream_evidence: "not_requested",
         };
         write_receipt_new(home.path(), "safe", &receipt).unwrap();
         assert!(write_receipt_new(home.path(), "safe", &receipt).is_err());
@@ -882,6 +965,7 @@ mod tests {
             direct_config: Some(home.path().join("direct.yaml")),
             fallback_config: Some(home.path().join("fallback.yaml")),
             receipt_dir: receipt_dir.clone(),
+            stream: false,
             output: OutputFormat::Json,
         };
         assert!(run_nct_baseline(malformed).await.is_err());
@@ -896,6 +980,7 @@ mod tests {
             direct_config: None,
             fallback_config: None,
             receipt_dir,
+            stream: false,
             output: OutputFormat::Json,
         };
         let error = run_nct_baseline(missing_config)
@@ -961,6 +1046,7 @@ mod tests {
             direct_config: Some(direct_path.clone()),
             fallback_config: Some(fallback_path.clone()),
             receipt_dir: receipts.clone(),
+            stream: false,
             output: OutputFormat::Json,
         };
         run_nct_baseline_with(
@@ -996,6 +1082,11 @@ mod tests {
             direct_receipt.contains("nct-hermetic-leaf")
                 && fallback_receipt.contains("nct-hermetic-leaf")
         );
+        for raw in [&direct_receipt, &fallback_receipt] {
+            let receipt: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(receipt["stream_requested"], false);
+            assert_eq!(receipt["stream_evidence"], "not_requested");
+        }
         assert!(
             !direct_receipt.contains("NEOTH baseline acknowledged")
                 && !fallback_receipt.contains("NEOTH fallback baseline acknowledged")
@@ -1007,6 +1098,7 @@ mod tests {
             direct_config: Some(direct_path),
             fallback_config: Some(fallback_path),
             receipt_dir: receipts,
+            stream: false,
             output: OutputFormat::Json,
         };
         assert!(
@@ -1041,7 +1133,7 @@ mod tests {
         let wal = canonical_wal(home.path(), "nct-direct");
         let calls = Arc::new(AtomicUsize::new(0));
         let output_caps = Arc::new(Mutex::new(Vec::new()));
-        crate::cli::chat::run_chat_with_output_cap(
+        Box::pin(crate::cli::chat::run_chat_with_output_cap(
             chat_args(home.path(), &wal, "public NCT direct"),
             normal_config(),
             &CountingLeaf {
@@ -1049,7 +1141,7 @@ mod tests {
                 output_caps: Arc::clone(&output_caps),
             },
             NCT_MAX_OUTPUT_TOKENS,
-        )
+        ))
         .await
         .expect("ordinary direct chat");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1058,7 +1150,7 @@ mod tests {
             &[Some(NCT_MAX_OUTPUT_TOKENS)]
         );
         let projection =
-            project_terminal(&wal, Route::Direct).expect("project only owned direct WAL");
+            project_terminal(&wal, Route::Direct, false).expect("project only owned direct WAL");
         assert_eq!(projection.provider, "nct-hermetic-leaf");
         assert_eq!(projection.wire_model, NCT_TEST_MODEL);
         assert_eq!(projection.input_tokens, Some(12));
@@ -1088,6 +1180,8 @@ mod tests {
             cost_status: "unknown",
             terminal: projection.terminal,
             route_evidence: projection.route_evidence,
+            stream_requested: projection.stream_requested,
+            stream_evidence: projection.stream_evidence,
         };
         let serialized = serde_json::to_string(&receipt).unwrap();
         assert!(!serialized.contains("public NCT direct"));
@@ -1114,12 +1208,12 @@ mod tests {
             None,
             home.path().join("quota.json"),
         );
-        crate::cli::chat::run_chat_with_output_cap(
+        Box::pin(crate::cli::chat::run_chat_with_output_cap(
             chat_args(home.path(), &wal, "public NCT fallback"),
             normal_config(),
             &chain,
             NCT_MAX_OUTPUT_TOKENS,
-        )
+        ))
         .await
         .expect("ordinary fallback chat");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1128,12 +1222,231 @@ mod tests {
             &[Some(NCT_MAX_OUTPUT_TOKENS)]
         );
         let projection =
-            project_terminal(&wal, Route::Fallback).expect("project only owned fallback WAL");
+            project_terminal(&wal, Route::Fallback, false).expect("project only owned fallback WAL");
         assert_eq!(
             projection.provider, "nct-hermetic-leaf",
             "receipt records actual fallback leaf"
         );
         assert_eq!(projection.wire_model, NCT_TEST_MODEL);
         assert_eq!(projection.input_tokens, Some(12));
+    }
+
+    struct StreamingLeaf {
+        complete_calls: Arc<AtomicUsize>,
+        stream_calls: Arc<AtomicUsize>,
+        stream_output_caps: Arc<Mutex<Vec<Option<u32>>>>,
+    }
+
+    #[async_trait]
+    impl Provider for StreamingLeaf {
+        fn name(&self) -> &'static str {
+            "local_qwen"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some(NCT_TEST_MODEL)
+        }
+
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        fn output_token_ceiling(&self, request: &Request) -> Option<u32> {
+            request.max_output_tokens
+        }
+
+        async fn complete(&self, _request: Request) -> Result<Completion> {
+            self.complete_calls.fetch_add(1, Ordering::SeqCst);
+            anyhow::bail!("stream=true must use StreamingLeaf::stream_raw")
+        }
+
+        async fn stream_raw(
+            &self,
+            request: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+        ) -> Result<crate::providers::ChunkStream> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            self.stream_output_caps
+                .lock()
+                .expect("stream output-cap mutex")
+                .push(request.max_output_tokens);
+            Ok(Box::pin(futures_util::stream::iter([
+                Ok(crate::providers::CompletionChunk {
+                    delta: "native ".into(),
+                    done: false,
+                    ..Default::default()
+                }),
+                Ok(crate::providers::CompletionChunk {
+                    delta: "stream".into(),
+                    done: true,
+                    input_tokens: Some(7),
+                    output_tokens: Some(2),
+                    ..Default::default()
+                }),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn wrapper_streaming_runs_local_leaf_and_binds_private_receipt() {
+        let root = tempfile::tempdir().unwrap();
+        let direct_home = root.path().join("direct");
+        let fallback_home = root.path().join("fallback");
+        std::fs::create_dir_all(&direct_home).unwrap();
+        std::fs::create_dir_all(&fallback_home).unwrap();
+        // Preserve the existing ordinary admitted config shape.  The hermetic
+        // runner injects the actual terminal leaf; receipt locality must derive
+        // from that leaf rather than this config's admission provider.
+        crate::consent::grant(&direct_home, ProviderKind::ClaudeCli).unwrap();
+        crate::consent::grant(&fallback_home, ProviderKind::ClaudeCli).unwrap();
+        let mut direct_config = normal_config();
+        direct_config.tokens.max_per_request = NCT_MAX_TOKENS_PER_REQUEST;
+        let mut fallback_config = direct_config.clone();
+        fallback_config.fallback.max_hops = 1;
+        fallback_config.fallback.chain.push(crate::config::inference::HemisphereSlot {
+            provider: Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            model: Some(NCT_TEST_MODEL.into()),
+            ..Default::default()
+        });
+        let direct_path = direct_home.join("freedom.yaml");
+        let fallback_path = fallback_home.join("freedom.yaml");
+        std::fs::write(&direct_path, serde_yaml::to_string(&direct_config).unwrap()).unwrap();
+        std::fs::write(&fallback_path, serde_yaml::to_string(&fallback_config).unwrap()).unwrap();
+
+        let complete_calls = Arc::new(AtomicUsize::new(0));
+        let stream_calls = Arc::new(AtomicUsize::new(0));
+        let stream_output_caps = Arc::new(Mutex::new(Vec::new()));
+        let direct = StreamingLeaf {
+            complete_calls: Arc::clone(&complete_calls),
+            stream_calls: Arc::clone(&stream_calls),
+            stream_output_caps: Arc::clone(&stream_output_caps),
+        };
+        // Streaming fallback intentionally uses only the primary: after emitting
+        // bytes it cannot rewind the stream. Verify primary success is reported
+        // honestly without claiming that the fallback route was exercised.
+        let fallback = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(StreamingLeaf {
+                    complete_calls: Arc::clone(&complete_calls),
+                    stream_calls: Arc::clone(&stream_calls),
+                    stream_output_caps: Arc::clone(&stream_output_caps),
+                }),
+                Box::new(QuotaLeaf),
+            ],
+            vec![Some(NCT_TEST_MODEL.into()), Some(NCT_TEST_MODEL.into())],
+            1,
+            None,
+            fallback_home.join("quota.json"),
+        );
+        let receipts = root.path().join("receipts");
+        let args = NctBaselineArgs {
+            builtin_recipe: true,
+            recipe: None,
+            execute: true,
+            stream: true,
+            direct_config: Some(direct_path),
+            fallback_config: Some(fallback_path),
+            receipt_dir: receipts.clone(),
+            output: OutputFormat::Json,
+        };
+
+        Box::pin(run_nct_baseline_with(
+            args,
+            NctRunner::Hermetic {
+                direct: &direct,
+                fallback: &fallback,
+            },
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(complete_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(stream_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            stream_output_caps.lock().unwrap().as_slice(),
+            &[Some(NCT_MAX_OUTPUT_TOKENS), Some(NCT_MAX_OUTPUT_TOKENS)]
+        );
+        for row in ["direct", "fallback"] {
+            let raw = std::fs::read_to_string(
+                receipts.join(format!("nct-live-{row}-public-v1.receipt.json")),
+            )
+            .unwrap();
+            let receipt: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(receipt["provider"], "local_qwen");
+            assert_eq!(receipt["input_tokens"], 7);
+            assert_eq!(receipt["output_tokens"], 2);
+            assert_eq!(receipt["stream_requested"], true);
+            assert_eq!(receipt["stream_evidence"], "observed_local_stream");
+            assert_eq!(
+                receipt["route_evidence"],
+                if row == "direct" {
+                    "direct_completed"
+                } else {
+                    "fallback_not_exercised_primary_succeeded"
+                }
+            );
+            assert!(!raw.contains("native stream"), "receipt contains response content");
+        }
+    }
+
+    #[test]
+    fn nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair() {
+        use crate::wal::events::{
+            EVENT_TYPE_LOCAL_INFERENCE_END, EVENT_TYPE_LOCAL_INFERENCE_START,
+            EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("stream-projection-000001.wal");
+        for (provider, trace, end, native, requested, expected) in [
+            ("local_ollama", Some(11_u64), true, true, true, "observed_local_stream"),
+            ("local_ollama", Some(12), true, true, true, "requested_unobserved"),
+            ("local_ollama", None, true, true, true, "requested_unobserved"),
+            ("local_ollama", Some(11), false, true, true, "requested_unobserved"),
+            ("local_ollama", Some(11), true, false, true, "requested_unobserved"),
+            ("openai_api", Some(11), true, true, true, "requested_unobserved"),
+            ("local_ollama", Some(11), true, true, false, "not_requested"),
+        ] {
+            let mut bytes =
+                crate::wal::segment_header::SegmentHeader::new(1, 1, 1, 1, [0; 16])
+                    .to_le_bytes()
+                    .to_vec();
+            let mut append = |event_type, value: serde_json::Value| {
+                let payload = serde_json::to_vec(&value).unwrap();
+                let header = crate::wal::make_header(event_type, &payload);
+                bytes.extend(crate::wal::frame::encode_frame(&header, &payload));
+            };
+            let local = serde_json::json!({
+                "request_id": 11,
+                "local_inference_trace_id": 11,
+                "stream": true,
+            });
+            append(EVENT_TYPE_LOCAL_INFERENCE_START, local.clone());
+            let lifecycle = serde_json::json!({
+                "schema": "neoth.provider-lifecycle.v1",
+                "invocation_id": "owned-invocation",
+                "request_binding_sha256": "owned-request-binding",
+                "provider": provider,
+                "wire_model": NCT_TEST_MODEL,
+                "prompt_bytes": 1,
+                "system_bytes": 0,
+                "ok": true,
+                "streaming": native,
+                "local_inference_trace_id": trace,
+            });
+            append(EVENT_TYPE_PROVIDER_REQUEST, lifecycle.clone());
+            append(EVENT_TYPE_PROVIDER_RESPONSE, lifecycle);
+            if end {
+                append(EVENT_TYPE_LOCAL_INFERENCE_END, local);
+            }
+            std::fs::write(&wal, bytes).unwrap();
+            let projection = project_terminal(&wal, Route::Direct, requested).unwrap();
+            assert_eq!(projection.stream_requested, requested);
+            assert_eq!(projection.stream_evidence, expected, "provider={provider} trace={trace:?}");
+        }
     }
 }

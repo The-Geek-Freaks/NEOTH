@@ -525,6 +525,8 @@ pub struct ProviderCallAuditContext {
     /// admission boundary. The opaque value is copied through provider retries
     /// and fallbacks, never derived from payload metadata.
     pub(crate) wal_session: Option<WalSessionContext>,
+    /// Opaque local telemetry correlation. It is never request authority.
+    pub(crate) local_inference_trace_id: Option<u64>,
     pub target: Option<String>,
     pub configured_provider_kind: Option<String>,
     /// Stable, content-free transport identity.  These are separate from the
@@ -601,6 +603,9 @@ fn add_audit_context(
     }
     if let Some(session_id) = context.session_id.as_deref() {
         payload.insert("session_id".into(), session_id.into());
+    }
+    if let Some(trace_id) = context.local_inference_trace_id {
+        payload.insert("local_inference_trace_id".into(), trace_id.into());
     }
     if let Some(target) = context.target.as_deref() {
         payload.insert("target".into(), target.into());

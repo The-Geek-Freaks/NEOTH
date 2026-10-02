@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T21:43:45.2500793Z",
-  "validationStatus": "HOSTED_DIAGNOSTICS_REPAIRED_AUTHENTIC_REFERENCE_IMPORTED_TESTS_PENDING",
+  "capturedUtc": "2026-10-02T22:36:23.2350209Z",
+  "validationStatus": "static-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 119599,
-      "sha256": "F95DE4930EE4DF4499B3227F8F85859320CB09233ED59AD425DB1AC087D4CDC0"
+      "bytes": 120346,
+      "sha256": "CBDBEE3791AE539593E056385F4EF52565C924A3C280CDAF5F50510BEC3D8EBA"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 21947,
-      "sha256": "9D52CE55D0674891828F1EF3D6489ECE5B95A124BCD7AE2CD33CC702572358DC"
+      "bytes": 22108,
+      "sha256": "32E70D44E7B054879B1AA391FF3460B68BCC1E81D7A89E11190534D4969B58DD"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -3162,6 +3162,11 @@
       "sha256": "2C65B99DB728549D7D5676323521106C1E4C676FEE35EF23EEFBA7EFD292C1ED"
     },
     {
+      "path": "docs/verification/gold-wave2219-streaming-deadline.json",
+      "bytes": 4389,
+      "sha256": "C6A29BABA2EEF042BC981EB0DC5B8482FA18B512C89DD29148E4723CD5EEFCEF"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4303,8 +4308,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2317608,
-      "sha256": "41897A90F992F02C7597ABCD296C4BCB6EE1E7AF6530357EF66FC55CB60852B2"
+      "bytes": 2320939,
+      "sha256": "32FA6CDD6316DF84137ABC19403D4F1D05391418F97F16D1B38A51942FA37553"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5223,8 +5228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1217861,
-      "sha256": "A1074F8D9F09A6B30A6A20A00B0FA7D5E97B76D89B015B18254DDFA76930C836"
+      "bytes": 1218297,
+      "sha256": "36AB3A38EA15523EF2671A6E391833F741778C3B310A2E2C16A9EF29FCA0F86F"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -5468,8 +5473,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 130676,
-      "sha256": "4E3521532A3AF31109996ECB97E03B60B1D692B1D80105AEAC2AE555D8836DF4"
+      "bytes": 130717,
+      "sha256": "D3711DD474FEBC100FDAA433CF63B64FF478B881513EBB8E25B2E884FF25BFCD"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -5483,8 +5488,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/nct_baseline.rs",
-      "bytes": 44296,
-      "sha256": "87CA58A5CC59DBA506B40817B37395BB7B48DC5937A6CFAE7463A27A830C7CEF"
+      "bytes": 57527,
+      "sha256": "8A38FEE66720E3783D6E528E7180201C1EF9FCB68A8666D8E55621D356D94C6F"
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
@@ -7298,8 +7303,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 360413,
-      "sha256": "43C8CD5A40DC9CBD3436299C1DF59C9EAC592216B042A894DDBA0F80A34B27A2"
+      "bytes": 360687,
+      "sha256": "FDD6D898AA04BCD6B63049CEB0EA83591023A7F86CC03960ED36B61189E2B94F"
     },
     {
       "path": "SRC/neothd/src/providers/cost.rs",
@@ -7768,8 +7773,8 @@
     },
     {
       "path": "SRC/neothd/src/updater/self_update.rs",
-      "bytes": 388966,
-      "sha256": "972AE969FCF98CEACBDF36FC9D9BE5F8595C57BBA7500B3C3E116340A65A499C"
+      "bytes": 391701,
+      "sha256": "836492CC5A335F34B3AFF393B2BB1957C73A405FD607BF576FC9903C35D4D087"
     },
     {
       "path": "SRC/neothd/src/updater/skill_resolver.rs",

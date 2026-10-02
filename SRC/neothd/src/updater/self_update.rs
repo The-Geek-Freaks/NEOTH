@@ -6735,6 +6735,26 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(250));
         }
+        if mode == "wait_for_cancel_before_helper" {
+            if let Some(marker) = std::env::var_os("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER") {
+                std::fs::write(marker, b"started").expect("mark contained helper started");
+            }
+            let decoded: OwnedStageRequest = serde_json::from_slice(&request)
+                .expect("decode request before waiting for cancellation");
+            let cancel = decoded
+                .stage_dir
+                .join("operations")
+                .join(decoded.operation_dir)
+                .join("cancel");
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while !cancel.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "parent did not write owned-stage cancellation marker"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         run_owned_stage_helper(&request, &request_sha256)
             .expect("contained helper must consume its sealed request");
         if mode == "publish_then_sleep" {
@@ -6997,10 +7017,10 @@ mod tests {
         let stage_dir = root.path().join("home").join("staged");
         let clock = crate::updater::budget::UpdaterRunClock::start(
             crate::updater::budget::UpdaterRunLimits::new(
-                Duration::from_millis(40),
-                Duration::from_secs(1),
                 Duration::from_secs(2),
                 Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
             )
             .unwrap(),
         )
@@ -7009,22 +7029,63 @@ mod tests {
             owned_stage_invocation_fixture(&stage_dir, "op-owned-cancel", clock.budgets().clone());
         let request: OwnedStageRequest =
             serde_json::from_slice(invocation.request_bytes()).unwrap();
+        let control = crate::daemon::updater_cron::UpdaterPassControl::for_test();
+        let started_marker = root.path().join("contained-helper-started");
+        unsafe {
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_MODE",
+                "wait_for_cancel_before_helper",
+            );
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256",
+                invocation.request_sha256(),
+            );
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER", &started_marker);
+        }
+        let cleanup = OwnedStageChildEnv;
+        let task_invocation = invocation.clone();
+        let task_clock = clock.clone();
+        let task_control = control.clone();
+        let task = tokio::spawn(async move {
+            run_owned_stage_invocation(&task_invocation, &task_clock, Some(task_control)).await
+        });
+        let started = tokio::time::timeout(Duration::from_secs(1), async {
+            while !started_marker.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        if let Err(error) = started {
+            // A setup failure must still release the real contained child.
+            control.cancel();
+            let _ = task.await;
+            drop(cleanup);
+            panic!("real contained helper did not start: {error}");
+        }
+        let cancel = stage_dir
+            .join("operations")
+            .join(&request.operation_dir)
+            .join("cancel");
+        let setup_failure = if cancel.exists() {
+            Some("helper started after cancellation was already written")
+        } else if clock.remaining(crate::updater::budget::UpdaterDeadlinePhase::Effect)
+            == Duration::ZERO
+        {
+            Some("helper startup consumed the effect deadline")
+        } else {
+            None
+        };
+        if let Some(reason) = setup_failure {
+            control.cancel();
+            let _ = task.await;
+            drop(cleanup);
+            panic!("{reason}");
+        }
+        let observed = task.await.unwrap().unwrap();
+        drop(cleanup);
 
-        let observed = with_owned_stage_child_mode(
-            "sleep_before_helper",
-            &invocation,
-            run_owned_stage_invocation(&invocation, &clock, None),
-        )
-        .await
-        .unwrap();
         assert_eq!(observed, OwnedStageReadback::Unchanged);
-        assert!(
-            stage_dir
-                .join("operations")
-                .join(&request.operation_dir)
-                .join("cancel")
-                .exists()
-        );
+        assert!(cancel.exists());
         assert_eq!(
             read_owned_stage_readback(invocation.request_bytes(), invocation.request_sha256())
                 .unwrap(),

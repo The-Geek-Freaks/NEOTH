@@ -1697,6 +1697,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             chat::run_chat(args).await?;
         }
         Commands::NctBaseline(mut args) => {
+            args.stream = global_stream;
             args.output = global_output;
             nct_baseline::run_nct_baseline(args).await?;
         }

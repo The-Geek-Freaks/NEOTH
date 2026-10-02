@@ -164,6 +164,7 @@ jobs:
             SRC/neothd/src/daemon/proactive_egress.rs \
             SRC/neothd/tests/proactive_egress_contract_source_gate.rs \
             SRC/neothd/src/daemon/updater_cron.rs \
+            SRC/neothd/src/updater/self_update.rs \
             SRC/neothd/src/updater/probes.rs \
             SRC/neothd/src/updater/skill_resolver.rs \
             SRC/neothd/src/updater/process_containment.rs \
@@ -759,9 +760,12 @@ jobs:
           run_case 427 lib config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key --lib
           run_case 428 lib config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields --lib
           run_case 429 lib slash::action_dispatch::tests::config_set_rejects_nested_secret_replacement_without_touching_bytes slash::action_dispatch::tests::config_set_rejects_nested_secret_replacement_without_touching_bytes --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 429
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 429
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 429
+          run_case 430 lib cli::nct_baseline::tests::wrapper_streaming_runs_local_leaf_and_binds_private_receipt cli::nct_baseline::tests::wrapper_streaming_runs_local_leaf_and_binds_private_receipt --lib
+          run_case 431 lib cli::nct_baseline::tests::nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair cli::nct_baseline::tests::nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair --lib
+          run_case 432 lib updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 432
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 432
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 432
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 
