@@ -1,0 +1,20 @@
+{
+  "schema": "neoth-gold-wave2129-public-prepare-test-type/v1",
+  "base": "8b6472c52b9c4e8e4429887d064162f6c47766dd",
+  "status": "NARROW_STATIC_REVIEW_HOSTED_PENDING",
+  "previousRun": "36996173618",
+  "previousRunConclusion": "compile failure before test execution",
+  "previousTestsExecuted": 0,
+  "diagnostic": "E0282 at config/mod.rs:4364: error-only closure left generic prepare_public_update_at<T> unconstrained",
+  "repair": "Use prepare_public_update_at::<()> in the existing negative test; no production behavior changed",
+  "candidateBlob": "be73627439e1a1ffb818e51f855f5582c866ce5e",
+  "candidateSha256": "BFABED6C698A30EBD22B65BC00CCA013E24AB4B0B39D2258C85D2AA655142617",
+  "rootReview": "Generic signature accepts one T and mutation returns Result<T>; explicit unit preserves the unconditional error path",
+  "focusedCases": 387,
+  "portableCases": 2607,
+  "focusedSourceBindings": 179,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

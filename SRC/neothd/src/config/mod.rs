@@ -4361,7 +4361,7 @@ mod public_prepared_update_tests {
         let source_before = std::fs::read(&freedom).unwrap();
 
         assert!(
-            FreedomConfig::prepare_public_update_at(&freedom, |_| anyhow::bail!(
+            FreedomConfig::prepare_public_update_at::<()>(&freedom, |_| anyhow::bail!(
                 "reject before publication"
             ))
             .is_err()
