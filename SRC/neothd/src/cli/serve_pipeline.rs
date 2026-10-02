@@ -4243,27 +4243,43 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // Resolve a retained Skill selector before model selection, budget,
             // authorization, and every completion/MCP leaf.  Channel turns
             // cannot prompt, so the exact durable route is required here.
-            let channel_skill_provider_binding = if let Some(instance_id) = channel_skill_provider_instance_id.as_deref() {
-                anyhow::ensure!(
-                    channel_skill_delegate_to.is_none(),
-                    "skill provider_instance_id cannot be combined with delegate_to"
-                );
-                let selector = crate::config::inference::HemisphereSlot {
-                    provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(instance_id)?),
-                    ..Default::default()
+            let channel_skill_provider_binding =
+                if let Some(instance_id) = channel_skill_provider_instance_id.as_deref() {
+                    anyhow::ensure!(
+                        channel_skill_delegate_to.is_none(),
+                        "skill provider_instance_id cannot be combined with delegate_to"
+                    );
+                    let selector = crate::config::inference::HemisphereSlot {
+                        provider_instance_id: Some(
+                            crate::config::inference::ProviderInstanceId::parse(instance_id)?,
+                        ),
+                        ..Default::default()
+                    };
+                    let binding = config_for_handler
+                        .inference
+                        .resolve_explicit_slot_binding(&selector)?;
+                    anyhow::ensure!(
+                        binding.is_named_instance,
+                        "skill provider selector must resolve to a named instance"
+                    );
+                    let route = crate::consent::route_for_resolved_binding(
+                        config_for_handler.as_ref(),
+                        &binding,
+                    )?;
+                    crate::consent::ensure_route_still_granted(&neoth_home, &route)?;
+                    Some(binding)
+                } else {
+                    None
                 };
-                let binding = config_for_handler.inference.resolve_explicit_slot_binding(&selector)?;
-                anyhow::ensure!(binding.is_named_instance, "skill provider selector must resolve to a named instance");
-                let route = crate::consent::route_for_resolved_binding(config_for_handler.as_ref(), &binding)?;
-                crate::consent::ensure_route_still_granted(&neoth_home, &route)?;
-                Some(binding)
-            } else {
-                None
-            };
             let provider: Arc<dyn Provider> = match channel_skill_provider_binding.as_ref() {
-                Some(binding) => Arc::from(crate::providers::from_config_for_resolved_binding_at(
-                    config_for_handler.as_ref(), binding, &neoth_home,
-                ).await?),
+                Some(binding) => Arc::from(
+                    crate::providers::from_config_for_resolved_binding_at(
+                        config_for_handler.as_ref(),
+                        binding,
+                        &neoth_home,
+                    )
+                    .await?,
+                ),
                 None => provider,
             };
             if let Some(binding) = channel_skill_provider_binding.as_ref() {
@@ -4272,11 +4288,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         provider_instance_id: binding.provider_instance_id.clone(),
                         provider_descriptor_id: Some(binding.provider_descriptor_id.clone()),
                         ..Default::default()
-                    }.with_wal_session(channel_wal_session),
+                    }
+                    .with_wal_session(channel_wal_session),
                 );
             }
             let channel_requested_model = channel_skill_model
-                .or_else(|| channel_skill_provider_binding.as_ref().and_then(|binding| binding.slot.model.clone()))
+                .or_else(|| {
+                    channel_skill_provider_binding
+                        .as_ref()
+                        .and_then(|binding| binding.slot.model.clone())
+                })
                 .or_else(|| config_for_handler.provider_model.clone());
             let channel_effective_model = match crate::cli::chat::resolve_provider_call_wire_model(
                 config_for_handler.as_ref(),
@@ -5884,12 +5905,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             .inference
                             .resolve_profile_provider_binding()?
                         {
-                            Some(binding) if binding.is_named_instance => provider_call_authorizer
-                                .clone()
-                                .with_provider_binding(
+                            Some(binding) if binding.is_named_instance => {
+                                provider_call_authorizer.clone().with_provider_binding(
                                     binding.provider_instance_id,
                                     binding.provider_descriptor_id,
-                                ),
+                                )
+                            }
                             _ => provider_call_authorizer.clone(),
                         };
                         let segment_path_for_pipeline = segment_path.clone();

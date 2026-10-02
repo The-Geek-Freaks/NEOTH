@@ -3530,12 +3530,8 @@ async fn from_config_for_role_inner(
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
-    let mut synthetic = synthetic_config_for_slot(
-        config,
-        slot,
-        provider_kind,
-        binding.is_named_instance,
-    );
+    let mut synthetic =
+        synthetic_config_for_slot(config, slot, provider_kind, binding.is_named_instance);
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
     // top-level FreedomConfig::provider_region. Only relevant for
     // aws_bedrock today; other providers ignore the field.
@@ -3874,12 +3870,8 @@ async fn from_config_for_sub_role_inner(
     };
     let provider_kind = provider_kind.to_provider_kind();
     reject_missing_named_bedrock_region(slot, provider_kind, binding.is_named_instance)?;
-    let mut synthetic = synthetic_config_for_slot(
-        config,
-        slot,
-        provider_kind,
-        binding.is_named_instance,
-    );
+    let mut synthetic =
+        synthetic_config_for_slot(config, slot, provider_kind, binding.is_named_instance);
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -3971,7 +3963,10 @@ fn build_explicit_profile_config(config: &FreedomConfig) -> Result<Option<Freedo
             true,
         )));
     }
-    let provider = binding.slot.provider.expect("legacy profile binding has a provider");
+    let provider = binding
+        .slot
+        .provider
+        .expect("legacy profile binding has a provider");
     let kind = provider.to_provider_kind();
     let mut synthetic = config.clone();
     // A typed profile provider can be a different vendor from the main chat
@@ -7202,7 +7197,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer profile-secret-2061"))
-            .and(body_partial_json(serde_json::json!({ "model": "gpt-4o-mini" })))
+            .and(body_partial_json(
+                serde_json::json!({ "model": "gpt-4o-mini" }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{ "message": { "content": "profile instance success" } }],
                 "model": "gpt-4o-mini",
@@ -7218,10 +7215,16 @@ mod tests {
             .expect("resolve named profile binding")
             .expect("explicit profile selector is present");
         assert!(binding.is_named_instance);
-        assert_eq!(binding.provider_instance_id.as_deref(), Some("profile_compat_2061"));
+        assert_eq!(
+            binding.provider_instance_id.as_deref(),
+            Some("profile_compat_2061")
+        );
         assert_eq!(binding.provider_descriptor_id, "openai_compat");
         let expected_endpoint = format!("{}/v1", server.uri());
-        assert_eq!(binding.slot.endpoint.as_deref(), Some(expected_endpoint.as_str()));
+        assert_eq!(
+            binding.slot.endpoint.as_deref(),
+            Some(expected_endpoint.as_str())
+        );
         assert_eq!(binding.slot.model.as_deref(), Some("gpt-4o-mini"));
 
         let home = tempfile::tempdir().expect("create profile factory home");
@@ -7235,11 +7238,9 @@ mod tests {
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).expect("create profile lifecycle WAL directory");
         let segment = wal_dir.join("00000000000000000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .expect("spawn home-bound lifecycle WAL writer");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
+                .expect("spawn home-bound lifecycle WAL writer");
         let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
             crate::permissions::AutonomyLevel::Full,
             Some(writer.clone()),
@@ -7289,7 +7290,11 @@ mod tests {
             }
             cursor += frame.header.total_len as usize;
         }
-        assert_eq!(lifecycle_payloads.len(), 2, "one request and one terminal receipt");
+        assert_eq!(
+            lifecycle_payloads.len(),
+            2,
+            "one request and one terminal receipt"
+        );
         for payload in lifecycle_payloads {
             assert_eq!(payload["provider_instance_id"], "profile_compat_2061");
             assert_eq!(payload["provider_descriptor_id"], "openai_compat");
@@ -7300,7 +7305,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io() {
+    async fn explicit_named_profile_factory_rejects_unknown_or_conflicting_selector_before_wire_io()
+    {
         use wiremock::matchers::method;
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -7351,7 +7357,10 @@ mod tests {
             .expect("resolve named Claude profile factory")
             .expect("explicit profile factory config");
         assert_eq!(synthetic.provider_kind, Some(ProviderKind::ClaudeCli));
-        assert_eq!(synthetic.provider_model.as_deref(), Some("profile-claude-model"));
+        assert_eq!(
+            synthetic.provider_model.as_deref(),
+            Some("profile-claude-model")
+        );
         assert!(synthetic.provider_binary.is_none());
     }
 
@@ -7368,13 +7377,17 @@ mod tests {
         )).expect("parse selected skill instance");
         let selector: HemisphereSlot = serde_yaml::from_str("provider_instance_id: skill_compat")
             .expect("parse selected skill selector");
-        let binding = config.inference.resolve_explicit_slot_binding(&selector)
+        let binding = config
+            .inference
+            .resolve_explicit_slot_binding(&selector)
             .expect("resolve selected skill binding");
 
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer skill-secret"))
-            .and(body_partial_json(serde_json::json!({ "model": "skill-wire-model" })))
+            .and(body_partial_json(
+                serde_json::json!({ "model": "skill-wire-model" }),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices": [{ "message": { "content": "selected instance" } }],
                 "model": "skill-wire-model",
@@ -7384,10 +7397,17 @@ mod tests {
             .mount(&selected)
             .await;
 
-        let provider = from_config_for_resolved_binding_at(&config, &binding, std::path::Path::new("."))
-            .await.expect("construct only selected named instance");
-        let completion = provider.complete(Request { prompt: "exact skill endpoint".into(), ..Default::default() })
-            .await.expect("dispatch selected named provider");
+        let provider =
+            from_config_for_resolved_binding_at(&config, &binding, std::path::Path::new("."))
+                .await
+                .expect("construct only selected named instance");
+        let completion = provider
+            .complete(Request {
+                prompt: "exact skill endpoint".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("dispatch selected named provider");
         assert_eq!(completion.text, "selected instance");
         selected.verify().await;
     }
@@ -7401,19 +7421,37 @@ mod tests {
             "mode: custom\nprovider_instances:\n  - { id: named_bedrock, descriptor: aws_bedrock }\nprofile_provider_instance_id: named_bedrock\n",
         )
         .expect("parse named Bedrock without its own region");
-        let binding = config.inference.resolve_profile_provider_binding()
+        let binding = config
+            .inference
+            .resolve_profile_provider_binding()
             .expect("resolve profile selector")
             .expect("explicit profile binding");
         let profile_error = from_config_for_explicit_profile_at(&config, home.path())
-            .await.err().expect("missing profile region must reject before adapter construction");
-        assert!(profile_error.to_string().contains("requires an explicit region"));
+            .await
+            .err()
+            .expect("missing profile region must reject before adapter construction");
+        assert!(
+            profile_error
+                .to_string()
+                .contains("requires an explicit region")
+        );
         let explicit_error = from_config_for_resolved_binding_at(&config, &binding, home.path())
-            .await.err().expect("missing selected region must reject before adapter construction");
-        assert!(explicit_error.to_string().contains("requires an explicit region"));
+            .await
+            .err()
+            .expect("missing selected region must reject before adapter construction");
+        assert!(
+            explicit_error
+                .to_string()
+                .contains("requires an explicit region")
+        );
         let routes = crate::consent::required_consent_routes(&config)
             .expect("inventory preserves an invalid named profile route");
-        assert!(routes.iter().any(|route| route.kind == ProviderKind::AwsBedrock
-            && route.endpoint.as_deref() == Some("invalid://aws-bedrock-region")));
+        assert!(
+            routes
+                .iter()
+                .any(|route| route.kind == ProviderKind::AwsBedrock
+                    && route.endpoint.as_deref() == Some("invalid://aws-bedrock-region"))
+        );
     }
 
     #[test]

@@ -693,25 +693,32 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         &args,
         &neoth_home,
         &config_path,
-        args.message.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("resolve normal chat prompt before Skill admission")
-        })?,
+        args.message
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("resolve normal chat prompt before Skill admission"))?,
     )
     .await?;
     let selected_skill_binding = if let Some(route) = retained_skill_admission.route.as_ref()
         && let Some(instance_id) = route.provider_instance_id()
     {
-            anyhow::ensure!(
-                route.skill().manifest.delegate_to.is_none(),
-                "skill provider_instance_id cannot be combined with delegate_to"
-            );
-            let selector = crate::config::inference::HemisphereSlot {
-                provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(instance_id)?),
-                ..Default::default()
-            };
-            let binding = config_before_consent.inference.resolve_explicit_slot_binding(&selector)?;
-            anyhow::ensure!(binding.is_named_instance, "skill provider selector must resolve to a named instance");
-            Some(binding)
+        anyhow::ensure!(
+            route.skill().manifest.delegate_to.is_none(),
+            "skill provider_instance_id cannot be combined with delegate_to"
+        );
+        let selector = crate::config::inference::HemisphereSlot {
+            provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(
+                instance_id,
+            )?),
+            ..Default::default()
+        };
+        let binding = config_before_consent
+            .inference
+            .resolve_explicit_slot_binding(&selector)?;
+        anyhow::ensure!(
+            binding.is_named_instance,
+            "skill provider selector must resolve to a named instance"
+        );
+        Some(binding)
     } else {
         None
     };
@@ -737,19 +744,24 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     } else {
         let ephemeral = match selected_skill_binding.as_ref() {
             Some(binding) => {
-                let route = crate::consent::route_for_resolved_binding(&config_before_consent, binding)?;
+                let route =
+                    crate::consent::route_for_resolved_binding(&config_before_consent, binding)?;
                 crate::cli::consent::ensure_route_granted_or_prompt_at(
                     &neoth_home,
                     &route,
                     &config_before_consent,
                     crate::cli::consent::ConsentMutationSource::Tty,
-                ).await?
+                )
+                .await?
             }
-            None => crate::cli::consent::ensure_all_granted_or_prompt_at(
-                &neoth_home,
-                &config_before_consent,
-                crate::cli::consent::ConsentMutationSource::Tty,
-            ).await?,
+            None => {
+                crate::cli::consent::ensure_all_granted_or_prompt_at(
+                    &neoth_home,
+                    &config_before_consent,
+                    crate::cli::consent::ConsentMutationSource::Tty,
+                )
+                .await?
+            }
         };
         (config_before_consent, ephemeral)
     };
@@ -783,34 +795,39 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     // failover in the logs. The daemon path threads its writer for the
     // durable `0x25 PROVIDER_FALLBACK_ATTEMPTED` audit frame.
     let provider = match selected_skill_binding.as_ref() {
-        Some(binding) => crate::providers::from_config_for_resolved_binding_at(&config, binding, &neoth_home).await?,
-        None => providers::fallback_chain_from_config_interactive(
-            &config,
-            &neoth_home,
-            None,
-            &ephemeral_consent,
-        ).await?,
+        Some(binding) => {
+            crate::providers::from_config_for_resolved_binding_at(&config, binding, &neoth_home)
+                .await?
+        }
+        None => {
+            providers::fallback_chain_from_config_interactive(
+                &config,
+                &neoth_home,
+                None,
+                &ephemeral_consent,
+            )
+            .await?
+        }
     };
     // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
     // CLI path has no WAL writer yet (writer is opened inside run_chat_with),
     // so WAL audit frames are skipped here (wal=None). The inner provider retains
     // the same identity for callers — only the prompt is modified in-place.
-    let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled
-        && selected_skill_binding.is_none()
-    {
-        let utility = providers::from_config_for_utility_at(&config, &neoth_home)
-            .await
-            .ok();
-        providers::compactor::CompactingProvider::from_config(
-            provider,
-            utility,
-            providers::utility_model_for_config(&config),
-            &config.tokens,
-            None,
-        )
-    } else {
-        provider
-    };
+    let provider: Box<dyn providers::Provider> =
+        if config.tokens.history_compaction_enabled && selected_skill_binding.is_none() {
+            let utility = providers::from_config_for_utility_at(&config, &neoth_home)
+                .await
+                .ok();
+            providers::compactor::CompactingProvider::from_config(
+                provider,
+                utility,
+                providers::utility_model_for_config(&config),
+                &config.tokens,
+                None,
+            )
+        } else {
+            provider
+        };
     let (stream_control_token, gui_reasoning_display) = gui_launch
         .map(|launch| (Some(launch.stream_control_token), launch.reasoning_display))
         .unwrap_or((None, args.show_reasoning));
@@ -2632,12 +2649,16 @@ async fn admit_skill_route_before_provider(
     if !config.skills.pinned_hashes.is_empty() {
         for (skill, verdict) in raw.iter().zip(
             crate::skills::versioning::check_pinned_hashes(
-                raw.iter().map(|skill| (skill.id(), skill.content_hash.as_str())),
+                raw.iter()
+                    .map(|skill| (skill.id(), skill.content_hash.as_str())),
                 &config.skills.pinned_hashes,
             )
             .iter(),
         ) {
-            if matches!(verdict.verdict, crate::skills::versioning::PinnedHashOutcome::Mismatch) {
+            if matches!(
+                verdict.verdict,
+                crate::skills::versioning::PinnedHashOutcome::Mismatch
+            ) {
                 blocked.insert(skill.id().to_owned());
             }
         }
@@ -2647,7 +2668,10 @@ async fn admit_skill_route_before_provider(
     let explicit_slash = (!eval_suppress)
         .then_some(slash_skill_name.as_deref())
         .flatten()
-        .filter(|name| raw.iter().any(|skill| skill.id().eq_ignore_ascii_case(name)));
+        .filter(|name| {
+            raw.iter()
+                .any(|skill| skill.id().eq_ignore_ascii_case(name))
+        });
     let explicit = args.skill.as_deref().or(explicit_slash);
     let resolver = crate::skills::resolver::SkillRouteResolver::new(snapshot)
         .retaining(|skill| !eval_suppress && !blocked.contains(skill.id()));
@@ -3104,14 +3128,13 @@ pub(super) async fn build_prompt_bundle(
     // Compatibility field, corrected semantics: `true` enables semantic
     // fallback after literal NoMatch. It can no longer override a literal or
     // mode decision.
-    let embed_provider = if retained_skill_admission.is_none()
-        && !eval_suppress
-        && config.skills.always_embed_route
-    {
-        crate::providers::embed_provider_from_config(&config).await
-    } else {
-        None
-    };
+    let embed_provider =
+        if retained_skill_admission.is_none() && !eval_suppress && config.skills.always_embed_route
+        {
+            crate::providers::embed_provider_from_config(&config).await
+        } else {
+            None
+        };
     let (skill_route_report, selected_skill_route) = match retained_skill_admission {
         Some(admission) => (admission.report, admission.route),
         None => {
@@ -8900,17 +8923,21 @@ pub(super) async fn run_post_reply_pipelines(
                 "profile learn pass skipped: selected provider build failed"
             );
         } else if let Some(learn_provider_ref) = learn_dispatch {
-            let profile_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                config.autonomy_policy(),
-                Some(writer.clone()),
-                config.tokens.max_per_request,
-            )
-            .with_usage_home(first_tour_home.clone())
-            .with_turn_effect_gate(turn_effect_gate.clone())
-            .with_ephemeral_consent(ephemeral_consent.clone());
+            let profile_authorizer =
+                crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                    config.autonomy_policy(),
+                    Some(writer.clone()),
+                    config.tokens.max_per_request,
+                )
+                .with_usage_home(first_tour_home.clone())
+                .with_turn_effect_gate(turn_effect_gate.clone())
+                .with_ephemeral_consent(ephemeral_consent.clone());
             let profile_authorizer = match config.inference.resolve_profile_provider_binding()? {
                 Some(binding) if binding.is_named_instance => profile_authorizer
-                    .with_provider_binding(binding.provider_instance_id, binding.provider_descriptor_id),
+                    .with_provider_binding(
+                        binding.provider_instance_id,
+                        binding.provider_descriptor_id,
+                    ),
                 _ => profile_authorizer,
             };
             let authorized_learn_provider =
@@ -19935,13 +19962,23 @@ modes:
             "mode: custom\nprovider_instances:\n  - id: skill_compat\n    descriptor: openai_compat\n    endpoint: {}/v1\n    model: skill-wire-model\n    key: skill-secret\n",
             selected.uri(),
         )).expect("parse named skill provider topology");
-        std::fs::write(&config_path, serde_yaml::to_string(&config).expect("serialize named skill config"))
-            .expect("write named skill config");
-        let reload = Arc::new(crate::config::reload::ReloadController::new(config.clone(), config_path.clone()));
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&config).expect("serialize named skill config"),
+        )
+        .expect("write named skill config");
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            config_path.clone(),
+        ));
         activate_direct_cli_registry_skill(&home, skill_id, reload.as_ref());
-        let binding = config.inference.resolve_explicit_slot_binding(
-            &serde_yaml::from_str("provider_instance_id: skill_compat").expect("parse named selector"),
-        ).expect("resolve named skill binding");
+        let binding = config
+            .inference
+            .resolve_explicit_slot_binding(
+                &serde_yaml::from_str("provider_instance_id: skill_compat")
+                    .expect("parse named selector"),
+            )
+            .expect("resolve named skill binding");
         let route = crate::consent::route_for_resolved_binding(&config, &binding)
             .expect("derive exact selected consent route");
         // Exercise the same first-use AllowOnce branch that the TTY prompt
@@ -19960,7 +19997,9 @@ modes:
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .and(header("authorization", "Bearer skill-secret"))
-            .and(body_partial_json(serde_json::json!({"model":"skill-wire-model"})))
+            .and(body_partial_json(
+                serde_json::json!({"model":"skill-wire-model"}),
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "choices":[{"message":{"content":"named skill complete"}}],
                 "model":"skill-wire-model",
@@ -19970,11 +20009,28 @@ modes:
             .mount(&selected)
             .await;
         let args = ChatArgs {
-            attach: Vec::new(), repository_root: None, message: Some("named-skill".into()), workflow: None,
-            changing_facts: false, model: None, skill: Some(skill_id.into()), system: None, edit: false,
-            config: Some(config_path), wal_segment: Some(wal_path), stream: false, show_reasoning: false,
-            gui_consent_token_stdin: false, temperature: None, top_p: None, sampling_seed: None,
-            resume_from: None, incognito: false, loop_mode: false, iterations: None, until: vec![],
+            attach: Vec::new(),
+            repository_root: None,
+            message: Some("named-skill".into()),
+            workflow: None,
+            changing_facts: false,
+            model: None,
+            skill: Some(skill_id.into()),
+            system: None,
+            edit: false,
+            config: Some(config_path),
+            wal_segment: Some(wal_path),
+            stream: false,
+            show_reasoning: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
         let result = run_chat(args).await;
         result.expect("public chat must construct only the admitted named Skill leaf");
@@ -19990,8 +20046,14 @@ modes:
             "the durable provider-leaf receipt carries the exact selected instance identity"
         );
         let receipt = String::from_utf8_lossy(&wal);
-        assert!(receipt.contains("openai_compat"), "provider receipt retains selected descriptor");
-        assert!(receipt.contains("skill-wire-model"), "provider receipt retains final selected wire model");
+        assert!(
+            receipt.contains("openai_compat"),
+            "provider receipt retains selected descriptor"
+        );
+        assert!(
+            receipt.contains("skill-wire-model"),
+            "provider receipt retains final selected wire model"
+        );
     }
 
     #[tokio::test]

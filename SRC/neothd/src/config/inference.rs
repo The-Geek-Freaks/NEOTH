@@ -1547,23 +1547,32 @@ impl InferenceTopology {
     /// Resolve the explicit profile-extraction selector before a caller can
     /// construct a provider. The named selector is deliberately independent
     /// from role routing, while the legacy enum retains its existing meaning.
-    pub fn resolve_profile_provider_binding(&self) -> anyhow::Result<Option<ResolvedProviderBinding>> {
+    pub fn resolve_profile_provider_binding(
+        &self,
+    ) -> anyhow::Result<Option<ResolvedProviderBinding>> {
         anyhow::ensure!(
             !(self.profile_provider.is_some() && self.profile_provider_instance_id.is_some()),
             "profile_provider and profile_provider_instance_id are mutually exclusive"
         );
         if let Some(id) = &self.profile_provider_instance_id {
-            return self.resolve_explicit_slot_binding(&HemisphereSlot {
-                provider_instance_id: Some(id.clone()),
-                ..Default::default()
-            }).map(Some);
+            return self
+                .resolve_explicit_slot_binding(&HemisphereSlot {
+                    provider_instance_id: Some(id.clone()),
+                    ..Default::default()
+                })
+                .map(Some);
         }
-        Ok(self.profile_provider.map(|provider| ResolvedProviderBinding {
-            slot: HemisphereSlot { provider: Some(provider), ..Default::default() },
-            provider_instance_id: None,
-            provider_descriptor_id: provider.as_str().to_owned(),
-            is_named_instance: false,
-        }))
+        Ok(self
+            .profile_provider
+            .map(|provider| ResolvedProviderBinding {
+                slot: HemisphereSlot {
+                    provider: Some(provider),
+                    ..Default::default()
+                },
+                provider_instance_id: None,
+                provider_descriptor_id: provider.as_str().to_owned(),
+                is_named_instance: false,
+            }))
     }
 
     /// Validate instance records even when a config has no current role
@@ -2478,8 +2487,14 @@ model: claude-opus-4-7
             .unwrap()
             .expect("named profile selector");
         assert!(binding.is_named_instance);
-        assert_eq!(binding.provider_instance_id.as_deref(), Some("profile_compat"));
-        assert_eq!(binding.slot.endpoint.as_deref(), Some("https://profile.example/v1"));
+        assert_eq!(
+            binding.provider_instance_id.as_deref(),
+            Some("profile_compat")
+        );
+        assert_eq!(
+            binding.slot.endpoint.as_deref(),
+            Some("https://profile.example/v1")
+        );
         assert_eq!(binding.slot.model.as_deref(), Some("profile-model"));
 
         let ambiguous: InferenceTopology = serde_yaml::from_str(
@@ -2487,10 +2502,8 @@ model: claude-opus-4-7
         )
         .unwrap();
         assert!(ambiguous.resolve_profile_provider_binding().is_err());
-        let unknown: InferenceTopology = serde_yaml::from_str(
-            "profile_provider_instance_id: absent\n",
-        )
-        .unwrap();
+        let unknown: InferenceTopology =
+            serde_yaml::from_str("profile_provider_instance_id: absent\n").unwrap();
         assert!(unknown.resolve_profile_provider_binding().is_err());
     }
 

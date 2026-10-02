@@ -202,7 +202,11 @@ impl ResolvedSkillRoute {
 
     /// Returns the named provider selector captured in this immutable route.
     pub fn provider_instance_id(&self) -> Option<&str> {
-        self.body.as_skill().manifest.provider_instance_id.as_deref()
+        self.body
+            .as_skill()
+            .manifest
+            .provider_instance_id
+            .as_deref()
     }
 
     pub fn mode(&self) -> Option<&ModeEntry> {

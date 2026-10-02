@@ -3207,10 +3207,8 @@ fn profile_cli_authorizer(
     config: &FreedomConfig,
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
     match config.inference.resolve_profile_provider_binding()? {
-        Some(binding) if binding.is_named_instance => Ok(authorizer.with_provider_binding(
-            binding.provider_instance_id,
-            binding.provider_descriptor_id,
-        )),
+        Some(binding) if binding.is_named_instance => Ok(authorizer
+            .with_provider_binding(binding.provider_instance_id, binding.provider_descriptor_id)),
         Some(_) => Ok(authorizer),
         None => profile_cli_left_role_authorizer(authorizer, config),
     }
@@ -3942,11 +3940,8 @@ mod tests {
         let wal_dir = dir.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
         let segment = wal_dir.join("00000000000000000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment.clone(),
-            dir.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let authorizer = profile_cli_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                 cfg.autonomy_policy(),
@@ -3962,7 +3957,10 @@ mod tests {
             None,
             "profile.named.2061",
         );
-        provider.complete(crate::providers::Request::default()).await.unwrap();
+        provider
+            .complete(crate::providers::Request::default())
+            .await
+            .unwrap();
         drop(provider);
         drop(writer);
         join.await.unwrap();

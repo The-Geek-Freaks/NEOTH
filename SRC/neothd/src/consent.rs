@@ -1307,7 +1307,11 @@ pub fn route_for_resolved_binding(
         if binding.is_named_instance {
             binding.slot.region.as_deref()
         } else {
-            binding.slot.region.as_deref().or(config.provider_region.as_deref())
+            binding
+                .slot
+                .region
+                .as_deref()
+                .or(config.provider_region.as_deref())
         },
     ))
 }
@@ -2615,7 +2619,9 @@ mod tests {
         ).expect("parse named instance topology");
         let selector: crate::config::inference::HemisphereSlot =
             serde_yaml::from_str("provider_instance_id: skill_bedrock").expect("parse selector");
-        let binding = cfg.inference.resolve_explicit_slot_binding(&selector)
+        let binding = cfg
+            .inference
+            .resolve_explicit_slot_binding(&selector)
             .expect("resolve selected named instance");
         let error = route_for_resolved_binding(&cfg, &binding)
             .expect_err("named Bedrock selector must not inherit global/default region");

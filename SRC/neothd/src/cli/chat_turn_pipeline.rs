@@ -937,11 +937,16 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             "skill provider_instance_id cannot be combined with delegate_to"
         );
         let selector = crate::config::inference::HemisphereSlot {
-            provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(instance_id)?),
+            provider_instance_id: Some(crate::config::inference::ProviderInstanceId::parse(
+                instance_id,
+            )?),
             ..Default::default()
         };
         let binding = config.inference.resolve_explicit_slot_binding(&selector)?;
-        anyhow::ensure!(binding.is_named_instance, "skill provider selector must resolve to a named instance");
+        anyhow::ensure!(
+            binding.is_named_instance,
+            "skill provider selector must resolve to a named instance"
+        );
         let route = crate::consent::route_for_resolved_binding(&config, &binding)?;
         let ephemeral_granted = ephemeral_consent.permits_route(&route).unwrap_or(false);
         anyhow::ensure!(
@@ -953,14 +958,13 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         None
     };
     let selected_skill_provider = match skill_provider_binding.as_ref() {
-        Some(binding) => Some(crate::providers::from_config_for_resolved_binding_at(
-            &config, binding, &home,
-        ).await?),
+        Some(binding) => Some(
+            crate::providers::from_config_for_resolved_binding_at(&config, binding, &home).await?,
+        ),
         None => None,
     };
-    let provider: &dyn crate::providers::Provider = selected_skill_provider
-        .as_deref()
-        .unwrap_or(provider);
+    let provider: &dyn crate::providers::Provider =
+        selected_skill_provider.as_deref().unwrap_or(provider);
     // Preserve the documented request tiers while making the selected
     // instance's configured model the provider-default tier.  Dispatch,
     // skill, CLI and tweak overrides remain ahead of this value.
@@ -1238,8 +1242,12 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         prompt_bundle_hash: Some(prompt_bundle_hash.clone()),
         prompt_token_estimate: Some(prompt_token_estimate),
         incognito: args.incognito,
-        provider_instance_id: skill_provider_binding.as_ref().and_then(|binding| binding.provider_instance_id.clone()),
-        provider_descriptor_id: skill_provider_binding.as_ref().map(|binding| binding.provider_descriptor_id.clone()),
+        provider_instance_id: skill_provider_binding
+            .as_ref()
+            .and_then(|binding| binding.provider_instance_id.clone()),
+        provider_descriptor_id: skill_provider_binding
+            .as_ref()
+            .map(|binding| binding.provider_descriptor_id.clone()),
         ..Default::default()
     }
     .with_wal_session(*wal_session)
@@ -1288,7 +1296,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         &once_guard,
         turn_effect_gate.clone(),
         skill_invocation_policy,
-        normal_chat_role_for_provider_binding(skill_provider_binding.as_ref(), normal_chat_role.as_ref()),
+        normal_chat_role_for_provider_binding(
+            skill_provider_binding.as_ref(),
+            normal_chat_role.as_ref(),
+        ),
         Some(&provider_progress),
         replay_context
             .as_ref()
@@ -1425,7 +1436,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         cancellation,
         turn_effect_gate.clone(),
         skill_provider_binding.as_ref(),
-        normal_chat_role_for_provider_binding(skill_provider_binding.as_ref(), normal_chat_role.as_ref()),
+        normal_chat_role_for_provider_binding(
+            skill_provider_binding.as_ref(),
+            normal_chat_role.as_ref(),
+        ),
         #[cfg(test)]
         abliterated_loader.as_deref(),
         PostReplyStreamPlan {

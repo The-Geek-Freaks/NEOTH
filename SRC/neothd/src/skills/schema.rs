@@ -816,21 +816,27 @@ system_prompt: "use default model"
 
     #[test]
     fn provider_instance_id_parses_and_defaults_to_none() {
-        let selected: SkillManifest = serde_yaml::from_str(r#"
+        let selected: SkillManifest = serde_yaml::from_str(
+            r#"
 id: named-provider-skill
 description: exact named binding
 trigger_keywords: ["named"]
 system_prompt: "use admitted instance"
 provider_instance_id: compat_a
-"#).expect("parse selected provider instance");
+"#,
+        )
+        .expect("parse selected provider instance");
         assert_eq!(selected.provider_instance_id.as_deref(), Some("compat_a"));
 
-        let legacy: SkillManifest = serde_yaml::from_str(r#"
+        let legacy: SkillManifest = serde_yaml::from_str(
+            r#"
 id: legacy-skill
 description: legacy
 trigger_keywords: ["legacy"]
 system_prompt: "default route"
-"#).expect("parse legacy skill");
+"#,
+        )
+        .expect("parse legacy skill");
         assert!(legacy.provider_instance_id.is_none());
     }
 
