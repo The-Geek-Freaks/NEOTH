@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_HOSTED_PREFLIGHT_PENDING",
+  "status": "W2192_STATIC_REVIEWED_HOSTED_VALIDATION_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 363675,
-    "sha256": "7A28B70678750CEC003A7A58486456FF6FCC921A38017C33E7EBFC3CF7E2DFE6"
+    "bytes": 363867,
+    "sha256": "35118FDF57537BEE4FDE92C39931620D6C0FC8C8BAC94BAC3434458232236775"
   },
-  "sourceInputs": 1990,
+  "sourceInputs": 1991,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -70208,6 +70208,38 @@
       }
     ],
     "note": "Exact two-command cadence allowlist catch-up; integrated Matrix gate and formatting already passed on prior producer.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2192XxhashRegistryUpdate": {
+    "base": "eae61c9e46a644a6dcb69e09c2e2f3d38cb66c97",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2192-xxhash-update.json",
+        "bytes": 2721,
+        "sha256": "5F84DC80215D7FC9A2D6AD338E5A6774724E8AE50227CDC397822C1046201DCB",
+        "blob": "5f68cc32dc30f02bd93938ea83b59a6f44860c60"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2312411,
+        "sha256": "6433B4AC898F2BEDC9502856E25A59023882E0F15DB22F63E1F70498BE5CD87B",
+        "blob": "2e6308af81ed97e9255ab9e3c98a660578fb4e5d"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 386985,
+        "sha256": "8C51757F1E0CF49885A7EF653237C49C6E3D72E3CA2544E869F094AFF9EA2B20",
+        "blob": "b6dd58f2d54055ccc2c09887de248936ecf28b99"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2313117,
+        "sha256": "C4BA455F7F54CDEAADBD2EC98AAF661D8EBF45C2DB9FAE49D4B592563F241144",
+        "blob": "745946ed6e0f76aaf8b59cf8f37b00ee77203cdb"
+      }
+    ],
+    "note": "Authenticated xxhash-rust 0.8.16 registry patch and unchanged license bytes; exact final-producer runtime and notice checks pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

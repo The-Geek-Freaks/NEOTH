@@ -17776,3 +17776,11 @@ Preflight and Security now run the six provenance fixtures and the strict final 
 ## W2189 - Synchronize the exact noncompiling preflight command contract
 
 Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix provenance fixtures, the strict final gate, locked metadata and Rust formatting. Its offline cadence contract then rejected the two Matrix commands because the exact expected list had not been updated alongside W2173 workflow wiring. This two-line correction admits exactly those existing fixture and final-gate invocations in their existing order after imbl and before metadata. Exact command equality and all compiler/runtime exclusions remain unchanged. Fresh Preflight is required; no local Python, compiler, parser or runtime ran. See docs/verification/gold-wave2189-preflight-matrix-allowlist.json.
+
+
+### W2192 - xxhash-rust patched registry version (2026-10-02)
+
+- Primary GitHub Dependabot alert 40 / GHSA-6g2r-675j-hx59 identifies xxhash-rust <0.8.16. The registry lock now selects 0.8.16 with the authenticated official crates.io checksum; the existing 0.8 manifest range already admits it.
+- Independent bounded review confirmed exactly one lock package block and two notice version references changed. Both official releases contain identical BSL-1.0 LICENSE bytes; unrelated notices and dependency records remain intact.
+- Prior producer eae61c9e passed Preflight 37051736737 and Code Quality 37051735941. Those passes are not runtime acceptance of this new lockfile. Final producer requires fresh hosted workspace/native, distribution-notice and focused product validation.
+- Local BSOD hold remains absolute. No local compiler, formatter, parser, runtime or test was executed; no Slint change. Report: docs/verification/gold-wave2192-xxhash-update.json. Native release acceptance remains open.

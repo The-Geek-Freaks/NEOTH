@@ -1326,7 +1326,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `xmltree 0.10.3` - `MIT` - https://github.com/eminence/xmltree-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `xmlwriter 0.1.0` - `MIT` - https://github.com/RazrFalcon/xmlwriter - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `xsalsa20poly1305 0.9.1` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/AEADs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `xxhash-rust 0.8.15` - `BSL-1.0` - https://github.com/DoumanAsh/xxhash-rust - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `xxhash-rust 0.8.16` - `BSL-1.0` - https://github.com/DoumanAsh/xxhash-rust - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `y4m 0.8.0` - `MIT` - https://github.com/image-rs/y4m.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `yazi 0.2.1` - `Apache-2.0 OR MIT` - https://github.com/dfrg/yazi - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `yeslogic-fontconfig-sys 6.0.1` - `MIT` - https://github.com/yeslogic/fontconfig-rs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
@@ -31452,7 +31452,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566`
 
-Applies to: `clipboard-win 5.4.1`, `error-code 3.3.2`, `ryu 1.0.23`, `xxhash-rust 0.8.15`
+Applies to: `clipboard-win 5.4.1`, `error-code 3.3.2`, `ryu 1.0.23`, `xxhash-rust 0.8.16`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Boost Software License - Version 1.0 - August 17th, 2003
