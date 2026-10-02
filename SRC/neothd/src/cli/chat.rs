@@ -228,6 +228,15 @@ use crate::wal::events::{
 #[cfg(test)]
 use crate::wal::spawn as wal_spawn;
 
+tokio::task_local! {
+    // Internal-only bounded output policy. Ordinary CLI calls do not enter this
+    // scope and therefore retain their existing provider request controls.
+    static SCOPED_OUTPUT_TOKEN_CAP: Option<u32>;
+}
+tokio::task_local! {
+    static SCOPED_ADMITTED_PUBLIC_POLICY: Option<serde_yaml::Value>;
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct ChatArgs {
     /// Message to send. If omitted, NEOTH reads from stdin until EOF.
@@ -688,6 +697,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         Some(path) => FreedomConfig::load_from_path(path)?,
         None => FreedomConfig::load_from_default_path()?,
     };
+    ensure_scoped_admitted_public_policy(&config_before_consent)?;
     let retained_skill_admission = admit_skill_route_before_provider(
         &config_before_consent,
         &args,
@@ -781,6 +791,8 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         }
         crate::models::selector::VerifiabilityRoute::PreserveConfigured => config,
     };
+
+    ensure_scoped_admitted_public_policy(&config)?;
 
     // CH-04: chat dispatch routes through the Left hemisphere (analytic /
     // structured reasoning). In Single mode `from_config_for_role` falls
@@ -6501,7 +6513,7 @@ pub(super) async fn dispatch_provider(
         stop_sequences: Vec::new(),
         // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
         thinking_budget,
-        max_output_tokens: None,
+        max_output_tokens: scoped_output_token_cap(),
     };
     let recovery_request = req.clone();
     let token_capped_provider =
@@ -9426,6 +9438,59 @@ pub async fn run_chat_with(
 ) -> Result<()> {
     let mut output = CliChatOutput;
     run_chat_with_to(args, config, provider, &mut output).await
+}
+
+/// Run an injected chat producer with a bounded output limit that is installed
+/// before request binding, authorization, and fallback recursion. This seam is
+/// intentionally internal: it avoids expanding `ChatArgs` literals or changing
+/// ordinary CLI defaults.
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) async fn run_chat_with_output_cap(
+    args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    max_output_tokens: u32,
+) -> Result<()> {
+    anyhow::ensure!(max_output_tokens > 0, "chat output cap must be nonzero");
+    SCOPED_OUTPUT_TOKEN_CAP
+        .scope(Some(max_output_tokens), run_chat_with(args, config, provider))
+        .await
+}
+
+/// Apply the same internal output cap to the ordinary production chat entry
+/// point. Consent, egress, budget authorization, lifecycle WAL, and fallback
+/// remain owned by `run_chat` and its existing producer path.
+#[doc(hidden)]
+pub(crate) async fn run_chat_bounded_output(
+    args: ChatArgs,
+    admitted_config: &FreedomConfig,
+    max_output_tokens: u32,
+) -> Result<()> {
+    anyhow::ensure!(max_output_tokens > 0, "chat output cap must be nonzero");
+    let public_policy: serde_yaml::Value = serde_yaml::from_str(&admitted_config.public_yaml()?)?;
+    SCOPED_OUTPUT_TOKEN_CAP
+        .scope(Some(max_output_tokens), SCOPED_ADMITTED_PUBLIC_POLICY.scope(Some(public_policy), Box::pin(run_chat(args))))
+        .await
+}
+
+fn scoped_output_token_cap() -> Option<u32> {
+    SCOPED_OUTPUT_TOKEN_CAP.try_with(|cap| *cap).ok().flatten()
+}
+
+fn ensure_scoped_admitted_public_policy(config: &FreedomConfig) -> Result<()> {
+    if let Some(expected) = SCOPED_ADMITTED_PUBLIC_POLICY
+        .try_with(|policy| policy.clone())
+        .ok()
+        .flatten()
+    {
+        let actual: serde_yaml::Value = serde_yaml::from_str(&config.public_yaml()?)?;
+        anyhow::ensure!(
+            actual == expected,
+            "NCT admitted public config changed before provider admission"
+        );
+    }
+    Ok(())
 }
 
 /// Run the direct chat producer through an injected presentation sink.
@@ -19947,6 +20012,7 @@ modes:
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // serializes process-global consent-bypass environment through fixture teardown
     async fn public_chat_admits_named_skill_before_unconfigured_left_factory() {
         use wiremock::matchers::{body_partial_json, header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

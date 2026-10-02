@@ -1,0 +1,21 @@
+{
+  "schema": "neoth.nct-live-route-recipe.v1",
+  "recipe_id": "nct-live-direct-fallback-public-benign-v1",
+  "recipe_revision": "c332f42f09b1cc1d8ed343d5792cc10bd5cbe4d41baf4ced720f2f56fae9e32b",
+  "rows": [
+    {
+      "id": "nct-live-direct-public-v1",
+      "split": "train",
+      "route": "direct",
+      "prompt": "Reply with exactly: NEOTH baseline acknowledged.",
+      "expected_terminal": "success"
+    },
+    {
+      "id": "nct-live-fallback-public-v1",
+      "split": "holdout",
+      "route": "fallback",
+      "prompt": "Reply with exactly: NEOTH fallback baseline acknowledged.",
+      "expected_terminal": "success"
+    }
+  ]
+}

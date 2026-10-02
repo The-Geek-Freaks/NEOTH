@@ -1607,11 +1607,12 @@ mod tests {
             HandlerOutcome::Err { message, .. } => panic!("unexpected legacy refusal: {message}"),
         }
         assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
-        let requests = inner.requests.lock().expect("recorded request");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].max_output_tokens, Some(321));
-        assert_eq!(requests[1].max_output_tokens, None);
-        drop(requests);
+        {
+            let requests = inner.requests.lock().expect("recorded request");
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].max_output_tokens, Some(321));
+            assert_eq!(requests[1].max_output_tokens, None);
+        }
         let segment = home.path().join("n8n-ceiling-handler.wal");
         remove_n8n_test_dependencies(home.path());
         drop(state);

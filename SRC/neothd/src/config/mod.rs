@@ -3376,32 +3376,117 @@ fn remove_split_secret_fields(value: &mut serde_yaml::Value) {
     remove_public_yaml_key(root, "telegram_token");
 
     let inference_key = serde_yaml::Value::String("inference".to_string());
-    let Some(inference) = root
+    if let Some(inference) = root
         .get_mut(&inference_key)
         .and_then(serde_yaml::Value::as_mapping_mut)
-    else {
-        return;
-    };
-    for slot_name in ["left", "right", "cerebellum", "default_slot"] {
-        let slot_key = serde_yaml::Value::String(slot_name.to_string());
-        if let Some(slot) = inference
-            .get_mut(&slot_key)
-            .and_then(serde_yaml::Value::as_mapping_mut)
-        {
-            remove_public_yaml_key(slot, "key");
-        }
-    }
-    let instances_key = serde_yaml::Value::String("provider_instances".to_string());
-    if let Some(instances) = inference
-        .get_mut(&instances_key)
-        .and_then(serde_yaml::Value::as_sequence_mut)
     {
-        for instance in instances {
-            if let Some(instance) = instance.as_mapping_mut() {
-                remove_public_yaml_key(instance, "key");
+        for slot_name in ["left", "right", "cerebellum", "default_slot"] {
+            let slot_key = serde_yaml::Value::String(slot_name.to_string());
+            if let Some(slot) = inference
+                .get_mut(&slot_key)
+                .and_then(serde_yaml::Value::as_mapping_mut)
+            {
+                remove_public_yaml_key(slot, "key");
+            }
+        }
+        let instances_key = serde_yaml::Value::String("provider_instances".to_string());
+        if let Some(instances) = inference
+            .get_mut(&instances_key)
+            .and_then(serde_yaml::Value::as_sequence_mut)
+        {
+            for instance in instances {
+                if let Some(instance) = instance.as_mapping_mut() {
+                    remove_public_yaml_key(instance, "key");
+                }
             }
         }
     }
+
+    let fallback_key = serde_yaml::Value::String("fallback".to_string());
+    let chain_key = serde_yaml::Value::String("chain".to_string());
+    if let Some(chain) = root
+        .get_mut(&fallback_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+        .and_then(|fallback| fallback.get_mut(&chain_key))
+        .and_then(serde_yaml::Value::as_sequence_mut)
+    {
+        for slot in chain {
+            if let Some(slot) = slot.as_mapping_mut() {
+                remove_public_yaml_key(slot, "key");
+            }
+        }
+    }
+}
+
+/// Restore the exact typed fallback slots only after their public projection
+/// has been overlaid. Fallback slots lack a stable public identity, so keeping
+/// an old raw key by position can bind it to a different route after reorder
+/// or insert/remove. This private merge replaces every known slot field from
+/// the current typed config while retaining extension-owned YAML fields.
+fn restore_private_fallback_slots(
+    value: &mut serde_yaml::Value,
+    fallback: &FallbackConfig,
+) -> Result<()> {
+    const SLOT_KEYS: [&str; 9] = [
+        "provider_instance_id",
+        "provider",
+        "model",
+        "key",
+        "endpoint",
+        "openai_compat_profile",
+        "region",
+        "api_version",
+        "voice",
+    ];
+
+    let fallback_key = serde_yaml::Value::String("fallback".to_string());
+    let chain_key = serde_yaml::Value::String("chain".to_string());
+    let Some(target_chain) = value
+        .as_mapping_mut()
+        .and_then(|root| root.get_mut(&fallback_key))
+        .and_then(serde_yaml::Value::as_mapping_mut)
+        .and_then(|fallback| fallback.get_mut(&chain_key))
+        .and_then(serde_yaml::Value::as_sequence_mut)
+    else {
+        anyhow::bail!("canonical public fallback chain missing during private credential restore");
+    };
+
+    let mut private_slots = SensitivePublicYaml(
+        serde_yaml::to_value(&fallback.chain)
+            .context("serialize private fallback slots for lossless update")?,
+    );
+    let Some(source_chain) = private_slots.0.as_sequence_mut() else {
+        anyhow::bail!("serialized fallback slots were not a sequence");
+    };
+    anyhow::ensure!(
+        target_chain.len() == source_chain.len(),
+        "canonical fallback chain length changed during private credential restore"
+    );
+
+    for (target_slot, source_slot) in target_chain.iter_mut().zip(std::mem::take(source_chain)) {
+        let Some(target_slot) = target_slot.as_mapping_mut() else {
+            anyhow::bail!("canonical fallback slot was not a mapping");
+        };
+        let mut source_slot = SensitivePublicYaml(source_slot);
+        let Some(source_slot) = source_slot.0.as_mapping_mut() else {
+            anyhow::bail!("serialized fallback slot was not a mapping");
+        };
+
+        for name in SLOT_KEYS {
+            let key = serde_yaml::Value::String(name.to_string());
+            if !source_slot.contains_key(&key) {
+                if let Some(mut removed) = target_slot.remove(&key) {
+                    zeroize_public_yaml_value(&mut removed);
+                }
+            }
+        }
+        for (key, value) in std::mem::take(source_slot) {
+            if let Some(mut replaced) = target_slot.insert(key, value) {
+                zeroize_public_yaml_value(&mut replaced);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn canonicalize_public_yaml_aliases(value: &mut serde_yaml::Value) {
@@ -3464,6 +3549,7 @@ fn render_public_freedom_preserving_unknown(
         serde_yaml::from_str(&public).context("parse canonical public FreedomConfig rendering")?;
     remove_split_secret_fields(&mut known);
     overlay_public_known_yaml(&mut merged.0, known.clone());
+    restore_private_fallback_slots(&mut merged.0, &config.fallback)?;
     if let Some(previous_public) = previous_public {
         let mut previous_known: serde_yaml::Value = serde_yaml::from_str(previous_public)
             .context("parse previous canonical public FreedomConfig rendering")?;
@@ -3773,6 +3859,9 @@ impl FreedomConfig {
         public.inference.default_slot.key = None;
         for instance in &mut public.inference.provider_instances {
             instance.key = None;
+        }
+        for slot in &mut public.fallback.chain {
+            slot.key = None;
         }
         // `serde(skip)` is the serialization boundary; clear the cloned
         // runtime authority as well so its duplicate SecretStrings are dropped
@@ -4290,8 +4379,23 @@ mod managed_browser_config_tests {
 
 #[cfg(test)]
 mod provider_instance_credential_tests {
-    use super::{FreedomConfig, credentials::Credentials, merge_effective_credentials};
+    use super::{
+        FreedomConfig, credentials::Credentials, merge_effective_credentials,
+        render_public_freedom_preserving_unknown,
+    };
     use crate::secret::SecretString;
+    use std::path::Path;
+
+    fn render_fallback(source: &[u8], config: &FreedomConfig) -> FreedomConfig {
+        let rendered = render_public_freedom_preserving_unknown(
+            Path::new("freedom.yaml"),
+            source,
+            config,
+            None,
+        )
+        .unwrap();
+        serde_yaml::from_slice(&rendered).unwrap()
+    }
 
     #[test]
     fn named_instance_key_is_private_and_does_not_inherit_a_legacy_role_key() {
@@ -4320,6 +4424,72 @@ mod provider_instance_credential_tests {
         assert!(!public.contains("named-secret"));
         assert!(!public.contains("legacy-left"));
         assert!(public.contains("provider_instance_id: compat_a"));
+    }
+
+    #[test]
+    fn inline_fallback_key_is_absent_from_public_yaml_and_survives_public_render() {
+        let source = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: fallback-model\n      key: fallback-inline-secret\n";
+        let config: FreedomConfig = serde_yaml::from_slice(source).unwrap();
+
+        let public = config.public_yaml().unwrap();
+        assert!(!public.contains("fallback-inline-secret"));
+
+        let reloaded = render_fallback(source, &config);
+        assert_eq!(
+            reloaded.fallback.chain[0].key.as_ref().unwrap().expose(),
+            "fallback-inline-secret"
+        );
+    }
+
+    #[test]
+    fn reordered_inline_fallback_slots_keep_their_typed_keys() {
+        let source = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: first\n      key: first-secret\n    - provider: claude_cli\n      model: second\n      key: second-secret\n";
+        let desired = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: second\n      key: second-secret\n    - provider: claude_cli\n      model: first\n      key: first-secret\n";
+        let config: FreedomConfig = serde_yaml::from_slice(desired).unwrap();
+        let reloaded = render_fallback(source, &config);
+
+        assert_eq!(reloaded.fallback.chain[0].model.as_deref(), Some("second"));
+        assert_eq!(
+            reloaded.fallback.chain[0].key.as_ref().unwrap().expose(),
+            "second-secret"
+        );
+        assert_eq!(reloaded.fallback.chain[1].model.as_deref(), Some("first"));
+        assert_eq!(
+            reloaded.fallback.chain[1].key.as_ref().unwrap().expose(),
+            "first-secret"
+        );
+    }
+
+    #[test]
+    fn changed_length_inline_fallback_chain_keeps_each_typed_key() {
+        let source = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: first\n      key: first-secret\n";
+        let desired = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: inserted\n      key: inserted-secret\n    - provider: claude_cli\n      model: first\n      key: first-secret\n";
+        let config: FreedomConfig = serde_yaml::from_slice(desired).unwrap();
+        let reloaded = render_fallback(source, &config);
+
+        assert_eq!(reloaded.fallback.chain.len(), 2);
+        assert_eq!(
+            reloaded.fallback.chain[0].key.as_ref().unwrap().expose(),
+            "inserted-secret"
+        );
+        assert_eq!(
+            reloaded.fallback.chain[1].key.as_ref().unwrap().expose(),
+            "first-secret"
+        );
+    }
+
+    #[test]
+    fn named_fallback_transition_removes_inline_key_and_fields() {
+        let source = b"fallback:\n  chain:\n    - provider: claude_cli\n      model: inline\n      key: inline-secret\n";
+        let desired = b"inference:\n  provider_instances:\n    - id: named_fallback\n      descriptor: openai_compat\n  left:\n    provider_instance_id: named_fallback\nfallback:\n  chain:\n    - provider_instance_id: named_fallback\n";
+        let config: FreedomConfig = serde_yaml::from_slice(desired).unwrap();
+        let reloaded = render_fallback(source, &config);
+        let slot = &reloaded.fallback.chain[0];
+
+        assert_eq!(slot.provider_instance_id.as_deref(), Some("named_fallback"));
+        assert!(slot.provider.is_none());
+        assert!(slot.model.is_none());
+        assert!(slot.key.is_none());
     }
 }
 

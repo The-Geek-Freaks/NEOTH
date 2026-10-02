@@ -128,6 +128,9 @@ jobs:
             SRC/neothd/src/config/credentials/slack_migration/tests.rs \
             SRC/neothd/src/cli/mod.rs \
             SRC/neothd/src/cli/parity_drift.rs \
+            SRC/neothd/src/slash/action_dispatch.rs \
+            SRC/neothd/src/cli/nct_baseline.rs \
+            SRC/neothd/tests/fixtures/nct_baseline/nct_live_recipe_v1.json \
             SRC/neothd/src/channels/imessage_bluebubbles.rs \
             SRC/neothd/src/channels/gchat.rs \
             SRC/neothd/src/channels/readiness.rs \
@@ -248,6 +251,27 @@ jobs:
           python3 packaging/tests/test_gchat_daemon_adoption_canary.py
           python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py
 
+      - name: Build exact public CLI for relink lifecycle
+        id: public-cli-build
+        timeout-minutes: 20
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked --features gchat-channel,irc-channel,nostr-channel
+      - name: Export generated focused CLI reference from the compiled source
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          reference_dir="$W548_ROOT/cli-reference"
+          mkdir -p "$reference_dir"
+          SRC/target/debug/neoth completions --reference > "$reference_dir/cli-commands.md"
+          git -C SRC rev-parse HEAD > "$reference_dir/source-head.txt"
+          (cd "$reference_dir" && sha256sum cli-commands.md source-head.txt > SHA256SUMS)
+
+      - name: Upload generated focused CLI reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gchat-live-regressions-cli-reference-${{ github.sha }}
+          path: ${{ runner.temp }}/w548-gchat-live-regressions/cli-reference/
+          if-no-files-found: error
       - name: Run focused channel and exact-target regressions
         working-directory: SRC
         run: |
@@ -720,16 +744,26 @@ jobs:
           run_case 412 lib providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed --lib
           run_case 413 lib cli::chat::tests::direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b cli::chat::tests::direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b --lib
           run_case 414 lib cli::credential::tests::empty_provider_instance_key_map_is_not_listed_or_imported cli::credential::tests::empty_provider_instance_key_map_is_not_listed_or_imported --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 414
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 414
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 414
+          run_case 415 lib cli::nct_baseline::tests::existing_second_receipt_prevents_every_provider_and_wal_effect cli::nct_baseline::tests::existing_second_receipt_prevents_every_provider_and_wal_effect --lib
+          run_case 416 lib cli::nct_baseline::tests::unexpected_provider_error_retains_actual_blocked_receipt cli::nct_baseline::tests::unexpected_provider_error_retains_actual_blocked_receipt --lib
+          run_case 417 lib cli::nct_baseline::tests::bounded_production_entry_rejects_loaded_config_drift_before_wal cli::nct_baseline::tests::bounded_production_entry_rejects_loaded_config_drift_before_wal --lib
+          run_case 418 lib cli::nct_baseline::tests::output_bound_does_not_leak_into_following_ordinary_chat cli::nct_baseline::tests::output_bound_does_not_leak_into_following_ordinary_chat --lib
+          run_case 419 lib cli::nct_baseline::tests::builtin_recipe_is_one_public_direct_and_one_public_fallback cli::nct_baseline::tests::builtin_recipe_is_one_public_direct_and_one_public_fallback --lib
+          run_case 420 lib cli::nct_baseline::tests::row_ids_are_unique_safe_slugs_and_receipts_refuse_overwrite cli::nct_baseline::tests::row_ids_are_unique_safe_slugs_and_receipts_refuse_overwrite --lib
+          run_case 421 lib cli::nct_baseline::tests::malformed_recipe_and_missing_execute_config_fail_before_receipt_directory_creation cli::nct_baseline::tests::malformed_recipe_and_missing_execute_config_fail_before_receipt_directory_creation --lib
+          run_case 422 lib cli::nct_baseline::tests::wrapper_runs_two_admitted_rows_with_private_receipts_and_real_fallback cli::nct_baseline::tests::wrapper_runs_two_admitted_rows_with_private_receipts_and_real_fallback --lib
+          run_case 423 lib cli::nct_baseline::tests::hermetic_normal_chat_direct_emits_lifecycle_identity_native_usage_and_private_receipt cli::nct_baseline::tests::hermetic_normal_chat_direct_emits_lifecycle_identity_native_usage_and_private_receipt --lib
+          run_case 424 lib cli::nct_baseline::tests::hermetic_normal_chat_fallback_projects_actual_leaf_and_fallback_event cli::nct_baseline::tests::hermetic_normal_chat_fallback_projects_actual_leaf_and_fallback_event --lib
+          run_case 425 lib config::provider_instance_credential_tests::inline_fallback_key_is_absent_from_public_yaml_and_survives_public_render config::provider_instance_credential_tests::inline_fallback_key_is_absent_from_public_yaml_and_survives_public_render --lib
+          run_case 426 lib config::provider_instance_credential_tests::reordered_inline_fallback_slots_keep_their_typed_keys config::provider_instance_credential_tests::reordered_inline_fallback_slots_keep_their_typed_keys --lib
+          run_case 427 lib config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key --lib
+          run_case 428 lib config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields --lib
+          run_case 429 lib slash::action_dispatch::tests::config_set_rejects_nested_secret_replacement_without_touching_bytes slash::action_dispatch::tests::config_set_rejects_nested_secret_replacement_without_touching_bytes --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 429
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 429
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 429
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
-      - name: Build exact public CLI for relink lifecycle
-        id: public-cli-build
-        timeout-minutes: 20
-        working-directory: SRC
-        run: cargo build -p neoth --bin neoth --locked --features gchat-channel,irc-channel,nostr-channel
 
       - name: Exercise real public CLI relink against loopback BlueBubbles
         timeout-minutes: 5

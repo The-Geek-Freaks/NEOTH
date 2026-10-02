@@ -124,6 +124,7 @@ pub mod models;
 pub mod monitor;
 pub mod moral_core;
 pub mod n8n;
+pub mod nct_baseline;
 pub mod obsidian;
 pub mod obsidian_sync_task;
 pub mod obsidian_sync_util;
@@ -281,6 +282,10 @@ pub enum Commands {
     /// Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL,
     /// awaits SIGTERM / Ctrl+C, drains cleanly on shutdown.
     Serve(serve::ServeArgs),
+
+    /// Explicit two-route, content-free NCT baseline; --execute is required for provider calls.
+    #[command(name = "nct-baseline")]
+    NctBaseline(nct_baseline::NctBaselineArgs),
 
     /// One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply.
     /// Both request and response are persisted as WAL events.
@@ -1690,6 +1695,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat(mut args) => {
             args.stream = global_stream;
             chat::run_chat(args).await?;
+        }
+        Commands::NctBaseline(mut args) => {
+            args.output = global_output;
+            nct_baseline::run_nct_baseline(args).await?;
         }
         Commands::RiskConfirm(mut args) => {
             args.output = global_output;

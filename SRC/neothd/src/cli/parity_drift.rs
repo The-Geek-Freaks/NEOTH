@@ -1583,6 +1583,10 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("events", Gui("wal")),
     ("schema", CliOnly("schema dump pipe")),
     ("wal", Gui("wal")),
+    (
+        "nct-baseline",
+        CliOnly("explicit bounded direct/fallback baseline harness; no GUI surface"),
+    ),
     ("completions", CliOnly("shell completions generator")),
     ("export", CliOnly("data export pipe")),
     ("obsidian", Gui("obsidian")),

@@ -1,0 +1,165 @@
+{
+  "schema": "neoth.gold.wave2199.nct-direct-fallback.v1",
+  "base": "76f59ed093d2f5be3cc28a46d146cef6a6d7e1dd",
+  "status": "STATIC_REVIEWED_HOSTED_FORMAT_COMPILE_REFERENCE_TESTS_PENDING",
+  "sourceImages": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "baseBlob": "026b8b303a4f1b26b21ba81f7ae6fd29276e8f42",
+      "postSha256": "EDEF914AE8E723020E898A8ED4AC105EB268700101072AB0327F2D333B4963EE",
+      "postBlob": "9ca32df1e91b3c92cc5bdcb3cb7f400d116a6570"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "baseBlob": "de85eea12d23791775c64d998fa5093e96ac3edc",
+      "postSha256": "4E3521532A3AF31109996ECB97E03B60B1D692B1D80105AEAC2AE555D8836DF4",
+      "postBlob": "d815543832ec77c7252b664b690bae0722b9bda9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/nct_baseline.rs",
+      "baseBlob": null,
+      "postSha256": "0896FE107A8118AE93D20330D1A9579DA25B4FC716BAF4531D5A8F1BB629AE41",
+      "postBlob": "49033f8e485cfc1d2ba04d0a14fe0d245e4aab04"
+    },
+    {
+      "path": "SRC/neothd/tests/fixtures/nct_baseline/nct_live_recipe_v1.json",
+      "baseBlob": null,
+      "postSha256": "E1B915E643B32BAF432107D418E40EDF4CCFE2FA3F2B5F49E9882C4A6B567A27",
+      "postBlob": "3afcddcf80341ce77d1c64f33495d3aefe3ff269"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "baseBlob": "03aaa845d7f3306f1dda82a6e68fd174d16f7875",
+      "postSha256": "6BF12BD1E819F6A1780CA6E12EED9CC75170415BC7DBA12CAFEBDB71BB5A40BB",
+      "postBlob": "e82e639ccb54819cf3c2364df26cf1561b9d93f3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "baseBlob": "3b477e75f2e1756c2c94d4b8fa11eceaf98bcf40",
+      "postSha256": "652BF0DBE75478F9F9A4C49483228437B9210B37B3E4A7C118AB9A719F28FA13",
+      "postBlob": "25985bdf67e1647b5dfa26ff96b238c5bc91fd65"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "baseBlob": "b3551a853ad615f4b91e9b7f5f04e2df97c175f2",
+      "postSha256": "F95DE4930EE4DF4499B3227F8F85859320CB09233ED59AD425DB1AC087D4CDC0",
+      "postBlob": "5d327920e3e88c9e9d858e2ac0b61874245f258b"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "baseBlob": "97bc51aab577476a40e89c92ec9344bc592cc8c1",
+      "postSha256": "583796315AA4B4EB5134D0FF3A9472EF27747A9769906C66049FBBF8E5DF90B8",
+      "postBlob": "23b637a4fe499609690ee323b0691891eabcbe6e"
+    },
+    {
+      "path": "SRC/neothd/src/slash/action_dispatch.rs",
+      "baseBlob": "df713ac1612a43e57ca1cf1ed615a91a2b54ad50",
+      "postSha256": "CEA2580FEE7D246DB5262A3AB17810CC2B94CAB4485CE0780F8A6F9FDAC4C973",
+      "postBlob": "108a172b2d1f9fb99baec5318be8e8970dea6afa"
+    }
+  ],
+  "newPortableTests": [
+    "cli::nct_baseline::tests::existing_second_receipt_prevents_every_provider_and_wal_effect",
+    "cli::nct_baseline::tests::unexpected_provider_error_retains_actual_blocked_receipt",
+    "cli::nct_baseline::tests::bounded_production_entry_rejects_loaded_config_drift_before_wal",
+    "cli::nct_baseline::tests::output_bound_does_not_leak_into_following_ordinary_chat",
+    "cli::nct_baseline::tests::builtin_recipe_is_one_public_direct_and_one_public_fallback",
+    "cli::nct_baseline::tests::row_ids_are_unique_safe_slugs_and_receipts_refuse_overwrite",
+    "cli::nct_baseline::tests::malformed_recipe_and_missing_execute_config_fail_before_receipt_directory_creation",
+    "cli::nct_baseline::tests::wrapper_runs_two_admitted_rows_with_private_receipts_and_real_fallback",
+    "cli::nct_baseline::tests::hermetic_normal_chat_direct_emits_lifecycle_identity_native_usage_and_private_receipt",
+    "cli::nct_baseline::tests::hermetic_normal_chat_fallback_projects_actual_leaf_and_fallback_event",
+    "config::provider_instance_credential_tests::inline_fallback_key_is_absent_from_public_yaml_and_survives_public_render",
+    "config::provider_instance_credential_tests::reordered_inline_fallback_slots_keep_their_typed_keys",
+    "config::provider_instance_credential_tests::changed_length_inline_fallback_chain_keeps_each_typed_key",
+    "config::provider_instance_credential_tests::named_fallback_transition_removes_inline_key_and_fields",
+    "slash::action_dispatch::tests::config_set_rejects_nested_secret_replacement_without_touching_bytes"
+  ],
+  "boundaries": [
+    "Default validation only; explicit --execute performs public benign recipe rows through ordinary chat",
+    "Separate admitted Direct and Fallback configs, input token cap 1..1024 and request-bound output cap 256",
+    "Actual paired lifecycle terminal projected into exclusive content-free receipts; provider-native usage and latency retained; cost explicitly unknown",
+    "ASCII row IDs reject Windows reserved device basenames before config, receipt, WAL and provider effects; existing receipt at any row refuses all dispatch; task-local cap and policy do not change following ordinary chat",
+    "Fallback primary success is labelled non-proof; full eight-route NCT acceptance remains open"
+  ],
+  "publicFallbackCredentials": "Public YAML strips inline fallback keys; private persistence restores exact current typed slots after public overlay, preserving distinct credentials across reordering/length changes and removing inline fields for named references. Rejected W2198 R1 was never imported. W2204 rejects nested secret fields in public /config replacements before mutation, preventing falsely successful key-only rotations.",
+  "priorProducerEvidence": {
+    "googleChatGuards": 20,
+    "producer": "76f59ed093d2f5be3cc28a46d146cef6a6d7e1dd",
+    "exactRustCases": 414,
+    "fullStatus": "in_progress",
+    "failedJobs": [
+      {
+        "name": "windows-2022 tests / Rust 1.91",
+        "databaseId": 110992372373
+      },
+      {
+        "name": "Linux quality / Rust 1.91",
+        "databaseId": 110992372665
+      }
+    ],
+    "note": "Prior producer evidence is not acceptance of this new NCT source.",
+    "pythonContracts": 63,
+    "focusedRun": "37053576112",
+    "fullRun": "37053490515",
+    "focusedAdmissionSha256": "96B1E96CC0ED2854F96A1724F28147AB006CF68CBE3B4F5714D65EC5086B2A66",
+    "productScenarios": 4,
+    "daemonAdoptions": 2,
+    "fullConclusion": "",
+    "windowsNextest": {
+      "run": 19012,
+      "passed": 19011,
+      "failed": 1,
+      "skipped": 28,
+      "failure": "cli::eval::tests::verify_command_timeout_kills_long_child",
+      "reason": "timeout descendant never started",
+      "admissionSha256": "CA9D23EEC0F5D91493CD188D6F548F05F9501AB2355CCB56AA6796B056562A1C",
+      "accepted": false
+    }
+  },
+  "reviewedCandidates": [
+    {
+      "name": "NCT R7",
+      "reviewSha256": "A7562138AA9E30B90B88EAF0A90BC8A1539B8BAB2C6FEB3365A71A93776E7770"
+    },
+    {
+      "name": "NCT R8 Windows reserved row IDs",
+      "reviewSha256": "BC153C3A819DB814740AC16822D18DE42F7F477E00A8038A8FAB71103E57476B"
+    },
+    {
+      "name": "W2196 await lock fixtures",
+      "reviewSha256": "342CE0537D4B58AFA27BF910DC77DA1EA37F1A38224235C1FB9BBA0D8A27755F"
+    },
+    {
+      "name": "W2197 authentic CLI reference export",
+      "reviewSha256": "0805C49F807A03A43AE8B638E2A24110F8AA0790646A52E7B9FDFCC9C2926B99"
+    },
+    {
+      "name": "W2198 R2 public fallback keys",
+      "reviewSha256": "FD43DA804BA53AA56C33B47F020E8E8FFF4C1B61BE9D3B7D04D9681D00C4CC77"
+    },
+    {
+      "name": "W2204 nested secret rejection",
+      "reviewSha256": "B1C4763BD455DB4505BAC4C12D3BE3D3F2BA563BCFACF4929B66EA738750C296"
+    },
+    {
+      "name": "Root final Chat docs and test-only seam",
+      "reviewSha256": "06AA3BDE40380FDDB12293E0C0C954B9839DFCEA066B344CD35A36729973A633"
+    }
+  ],
+  "registration": {
+    "focusedSourcePaths": 184,
+    "focused": 429,
+    "portable": 2645
+  },
+  "pending": [
+    "Hosted rustfmt receipt and compilation",
+    "Authentic generated CLI reference import; existing docgen drift assertion stays active",
+    "Exact 429-case and four-product hosted acceptance on final producer",
+    "Single full native CI after focused acceptance",
+    "Real configured provider baseline and broader NCT route qualification"
+  ],
+  "localExecutableValidationRan": false,
+  "fullNativeAccepted": false,
+  "releaseAccepted": false
+}

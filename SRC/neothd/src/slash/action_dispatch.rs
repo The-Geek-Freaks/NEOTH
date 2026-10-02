@@ -199,6 +199,13 @@ fn handle_config(args: &str, config: &FreedomConfig, home: &Path) -> ActionOutco
             };
         }
     };
+    if yaml_value_contains_secret_field(&replacement) {
+        return ActionOutcome::InvalidArgs {
+            text: format!(
+                "`{key}` replacement contains a secret field. Use `neoth credential` or the channel/provider credential flow; secrets are never accepted by `/config`."
+            ),
+        };
+    }
     let path = home.join("freedom.yaml");
     let result = FreedomConfig::update_at(&path, |current| {
         let mut value = serde_yaml::to_value(&*current).context("encode current config")?;
@@ -253,6 +260,27 @@ fn secret_field_name(name: &str) -> bool {
 
 fn secret_config_path(path: &str) -> bool {
     path.split('.').any(secret_field_name)
+}
+
+fn yaml_value_contains_secret_field(value: &serde_yaml::Value) -> bool {
+    match value {
+        serde_yaml::Value::Mapping(mapping) => mapping.iter().any(|(key, child)| {
+            yaml_key_is_secret_field(key)
+                || yaml_value_contains_secret_field(key)
+                || yaml_value_contains_secret_field(child)
+        }),
+        serde_yaml::Value::Sequence(items) => items.iter().any(yaml_value_contains_secret_field),
+        serde_yaml::Value::Tagged(tagged) => yaml_value_contains_secret_field(&tagged.value),
+        _ => false,
+    }
+}
+
+fn yaml_key_is_secret_field(value: &serde_yaml::Value) -> bool {
+    match value {
+        serde_yaml::Value::String(name) => secret_field_name(name),
+        serde_yaml::Value::Tagged(tagged) => yaml_key_is_secret_field(&tagged.value),
+        _ => false,
+    }
 }
 
 fn yaml_value_at<'a>(value: &'a serde_yaml::Value, path: &str) -> Result<&'a serde_yaml::Value> {
@@ -1187,6 +1215,20 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), before);
     }
 
+    #[test]
+    fn config_set_rejects_nested_secret_replacement_without_touching_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FreedomConfig::default();
+        write_config(dir.path(), &config);
+        let path = dir.path().join("freedom.yaml");
+        let before = std::fs::read(&path).unwrap();
+
+        let out = handle_config("fallback.chain\n- key: rotated", &config, dir.path());
+
+        assert!(matches!(out, ActionOutcome::InvalidArgs { .. }), "{out:?}");
+        assert!(out.text().contains("secret field"));
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
     #[test]
     fn config_set_preserves_malformed_state_bytes() {
         let dir = tempfile::tempdir().unwrap();
