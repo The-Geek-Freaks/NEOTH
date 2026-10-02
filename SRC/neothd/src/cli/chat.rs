@@ -9454,7 +9454,10 @@ pub(crate) async fn run_chat_with_output_cap(
 ) -> Result<()> {
     anyhow::ensure!(max_output_tokens > 0, "chat output cap must be nonzero");
     SCOPED_OUTPUT_TOKEN_CAP
-        .scope(Some(max_output_tokens), run_chat_with(args, config, provider))
+        .scope(
+            Some(max_output_tokens),
+            run_chat_with(args, config, provider),
+        )
         .await
 }
 
@@ -9470,7 +9473,10 @@ pub(crate) async fn run_chat_bounded_output(
     anyhow::ensure!(max_output_tokens > 0, "chat output cap must be nonzero");
     let public_policy: serde_yaml::Value = serde_yaml::from_str(&admitted_config.public_yaml()?)?;
     SCOPED_OUTPUT_TOKEN_CAP
-        .scope(Some(max_output_tokens), SCOPED_ADMITTED_PUBLIC_POLICY.scope(Some(public_policy), Box::pin(run_chat(args))))
+        .scope(
+            Some(max_output_tokens),
+            SCOPED_ADMITTED_PUBLIC_POLICY.scope(Some(public_policy), Box::pin(run_chat(args))),
+        )
         .await
 }
 
