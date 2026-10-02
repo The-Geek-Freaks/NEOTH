@@ -3603,6 +3603,7 @@ pub async fn from_config_for_resolved_binding_at(
 /// whose cloud-egress consent is granted under `home`, in order, paired with
 /// the resolved provider. Slots with no provider are dropped; non-cloud
 /// kinds (`local_qwen`/`local_ouro`) always pass via [`crate::consent::is_granted`].
+#[cfg(test)]
 pub(crate) fn consented_fallback_slots<'a>(
     home: &std::path::Path,
     config: &'a FreedomConfig,
@@ -3613,6 +3614,7 @@ pub(crate) fn consented_fallback_slots<'a>(
     fallback_slots_allowed_by(home, config, None)
 }
 
+#[cfg(test)]
 fn fallback_slots_allowed_by<'a>(
     home: &std::path::Path,
     config: &'a FreedomConfig,

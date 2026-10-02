@@ -1299,25 +1299,25 @@ fn merge_effective_credentials(config: &mut FreedomConfig, credentials: &credent
     if let Some(value) = credentials.telegram_token.as_ref() {
         config.telegram_token = Some(value.clone());
     }
-    if let Some(value) = credentials.inference_left_key.as_ref() {
-        if config.inference.left.provider_instance_id.is_none() {
-            config.inference.left.key = Some(value.clone());
-        }
+    if let Some(value) = credentials.inference_left_key.as_ref()
+        && config.inference.left.provider_instance_id.is_none()
+    {
+        config.inference.left.key = Some(value.clone());
     }
-    if let Some(value) = credentials.inference_right_key.as_ref() {
-        if config.inference.right.provider_instance_id.is_none() {
-            config.inference.right.key = Some(value.clone());
-        }
+    if let Some(value) = credentials.inference_right_key.as_ref()
+        && config.inference.right.provider_instance_id.is_none()
+    {
+        config.inference.right.key = Some(value.clone());
     }
-    if let Some(value) = credentials.inference_cerebellum_key.as_ref() {
-        if config.inference.cerebellum.provider_instance_id.is_none() {
-            config.inference.cerebellum.key = Some(value.clone());
-        }
+    if let Some(value) = credentials.inference_cerebellum_key.as_ref()
+        && config.inference.cerebellum.provider_instance_id.is_none()
+    {
+        config.inference.cerebellum.key = Some(value.clone());
     }
-    if let Some(value) = credentials.inference_default_slot_key.as_ref() {
-        if config.inference.default_slot.provider_instance_id.is_none() {
-            config.inference.default_slot.key = Some(value.clone());
-        }
+    if let Some(value) = credentials.inference_default_slot_key.as_ref()
+        && config.inference.default_slot.provider_instance_id.is_none()
+    {
+        config.inference.default_slot.key = Some(value.clone());
     }
     for instance in &mut config.inference.provider_instances {
         if let Some(Some(value)) = credentials

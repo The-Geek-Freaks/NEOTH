@@ -1,7 +1,7 @@
 {
   "schema": "neoth-gold-wave2147-bluebubbles-adoption-order/v1",
   "base": "7ef951c1289ae18cf6037c79f2a8d3e21f5ab339",
-  "status": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "status": "HOSTED_FIXTURE_REPAIRED_RERUN_PENDING",
   "failedRun": "37011330821",
   "priorEvidence": {
     "rustPassed": 398,
@@ -60,5 +60,17 @@
   "localExecutableValidationRan": false,
   "hostedAcceptance": false,
   "nativeAcceptance": false,
-  "releaseAcceptance": false
+  "releaseAcceptance": false,
+  "followup": {
+    "run": 37016886497,
+    "producer": "d1cd27d506b5dcbfa7fd435c6b3e20891b0a1254",
+    "pythonPassed": 61,
+    "pythonErrors": 2,
+    "rustExecuted": 0,
+    "guardsExecuted": 0,
+    "productsExecuted": 0,
+    "reason": "Two new test fixtures referenced missing TRAFFIC_COUNTERS; W2149 uses actual services.counts() interface.",
+    "repairReport": "docs/verification/gold-wave2152-hosted-contract-repairs.json",
+    "hostedAcceptance": false
+  }
 }

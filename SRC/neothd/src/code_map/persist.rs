@@ -1074,14 +1074,14 @@ fn replace_chunks_in_transaction(
             total <= MAX_CODE_MAP_CHUNK_TEXT_BYTES,
             "code-map AST chunk corpus exceeds aggregate text cap"
         );
-        if let Some((prior_path, prior_start, prior_end, prior_ordinal)) = previous {
-            if prior_path == chunk.path {
-                ensure!(
-                    (chunk.start_byte, chunk.end_byte, chunk.ordinal)
-                        > (prior_start, prior_end, prior_ordinal),
-                    "code-map AST chunks are not stable source order"
-                );
-            }
+        if let Some((prior_path, prior_start, prior_end, prior_ordinal)) = previous
+            && prior_path == chunk.path
+        {
+            ensure!(
+                (chunk.start_byte, chunk.end_byte, chunk.ordinal)
+                    > (prior_start, prior_end, prior_ordinal),
+                "code-map AST chunks are not stable source order"
+            );
         }
         previous = Some((&chunk.path, chunk.start_byte, chunk.end_byte, chunk.ordinal));
     }
@@ -1784,6 +1784,7 @@ pub fn persist_map_and_edges(
 /// adopts a different directory identity at publication time. The expected
 /// identity is written into the snapshot, and a final physical check runs
 /// inside the IMMEDIATE transaction so a pre-commit replacement rolls back.
+#[cfg(test)]
 pub(crate) fn persist_map_and_edges_bound(
     conn: &mut Connection,
     map: &RepoMap,

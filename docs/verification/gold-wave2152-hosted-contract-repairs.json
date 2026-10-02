@@ -1,0 +1,160 @@
+{
+  "schema": "neoth-gold-wave2152-hosted-contract-repairs/v1",
+  "base": "d1cd27d506b5dcbfa7fd435c6b3e20891b0a1254",
+  "status": "STATIC_REVIEWED_HOSTED_RERUN_PENDING",
+  "focusedFailure": {
+    "rustExecuted": 0,
+    "run": 37016886497,
+    "pythonPassed": 61,
+    "partialCustodySha256": "B1DA792E342CC117518705D29FB24A3FC2F78393B90C019FD6E3080A3BF0C94A",
+    "pythonErrors": 2,
+    "productsExecuted": 0,
+    "guardsExecuted": 0
+  },
+  "fullRun": 37016981639,
+  "linuxDiagnostics": 15,
+  "sshContract": {
+    "passed": 39,
+    "failed": 1,
+    "logSha256": "220616391BBE759D06E3EEF09B9BE4725F4BA4F9F5E890315CBB1CF39C6988D8",
+    "failure": "CertificateFieldInvalid(ValidPrincipals) before host certificate rejection assertion"
+  },
+  "counts": {
+    "pythonGroups": [
+      10,
+      18,
+      8,
+      27
+    ],
+    "focusedRust": 398,
+    "workflowSources": 180,
+    "python": 63,
+    "portableRust": 2618
+  },
+  "changes": [
+    "Use real LoopbackServices.counts() in both BlueBubbles clock regressions.",
+    "Run the 27 BlueBubbles fixture contracts in the existing build-tool-denied Preflight and exact cadence allowlist.",
+    "Repair the 15 hosted Linux slim-core lints with one narrower visibility, six test-only helper gates, two needless-borrow removals and six predicate-preserving let chains.",
+    "Assign one explicit test-host principal before signing the SSH certificate fixture; production certificate rejection remains unchanged."
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false,
+  "liveAudioBaseline": {
+    "producer": "d1cd27d506b5dcbfa7fd435c6b3e20891b0a1254",
+    "run": 37016981639,
+    "platforms": [
+      "Linux",
+      "Windows",
+      "macOS"
+    ],
+    "fixturesPerPlatform": 19,
+    "actualPassed": 57,
+    "sourceBindings": 5,
+    "proofSha256": "0F6ED8D7E89228092FBDE099859043DF2AB9022D625837D2B1DE22773F70D44E",
+    "scope": "W186 only; no complete native or full-CI acceptance"
+  },
+  "sources": [
+    {
+      "path": "packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
+      "baseBlob": "9d5e2f45c6a58057bbc8519019b20afb381a8998",
+      "candidate": "work/gold-20260906/wave2149-bluebubbles-fixture-repair/candidate/packaging_tests_test_bluebubbles_daemon_adoption_canary.py",
+      "sha256": "FC86EA60529471461541D5D3F0B632A3A02FD7C3521093B52D9862712E264195",
+      "candidateBlob": "e6245c521d3fe724faf5571187260476cf417722"
+    },
+    {
+      "path": ".github/workflows/preflight.yml",
+      "baseBlob": "d210ef3c700633bb73d75c98d21f55c6eb933894",
+      "candidate": "work/gold-20260906/wave2149-bluebubbles-fixture-repair/candidate/.github_workflows_preflight.yml",
+      "sha256": "D52C578B8724DDCD85AF89D716D80B501AD12466FA9F7632D48F566C43ED03CC",
+      "candidateBlob": "a3972ddde0230bff824777147a8c3f62e267186c"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "baseBlob": "d36b37542e65d9292533e75e058c64962153c728",
+      "candidate": "work/gold-20260906/wave2149-bluebubbles-fixture-repair/candidate/packaging_tests_test_ci_cadence_contract.py",
+      "sha256": "36AE8433BDDDD3C6634DF5D886407C618679B025B16A8660D7C5C034EC578E13",
+      "candidateBlob": "14c386e1d214a144adde6fea17c023a18d94f21b"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "baseBlob": "dd723827e722a5f9694a025f819621ce18dc0106",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "493DFE2A4A3D1D88EAF5A20B9C50ABC5941A4F1CF6F67D99D924E977B4FDCA37",
+      "candidateBlob": "57c6df0a99acee99ab88f0e613d4dd1076e9270d"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code.rs",
+      "baseBlob": "944d3dc0400669315cec8c9bafcadec401c37ebd",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/cli/code.rs",
+      "sha256": "6E3E05F8171F1F40D949F4AD32522CD99D3522AC260CC9C6CF828342DF6BB404",
+      "candidateBlob": "45a4ed19cff57d2d27e344e90f3ad2c5d18ff1ea"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/persist.rs",
+      "baseBlob": "1ebc92a6e92db0c3b9b1d6a9bfcd99eabbb51497",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/code_map/persist.rs",
+      "sha256": "3CD270956B88FFC4E00B1B6E31DD315E9DED4769C06888EB74B35C1B89873176",
+      "candidateBlob": "69b91fb761ac8e2c0ebcec58bb5deff7f722ca6b"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "baseBlob": "be73627439e1a1ffb818e51f855f5582c866ce5e",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/config/mod.rs",
+      "sha256": "E0994E47EE4CD891AD2B6895F089443FEB8D0F5291F218CB07FC3E6152B95681",
+      "candidateBlob": "97bc51aab577476a40e89c92ec9344bc592cc8c1"
+    },
+    {
+      "path": "SRC/neothd/src/models/discovery.rs",
+      "baseBlob": "8f1371a4b20c66d3aaeefc6484a8b456937ba844",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/models/discovery.rs",
+      "sha256": "C3D730EE35463936043DD97B0CAA3B426C5848C4918DF18BFE9C64A005CA3389",
+      "candidateBlob": "375e5e43e787a78304fb338d6d39dabd2e0a68b2"
+    },
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "baseBlob": "985037e5942906cf5614222054f83ef3ee2f8fb5",
+      "candidate": "work/gold-20260906/wave2150-linux-clippy-repair/candidate/SRC/neothd/src/providers/mod.rs",
+      "sha256": "9B7DA7D7F996B353D40DFCC299EF9D2CAB12BC3E47F4B90071A3C4277629EED0",
+      "candidateBlob": "3e7da023928fb4ca596e55ae1cd185f801d4b2fb"
+    },
+    {
+      "path": "SRC/neothd/src/transport/ssh_tunnel.rs",
+      "baseBlob": "6a82bad23448e51151867752f7d5b4e5fb91528e",
+      "candidate": "work/gold-20260906/wave2151-ssh-certificate-fixture/candidate/SRC/neothd/src/transport/ssh_tunnel.rs",
+      "sha256": "2E392B8AEDC5FBCBC19F14C4213FB53976D2DBBD493734AF49390F4E1A411C37",
+      "candidateBlob": "0c0cb3458457124351748f51bc4c3bfd9053ebd7"
+    }
+  ],
+  "reviews": [
+    {
+      "sha256": "D8EAEA44D7C4F91C34D6FF469622F361DB80371FE73C5ED6B6E28EC4EB4D8E9F",
+      "path": "work/gold-20260906/wave2149-bluebubbles-fixture-repair/REVIEW.json"
+    },
+    {
+      "sha256": "2A5C1932928739E74AE927101A9F33E7CF575C14065C04F5AAA3126A223D04D6",
+      "path": "work/gold-20260906/wave2149-bluebubbles-fixture-repair/PREFLIGHT_REVIEW.json"
+    },
+    {
+      "sha256": "18AF233986E9B262B09321127AE1DCA58AB20C77CD4F4E334CCC7E899A5BFDD2",
+      "path": "work/gold-20260906/wave2150-linux-clippy-repair/REVIEW.json"
+    },
+    {
+      "sha256": "5951280282E52105D8FF4182E991621FEABCE806E715F6C81A09D816A9B4A7A4",
+      "path": "work/gold-20260906/wave2151-ssh-certificate-fixture/REVIEW.json"
+    }
+  ],
+  "fullRunBaseline": {
+    "producer": "d1cd27d506b5dcbfa7fd435c6b3e20891b0a1254",
+    "run": 37016981639,
+    "status": "in_progress",
+    "successJobs": 15,
+    "failedJobs": 2,
+    "windows": "test execution active; compilation passed",
+    "macos": "compilation active",
+    "accepted": false,
+    "observedUtc": "2026-10-02T15:33:50.3589591Z"
+  },
+  "sequencingReviewSha256": "A1749EB78105981C31EF6B3989476D4DBD71B508CED64CA354C33B06C6C6E53B"
+}

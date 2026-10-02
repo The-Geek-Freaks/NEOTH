@@ -330,6 +330,7 @@ fn prompt_recall_context_at(
     )
 }
 
+#[cfg(test)]
 fn prompt_recall_context_at_bounded(
     conn: &Connection,
     cwd: &std::path::Path,
@@ -364,6 +365,7 @@ fn prompt_recall_context_at_bounded(
     )
 }
 
+#[cfg(test)]
 fn prompt_recall_context_from_receipt(
     conn: &rusqlite::Connection,
     receipt: &crate::code_map::recall::RecallReceipt,
@@ -1096,6 +1098,7 @@ fn diff_impact_context_at(
 
 /// Build bounded context for the shared coding-service admission path using
 /// its explicit database and physical repository root, without resolving CWD.
+#[cfg(test)]
 pub(crate) fn prepare_code_map_context_for_root_at_database(
     prompt: &str,
     repository_root: &std::path::Path,
@@ -1342,7 +1345,7 @@ async fn semantic_candidates_for_prompt_with_provider(
     }
     let Some(query) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        crate::memory::embeddings::embed_one(prompt, &provider),
+        crate::memory::embeddings::embed_one(prompt, provider),
     )
     .await
     .ok()
@@ -1363,7 +1366,7 @@ async fn semantic_candidates_for_prompt_with_provider(
             crate::code_map::vector_embeddings::query_pre_ranked_files(
                 &conn,
                 &receipt.snapshot,
-                &provider,
+                provider,
                 &query,
                 &receipt.ranked_files,
             )

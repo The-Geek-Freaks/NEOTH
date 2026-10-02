@@ -783,6 +783,9 @@ mod tests {
         builder
             .cert_type(CertType::Host)
             .expect("mark host certificate");
+        builder
+            .valid_principal("certificate-test")
+            .expect("restrict host certificate to test host");
         let certificate = builder.sign(&signing_ca).expect("sign host certificate");
         let tofu = Arc::new(Mutex::new(
             TofuStore::in_memory().expect("open test TOFU store"),

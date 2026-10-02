@@ -333,7 +333,7 @@ pub(crate) struct ChatTurnPreparation {
     /// Exact selected skill binding from the authority-bound replay prompt snapshot.
     pub(crate) replay_selected_skill: Option<crate::cli::chat::ReplaySelectedSkill>,
     /// Route admitted by the public CLI ingress before consent/provider creation.
-    pub(crate) retained_skill_admission: Option<crate::cli::chat::RetainedSkillAdmission>,
+    pub(super) retained_skill_admission: Option<crate::cli::chat::RetainedSkillAdmission>,
     pub(crate) reasoning_display: bool,
     pub(crate) cancellation: ChatTurnCancellation,
     pub(crate) session_canary: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,

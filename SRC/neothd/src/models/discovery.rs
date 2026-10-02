@@ -750,15 +750,15 @@ fn effective_route_bindings(
             let kind = provider.to_provider_kind();
             let region =
                 explicit_binding_region(config, kind, &binding.slot, binding.is_named_instance);
-            if let Some(home) = home {
-                if !route_consented(
+            if let Some(home) = home
+                && !route_consented(
                     Some(home),
                     kind,
                     binding.slot.endpoint.as_deref(),
                     region.as_deref(),
-                ) {
-                    continue;
-                }
+                )
+            {
+                continue;
             }
             push_explicit_binding(
                 &mut bindings,

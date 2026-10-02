@@ -349,7 +349,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             reload.write_text("reload\n", encoding="utf-8")
             services = canary.LoopbackServices()
             self.addCleanup(services.stop)
-            counts = {name: 0 for name in canary.TRAFFIC_COUNTERS}
+            counts = services.counts()
             counts["empty_poll"] = 1
 
             def consume_sentinel(_: float) -> None:
@@ -368,7 +368,7 @@ class BlueBubblesDaemonAdoptionCanaryTests(unittest.TestCase):
             (home / canary.RELOAD).write_text("reload\n", encoding="utf-8")
             services = canary.LoopbackServices()
             self.addCleanup(services.stop)
-            counts = {name: 0 for name in canary.TRAFFIC_COUNTERS}
+            counts = services.counts()
             counts["empty_poll"] = 1
             with patch.object(services, "counts", return_value=counts), patch.object(
                 canary.time, "monotonic", side_effect=[0, 0, 26]
