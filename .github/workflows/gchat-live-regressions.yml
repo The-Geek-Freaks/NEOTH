@@ -256,6 +256,7 @@ jobs:
             slug="$(printf '%s' "$case_id" | tr ':' '-' | tr -c '[:alnum:]' '-')"
             local discovery_log="$W548_ROOT/log/${ordinal}-discovery-${kind}-${slug}.log"
             local actual_log="$W548_ROOT/log/${ordinal}-actual-${kind}-${slug}.log"
+            local terminal_prefix="test $test_name ... "
 
             printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/started.txt"
             if ! timeout --kill-after=10s 1800s cargo test -p neoth --locked --features gchat-channel,irc-channel,nostr-channel "$@" "$test_name" -- --exact --list >"$discovery_log" 2>&1; then
@@ -271,7 +272,18 @@ jobs:
 
             printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/executed.txt"
             if timeout --kill-after=10s 180s cargo test -p neoth --locked --features gchat-channel,irc-channel,nostr-channel "$@" "$test_name" -- --exact --test-threads=1 >"$actual_log" 2>&1 \
-              && [ "$(grep -Fxc "test $test_name ... ok" "$actual_log")" -eq 1 ] \
+              && awk -v prefix="$terminal_prefix" '
+                index($0, prefix) == 1 {
+                  starts++
+                  if ($0 == prefix "ok") inline_terminals++
+                  else awaiting_terminal = 1
+                  next
+                }
+                awaiting_terminal && $0 == "ok" { terminals++ }
+                END {
+                  exit (starts == 1 && ((inline_terminals == 1) || (inline_terminals == 0 && terminals == 1))) ? 0 : 1
+                }
+              ' "$actual_log" \
               && [ "$(grep -Fc 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$actual_log")" -eq 1 ]; then
               printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/passed.txt"
             else

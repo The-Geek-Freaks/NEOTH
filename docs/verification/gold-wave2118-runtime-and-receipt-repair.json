@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-gold-wave2118-runtime-and-receipt-repair/v1",
+  "capturedUtc": "2026-10-02T09:46:24.3332601Z",
+  "base": "e1829ffe2d173e8d6fa5f15507e54458dbaee465",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "previousRun": {
+    "id": "36987926773",
+    "producer": "e1829ffe2d173e8d6fa5f15507e54458dbaee465",
+    "started": 372,
+    "executed": 372,
+    "receiptPassed": 369,
+    "receiptFailed": 3,
+    "chatEngineResult": "1 passed; stdout interleaved so old terminal predicate rejected; process status not independently recorded",
+    "failedTests": [
+      "cli::docgen::tests::cli_commands_md_is_up_to_date",
+      "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds"
+    ],
+    "overallAcceptance": false
+  },
+  "repairs": [
+    "Generated CLI reference recovered byte-for-byte from producer-bound hosted docgen assertion; old left string matched source",
+    "Named Channel MCP fixture uses canonical marker child and verifies exact derived startup descriptor after successful dispatch",
+    "Workflow and independent admission accept exact inline or interleaved libtest success; process and one-passed summary gates retained"
+  ],
+  "mcp": {
+    "run": "36987926773",
+    "producer": "e1829ffe2d173e8d6fa5f15507e54458dbaee465",
+    "mcpConditionObserved": "assertion `left == right` failed: W2105 diagnostic (not a repair): selected_http_calls=1; remaining_scripted_responses=1; selected_leaf_receipts=1; mcp_calls=0; mcp_rejections=[]; dispatch_warnings=\" WARN W2105 diagnostic: MCP dispatch failed before loop progress server=neoth-codegraph tool=codegraph_recall_v1 reason=spawn MCP server `neoth-codegraph`: MCP server `neoth-codegraph`: stdin/stdout I/O error: server closed stdout server_truncated=false tool_truncated=false reason_truncated=false\\n\"",
+    "mcpActualLogSha256": "F73EA2B2C9ED79621F268FAF28CC440264933ED30F411BB96FD19574FEFA9E48",
+    "candidateSha256": "A223A02129960A28B165B9AF9FEB80F28F711ED9D0F2E9EE00657760D6E63F0B",
+    "reviewer": "/root/w2107_final_review",
+    "status": "CONDITIONAL_STATIC_APPROVAL_ACTIVATED_BY_HOSTED_DIAGNOSIS",
+    "localExecutableValidationRan": false
+  },
+  "doc": {
+    "producer": "e1829ffe2d173e8d6fa5f15507e54458dbaee465",
+    "run": "36987926773",
+    "source": "verified original log artifact11219476795, exactcase204 actual log",
+    "method": "Decode JSON-compatible string values in hosted Rust assertion; source confirms left=committed/right=generated; left equals current source bytes after CRLF normalization",
+    "logSHA256": "C6BDA6FB80142318A4B789E8870EF1953286762C566403FAD79D05DAE93E5918",
+    "candidateSHA256": "1E4F81F82BCAD891216832D82F6F45193C5F5076CA378EC7A5652C2602010536",
+    "candidateBlob": "3aa8627e856960e38a9101bef115cd1ac1bc166e",
+    "localCodeParserOrRuntimeRan": false
+  },
+  "terminalReview": {
+    "reviewer": "/root/w2118_terminal_review",
+    "workflowSHA256": "6513C8923DD7BC6EF2650170E759D28FB4631452CE77920215FA950C66A4F7AE",
+    "helperSHA256": "F1C0F9416F474A437FA59644D44088182DD1799BE0FB8EA89E7B9AD1DD95F702"
+  },
+  "focusedCases": 372,
+  "sourceBindings": 174,
+  "portableCases": 2594,
+  "guards": 20,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeAcceptance": false,
+  "releaseAcceptance": false
+}

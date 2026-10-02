@@ -413,12 +413,76 @@ Persist the closed embedding-model selection and return exact readback
 
 Alias of list for GUI and operator status polling
 
+### `neoth buddy fallback`
+
+Replace or clear the HTTP-429 fallback chain with named provider selectors.  The selector-only transaction lives in `hemispheres` so Buddy cannot create a second configuration writer
+
+#### `neoth buddy fallback clear`
+
+Clear every configured fallback while preserving `fallback.max_hops`
+
+#### `neoth buddy fallback replace`
+
+Replace the full chain in order. Each selector must name an existing provider instance; inline provider/model/endpoint authority is absent
+
+- `--provider-instance-id <PROVIDER_INSTANCE_IDS>`
+
 ### `neoth buddy proactive`
 
 Toggle `proactive.enabled` in freedom.yaml
 
 - `--enable` — Enable proactive messaging
 - `--disable` — Disable proactive messaging
+
+### `neoth buddy provider`
+
+Rebind or inspect a provider/model route through the canonical `neoth hemispheres` command.  This facade owns no validation, config, credential, rollback, or audit implementation of its own
+
+#### `neoth buddy provider mode`
+
+GOLD-FEAT-01a: switch to single-provider mode — set `inference.mode = single` so all three roles resolve to ONE provider (`default_slot`) and bind that provider in one step. Unlike `preset single` (which keeps the existing default slot), this picks the provider explicitly. Writes freedom.yaml atomically with a pre-mutation rollback snapshot
+
+- `--provider <PROVIDER>` — Provider all hemispheres route to: `claude_cli` / `anthropic_api` / `openai_api` / `openai_compat` / `gemini_api` / `local_qwen` / `local_ouro` / `aws_bedrock` / `azure_openai`
+- `--model <MODEL>` — Model identifier for the single provider
+- `--key <KEY>` — API key (when the provider needs one)
+- `--endpoint <ENDPOINT>` — Endpoint URL (for `openai_compat`)
+
+#### `neoth buddy provider preset`
+
+Apply a named hemisphere preset to `freedom.yaml` non-interactively (GOLD-ADOPT-12) — the same presets the `neoth init` wizard offers. Writes atomically + emits a 0x1F HEMISPHERE_REBOUND audit frame per changed role (with a pre-mutation rollback snapshot)
+
+- `<NAME>` — Preset to apply: `local` / `local-reasoning` / `local-abliterated` / `single`
+- `--vram <VRAM>` — (local-abliterated) override detected VRAM in MiB instead of probing
+- `--count <COUNT>` — (local-abliterated) how many hemispheres run local — default = the most the VRAM supports
+
+#### `neoth buddy provider select`
+
+Select an existing named provider instance for one role. The persisted role slot is a selector only; provider authority remains in the registry entry
+
+- `--role <ROLE>` — Role to rebind: `left` / `right` / `cerebellum`
+- `--provider-instance-id <PROVIDER_INSTANCE_ID>` — Existing `inference.provider_instances[].id` to select
+
+#### `neoth buddy provider set`
+
+Rebind one hemisphere role to a provider. Writes `~/.neoth/freedom.yaml` atomically and emits a WAL 0x1F HEMISPHERE_REBOUND audit frame immediately into `~/.neoth/wal/<uuid>-hemisphere-rebind-000001.wal`
+
+- `--role <ROLE>` — Role to rebind: `left` / `right` / `cerebellum`
+- `--provider <PROVIDER>` — Provider name: `claude_cli` / `anthropic_api` / `openai_api` / `openai_compat` / `gemini_api` / `local_qwen` / `local_ouro` / `aws_bedrock` / `azure_openai`
+- `--model <MODEL>` — Model identifier (e.g. `claude-opus-4-7`, `gpt-4o`)
+- `--key <KEY>` — API key (when the provider needs one)
+- `--endpoint <ENDPOINT>` — Endpoint URL (for `openai_compat`)
+
+#### `neoth buddy provider show`
+
+Show the current per-hemisphere provider binding
+
+#### `neoth buddy provider test`
+
+Sanity-check the provider bound to a role. Default behaviour: build the adapter + report load latency only. Pass `--question "X"` to additionally fire a live LLM round-trip against the bound provider — the smallest possible end-to-end smoke-test per hemisphere. Pair with `--dry-run` to print what would be sent without making the call (useful for cost-sensitive cloud providers)
+
+- `--role <ROLE>`
+- `--question <QUESTION>` — Optional question to send live to the bound provider. Without this flag the command is build-only
+- `--dry-run` — When set with `--question`, print what would be sent + resolved provider/model without making the LLM call
 
 ### `neoth buddy self-activation`
 
@@ -2079,6 +2143,13 @@ Apply a named hemisphere preset to `freedom.yaml` non-interactively (GOLD-ADOPT-
 - `<NAME>` — Preset to apply: `local` / `local-reasoning` / `local-abliterated` / `single`
 - `--vram <VRAM>` — (local-abliterated) override detected VRAM in MiB instead of probing
 - `--count <COUNT>` — (local-abliterated) how many hemispheres run local — default = the most the VRAM supports
+
+### `neoth hemispheres select`
+
+Select an existing named provider instance for one role. The persisted role slot is a selector only; provider authority remains in the registry entry
+
+- `--role <ROLE>` — Role to rebind: `left` / `right` / `cerebellum`
+- `--provider-instance-id <PROVIDER_INSTANCE_ID>` — Existing `inference.provider_instances[].id` to select
 
 ### `neoth hemispheres set`
 

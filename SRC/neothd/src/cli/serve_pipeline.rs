@@ -11798,7 +11798,7 @@ mod tests {
                 std::fs::write(
                     home.path().join("mcp_servers.yaml"),
                     serde_yaml::to_string(&crate::mcp::McpServers {
-                        servers: vec![descriptor],
+                        servers: vec![descriptor.clone()],
                         smart_loading: true,
                     })
                     .expect("serialize W2062 MCP config"),
@@ -11906,17 +11906,25 @@ mod tests {
                     home.path().to_path_buf(),
                 )
                 .expect("spawn W2062 channel WAL");
+                let child_record = home.path().join("w2062-child-events.jsonl");
+                let prior_child_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
                 let prior_autoroute = std::env::var_os("NEOTH_MCP_AUTOROUTE");
                 let prior_child_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe { std::env::set_var("NEOTH_W56_CHILD_RECORD", &child_record) };
                 unsafe { std::env::set_var("NEOTH_MCP_AUTOROUTE", "1") };
                 unsafe { std::env::set_var("NEOTH_W59_CHILD_CWD", &root) };
                 struct RestoreW2062ProcessState {
+                    child_record: Option<std::ffi::OsString>,
                     autoroute: Option<std::ffi::OsString>,
                     child_cwd: Option<std::ffi::OsString>,
                 }
                 impl Drop for RestoreW2062ProcessState {
                     fn drop(&mut self) {
                         unsafe {
+                            match self.child_record.take() {
+                                Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                                None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                            }
                             match self.autoroute.take() {
                                 Some(value) => std::env::set_var("NEOTH_MCP_AUTOROUTE", value),
                                 None => std::env::remove_var("NEOTH_MCP_AUTOROUTE"),
@@ -11929,6 +11937,7 @@ mod tests {
                     }
                 }
                 let _restore_process_state = RestoreW2062ProcessState {
+                    child_record: prior_child_record,
                     autoroute: prior_autoroute,
                     child_cwd: prior_child_cwd,
                 };
@@ -12050,6 +12059,29 @@ mod tests {
                 );
                 assert_eq!(selected_leaf_receipts, 2, "both MCP provider leaves retain selected identity");
                 assert_eq!(mcp_calls, 1, "only the Skill-allowed MCP tool reaches the real MCP dispatch path");
+                let child_events: Vec<serde_json::Value> = std::fs::read_to_string(&child_record)
+                    .expect("read W2062 real codegraph child record")
+                    .lines()
+                    .map(|line| serde_json::from_str(line).expect("valid W2062 child event"))
+                    .collect();
+                let startups: Vec<_> = child_events
+                    .iter()
+                    .filter(|event| event["event"] == "startup")
+                    .collect();
+                assert_eq!(startups.len(), 1, "one W2062 real codegraph child starts");
+                let observed = serde_json::from_value::<crate::mcp::config::McpServerConfig>(
+                    startups[0]["descriptor"].clone(),
+                )
+                .expect("complete W2062 child descriptor");
+                let expected = crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
+                    &descriptor,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    crate::config::CodeMapConfig::default()
+                        .requested_context_policy()
+                        .expect("default W2062 requested context policy"),
+                )
+                .expect("derive expected W2062 child descriptor");
+                assert_eq!(observed, expected, "real child retains the exact derived descriptor");
                 });
         });
     }

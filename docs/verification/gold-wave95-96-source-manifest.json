@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T09:02:53.0011500Z",
-  "validationStatus": "Exact five hosted compile diagnostics repaired statically;372 focused cases pending",
+  "capturedUtc": "2026-10-02T09:46:27.3070390Z",
+  "validationStatus": "Confirmed MCP child and CLI reference repairs;stdout-aware terminal predicates reviewed;372 focused cases pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 105646,
-      "sha256": "A4F3C5E887360B1BDCA1F4723B23136ACF08FB718A18E6D28674DA638B8FDC0E"
+      "bytes": 106141,
+      "sha256": "6513C8923DD7BC6EF2650170E759D28FB4631452CE77920215FA950C66A4F7AE"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -258,8 +258,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 258709,
-      "sha256": "7388B787650C6A840E91020BCDA09A8B34716EE6965C30C6AB7FC3E0C8F8113A"
+      "bytes": 263044,
+      "sha256": "1E4F81F82BCAD891216832D82F6F45193C5F5076CA378EC7A5652C2602010536"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3057,6 +3057,11 @@
       "sha256": "9413867CC7F48EA39208F9A3CA1ECCD046ABADB159B955FEC02F6AC5453BC998"
     },
     {
+      "path": "docs/verification/gold-wave2118-runtime-and-receipt-repair.json",
+      "bytes": 3316,
+      "sha256": "258B38278E474410F71A11424513A6FF79E922A707087A44DB5952F0F0B8C35F"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4158,8 +4163,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2286812,
-      "sha256": "2AEDF3D156402E2EDFE07A0FC5042D49A5075ABB272941C9A94EC330AC161FE3"
+      "bytes": 2288396,
+      "sha256": "A7540F5990E6F630ECD1A757FD4D35FCFDFA52C47462A626000FDBB6307B6B27"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5423,8 +5428,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 558770,
-      "sha256": "FAADEEAFAED928E0C146A684F2068F008BD462E02AB8D945428FF682FBDA21DF"
+      "bytes": 560830,
+      "sha256": "A223A02129960A28B165B9AF9FEB80F28F711ED9D0F2E9EE00657760D6E63F0B"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
