@@ -1,0 +1,419 @@
+{
+  "schema": "neoth.wave2289.focused491-additions.v2",
+  "baseFocusedCaseCount": 437,
+  "addedPortableRecords": 50,
+  "addedClusterRecords": 4,
+  "totalFocusedCases": 491,
+  "execution": {
+    "featureSet": [
+      "gchat-channel",
+      "irc-channel",
+      "nostr-channel"
+    ],
+    "testArgs": [
+      "-p",
+      "neoth",
+      "--locked",
+      "--features",
+      "gchat-channel,irc-channel,nostr-channel",
+      "--lib",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "clusterFeatureMismatch": false
+  },
+  "records": [
+    {
+      "caseId": 438,
+      "test": "daemon::audit_rpc::tests::conversation_start_peer_eof_aborts_and_joins_before_handler_returns",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "BE815D79677FE4FAE8DC26D36FEB86C8B156BA16F66BB9F0FC6DDCA9028F50AD",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 439,
+      "test": "daemon::audit_rpc::tests::conversation_start_broken_reply_write_aborts_before_handler_returns",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "BE815D79677FE4FAE8DC26D36FEB86C8B156BA16F66BB9F0FC6DDCA9028F50AD",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 440,
+      "test": "daemon::audit_rpc::tests::conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_returns_error",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "BE815D79677FE4FAE8DC26D36FEB86C8B156BA16F66BB9F0FC6DDCA9028F50AD",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 441,
+      "test": "daemon::audit_rpc::tests::conversation_attach_failed_abort_after_peer_close_returns_error_from_production_helper",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "BE815D79677FE4FAE8DC26D36FEB86C8B156BA16F66BB9F0FC6DDCA9028F50AD",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 442,
+      "test": "daemon::authorized_text_turn::tests::genuine_bridge_reasoning_event_never_reaches_voice_sink",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 443,
+      "test": "daemon::authorized_text_turn::tests::genuine_bridge_delta_and_terminal_are_forwarded_in_order",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 444,
+      "test": "daemon::authorized_text_turn::tests::sealed_start_cursor_replays_visible_delta_before_exchange_upper_bound",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 445,
+      "test": "daemon::authorized_text_turn::tests::failed_exchange_cancels_and_observes_terminal_before_returning_error",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 446,
+      "test": "daemon::authorized_text_turn::tests::partial_attach_error_commits_cursor_and_never_replays_speech",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 447,
+      "test": "daemon::authorized_text_turn::tests::cancellation_preserves_terminal_delivered_before_later_attach_error",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 448,
+      "test": "daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 449,
+      "test": "daemon::authorized_text_turn::tests::normal_preobserved_cancelled_terminal_never_mints_auto_cancel_proof",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 450,
+      "test": "daemon::authorized_text_turn::tests::dropped_consumer_is_cancelled_and_settled_by_its_existing_supervisor",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 451,
+      "test": "daemon::authorized_text_turn::tests::second_start_is_refused_before_any_second_bridge_start",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 452,
+      "test": "daemon::authorized_text_turn::tests::idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 453,
+      "test": "daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible",
+      "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sourceSha256": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 454,
+      "test": "daemon::conversation_bridge::tests::indeterminate_start_failure_is_not_projected_as_retryable_unavailability",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_bridge.rs",
+      "sourceSha256": "BF5234C11440D966DA77FEAC4D3254CC6E7728FBC5E4CE831658B1ED73749E82",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 455,
+      "test": "daemon::conversation_bridge::tests::stateful_reply_cannot_replace_its_subscription_or_generation",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_bridge.rs",
+      "sourceSha256": "BF5234C11440D966DA77FEAC4D3254CC6E7728FBC5E4CE831658B1ED73749E82",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 456,
+      "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "sourceSha256": "4CCA712619289CAD722871CF1E177F0BE23C4750963525542B347FFAAC174B29",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 457,
+      "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "sourceSha256": "4CCA712619289CAD722871CF1E177F0BE23C4750963525542B347FFAAC174B29",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 458,
+      "test": "daemon::conversation_registry::tests::concurrent_duplicate_preflight_mints_one_owner_call_and_one_subscription",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 459,
+      "test": "daemon::conversation_registry::tests::changed_preflight_body_for_same_request_is_a_conflict",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 460,
+      "test": "daemon::conversation_registry::tests::foreign_session_cannot_control_bound_subscription",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 461,
+      "test": "daemon::conversation_registry::tests::failed_start_is_not_cached_and_retry_reaches_owner",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 462,
+      "test": "daemon::conversation_registry::tests::more_than_the_retention_limit_of_settled_lifecycles_admits_the_next_request",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 463,
+      "test": "daemon::conversation_registry::tests::relay_lag_publishes_indeterminate_terminal_and_closes_its_owner",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 464,
+      "test": "daemon::conversation_registry::tests::relay_lag_owner_close_failure_is_returned_by_runtime_close",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 465,
+      "test": "daemon::conversation_registry::tests::runtime_close_joins_a_long_lived_relay_after_session_cleanup",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sourceSha256": "E3925E9706E64E9B56CBB35E06A94FE562636A067A59B271EC1075F87F3C7C15",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 466,
+      "test": "daemon::conversation_session::tests::retained_stage_failure_reaches_the_session_owner",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_session.rs",
+      "sourceSha256": "55A6EFB3449C23F63E89177FCD0BABD1B9EE0BB37AE6277D42F3640EC800B68F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 467,
+      "test": "daemon::conversation_session::tests::retained_stage_reports_closed_bounded_result_queue",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_session.rs",
+      "sourceSha256": "55A6EFB3449C23F63E89177FCD0BABD1B9EE0BB37AE6277D42F3640EC800B68F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 468,
+      "test": "daemon::conversation_session::tests::drain_stages_joins_a_later_blocked_worker_after_the_first_failure",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_session.rs",
+      "sourceSha256": "55A6EFB3449C23F63E89177FCD0BABD1B9EE0BB37AE6277D42F3640EC800B68F",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 469,
+      "test": "daemon::conversation_transport_regressions::tests::exact_preflight_replays_once_and_wrong_boot_has_no_effect",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_transport_regressions.rs",
+      "sourceSha256": "DC8028FF059F645C6E3329FCE61EBE97AD9133DC0B74F6E50EAAB9F06B5C8669",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 470,
+      "test": "daemon::conversation_transport_regressions::tests::foreign_request_or_generation_has_no_control_effect",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_transport_regressions.rs",
+      "sourceSha256": "DC8028FF059F645C6E3329FCE61EBE97AD9133DC0B74F6E50EAAB9F06B5C8669",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 471,
+      "test": "media::audio::tests::in_memory_tts_wav_decoder_returns_bounded_pcm_and_rejects_bad_inputs",
+      "sourcePath": "SRC/neothd/src/media/audio.rs",
+      "sourceSha256": "9FFD64C8A48D20BF62045F49053F821E7C3802AE2B59DE8C93094BD3811DC612",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 472,
+      "test": "media::audio::tests::normalized_tts_pcm_rejects_an_impossible_empty_decoder_result",
+      "sourcePath": "SRC/neothd/src/media/audio.rs",
+      "sourceSha256": "9FFD64C8A48D20BF62045F49053F821E7C3802AE2B59DE8C93094BD3811DC612",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 473,
+      "test": "media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation",
+      "sourcePath": "SRC/neothd/src/media/conversation_scope.rs",
+      "sourceSha256": "CA99E246BD742DCF70176A987A7F4157F12520D2DFC1A6C755EFEDA46AE24575",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 474,
+      "test": "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
+      "sourcePath": "SRC/neothd/src/media/dictation.rs",
+      "sourceSha256": "9DFFBD37969CEC104CEC368D34C51A00A98076EE287D78039DD129F052E18645",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 475,
+      "test": "media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress",
+      "sourcePath": "SRC/neothd/src/media/dictation.rs",
+      "sourceSha256": "9DFFBD37969CEC104CEC368D34C51A00A98076EE287D78039DD129F052E18645",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 476,
+      "test": "media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response",
+      "sourcePath": "SRC/neothd/src/media/tts_cloud.rs",
+      "sourceSha256": "725E0CC4730ACB04774A2BAE223373208C28F6C724AAC8CAD694EC34FF9E2E4B",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 477,
+      "test": "media::tts_cloud::tests::only_azure_raw_pcm_has_a_proved_playback_format",
+      "sourcePath": "SRC/neothd/src/media/tts_cloud.rs",
+      "sourceSha256": "725E0CC4730ACB04774A2BAE223373208C28F6C724AAC8CAD694EC34FF9E2E4B",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 478,
+      "test": "media::tts_cloud::tests::configured_local_wav_response_normalizes_through_the_existing_decoder",
+      "sourcePath": "SRC/neothd/src/media/tts_cloud.rs",
+      "sourceSha256": "725E0CC4730ACB04774A2BAE223373208C28F6C724AAC8CAD694EC34FF9E2E4B",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 479,
+      "test": "media::tts_cloud::tests::configured_playback_request_format_keeps_local_wav_available",
+      "sourcePath": "SRC/neothd/src/media/tts_cloud.rs",
+      "sourceSha256": "725E0CC4730ACB04774A2BAE223373208C28F6C724AAC8CAD694EC34FF9E2E4B",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 480,
+      "test": "permissions::microphone::tests::once_is_config_bound_and_consumed",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
+      "sourceSha256": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 481,
+      "test": "permissions::microphone::tests::denial_expiry_and_revoke_fail_closed",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
+      "sourceSha256": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 482,
+      "test": "permissions::microphone::tests::independent_store_revoke_invalidates_stale_challenge_and_capability",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
+      "sourceSha256": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 483,
+      "test": "permissions::microphone::tests::oversized_or_nonregular_persisted_state_fails_closed",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
+      "sourceSha256": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 484,
+      "test": "permissions::microphone::tests::symlinked_persisted_state_fails_closed",
+      "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
+      "sourceSha256": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 485,
+      "test": "wal::microphone_receipts::tests::consumed_admission_forms_one_sealed_intent_then_terminal_result",
+      "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs",
+      "sourceSha256": "7B4D308BCB07722DCB308E699608F51E77892D6C5787CE9522BC8F0182511AAA",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 486,
+      "test": "wal::writer::tests::microphone_realtime_subtypes_refuse_every_generic_writer_entry",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "ADE96528687D9B3EC43C225533A771D69611573D400D2432738A6DB1DFAF5BBC",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 487,
+      "test": "wal::writer::tests::microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "ADE96528687D9B3EC43C225533A771D69611573D400D2432738A6DB1DFAF5BBC",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 488,
+      "test": "cluster::outbound_tests::task_result_validator_enforces_terminal_payload_shape_without_requiring_nonempty_completion",
+      "sourcePath": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "sourceSha256": "6A63C5B09FE8E17A11776C3CE1AA534841D8BAD84ED5D52776BEB5941AFCE028",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 489,
+      "test": "cluster::outbound_tests::outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_partial_state",
+      "sourcePath": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "sourceSha256": "6A63C5B09FE8E17A11776C3CE1AA534841D8BAD84ED5D52776BEB5941AFCE028",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 490,
+      "test": "cluster::outbound_tests::prepared_result_race_and_revoked_or_indeterminate_operations_fail_closed_without_redelegation",
+      "sourcePath": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "sourceSha256": "6A63C5B09FE8E17A11776C3CE1AA534841D8BAD84ED5D52776BEB5941AFCE028",
+      "junitClass": "neoth"
+    },
+    {
+      "caseId": 491,
+      "test": "cluster::outbound_tests::result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal_state_together",
+      "sourcePath": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "sourceSha256": "6A63C5B09FE8E17A11776C3CE1AA534841D8BAD84ED5D52776BEB5941AFCE028",
+      "junitClass": "neoth"
+    }
+  ],
+  "provenanceDocuments": [
+    {
+      "path": "docs/verification/gold-wave2274-2282-conversation-backend.json",
+      "sourceImports": 37
+    },
+    {
+      "path": "docs/verification/gold-wave2285-cluster-result.json",
+      "sourceImports": 8
+    }
+  ],
+  "sourceHashBinding": "refreshed from current tracked/staged working tree at candidate preparation",
+  "status": "54 new exact-case registrations integrated into existing focused lane; hosted execution pending",
+  "workflowSha256": "D2F3C4F7395899A02CCCA04817EFA1078B8F31426A1F446C48A8F7417540BC3B",
+  "localExecutableValidationRan": false
+}

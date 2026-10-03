@@ -17933,3 +17933,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - W2288 follow-up: Preflight37138228348 exposed an invalid async-block return annotation after the delimiter repair. Removed only the annotation; the existing JoinSet<Result<()>> still fixes the result type and propagates settlement failures. Hosted syntax/format and executable validation remain pending.
 
 - W2288 hosted formatting: original artifact11279822135 from Preflight37138780099@9678c04a verified by API/ZIP SHA256, all three entries and internal sums, exact producer, and 30-path Rust scope. Applied only that patch and rebound the 52-case live-audio catalog plus source/test inventories. No local formatter or runtime ran; new-producer fast checks and executable acceptance remain pending.
+
+
+## W2289 - Exact conversation and cluster hosted regression selection (2026-10-03)
+
+- Existing focused lane extended from437 to491 exact identities:50 portable conversation cases and4 durable cluster result cases. All437 existing selections remain unchanged; receipt counts, source guards and tracked batch provenance were extended together.
+- No new local runtime or parallel full CI. The four cluster cases are default cfg(test), available in the lane's existing feature set. Runtime acceptance and generated CLI-reference comparison remain pending until hosted execution succeeds.

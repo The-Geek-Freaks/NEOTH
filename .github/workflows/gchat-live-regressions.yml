@@ -239,6 +239,37 @@ jobs:
             SRC/neothd/src/skills/schema.rs \
             SRC/neothd/src/skills/teacher.rs \
             SRC/neothd/src/skills/test_harness.rs \
+            SRC/neothd/src/cli/dictate.rs \
+            SRC/neothd/src/daemon/authorized_text_turn.rs \
+            SRC/neothd/src/daemon/companion.rs \
+            SRC/neothd/src/daemon/conversation_bridge.rs \
+            SRC/neothd/src/daemon/conversation_gui_bridge.rs \
+            SRC/neothd/src/daemon/conversation_owner.rs \
+            SRC/neothd/src/daemon/conversation_protocol.rs \
+            SRC/neothd/src/daemon/conversation_registry.rs \
+            SRC/neothd/src/daemon/conversation_session.rs \
+            SRC/neothd/src/daemon/conversation_transport_regressions.rs \
+            SRC/neothd/src/daemon/gui_chat_bridge.rs \
+            SRC/neothd/src/daemon/gui_chat_protocol.rs \
+            SRC/neothd/src/daemon/mod.rs \
+            SRC/neothd/src/daemon/webchat/tests.rs \
+            SRC/neothd/src/media/audio.rs \
+            SRC/neothd/src/media/conversation_loop.rs \
+            SRC/neothd/src/media/conversation_scope.rs \
+            SRC/neothd/src/media/dictation.rs \
+            SRC/neothd/src/media/lm_output_processor.rs \
+            SRC/neothd/src/media/mod.rs \
+            SRC/neothd/src/media/playback.rs \
+            SRC/neothd/src/media/tts_cloud.rs \
+            SRC/neothd/src/media/tts_dispatch.rs \
+            SRC/neothd/src/media/turn_tracker.rs \
+            SRC/neothd/src/permissions/microphone.rs \
+            SRC/neothd/src/permissions/mod.rs \
+            SRC/neothd/src/wal/events.rs \
+            SRC/neothd/src/wal/microphone_receipts.rs \
+            SRC/neothd/src/wal/mod.rs \
+            docs/verification/gold-wave2274-2282-conversation-backend.json \
+            docs/verification/gold-wave2285-cluster-result.json \
             > "$W548_ROOT/source/SHA256SUMS.txt"
           : > "$W548_ROOT/receipt/started.txt"
           : > "$W548_ROOT/receipt/passed.txt"
@@ -768,9 +799,63 @@ jobs:
           run_case 435 lib cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content --lib
           run_case 436 lib cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path --lib
           run_case 437 lib cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 437
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 437
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 437
+          run_case 438 lib daemon::audit_rpc::tests::conversation_start_peer_eof_aborts_and_joins_before_handler_returns daemon::audit_rpc::tests::conversation_start_peer_eof_aborts_and_joins_before_handler_returns --lib
+          run_case 439 lib daemon::audit_rpc::tests::conversation_start_broken_reply_write_aborts_before_handler_returns daemon::audit_rpc::tests::conversation_start_broken_reply_write_aborts_before_handler_returns --lib
+          run_case 440 lib daemon::audit_rpc::tests::conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_returns_error daemon::audit_rpc::tests::conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_returns_error --lib
+          run_case 441 lib daemon::audit_rpc::tests::conversation_attach_failed_abort_after_peer_close_returns_error_from_production_helper daemon::audit_rpc::tests::conversation_attach_failed_abort_after_peer_close_returns_error_from_production_helper --lib
+          run_case 442 lib daemon::authorized_text_turn::tests::genuine_bridge_reasoning_event_never_reaches_voice_sink daemon::authorized_text_turn::tests::genuine_bridge_reasoning_event_never_reaches_voice_sink --lib
+          run_case 443 lib daemon::authorized_text_turn::tests::genuine_bridge_delta_and_terminal_are_forwarded_in_order daemon::authorized_text_turn::tests::genuine_bridge_delta_and_terminal_are_forwarded_in_order --lib
+          run_case 444 lib daemon::authorized_text_turn::tests::sealed_start_cursor_replays_visible_delta_before_exchange_upper_bound daemon::authorized_text_turn::tests::sealed_start_cursor_replays_visible_delta_before_exchange_upper_bound --lib
+          run_case 445 lib daemon::authorized_text_turn::tests::failed_exchange_cancels_and_observes_terminal_before_returning_error daemon::authorized_text_turn::tests::failed_exchange_cancels_and_observes_terminal_before_returning_error --lib
+          run_case 446 lib daemon::authorized_text_turn::tests::partial_attach_error_commits_cursor_and_never_replays_speech daemon::authorized_text_turn::tests::partial_attach_error_commits_cursor_and_never_replays_speech --lib
+          run_case 447 lib daemon::authorized_text_turn::tests::cancellation_preserves_terminal_delivered_before_later_attach_error daemon::authorized_text_turn::tests::cancellation_preserves_terminal_delivered_before_later_attach_error --lib
+          run_case 448 lib daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof --lib
+          run_case 449 lib daemon::authorized_text_turn::tests::normal_preobserved_cancelled_terminal_never_mints_auto_cancel_proof daemon::authorized_text_turn::tests::normal_preobserved_cancelled_terminal_never_mints_auto_cancel_proof --lib
+          run_case 450 lib daemon::authorized_text_turn::tests::dropped_consumer_is_cancelled_and_settled_by_its_existing_supervisor daemon::authorized_text_turn::tests::dropped_consumer_is_cancelled_and_settled_by_its_existing_supervisor --lib
+          run_case 451 lib daemon::authorized_text_turn::tests::second_start_is_refused_before_any_second_bridge_start daemon::authorized_text_turn::tests::second_start_is_refused_before_any_second_bridge_start --lib
+          run_case 452 lib daemon::authorized_text_turn::tests::idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry daemon::authorized_text_turn::tests::idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry --lib
+          run_case 453 lib daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible --lib
+          run_case 454 lib daemon::conversation_bridge::tests::indeterminate_start_failure_is_not_projected_as_retryable_unavailability daemon::conversation_bridge::tests::indeterminate_start_failure_is_not_projected_as_retryable_unavailability --lib
+          run_case 455 lib daemon::conversation_bridge::tests::stateful_reply_cannot_replace_its_subscription_or_generation daemon::conversation_bridge::tests::stateful_reply_cannot_replace_its_subscription_or_generation --lib
+          run_case 456 lib daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection --lib
+          run_case 457 lib daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection --lib
+          run_case 458 lib daemon::conversation_registry::tests::concurrent_duplicate_preflight_mints_one_owner_call_and_one_subscription daemon::conversation_registry::tests::concurrent_duplicate_preflight_mints_one_owner_call_and_one_subscription --lib
+          run_case 459 lib daemon::conversation_registry::tests::changed_preflight_body_for_same_request_is_a_conflict daemon::conversation_registry::tests::changed_preflight_body_for_same_request_is_a_conflict --lib
+          run_case 460 lib daemon::conversation_registry::tests::foreign_session_cannot_control_bound_subscription daemon::conversation_registry::tests::foreign_session_cannot_control_bound_subscription --lib
+          run_case 461 lib daemon::conversation_registry::tests::failed_start_is_not_cached_and_retry_reaches_owner daemon::conversation_registry::tests::failed_start_is_not_cached_and_retry_reaches_owner --lib
+          run_case 462 lib daemon::conversation_registry::tests::more_than_the_retention_limit_of_settled_lifecycles_admits_the_next_request daemon::conversation_registry::tests::more_than_the_retention_limit_of_settled_lifecycles_admits_the_next_request --lib
+          run_case 463 lib daemon::conversation_registry::tests::relay_lag_publishes_indeterminate_terminal_and_closes_its_owner daemon::conversation_registry::tests::relay_lag_publishes_indeterminate_terminal_and_closes_its_owner --lib
+          run_case 464 lib daemon::conversation_registry::tests::relay_lag_owner_close_failure_is_returned_by_runtime_close daemon::conversation_registry::tests::relay_lag_owner_close_failure_is_returned_by_runtime_close --lib
+          run_case 465 lib daemon::conversation_registry::tests::runtime_close_joins_a_long_lived_relay_after_session_cleanup daemon::conversation_registry::tests::runtime_close_joins_a_long_lived_relay_after_session_cleanup --lib
+          run_case 466 lib daemon::conversation_session::tests::retained_stage_failure_reaches_the_session_owner daemon::conversation_session::tests::retained_stage_failure_reaches_the_session_owner --lib
+          run_case 467 lib daemon::conversation_session::tests::retained_stage_reports_closed_bounded_result_queue daemon::conversation_session::tests::retained_stage_reports_closed_bounded_result_queue --lib
+          run_case 468 lib daemon::conversation_session::tests::drain_stages_joins_a_later_blocked_worker_after_the_first_failure daemon::conversation_session::tests::drain_stages_joins_a_later_blocked_worker_after_the_first_failure --lib
+          run_case 469 lib daemon::conversation_transport_regressions::tests::exact_preflight_replays_once_and_wrong_boot_has_no_effect daemon::conversation_transport_regressions::tests::exact_preflight_replays_once_and_wrong_boot_has_no_effect --lib
+          run_case 470 lib daemon::conversation_transport_regressions::tests::foreign_request_or_generation_has_no_control_effect daemon::conversation_transport_regressions::tests::foreign_request_or_generation_has_no_control_effect --lib
+          run_case 471 lib media::audio::tests::in_memory_tts_wav_decoder_returns_bounded_pcm_and_rejects_bad_inputs media::audio::tests::in_memory_tts_wav_decoder_returns_bounded_pcm_and_rejects_bad_inputs --lib
+          run_case 472 lib media::audio::tests::normalized_tts_pcm_rejects_an_impossible_empty_decoder_result media::audio::tests::normalized_tts_pcm_rejects_an_impossible_empty_decoder_result --lib
+          run_case 473 lib media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation --lib
+          run_case 474 lib media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block --lib
+          run_case 475 lib media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress --lib
+          run_case 476 lib media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response --lib
+          run_case 477 lib media::tts_cloud::tests::only_azure_raw_pcm_has_a_proved_playback_format media::tts_cloud::tests::only_azure_raw_pcm_has_a_proved_playback_format --lib
+          run_case 478 lib media::tts_cloud::tests::configured_local_wav_response_normalizes_through_the_existing_decoder media::tts_cloud::tests::configured_local_wav_response_normalizes_through_the_existing_decoder --lib
+          run_case 479 lib media::tts_cloud::tests::configured_playback_request_format_keeps_local_wav_available media::tts_cloud::tests::configured_playback_request_format_keeps_local_wav_available --lib
+          run_case 480 lib permissions::microphone::tests::once_is_config_bound_and_consumed permissions::microphone::tests::once_is_config_bound_and_consumed --lib
+          run_case 481 lib permissions::microphone::tests::denial_expiry_and_revoke_fail_closed permissions::microphone::tests::denial_expiry_and_revoke_fail_closed --lib
+          run_case 482 lib permissions::microphone::tests::independent_store_revoke_invalidates_stale_challenge_and_capability permissions::microphone::tests::independent_store_revoke_invalidates_stale_challenge_and_capability --lib
+          run_case 483 lib permissions::microphone::tests::oversized_or_nonregular_persisted_state_fails_closed permissions::microphone::tests::oversized_or_nonregular_persisted_state_fails_closed --lib
+          run_case 484 lib permissions::microphone::tests::symlinked_persisted_state_fails_closed permissions::microphone::tests::symlinked_persisted_state_fails_closed --lib
+          run_case 485 lib wal::microphone_receipts::tests::consumed_admission_forms_one_sealed_intent_then_terminal_result wal::microphone_receipts::tests::consumed_admission_forms_one_sealed_intent_then_terminal_result --lib
+          run_case 486 lib wal::writer::tests::microphone_realtime_subtypes_refuse_every_generic_writer_entry wal::writer::tests::microphone_realtime_subtypes_refuse_every_generic_writer_entry --lib
+          run_case 487 lib wal::writer::tests::microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append wal::writer::tests::microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append --lib
+          run_case 488 lib cluster::outbound_tests::task_result_validator_enforces_terminal_payload_shape_without_requiring_nonempty_completion cluster::outbound_tests::task_result_validator_enforces_terminal_payload_shape_without_requiring_nonempty_completion --lib
+          run_case 489 lib cluster::outbound_tests::outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_partial_state cluster::outbound_tests::outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_partial_state --lib
+          run_case 490 lib cluster::outbound_tests::prepared_result_race_and_revoked_or_indeterminate_operations_fail_closed_without_redelegation cluster::outbound_tests::prepared_result_race_and_revoked_or_indeterminate_operations_fail_closed_without_redelegation --lib
+          run_case 491 lib cluster::outbound_tests::result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal_state_together cluster::outbound_tests::result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal_state_together --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 491
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 491
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 491
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 
