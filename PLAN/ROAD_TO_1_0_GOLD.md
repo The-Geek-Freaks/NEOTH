@@ -17923,3 +17923,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Full run 37127028297 finished on producer 6a8942: Windows passed all 19057 selected tests; macOS passed 19176 of 19177 with one Buddy configuration callback failure at set_left_openai_api. Linux completed Clippy and doctests, then received an unexplained runner shutdown while preparing native GUI prerequisites. The whole run remains failed, not accepted.
 - The existing single Buddy worker and actual fresh-Show path now retain test-only closed failure-stage diagnostics. Identity error mapping preserves production behavior and UI messages; no command is replayed. The callback regression also reports only whether its owned public-config fixture changed, without printing source data, credentials, endpoints, paths or subprocess output.
 - The failing macOS cause is still unconfirmed. This batch is diagnostic instrumentation, not a behavior repair or a pass. No Slint, rendered UI or local executable validation ran under the BSOD hold.
+
+
+## W2288 - Conversation RPC syntax repair (2026-10-03)
+
+- Hosted Preflight37135934144 on dc993197 identified an unclosed macro definition in the new conversation RPC route. Added its missing closing delimiter; route behavior and existing tests are unchanged.
+- Source-only correction. Hosted formatter, compile and runtime evidence remain pending; no local runtime ran under the BSOD hold. The incomplete formatter artifact was not admitted.

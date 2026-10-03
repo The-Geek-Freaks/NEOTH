@@ -1921,6 +1921,7 @@ async fn handle_conversation_route(mut stream: super::transport::AuditStream, st
         let request = match serde_json::from_slice::<$kind>(body) { Ok(value) => value, Err(_) => { let _ = stream.write_all(http_response(422, "invalid_conversation_request").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); } };
         match runtime.$call(request).await { Ok(reply) => { let valid = reply.schema_version == conversation::CONVERSATION_V1_SCHEMA_VERSION && reply.expected_boot_id.len() <= conversation::CONVERSATION_BOOT_ID_MAX_BYTES; if !valid { let _ = stream.write_all(http_response(500, "invalid_conversation_response").as_bytes()).await; } else { let encoded = serde_json::to_string(&reply).context("encode conversation response")?; let _ = stream.write_all(http_response_json(200, &encoded).as_bytes()).await; } let _ = stream.shutdown().await; Ok(ConnectionOutcome::Complete) }, Err(_) => { let _ = stream.write_all(http_response(422, "conversation_request_refused").as_bytes()).await; let _ = stream.shutdown().await; Ok(ConnectionOutcome::Complete) } }
     }};
+    }
     match path {
         conversation::CONVERSATION_V1_AVAILABILITY_PATH => post!(conversation::ConversationAvailabilityRequest, availability, conversation::ConversationAvailabilityResponse),
         conversation::CONVERSATION_V1_PREFLIGHT_PATH => post!(conversation::ConversationPreflightRequest, preflight, conversation::ConversationProgressResponse),

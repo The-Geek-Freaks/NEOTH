@@ -1,0 +1,12 @@
+{
+  "schema": "neoth-gold-wave2288-rpc-syntax/v1",
+  "base": "dc9931976b4dd82007ac100a391f05b7aad34b98",
+  "status": "One missing macro definition delimiter corrected; hosted syntax/format and executable validation pending",
+  "failureRun": "37135934144",
+  "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+  "sourceSha256": "6EEF4D9380350C8112A10AD0D78BF7948465C917815D068AA81113DFC9713648",
+  "change": "Close macro_rules post definition after expansion and before route match",
+  "localExecutableValidationRan": false,
+  "newTests": 0,
+  "note": "Existing conversation RPC tests unchanged. Broken formatter artifact11278298782 was not imported."
+}
