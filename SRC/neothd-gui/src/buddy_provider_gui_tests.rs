@@ -271,11 +271,7 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
 
     window.invoke_bc_buddy_provider_set("left".into(), "openai_api".into(), "gpt-4o-mini".into());
     pump(&window, "real provider set plus fresh show");
-    assert_accepted(
-        &window,
-        "set_left_openai_api",
-        "role update was accepted",
-    );
+    assert_accepted(&window, "set_left_openai_api", "role update was accepted");
     let left = window
         .get_bc_provider_config_roles()
         .row_data(0)

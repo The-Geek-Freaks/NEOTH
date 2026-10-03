@@ -95,5 +95,16 @@
   "fullTerminalEvidence": {
     "path": "work/gold-20260906/wave2268-full-model-picker-validation/ROOT_FULL_TERMINAL.json",
     "sha256": "84FF44FB8439D37F2BA8942948E7ADFB1CEA79E105091FC2A30105F1FCF517C0"
+  },
+  "hostedFormatRepair": {
+    "run": 37126640770,
+    "producer": "2f6409bd2d9a88c3e2ae17449cd030b7d960ff78",
+    "artifact": 11274937051,
+    "zipSha256": "87af9ff389997202914dded3135d932bbd81053a65f52d62724bd86ee17f133c",
+    "patchSha256": "807738AFE34EA68095AFA124C7F2D2838CE913E88C53942D211017D96AC69D92",
+    "postimageBlob": "242f3c68f934c6f47e82bc7a451038a281b60b27",
+    "postimageSha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35",
+    "scope": "one assertion call line wrap only; original ZIP/API/internal SHA256SUMS and source-head verified",
+    "localRustfmtRan": false
   }
 }

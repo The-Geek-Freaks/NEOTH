@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2273 Clippy repair and W2275 native callback diagnostics integrated; new-producer hosted validation pending; macOS failure unresolved",
+  "status": "W2273-W2275 hosted one-call formatting patch integrated; new-producer validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 367719,
-    "sha256": "A6F84668CDEBE7AED60D28CB45EDEFBAE5EDD6FD956FA8C4DCB2C9C49924E4DE"
+    "bytes": 367673,
+    "sha256": "3E36442BD3B847FFA50703560990B2E47B24EFFC3282F458DF208202D730027A"
   },
   "sourceInputs": 2011,
   "requiredNativeTests": [
@@ -16711,8 +16711,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 18595,
-      "sha256": "7B6B921C635AD6B9E2EB85EA33322B67E93CCD328FA19C4893D25FB4035B3E97"
+      "bytes": 18564,
+      "sha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -71356,6 +71356,32 @@
       }
     ],
     "note": "Exact three GUI paths. Preserve all assertion predicates; prior full17successful LinuxClippy/macOS1failure. Focused437 195 bindings have zero GUI overlap. No local executable validation or Slint edits.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2275HostedFormatRepair": {
+    "base": "2f6409bd2d9a88c3e2ae17449cd030b7d960ff78",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2273-2275-buddy-diagnostics.json",
+        "bytes": 5526,
+        "sha256": "13A0A0F7E969451BAF64359C580FF47A04BA1C8A02FAB6940387B09471CBC205",
+        "blob": "4483ed63051467f4b3aa09c6c637e3749ac184a4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2340251,
+        "sha256": "BE015753FBB5AC4CB778F0C3946B5554B08A7F63C3BA0733E61C5F3A6F913B1E",
+        "blob": "bedc10c393ff6e1c9d10ba6bb195aa6717d30b56"
+      },
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+        "bytes": 18564,
+        "sha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35",
+        "blob": "242f3c68f934c6f47e82bc7a451038a281b60b27"
+      }
+    ],
+    "note": "Original Preflight37126640770 artifact authenticated; one assertion line-wrap only, no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

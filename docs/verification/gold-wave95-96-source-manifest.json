@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T13:31:20.7018917Z",
-  "validationStatus": "W2273 Clippy repair and W2275 native callback diagnostics integrated; new-producer hosted validation pending; macOS failure unresolved",
+  "capturedUtc": "2026-10-03T13:36:00.3291455Z",
+  "validationStatus": "W2273-W2275 hosted one-call formatting patch integrated; new-producer validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3213,8 +3213,8 @@
     },
     {
       "path": "docs/verification/gold-wave2273-2275-buddy-diagnostics.json",
-      "bytes": 4912,
-      "sha256": "843ABEFF82EC1220AAFE901DA9F52340094F66E20800478F51D6E7AF862E9B16"
+      "bytes": 5526,
+      "sha256": "13A0A0F7E969451BAF64359C580FF47A04BA1C8A02FAB6940387B09471CBC205"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4358,8 +4358,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2339856,
-      "sha256": "4EC773971B9E18CD1EE4C04D11F60C435A91C0AAE5189613663DC15DF2255CE9"
+      "bytes": 2340251,
+      "sha256": "BE015753FBB5AC4CB778F0C3946B5554B08A7F63C3BA0733E61C5F3A6F913B1E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4553,8 +4553,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 18595,
-      "sha256": "7B6B921C635AD6B9E2EB85EA33322B67E93CCD328FA19C4893D25FB4035B3E97"
+      "bytes": 18564,
+      "sha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
