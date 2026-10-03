@@ -1,0 +1,29 @@
+{
+  "schema": "neoth-gold-wave2291-conversation-compile-repair/v1",
+  "base": "3d5930ca565e09f77c10077a989e2d49c1c2d866",
+  "failureRun": "37139447181",
+  "compilerErrors": [
+    "E0382: GUI boot commitment moved before conversation registry initialization",
+    "E0631: anyhow attestation error passed to GuiChatClientError mapper"
+  ],
+  "repairs": [
+    "Clone the same fresh boot commitment for the first consumer",
+    "Map pre-request failed attestation into existing PreWriteUnavailable; caller remains unavailable",
+    "Compile SHA imports only with live-audio, matching their only use"
+  ],
+  "sources": [
+    {
+      "candidate": "16E96A3E4D763153F6C26C11DB506B43201370FCF44BB9F5B5B2F45D01D82E05",
+      "base": "984EF2F387EFDA553F9C66A942454C43D87EA70C49E9588C3A62D248F0B183BB",
+      "path": "SRC/neothd/src/cli/serve.rs"
+    },
+    {
+      "candidate": "A6BE726A8021EA6650FF7A38256EAF786DAA878384A2440F7AA233DD4D043BDD",
+      "base": "1FEF0C1576622096893981919818FA4711ADC8803C415B4FBE73E4A4EC2247AA",
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs"
+    }
+  ],
+  "status": "Narrow hosted compiler diagnostics repaired; new-producer compilation and focused491 execution pending",
+  "localExecutableValidationRan": false,
+  "newTests": 0
+}

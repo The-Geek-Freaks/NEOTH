@@ -828,7 +828,11 @@ fn map_conversation_client_error(error: GuiChatClientError) -> ConversationClien
 pub(crate) fn attested_conversation_boot_id(
     home: &Path,
 ) -> Result<String, ConversationClientError> {
-    attested_gui_chat_boot_id(home).map_err(map_conversation_client_error)
+    attested_gui_chat_boot_id(home).map_err(|error| {
+        ConversationClientError::PreWriteUnavailable(format!(
+            "attest conversation instance: {error}"
+        ))
+    })
 }
 pub(crate) async fn conversation_post<T, R>(
     home: &Path,

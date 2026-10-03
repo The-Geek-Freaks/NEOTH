@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2289 focused491 exact registration integrated; execution pending",
+  "status": "W2291 hosted compiler errors repaired; executable validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 371990,
-    "sha256": "4C4827F8EDAE94E3C21312270629A35B846953777C7472B7D0FE66C8FAD513A6"
+    "bytes": 372192,
+    "sha256": "C80B8FE97E39B92C8E1F87BD02F7A5FBAC1A43EF74C049924B684EDE1E7B48B6"
   },
-  "sourceInputs": 2035,
+  "sourceInputs": 2036,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -9540,7 +9540,7 @@
     {
       "test": "cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault",
       "sourcePath": "SRC/neothd/src/cli/serve.rs",
-      "sourceSha256": "984EF2F387EFDA553F9C66A942454C43D87EA70C49E9588C3A62D248F0B183BB",
+      "sourceSha256": "16E96A3E4D763153F6C26C11DB506B43201370FCF44BB9F5B5B2F45D01D82E05",
       "junitClass": "neoth"
     },
     {
@@ -72344,6 +72344,38 @@
       }
     ],
     "note": "Preserved437 prior cases and appended54; complete new batch source guards and tracked provenance inputs",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2291ConversationCompileRepair": {
+    "base": "3d5930ca565e09f77c10077a989e2d49c1c2d866",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2291-conversation-compile-repair.json",
+        "bytes": 1263,
+        "sha256": "3F64DBE2D045F90138A49CDAFB9C291FA301AB282B8C8BC65A75D93986E22810",
+        "blob": "29ba0bb844a14c68931360510673f30a6f93b235"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2346765,
+        "sha256": "96842B02740C1B43E8BF8D401CF1746C9E23C527885195F5F62BAEFD7E16486E",
+        "blob": "56014d686c98e4badb2c08f95e18284f45ca1f98"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 184307,
+        "sha256": "16E96A3E4D763153F6C26C11DB506B43201370FCF44BB9F5B5B2F45D01D82E05",
+        "blob": "cf20031bda82f867b3995bffc280b9b2e561a6c5"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "bytes": 62281,
+        "sha256": "A6BE726A8021EA6650FF7A38256EAF786DAA878384A2440F7AA233DD4D043BDD",
+        "blob": "d8af04dbc7d9d1505cad47bfdf7f0dd286ccbd48"
+      }
+    ],
+    "note": "E0382 boot commitment ownership and E0631 pre-request attestation mapping repaired; SHA imports live-audio gated",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Args;
+#[cfg(feature = "live-audio")]
 use sha2::{Digest as _, Sha256};
 use tracing::{debug, error, info, warn};
 
@@ -600,7 +601,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             Arc::clone(&chat_runtime),
             neoth_home.clone(),
             config_path.clone(),
-            gui_chat_boot_id.0,
+            gui_chat_boot_id.0.clone(),
         ));
     // One daemon-lifetime A2 runtime is injected into the authenticated
     // listener.  The feature-on owner receives the same accepted config,

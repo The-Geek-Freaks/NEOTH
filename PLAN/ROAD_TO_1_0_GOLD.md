@@ -17939,3 +17939,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Existing focused lane extended from437 to491 exact identities:50 portable conversation cases and4 durable cluster result cases. All437 existing selections remain unchanged; receipt counts, source guards and tracked batch provenance were extended together.
 - No new local runtime or parallel full CI. The four cluster cases are default cfg(test), available in the lane's existing feature set. Runtime acceptance and generated CLI-reference comparison remain pending until hosted execution succeeds.
+
+
+## W2291 - Hosted conversation compile integration repair (2026-10-03)
+
+- Focused37139447181@3d5930ca stopped during real CLI compilation with two errors, before test execution: moved boot commitment and mismatched attestation error mapper. Preserve this as failed evidence, not a regression pass.
+- Clone the shared fresh boot commitment at its first consumer; map the pre-request attestation error into the existing unavailable category; feature-gate live-audio-only SHA imports. No local executable check. New producer hosted compilation and focused491 acceptance remain pending.

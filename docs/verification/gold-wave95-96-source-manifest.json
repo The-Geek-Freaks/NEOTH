@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T17:04:15.0999487Z",
-  "validationStatus": "W2289 focused491 exact registration integrated; execution pending",
+  "capturedUtc": "2026-10-03T17:15:57.0684387Z",
+  "validationStatus": "W2291 hosted compiler errors repaired; executable validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3252,6 +3252,11 @@
       "sha256": "4E67CC92FBBA881B2E632E1D1CE7D2A83B719D21993BBCADF9541AC27B5A879E"
     },
     {
+      "path": "docs/verification/gold-wave2291-conversation-compile-repair.json",
+      "bytes": 1263,
+      "sha256": "3F64DBE2D045F90138A49CDAFB9C291FA301AB282B8C8BC65A75D93986E22810"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4393,8 +4398,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2346180,
-      "sha256": "B195F1A5D0DC785024CE08E06E21AD3859ED36A4927516A0D6CFC276AAAC94FC"
+      "bytes": 2346765,
+      "sha256": "96842B02740C1B43E8BF8D401CF1746C9E23C527885195F5F62BAEFD7E16486E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5688,8 +5693,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 184268,
-      "sha256": "984EF2F387EFDA553F9C66A942454C43D87EA70C49E9588C3A62D248F0B183BB"
+      "bytes": 184307,
+      "sha256": "16E96A3E4D763153F6C26C11DB506B43201370FCF44BB9F5B5B2F45D01D82E05"
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",
@@ -6193,8 +6198,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 62170,
-      "sha256": "1FEF0C1576622096893981919818FA4711ADC8803C415B4FBE73E4A4EC2247AA"
+      "bytes": 62281,
+      "sha256": "A6BE726A8021EA6650FF7A38256EAF786DAA878384A2440F7AA233DD4D043BDD"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
