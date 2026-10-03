@@ -362,6 +362,12 @@ pub const MAX_TASK_SCOPE_ID_BYTES: usize = 128;
 /// reviewed portable provider contract; this is a request bound, not a claim
 /// that an adapter observed a remote provider enforcing it.
 pub const MAX_TASK_OUTPUT_TOKENS: u32 = crate::providers::MAX_REQUEST_OUTPUT_TOKENS;
+/// Result texts are already bounded by the worker executor. Re-check the
+/// boundary at master ingress before retaining a remote payload durably.
+pub const MAX_TASK_RESULT_BYTES: usize = 32 * 1024;
+/// Result metadata must never turn an error/status frame into an unbounded
+/// durable record. This is deliberately much smaller than a completion.
+pub const MAX_TASK_RESULT_METADATA_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -413,7 +419,7 @@ pub enum TaskResultStatus {
 }
 
 /// SL-01 TaskResult body — the slave's reply to a delegated task.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskResultBody {
     /// Echoes [`TaskDelegateBody::task_id`] for correlation on the master.
     pub task_id: String,
@@ -433,6 +439,70 @@ pub struct TaskResultBody {
     /// observation of the remote provider response or a wire-delivery claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_output_token_ceiling: Option<u32>,
+}
+
+/// Validate a received task result before it can enter the master's durable
+/// result custody. The authenticated transport binding is checked separately
+/// by membership storage; this function bounds and canonicalizes only wire
+/// material supplied by the peer.
+pub fn validate_task_result(body: &TaskResultBody) -> Result<()> {
+    let task = TaskDelegateBody {
+        task_id: body.task_id.clone(),
+        prompt: "result-validation".into(),
+        model_hint: None,
+        max_output_tokens: None,
+        scope: None,
+    };
+    validate_task_delegate(&task)?;
+    match &body.status {
+        TaskResultStatus::Completed => anyhow::ensure!(
+            body.result.is_some(),
+            "task_result: completed status omitted result"
+        ),
+        TaskResultStatus::Rejected { .. } | TaskResultStatus::Failed { .. } => anyhow::ensure!(
+            body.result.is_none(),
+            "task_result: non-completed status carries a result"
+        ),
+    }
+    if let Some(result) = &body.result {
+        anyhow::ensure!(
+            result.len() <= MAX_TASK_RESULT_BYTES,
+            "task_result: result {} bytes exceeds cap {MAX_TASK_RESULT_BYTES}",
+            result.len()
+        );
+    }
+    if let Some(provider_name) = &body.provider_name {
+        anyhow::ensure!(
+            !provider_name.is_empty()
+                && provider_name.len() <= MAX_TASK_ID_BYTES
+                && !provider_name.chars().any(char::is_control),
+            "task_result: provider_name is invalid"
+        );
+    }
+    match &body.status {
+        TaskResultStatus::Completed => {}
+        TaskResultStatus::Rejected { reason } | TaskResultStatus::Failed { error: reason } => {
+            anyhow::ensure!(
+                !reason.is_empty()
+                    && reason.len() <= MAX_TASK_RESULT_METADATA_BYTES
+                    && !reason.chars().any(char::is_control),
+                "task_result: terminal diagnostic is invalid"
+            );
+        }
+    }
+    if let Some(requested) = body.requested_max_output_tokens {
+        anyhow::ensure!(
+            requested > 0 && requested <= MAX_TASK_OUTPUT_TOKENS,
+            "task_result: requested_max_output_tokens is invalid"
+        );
+    }
+    if let Some(effective) = body.effective_output_token_ceiling {
+        anyhow::ensure!(
+            effective > 0 && effective <= MAX_TASK_OUTPUT_TOKENS,
+            "task_result: effective_output_token_ceiling is invalid"
+        );
+    }
+    Ok(())
 }
 
 /// Validate an inbound [`TaskDelegateBody`] BEFORE the accept gate. Fail-closed

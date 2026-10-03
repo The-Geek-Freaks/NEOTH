@@ -121,6 +121,13 @@ pub enum ClusterTaskDelegateAction {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Read the complete private terminal result retained for one exact
+    /// outbound operation. This is read-only and never dispatches or retries.
+    #[command(name = "outbound-result")]
+    OutboundResult {
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: String,
+    },
     /// CAS one exact outbound route. This changes only local durable
     /// authority; daemon dispatch remains a separate live operation.
     #[command(name = "outbound-set")]
@@ -1866,6 +1873,24 @@ async fn run_task_delegate_assignment(
             let assignment = task_delegate_outbound_assignment_show_at(&home, &peer_key, &scope)?;
             print_outbound_assignment(output, &assignment);
         }
+        ClusterTaskDelegateAction::OutboundResult { operation_id } => {
+            let result = task_delegate_outbound_result_show_at(&home, &operation_id)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&result)?),
+                OutputFormat::Table => match result {
+                    Some(result) => println!(
+                        "operation_id={} task_id={} peer_key={} received_at={} status={:?}",
+                        result.operation_id,
+                        result.task_id,
+                        result.peer_key,
+                        result.received_at_unix,
+                        result.body.status
+                    ),
+                    None => println!("outbound_task_result=not_found"),
+                },
+            }
+        }
         ClusterTaskDelegateAction::OutboundSet {
             peer_key,
             skill,
@@ -1999,6 +2024,16 @@ fn task_delegate_outbound_assignment_show_at(
     )?;
     crate::cluster::membership::MembershipStore::task_delegate_outbound_assignment_read_only(
         home, peer_key, scope,
+    )
+}
+
+fn task_delegate_outbound_result_show_at(
+    home: &Path,
+    operation_id: &str,
+) -> Result<Option<crate::cluster::membership::OutboundTaskDelegateResult>> {
+    crate::cluster::membership::MembershipStore::task_delegate_outbound_result_read_only(
+        home,
+        operation_id,
     )
 }
 

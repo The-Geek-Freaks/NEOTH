@@ -214,10 +214,16 @@ impl OutboundTaskDelegateController {
         }
         anyhow::bail!("cluster outbound delegation has no live eligible peer")
     }
-    pub fn receive_result(&self, peer_key: &str, task_id: &str) -> Result<bool> {
-        self.membership
-            .store()
-            .result_task_delegate_outbound_operation(peer_key, task_id, crate::time::now_unix_i64())
+    pub fn receive_result(
+        &self,
+        peer_key: &str,
+        body: &crate::cluster::heartbeat::TaskResultBody,
+    ) -> Result<crate::cluster::membership::OutboundTaskDelegateResultReceipt> {
+        self.membership.store().receive_task_delegate_outbound_result(
+            peer_key,
+            body,
+            crate::time::now_unix_i64(),
+        )
     }
 }
 
@@ -790,6 +796,7 @@ impl CarrierRuntime {
             deps.home.clone(),
             Some(dispatch_tx),
             budget_carrier.clone(),
+            Arc::clone(&deps.outbound_dispatch),
         )
         .await
         {

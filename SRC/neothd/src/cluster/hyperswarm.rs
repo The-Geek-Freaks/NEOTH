@@ -26,6 +26,8 @@
 //!     Arc::clone(&reload_controller),
 //!     neoth_home,
 //!     Some(dispatch_tx),
+//!     budget_carrier,
+//!     Arc::clone(&outbound_dispatch),
 //! ).await?;
 //! // ... daemon runs ...
 //! handle.shutdown().await?;
@@ -598,6 +600,9 @@ pub async fn spawn_discovery_with_wal(
     // Recovered budget authority, if the runtime has enabled the fixed-voter
     // budget mode. `None` means budget frames are not accepted.
     budget_carrier: Option<Arc<BudgetPeerCarrier>>,
+    // The daemon-owned result path shares the exact dispatch controller; a
+    // session must never reopen the DB and bypass its durable receipt API.
+    outbound_dispatch: Arc<super::runtime_supervisor::OutboundTaskDelegateController>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     // Transport identity is node identity, not rendezvous-key identity.
@@ -730,6 +735,7 @@ pub async fn spawn_discovery_with_wal(
             let dtx = dispatch_tx.clone();
             let reload = Arc::clone(&reload_controller);
             let budget = budget_carrier.clone();
+            let outbound = Arc::clone(&outbound_dispatch);
             peer_sessions.spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
@@ -748,6 +754,7 @@ pub async fn spawn_discovery_with_wal(
                     home,
                     dtx,
                     budget,
+                    outbound,
                 )
                 .await
                 {
@@ -863,6 +870,7 @@ async fn handle_peeroxide_connection(
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
     budget_carrier: Option<Arc<BudgetPeerCarrier>>,
+    outbound_dispatch: Arc<super::runtime_supervisor::OutboundTaskDelegateController>,
 ) -> Result<()> {
     let remote_pk_hex = hex_encode(conn.remote_public_key());
     // Peer's Noise static key from the authenticated channel — the identity
@@ -1386,14 +1394,7 @@ async fn handle_peeroxide_connection(
             if let FrameBody::TaskResult(r) = &frame.body {
                 // Master-side: only the exact authenticated Noise peer chosen
                 // for this task id can settle its durable operation.
-                let correlated =
-                    super::membership::MembershipStore::open(&neoth_home).and_then(|store| {
-                        store.result_task_delegate_outbound_operation(
-                            &remote_pk_hex,
-                            &r.task_id,
-                            crate::time::now_unix_i64(),
-                        )
-                    });
+                let correlated = outbound_dispatch.receive_result(&remote_pk_hex, r);
                 info!(
                     peer_id = %peer_id,
                     task_id = %r.task_id,

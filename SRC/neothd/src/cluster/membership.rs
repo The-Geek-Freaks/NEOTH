@@ -16,7 +16,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const AUTHORITY_SCHEMA_VERSION: i64 = 7;
+pub const AUTHORITY_SCHEMA_VERSION: i64 = 8;
 const REVOCATION_INTENTS_SCHEMA_VERSION: i64 = 4;
 pub const MEMBERSHIP_SNAPSHOT_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_WIRE_VERSION: u16 = 1;
@@ -2830,6 +2830,24 @@ pub struct OutboundTaskDelegateOperation {
     pub state: OutboundTaskDelegateState,
 }
 
+/// Immutable terminal master custody for one exactly-selected remote task.
+/// This record is private authority-DB state, not a delivery acknowledgement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundTaskDelegateResult {
+    pub operation_id: String,
+    pub task_id: String,
+    pub peer_key: String,
+    pub received_at_unix: i64,
+    pub body: crate::cluster::heartbeat::TaskResultBody,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundTaskDelegateResultReceipt {
+    Stored,
+    Duplicate,
+}
+
 /// Strict authenticated daemon request for one operator-owned delegation CAS.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3405,6 +3423,30 @@ impl MembershipStore {
         conn.query_row("SELECT allowed,priority,revision FROM task_delegate_outbound_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4",params![peer_key,scope.skill_id,channel,account],|row| Ok(TaskDelegateOutboundAssignment{peer_key:peer_key.into(),skill_id:scope.skill_id.clone(),channel_id:scope.channel_id.clone(),account_id:scope.account_id.clone(),allowed:row.get::<_,i64>(0)?==1,priority:row.get(1)?,revision:row.get(2)?})).optional().map_err(Into::into)
     }
 
+    /// Read one terminal result without opening a write-capable connection or
+    /// migrating an authority DB owned by a running daemon.
+    pub fn task_delegate_outbound_result_read_only(
+        home: &Path,
+        operation_id: &str,
+    ) -> Result<Option<OutboundTaskDelegateResult>> {
+        validate_task_delegate_operation_id(operation_id)?;
+        let path = home.join(AUTHORITY_DB_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open membership authority read-only {}", path.display()))?;
+        let has_table: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_delegate_outbound_results')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_table == 0 {
+            return Ok(None);
+        }
+        Self::read_task_delegate_outbound_result_on(&conn, operation_id)
+    }
+
     pub fn set_task_delegate_outbound_assignment(
         &self,
         assignment: &TaskDelegateOutboundAssignment,
@@ -3482,10 +3524,7 @@ impl MembershipStore {
                 scope: Some(scope.clone()),
             },
         )?;
-        anyhow::ensure!(
-            !operation_id.is_empty() && operation_id.len() <= 64,
-            "outbound task delegation operation id is invalid"
-        );
+        validate_task_delegate_operation_id(operation_id)?;
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let channel = scope.channel_id.as_deref().unwrap_or("");
@@ -3554,16 +3593,99 @@ impl MembershipStore {
         Ok(conn.execute("UPDATE task_delegate_outbound_operations SET state='indeterminate',updated_at=?1 WHERE state='prepared'", [now_unix])?)
     }
 
-    /// Only the authenticated selected peer may settle its task id.
-    pub fn result_task_delegate_outbound_operation(
+    /// Atomically store a complete terminal result and advance the matched
+    /// operation. Exact retransmits are idempotent; any conflicting, stale,
+    /// foreign, or revoked result is rejected without changing durable state.
+    pub fn receive_task_delegate_outbound_result(
         &self,
         peer_key: &str,
-        task_id: &str,
+        body: &crate::cluster::heartbeat::TaskResultBody,
         now_unix: i64,
-    ) -> Result<bool> {
+    ) -> Result<OutboundTaskDelegateResultReceipt> {
         validate_peeroxide_transport_key(peer_key)?;
+        crate::cluster::heartbeat::validate_task_result(body)?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let operation = tx
+            .query_row(
+                "SELECT operation_id,state FROM task_delegate_outbound_operations WHERE transport_identity=?1 AND task_id=?2",
+                params![peer_key, body.task_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((operation_id, state)) = operation else {
+            anyhow::bail!("outbound task result does not match an exact selected peer/task");
+        };
+        let active: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM members m JOIN transport_bindings b ON b.stable_node_id=m.stable_node_id JOIN authority_meta a ON a.singleton=1 WHERE m.state='active' AND b.carrier='peeroxide' AND b.transport_identity=?1 AND b.auth_epoch=m.auth_epoch AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch AND m.membership_epoch>=a.revocation_floor)",
+            [peer_key],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(active == 1, "outbound task result peer authority is no longer active");
+        let existing = Self::read_task_delegate_outbound_result_on(&tx, &operation_id)?;
+        if let Some(existing) = existing {
+            anyhow::ensure!(
+                existing.peer_key == peer_key && existing.task_id == body.task_id,
+                "outbound task result durable binding mismatch"
+            );
+            anyhow::ensure!(
+                existing.body == *body,
+                "outbound task result conflicts with existing terminal result"
+            );
+            tx.commit()?;
+            return Ok(OutboundTaskDelegateResultReceipt::Duplicate);
+        }
+        anyhow::ensure!(
+            matches!(state.as_str(), "prepared" | "accepted"),
+            "outbound task result cannot settle a {state} operation"
+        );
+        let body_json = serde_json::to_string(body).context("serialize bounded outbound task result")?;
+        tx.execute(
+            "INSERT INTO task_delegate_outbound_results (operation_id,task_id,transport_identity,body,received_at) VALUES (?1,?2,?3,?4,?5)",
+            params![operation_id, body.task_id, peer_key, body_json, now_unix],
+        )?;
+        anyhow::ensure!(
+            tx.execute(
+                "UPDATE task_delegate_outbound_operations SET state='resulted',updated_at=?2 WHERE operation_id=?1 AND state IN ('prepared','accepted')",
+                params![operation_id, now_unix],
+            )? == 1,
+            "outbound task result lost its terminal-state race"
+        );
+        tx.commit()?;
+        Ok(OutboundTaskDelegateResultReceipt::Stored)
+    }
+
+    pub fn task_delegate_outbound_result(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<OutboundTaskDelegateResult>> {
+        validate_task_delegate_operation_id(operation_id)?;
         let conn = self.connection()?;
-        Ok(conn.execute("UPDATE task_delegate_outbound_operations SET state='resulted',updated_at=?3 WHERE transport_identity=?1 AND task_id=?2 AND state IN ('prepared','accepted')", params![peer_key, task_id, now_unix])? == 1)
+        Self::read_task_delegate_outbound_result_on(&conn, operation_id)
+    }
+
+    fn read_task_delegate_outbound_result_on(
+        conn: &Connection,
+        operation_id: &str,
+    ) -> Result<Option<OutboundTaskDelegateResult>> {
+        conn.query_row(
+            "SELECT operation_id,task_id,transport_identity,received_at,body FROM task_delegate_outbound_results WHERE operation_id=?1",
+            [operation_id],
+            |row| {
+                let body_json: String = row.get(4)?;
+                let body = serde_json::from_str::<crate::cluster::heartbeat::TaskResultBody>(&body_json)
+                    .map_err(|error| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(error)))?;
+                Ok(OutboundTaskDelegateResult {
+                    operation_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    peer_key: row.get(2)?,
+                    received_at_unix: row.get(3)?,
+                    body,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
     }
 
     pub fn latest_invitation_digest(
@@ -5601,6 +5723,21 @@ fn migrate(conn: &Connection) -> Result<()> {
              ON task_delegate_outbound_operations(transport_identity,task_id);
          PRAGMA user_version=7;",
     )?;
+    // Terminal result custody is separate from dispatch authority so old
+    // operation rows retain their meaning. The insert and state transition are
+    // committed in one transaction; no startup path replays paid work.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_delegate_outbound_results (
+             operation_id TEXT PRIMARY KEY REFERENCES task_delegate_outbound_operations(operation_id),
+             task_id TEXT NOT NULL UNIQUE,
+             transport_identity TEXT NOT NULL,
+             body TEXT NOT NULL,
+             received_at INTEGER NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS task_delegate_outbound_results_peer_task
+             ON task_delegate_outbound_results(transport_identity,task_id);
+         PRAGMA user_version=8;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -5613,6 +5750,18 @@ fn validate_peeroxide_transport_key(value: &str) -> Result<()> {
                 .chars()
                 .all(|character| matches!(character, '0'..='9' | 'a'..='f')),
         "task delegate peer key must be exactly 64 lowercase hex characters"
+    );
+    Ok(())
+}
+
+fn validate_task_delegate_operation_id(value: &str) -> Result<()> {
+    anyhow::ensure!(
+        !value.is_empty()
+            && value.len() <= 64
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')),
+        "outbound task delegation operation id is invalid"
     );
     Ok(())
 }

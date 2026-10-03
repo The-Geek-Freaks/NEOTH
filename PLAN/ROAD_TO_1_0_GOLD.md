@@ -17910,3 +17910,10 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Registered 50 new default-build cases and 33 new live-audio cases (83 new identities). Portable registry 2707; dedicated live-audio catalog 52 including all 19 previous identities with refreshed source bindings. Static review, exact candidate custody and JSON identity checks do not constitute execution.
 - Hosted formatting, compilation and exact tests for this new producer remain pending. No new Slint entry, native microphone/speaker acceptance, signing or release qualification is claimed. The local BSOD hold remains active.
 - Audio-only producer roots are compiled for unit tests or live-audio; default builds retain the unavailable RPC surface, task drain, all wire subtypes and generic-header closed-type rejection. No blanket warning suppression or visibility widening was used.
+
+### W2285 - durable master TaskResult custody (2026-10-03 UTC)
+
+- The actual authenticated Hyperswarm TaskResult path now retains the full bounded typed result under the existing selected peer, task and unique operation. Schema v8 inserts the result and settles the operation in one immediate transaction; exact duplicates require current membership, while conflicts, foreign peers/tasks, revocation and indeterminate states fail closed.
+- The completed result survives database reopen and is available through `cluster task-delegate outbound-result OPERATION_ID`, including the existing Buddy CLI nesting. The command does not dispatch or retry paid work.
+- Four new portable regressions cover terminal payload shape, reopen/idempotency/conflict, prepared/accepted and revocation races, and failure of the state UPDATE after an inserted result. The latter proves intended cross-statement rollback in source; it has not run locally.
+- Static R2 review closed all three findings. Portable registrations are now 2711. Hosted formatting/compilation/tests and generated CLI-reference comparison remain pending. Origin-stream delivery, deadlines/redelegation and complete cluster product acceptance remain open; existing backlog bytes are preserved.

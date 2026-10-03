@@ -97,6 +97,51 @@ fn dispatch_request(
     }
 }
 
+fn completed_result(task_id: &str, text: &str) -> super::heartbeat::TaskResultBody {
+    super::heartbeat::TaskResultBody {
+        task_id: task_id.into(),
+        status: super::heartbeat::TaskResultStatus::Completed,
+        result: Some(text.into()),
+        provider_name: Some("fixture-provider".into()),
+        requested_max_output_tokens: Some(64),
+        effective_output_token_ceiling: Some(64),
+    }
+}
+
+#[test]
+fn task_result_validator_enforces_terminal_payload_shape_without_requiring_nonempty_completion() {
+    let completed_empty = completed_result("shape-completed", "");
+    assert!(super::heartbeat::validate_task_result(&completed_empty).is_ok());
+
+    let mut completed_missing = completed_empty.clone();
+    completed_missing.result = None;
+    assert!(super::heartbeat::validate_task_result(&completed_missing).is_err());
+
+    let rejected_with_payload = super::heartbeat::TaskResultBody {
+        task_id: "shape-rejected".into(),
+        status: super::heartbeat::TaskResultStatus::Rejected {
+            reason: "operator_assignment_denied".into(),
+        },
+        result: Some("must not be retained as a completion".into()),
+        provider_name: None,
+        requested_max_output_tokens: None,
+        effective_output_token_ceiling: None,
+    };
+    assert!(super::heartbeat::validate_task_result(&rejected_with_payload).is_err());
+
+    let failed_without_payload = super::heartbeat::TaskResultBody {
+        task_id: "shape-failed".into(),
+        status: super::heartbeat::TaskResultStatus::Failed {
+            error: "no_provider_on_this_node".into(),
+        },
+        result: None,
+        provider_name: None,
+        requested_max_output_tokens: None,
+        effective_output_token_ceiling: None,
+    };
+    assert!(super::heartbeat::validate_task_result(&failed_without_payload).is_ok());
+}
+
 #[test]
 fn outbound_candidates_require_the_exact_allowed_scope() {
     let home = tempfile::tempdir().expect("create authority home");
@@ -227,9 +272,13 @@ fn prepared_outbound_operation_recovers_indeterminate_and_is_never_replayed() {
         OutboundTaskDelegateState::Indeterminate
     );
     assert!(
-        !store
-            .result_task_delegate_outbound_operation(&peer_key, "task-prepared", NOW + 4)
-            .expect("indeterminate operation cannot settle"),
+        store
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result("task-prepared", "never accepted"),
+                NOW + 4,
+            )
+            .is_err(),
         "recovery must not replay a prepared operation"
     );
     assert!(
@@ -259,26 +308,35 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
         )
         .expect("persist selected prepared operation");
     assert_eq!(prepared.peer_key, selected_peer);
-    assert!(
-        !store
-            .result_task_delegate_outbound_operation(&wrong_peer, "task-result", NOW + 1)
-            .expect("wrong peer cannot settle selected task")
-    );
-    assert!(
-        !store
-            .result_task_delegate_outbound_operation(&selected_peer, "different-task", NOW + 1)
-            .expect("selected peer cannot settle a different task")
-    );
+    assert!(store
+        .receive_task_delegate_outbound_result(
+            &wrong_peer,
+            &completed_result("task-result", "foreign"),
+            NOW + 1,
+        )
+        .is_err());
+    assert!(store
+        .receive_task_delegate_outbound_result(
+            &selected_peer,
+            &completed_result("different-task", "foreign"),
+            NOW + 1,
+        )
+        .is_err());
     assert_eq!(
         store
             .accept_task_delegate_outbound_operation("op-result", NOW + 2)
             .expect("accept selected operation"),
         OutboundTaskDelegateState::Accepted
     );
-    assert!(
+    assert_eq!(
         store
-            .result_task_delegate_outbound_operation(&selected_peer, "task-result", NOW + 3)
-            .expect("selected peer settles exact task")
+            .receive_task_delegate_outbound_result(
+                &selected_peer,
+                &completed_result("task-result", "settled"),
+                NOW + 3,
+            )
+            .expect("selected peer stores exact task result"),
+        super::membership::OutboundTaskDelegateResultReceipt::Stored
     );
     assert_eq!(
         store
@@ -286,10 +344,15 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
             .expect("late accept must report result"),
         OutboundTaskDelegateState::Resulted
     );
-    assert!(
-        !store
-            .result_task_delegate_outbound_operation(&selected_peer, "task-result", NOW + 5)
-            .expect("result is terminal")
+    assert_eq!(
+        store
+            .receive_task_delegate_outbound_result(
+                &selected_peer,
+                &completed_result("task-result", "settled"),
+                NOW + 5,
+            )
+            .expect("exact terminal replay is idempotent"),
+        super::membership::OutboundTaskDelegateResultReceipt::Duplicate
     );
 
     store
@@ -309,6 +372,167 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
             .accept_task_delegate_outbound_operation("op-discard", NOW + 7)
             .is_err(),
         "discarded prepared work cannot be accepted or replayed"
+    );
+}
+
+#[test]
+fn outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_partial_state() {
+    let home = tempfile::tempdir().expect("create authority home");
+    let store = MembershipStore::open(home.path()).expect("open authority store");
+    let exact = scope();
+    let peer_key = active_peer(&store, "result-reopen");
+    assign(&store, peer_key.clone(), &exact, true, 1, 0);
+    store
+        .prepare_task_delegate_outbound_operation("op-reopen", "task-reopen", &peer_key, &exact, NOW)
+        .expect("prepare outbound task");
+    let body = completed_result("task-reopen", "full retained completion");
+    assert_eq!(
+        store
+            .receive_task_delegate_outbound_result(&peer_key, &body, NOW + 1)
+            .expect("atomically retain result"),
+        super::membership::OutboundTaskDelegateResultReceipt::Stored
+    );
+    let mut conflict = body.clone();
+    conflict.result = Some("different payload".into());
+    assert!(store
+        .receive_task_delegate_outbound_result(&peer_key, &conflict, NOW + 2)
+        .is_err());
+    drop(store);
+    let reopened = MembershipStore::open(home.path()).expect("reopen authority DB");
+    let retained = reopened
+        .task_delegate_outbound_result("op-reopen")
+        .expect("read retained result")
+        .expect("terminal result exists after reopen");
+    assert_eq!(retained.peer_key, peer_key);
+    assert_eq!(retained.task_id, "task-reopen");
+    assert_eq!(retained.body, body);
+    assert_eq!(
+        reopened
+            .accept_task_delegate_outbound_operation("op-reopen", NOW + 3)
+            .expect("late accept observes terminal result"),
+        OutboundTaskDelegateState::Resulted
+    );
+}
+
+#[test]
+fn prepared_result_race_and_revoked_or_indeterminate_operations_fail_closed_without_redelegation() {
+    let home = tempfile::tempdir().expect("create authority home");
+    let sessions = Arc::new(LiveSessionRegistry::new());
+    let controller = MembershipController::new(
+        MembershipStore::open(home.path()).expect("open authority store"),
+        Arc::clone(&sessions),
+    );
+    let exact = scope();
+    let peer_key = active_peer(controller.store(), "result-race");
+    assign(controller.store(), peer_key.clone(), &exact, true, 1, 0);
+    controller
+        .store()
+        .prepare_task_delegate_outbound_operation("op-race", "task-race", &peer_key, &exact, NOW)
+        .expect("prepare result race");
+    assert_eq!(
+        controller
+            .store()
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result("task-race", "arrived before local accept"),
+                NOW + 1,
+            )
+            .expect("prepared/result race resolves to terminal custody"),
+        super::membership::OutboundTaskDelegateResultReceipt::Stored
+    );
+    assert_eq!(
+        controller
+            .store()
+            .accept_task_delegate_outbound_operation("op-race", NOW + 2)
+            .expect("late queue acceptance cannot reopen result"),
+        OutboundTaskDelegateState::Resulted
+    );
+
+    controller
+        .store()
+        .prepare_task_delegate_outbound_operation("op-indeterminate", "task-indeterminate", &peer_key, &exact, NOW)
+        .expect("prepare indeterminate operation");
+    controller
+        .store()
+        .recover_prepared_task_delegate_outbound_operations(NOW + 3)
+        .expect("mark only remaining prepared operation indeterminate");
+    assert!(controller
+        .store()
+        .receive_task_delegate_outbound_result(
+            &peer_key,
+            &completed_result("task-indeterminate", "late result"),
+            NOW + 4,
+        )
+        .is_err());
+
+    controller
+        .store()
+        .prepare_task_delegate_outbound_operation("op-revoked", "task-revoked", &peer_key, &exact, NOW)
+        .expect("prepare revocable operation");
+    controller
+        .revoke("outbound-result-race", "test revoke", NOW + 5)
+        .expect("revoke active peer")
+        .expect("revoke receipt");
+    assert!(controller
+        .store()
+        .receive_task_delegate_outbound_result(
+            &peer_key,
+            &completed_result("task-race", "arrived before local accept"),
+            NOW + 6,
+        )
+        .is_err(), "revocation rejects even an otherwise exact duplicate");
+    assert!(controller
+        .store()
+        .receive_task_delegate_outbound_result(
+            &peer_key,
+            &completed_result("task-revoked", "must not settle after revoke"),
+            NOW + 7,
+        )
+        .is_err());
+    assert!(controller
+        .store()
+        .task_delegate_outbound_result("op-revoked")
+        .expect("read rejected result slot")
+        .is_none());
+
+}
+
+#[test]
+fn result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal_state_together() {
+    let home = tempfile::tempdir().expect("create authority home");
+    let store = MembershipStore::open(home.path()).expect("open authority store");
+    let exact = scope();
+    let peer_key = active_peer(&store, "result-storage-trigger");
+    assign(&store, peer_key.clone(), &exact, true, 1, 0);
+    store
+        .prepare_task_delegate_outbound_operation("op-storage", "task-storage", &peer_key, &exact, NOW)
+        .expect("prepare operation before terminal-state storage failure");
+    let raw = rusqlite::Connection::open(store.path())
+        .expect("open isolated authority DB for storage-failure fixture");
+    raw.execute_batch(
+        "CREATE TRIGGER task_delegate_outbound_operations_resulted_abort \
+         BEFORE UPDATE OF state ON task_delegate_outbound_operations \
+         WHEN NEW.state='resulted' \
+         BEGIN SELECT RAISE(ABORT, 'fixture_resulted_state_abort'); END;",
+    )
+    .expect("install isolated post-insert terminal-state abort trigger");
+    drop(raw);
+    assert!(store
+        .receive_task_delegate_outbound_result(
+            &peer_key,
+            &completed_result("task-storage", "insert must roll back with later state failure"),
+            NOW + 1,
+        )
+        .is_err());
+    assert!(store
+        .task_delegate_outbound_result("op-storage")
+        .expect("read result after aborted terminal-state update")
+        .is_none());
+    assert_eq!(
+        store
+            .accept_task_delegate_outbound_operation("op-storage", NOW + 2)
+            .expect("aborted terminal-state update must leave operation pre-terminal"),
+        OutboundTaskDelegateState::Accepted
     );
 }
 

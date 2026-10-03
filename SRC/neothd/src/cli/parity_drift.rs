@@ -1209,6 +1209,15 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         "the GUI has no operation/task/prompt dispatch control or authenticated-daemon receipt/readback",
     ),
     #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-result",
+        "cluster",
+        "cluster task-delegate outbound-result",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate result",
+        "the GUI has no operation-bound private result readback",
+    ),
+    #[cfg(feature = "cluster")]
     OperationParity {
         id: "buddy.cluster.status",
         capability: "buddy",
@@ -1304,6 +1313,15 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         "buddyconfig",
         "Buddy Config > Cluster membership > Outbound TaskDelegate dispatch",
         "the GUI has no operation/task/prompt dispatch control or authenticated-daemon receipt/readback through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.outbound-result",
+        "buddy",
+        "buddy cluster task-delegate outbound-result",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate result",
+        "the GUI has no operation-bound private result readback through the Buddy task-delegate route",
     ),
     #[cfg(feature = "cluster")]
     unwired_operation(
@@ -2303,6 +2321,7 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "buddy.cluster.task-delegate.outbound-set",
         "buddy.cluster.task-delegate.outbound-reset",
         "buddy.cluster.task-delegate.outbound-dispatch",
+        "buddy.cluster.task-delegate.outbound-result",
         "cluster.configure",
         "cluster.confirm",
         "cluster.conflicts",
@@ -2323,6 +2342,7 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "cluster.swarm",
         "cluster.sync-state",
         "cluster.task-delegate.outbound-dispatch",
+        "cluster.task-delegate.outbound-result",
         "cluster.task-delegate.outbound-reset",
         "cluster.task-delegate.outbound-set",
         "cluster.task-delegate.outbound-show",

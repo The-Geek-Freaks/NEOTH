@@ -314,6 +314,12 @@ CAS-reset one outbound route to a durable deny tombstone
 - `--priority <PRIORITY>`
 - `--expected-revision <EXPECTED_REVISION>`
 
+##### `neoth buddy cluster task-delegate outbound-result`
+
+Read the complete private terminal result retained for one exact outbound operation. This is read-only and never dispatches or retries
+
+- `<OPERATION_ID>`
+
 ##### `neoth buddy cluster task-delegate outbound-set`
 
 CAS one exact outbound route. This changes only local durable authority; daemon dispatch remains a separate live operation
@@ -1021,6 +1027,12 @@ CAS-reset one outbound route to a durable deny tombstone
 - `--account <ACCOUNT>`
 - `--priority <PRIORITY>`
 - `--expected-revision <EXPECTED_REVISION>`
+
+#### `neoth cluster task-delegate outbound-result`
+
+Read the complete private terminal result retained for one exact outbound operation. This is read-only and never dispatches or retries
+
+- `<OPERATION_ID>`
 
 #### `neoth cluster task-delegate outbound-set`
 
