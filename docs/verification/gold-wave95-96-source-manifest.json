@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T03:10:10.9008397Z",
-  "validationStatus": "W2246 authentic generated CLI reference imported; final producer hosted pending",
+  "capturedUtc": "2026-10-03T03:37:08.2055705Z",
+  "validationStatus": "W2251 reviewed native fixture repairs; final producer hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 41232,
-      "sha256": "F7D864BC8022A8ECF0E9174B2268BD2F79844D0C8E16D1179DAC465B074F1E23"
+      "bytes": 43437,
+      "sha256": "77171BD6E9C277183F678A203F53C8FC50A1C121CFD1DCE871335B8647206031"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 121758,
-      "sha256": "8CEE9454FFDE1717496661FCCF73B3C6055FB78F7655930E872C623A72E4F5C7"
+      "bytes": 121989,
+      "sha256": "A6083FCBB74E70FB1DB0C98847115E8FBBEB4F34D3669B45EC6E43B9641BD199"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -3182,6 +3182,11 @@
       "sha256": "EAC4E5E569ADFC31BD8D469E4DDF2A40CA1CFF5DDB3F952261435F97F1A15237"
     },
     {
+      "path": "docs/verification/gold-wave2251-native-fixture-repair.json",
+      "bytes": 4212,
+      "sha256": "91D2DF78EE8915A45AAC70DBF2734E99C3F908BE31ED1C77FD97EED8D4104A4E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4143,8 +4148,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 48081,
-      "sha256": "F989D25DEB7D7531113352E087F7B160E80D01B6198344DDEED692BA82A5B64B"
+      "bytes": 50917,
+      "sha256": "9314B64B5C99CC9A09EC6E80FB4A5C377755D0BA8423CDFB470E17CC1947E5F9"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -4323,8 +4328,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2327202,
-      "sha256": "5686681B8D552172D687A4B6FDFCDB27B2A3541036BDEE9052CF1463BD0BE2A3"
+      "bytes": 2329272,
+      "sha256": "FDFAA0F5C4652BD6C85FF104812FD6424ABDDF01C7A8BE097046EC06F30689E2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5733,8 +5738,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 151631,
-      "sha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA"
+      "bytes": 151848,
+      "sha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",

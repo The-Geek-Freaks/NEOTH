@@ -767,9 +767,10 @@ jobs:
           run_case 434 lib cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary --lib
           run_case 435 lib cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content --lib
           run_case 436 lib cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 436
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 436
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 436
+          run_case 437 lib cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 437
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 437
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 437
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

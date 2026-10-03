@@ -1,0 +1,92 @@
+{
+  "schema": "neoth.w2251.native-fixture-repair.v1",
+  "base": "4931c4ac1e165bf4a39f64276a18a3c3aa8c49ff",
+  "status": "static_reviewed_pending_hosted",
+  "capturedUtc": "2026-10-03T03:37:06.3423891Z",
+  "sources": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "candidate": "work/gold-20260906/wave2248-linux-gui-fixture-repair/candidate-r2/.github/workflows/ci.yml",
+      "sha256": "0029EBC5D345732157998CDA88415D2F2F7EA07DA2C12571E54D036ED75FDAF4"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "candidate": "work/gold-20260906/wave2248-linux-gui-fixture-repair/candidate-r2/packaging/tests/test_ci_cadence_contract.py",
+      "sha256": "9314B64B5C99CC9A09EC6E80FB4A5C377755D0BA8423CDFB470E17CC1947E5F9"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "candidate": "work/gold-20260906/wave2249-macos-hyperswarm-repair/candidate/SRC/neothd/src/cluster/hyperswarm.rs",
+      "sha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "candidate": "work/gold-20260906/wave2250-focused437-preparation/gchat-live-regressions-r2.yml",
+      "sha256": "A6083FCBB74E70FB1DB0C98847115E8FBBEB4F34D3669B45EC6E43B9641BD199"
+    }
+  ],
+  "linux": {
+    "failureCustodySha256": "1108F8244D5FE06173CC05F2A9074731C311519E7BBCC5E5AF45A8EAF6F22BE3",
+    "producer": "dfa694a34c4f0c23af9c84bb5c165450ad5d821a",
+    "passed": 19159,
+    "failed": 4,
+    "repair": "Reuse authentic systemd/user-bus/AppArmor prerequisites and build actual CLI/GUI helper before unchanged full Nextest; strict existing cadence command equality updated",
+    "priorRun": 37087877186,
+    "run": 19163,
+    "cause": "Full Linux workspace lane omitted actual CLI/PATH and the separate production containment helper required by GUI callbacks",
+    "reviewSha256": "84C34C9FAA94C894BFEBCA3EE948A06E2306AF8B799CF19E90F89649C6A10676",
+    "skipped": 26
+  },
+  "macos": {
+    "failureCustodySha256": "BAC72DAB376DB0A848AEB778D0EE4B8B02CABCD65930099E787194DAF42DE2F6",
+    "leaks": 0,
+    "observedPanic": "WAL segment changed between authentication and callback passes",
+    "passed": 19147,
+    "failed": 1,
+    "repair": "Close and join the test writer before TrustLedger replay; retain queued job lifetime and every authenticated-key/lease assertion",
+    "priorRun": 37087877186,
+    "run": 19148,
+    "reviewSha256": "F93AFEFB46183882057DF607D7AC1F841C8B6123EE34EE78BD7CC14C51C445BE",
+    "skipped": 29,
+    "case": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease"
+  },
+  "priorWindows": {
+    "failed": 0,
+    "passed": 19030,
+    "independentReviewSha256": "A4AE0DC953CA12E1343B56B7115375966015C59B443699D95D2A436DC2544F92",
+    "run": 37087877186,
+    "skipped": 28,
+    "admissionSha256": "8E813DC25BEA09D2D345E951C6343FEF2992A7CB4D80692038F5FA2E7B9AB7AB",
+    "producer": "dfa694a34c4f0c23af9c84bb5c165450ad5d821a",
+    "leaks": 0
+  },
+  "priorFocused": {
+    "soleFailure": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "completeFocusedAdmission": false,
+    "generatedReferencePublished": "4931c4ac1e165bf4a39f64276a18a3c3aa8c49ff",
+    "newNctActualCasePasses": 3,
+    "receiptPassed": 435,
+    "receiptFailed": 1,
+    "run": 37091883325,
+    "producer": "0e65961461d4af4aed65f20edb372c82b9017d30"
+  },
+  "registration": {
+    "combinedSourceBindings": 195,
+    "focused": 437,
+    "portable": 2653,
+    "newRegisteredExistingTest": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
+    "sourcePaths": 185
+  },
+  "pending": [
+    "New producer Preflight and Code Quality",
+    "Focused437 including generated-reference freshness and Hyperswarm lease case",
+    "New full platform qualification after all previous runs terminal",
+    "CodeQL Rust runner-shutdown cause and Security qualification",
+    "Native signing, configured-provider qualification, separately constrained GUI work"
+  ],
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "testSelectionWeakened": false,
+  "timeoutsRaised": false,
+  "productionContainmentChanged": false
+}

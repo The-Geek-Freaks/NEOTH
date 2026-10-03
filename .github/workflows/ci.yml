@@ -188,6 +188,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            apparmor-utils \
+            dbus-user-session \
             libfontconfig1-dev \
             libx11-dev \
             libxcb1-dev \
@@ -284,6 +286,46 @@ jobs:
           CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
+          # Linux GUI callback fixtures require the actual CLI plus an isolated
+          # separately-built production GUI helper; never route containment through
+          # the libtest executable or a staged fake helper.
+          uid="$(id -u)"
+          gid="$(id -g)"
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          if ! timeout 1 /usr/bin/systemctl --user show-environment >/dev/null 2>&1; then
+            sudo timeout --kill-after=5s 30s /usr/bin/systemctl start "user@${uid}.service"
+            for attempt in 1 2 3 4 5; do
+              timeout 1 /usr/bin/systemctl --user show-environment >/dev/null 2>&1 && break
+              sleep 1
+            done
+          fi
+          test -S "$XDG_RUNTIME_DIR/bus"
+          test "$(stat -c '%u:%g:%a:%F' "$XDG_RUNTIME_DIR")" = "$uid:$gid:700:directory"
+          timeout 1 /usr/bin/systemctl --user show-environment >/dev/null
+          command -v apparmor_parser >/dev/null
+          export NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1
+
+          cargo build -p neoth --bin neoth --locked
+          export PATH="$PWD/target/debug:$PATH"
+          cargo build -p neothd-gui --bin neothd-gui --locked
+          contained_gui_helper="$(realpath "$PWD/target/debug/neothd-gui")"
+          test -f "$contained_gui_helper" && test -x "$contained_gui_helper"
+          [[ "$contained_gui_helper" != *[$'\t\n '\"\#\{\}\*\?\[\]]* ]] || exit 1
+          profile_file="$RUNNER_TEMP/neoth-w272-neothd-gui.profile"
+          cat > "$profile_file" <<EOF
+          #include <tunables/global>
+          profile neoth-w272-neothd-gui ${contained_gui_helper} flags=(attach_disconnected,mediate_deleted,complain) {
+            capability sys_admin,
+            userns,
+          }
+          EOF
+          sudo timeout 10 apparmor_parser -r "$profile_file"
+          cleanup_containment_apparmor() {
+            sudo timeout 10 apparmor_parser -R "$profile_file" >/dev/null 2>&1 || true
+          }
+          trap cleanup_containment_apparmor EXIT
+          export NEOTH_GUI_TEST_SYSTEMD_HELPER="$contained_gui_helper"
           xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast
 
       - name: Upload Linux JUnit report

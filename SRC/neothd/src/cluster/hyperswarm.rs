@@ -3038,6 +3038,11 @@ mod tests {
             .await
             .expect("matching authenticated lease queues");
         assert_eq!(job.reply_peer_pk, remote_pk_hex);
+        // The authenticated scanner deliberately rejects a segment that
+        // changes between its proof and callback passes. Finish this test's
+        // writer before replaying the durable admission decision.
+        drop(writer);
+        writer_join.await.unwrap();
         let ledger =
             crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
                 .unwrap();
@@ -3047,8 +3052,6 @@ mod tests {
             Some(lease_id.as_str())
         );
         drop(job);
-        drop(writer);
-        writer_join.await.unwrap();
     }
 
     #[tokio::test]

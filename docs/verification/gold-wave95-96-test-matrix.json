@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2246 authentic generated CLI reference imported; final producer hosted pending",
+  "status": "W2251 reviewed native fixture repairs; final producer hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 365968,
-    "sha256": "5FF75C86526064118FFD2680348B6AB76851EF1754EBA47A64D772AEF5B12736"
+    "bytes": 366150,
+    "sha256": "BEE73C5CEEFD778096F9E6693B5B51D572BDB2EB55EE46507A4699FD566E0686"
   },
-  "sourceInputs": 2002,
+  "sourceInputs": 2003,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "49AFA2E51DD36FB048264674E6D097F7E873177C19AB53C672D69170D55C94DA",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     },
     {
@@ -15938,6 +15938,12 @@
       "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
       "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
+      "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "sourceSha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
       "junitClass": "neoth"
     }
   ],
@@ -70883,6 +70889,50 @@
       }
     ],
     "note": "Actual CLI build/export37091883325@0e659 authenticated archive; exact generated doc import; focused/full remain producer-bound and pending; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2251NativeFixtureRepairs": {
+    "base": "4931c4ac1e165bf4a39f64276a18a3c3aa8c49ff",
+    "sources": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "bytes": 43437,
+        "sha256": "77171BD6E9C277183F678A203F53C8FC50A1C121CFD1DCE871335B8647206031",
+        "blob": "c5e793f8b2fb738d816b3af4465fcb379394fcaf"
+      },
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 121989,
+        "sha256": "A6083FCBB74E70FB1DB0C98847115E8FBBEB4F34D3669B45EC6E43B9641BD199",
+        "blob": "0ed13d29d282072a03f48ea5dae23920747eb16f"
+      },
+      {
+        "path": "docs/verification/gold-wave2251-native-fixture-repair.json",
+        "bytes": 4212,
+        "sha256": "91D2DF78EE8915A45AAC70DBF2734E99C3F908BE31ED1C77FD97EED8D4104A4E",
+        "blob": "736d96b4dd29c6542c3ccf93dc1bb697527513b7"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 50917,
+        "sha256": "9314B64B5C99CC9A09EC6E80FB4A5C377755D0BA8423CDFB470E17CC1947E5F9",
+        "blob": "f456509eba623f16093b9943d83fa32ca6b9ec0c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2329272,
+        "sha256": "FDFAA0F5C4652BD6C85FF104812FD6424ABDDF01C7A8BE097046EC06F30689E2",
+        "blob": "04ee3f0ad14b08c7657f158786dc800af55a3e69"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 151848,
+        "sha256": "C368173174A82312709421D3333146B6278B19EAC1CF752BC78F4E50AEE54319",
+        "blob": "262caf619e123d3ea1eb8b1a77fc61accefaa0b8"
+      }
+    ],
+    "note": "Reviewed authentic Linux production-helper preparation and WAL writer-before-replay fixture repair. Existing tests/production boundaries/timeouts retained. Focused437; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
