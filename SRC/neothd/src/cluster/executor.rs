@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-
 use crate::providers::{Provider, Request};
 
 use super::heartbeat::{TaskResultBody, TaskResultStatus};
@@ -120,7 +119,10 @@ impl ClusterTaskJob {
     }
 
     #[cfg(test)]
-    fn with_deadline_rejected_notify(mut self, notify: std::sync::Arc<tokio::sync::Notify>) -> Self {
+    fn with_deadline_rejected_notify(
+        mut self,
+        notify: std::sync::Arc<tokio::sync::Notify>,
+    ) -> Self {
         self.deadline_rejected_notify = Some(notify);
         self
     }
@@ -553,12 +555,15 @@ async fn run_one_task_execution_inner(
         notify_deadline_rejected(&job);
         return TaskResultBody {
             task_id: job.task_id.clone(),
-            status: TaskResultStatus::Rejected { reason: "deadline_expired".to_string() },
+            status: TaskResultStatus::Rejected {
+                reason: "deadline_expired".to_string(),
+            },
             result: None,
             provider_name: None,
             requested_max_output_tokens: job.max_output_tokens,
             effective_output_token_ceiling: None,
-        }.into();
+        }
+        .into();
     }
     let Some(provider) = provider else {
         // Honest failure (not theater): the master learns this node has no
@@ -686,12 +691,15 @@ async fn run_one_task_execution_inner(
         notify_deadline_rejected(&job);
         return TaskResultBody {
             task_id: job.task_id.clone(),
-            status: TaskResultStatus::Rejected { reason: "deadline_expired".to_string() },
+            status: TaskResultStatus::Rejected {
+                reason: "deadline_expired".to_string(),
+            },
             result: None,
             provider_name: Some(provider_name),
             requested_max_output_tokens: job.max_output_tokens,
             effective_output_token_ceiling,
-        }.into();
+        }
+        .into();
     }
 
     // The delegation CAS and external permit use one short authority gate.
@@ -2213,13 +2221,17 @@ mod tests {
         }
         #[async_trait]
         impl Provider for BlockingProvider {
-            fn name(&self) -> &'static str { "deadline-queue" }
+            fn name(&self) -> &'static str {
+                "deadline-queue"
+            }
             async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
                 if call == 0 {
                     self.first_started.notify_one();
                     self.release_first.notified().await;
-                    anyhow::bail!("first fixture task is released after the second task has expired")
+                    anyhow::bail!(
+                        "first fixture task is released after the second task has expired"
+                    )
                 }
                 anyhow::bail!("expired queued task must not reach provider")
             }
@@ -2251,23 +2263,36 @@ mod tests {
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         );
         let dispatch = executor.dispatch_sender();
-        dispatch.send(job(home.path(), "hold the sole executor worker")).await.unwrap();
+        dispatch
+            .send(job(home.path(), "hold the sole executor worker"))
+            .await
+            .unwrap();
         first_started.notified().await;
 
         // The second task is live at authenticated ingress and travels through
         // the actual bounded dispatcher.  The first provider task keeps it
         // queued while this per-job test clock crosses its deadline.
-        dispatch.send(
-            job_with_deadline(home.path(), "must expire in the actual queue", deadline)
-                .with_test_deadline_clock(Arc::clone(&clock))
-                .with_deadline_rejected_notify(Arc::clone(&deadline_rejected)),
-        ).await.unwrap();
+        dispatch
+            .send(
+                job_with_deadline(home.path(), "must expire in the actual queue", deadline)
+                    .with_test_deadline_clock(Arc::clone(&clock))
+                    .with_deadline_rejected_notify(Arc::clone(&deadline_rejected)),
+            )
+            .await
+            .unwrap();
         clock.store(deadline, Ordering::SeqCst);
         release_first.notify_one();
-        tokio::time::timeout(std::time::Duration::from_secs(3), deadline_rejected.notified())
-            .await
-            .expect("queued expired task did not reach the executor deadline gate");
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "only the fixture blocker may call the provider");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            deadline_rejected.notified(),
+        )
+        .await
+        .expect("queued expired task did not reach the executor deadline gate");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "only the fixture blocker may call the provider"
+        );
         drop(dispatch);
         executor.shutdown().await;
     }
@@ -2280,7 +2305,9 @@ mod tests {
         struct CountingProvider(Arc<AtomicUsize>);
         #[async_trait]
         impl Provider for CountingProvider {
-            fn name(&self) -> &'static str { "deadline-final-permit" }
+            fn name(&self) -> &'static str {
+                "deadline-final-permit"
+            }
             async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 anyhow::bail!("final permit expiry must prevent provider work")
@@ -2313,9 +2340,16 @@ mod tests {
                 .with_test_deadline_clock(clock),
             execution_context(home.path(), crate::config::FreedomConfig::default()),
             Some(&before_external_permit),
-        ).await.body;
-        assert!(hook_called.load(Ordering::SeqCst), "the final external-permit seam must run");
+        )
+        .await
+        .body;
+        assert!(
+            hook_called.load(Ordering::SeqCst),
+            "the final external-permit seam must run"
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert!(matches!(result.status, TaskResultStatus::Rejected { ref reason } if reason == "deadline_expired"));
+        assert!(
+            matches!(result.status, TaskResultStatus::Rejected { ref reason } if reason == "deadline_expired")
+        );
     }
 }

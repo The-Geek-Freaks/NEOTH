@@ -3614,8 +3614,17 @@ impl MembershipStore {
             },
         )?;
         validate_task_delegate_operation_id(operation_id)?;
-        anyhow::ensure!(deadline_unix > now_unix, "outbound task delegation deadline is expired");
-        anyhow::ensure!(request_digest.len() == 64 && request_digest.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')), "outbound task delegation request digest is invalid");
+        anyhow::ensure!(
+            deadline_unix > now_unix,
+            "outbound task delegation deadline is expired"
+        );
+        anyhow::ensure!(
+            request_digest.len() == 64
+                && request_digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')),
+            "outbound task delegation request digest is invalid"
+        );
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let channel = scope.channel_id.as_deref().unwrap_or("");
@@ -3721,10 +3730,19 @@ impl MembershipStore {
             "UPDATE task_delegate_outbound_operations SET state='indeterminate',updated_at=?2 WHERE operation_id=?1 AND state IN ('prepared','accepted') AND deadline_unix <= ?2",
             params![operation_id, now_unix],
         )?;
-        if changed == 1 { return Ok(OutboundTaskDelegateState::Indeterminate); }
+        if changed == 1 {
+            return Ok(OutboundTaskDelegateState::Indeterminate);
+        }
         let (state, deadline): (String, i64) = conn.query_row("SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id=?1", [operation_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        anyhow::ensure!(deadline <= now_unix || state == "indeterminate", "outbound task delegation deadline has not elapsed");
-        match state.as_str() { "indeterminate" => Ok(OutboundTaskDelegateState::Indeterminate), "resulted" => anyhow::bail!("outbound task delegation result is terminal"), _ => anyhow::bail!("invalid outbound task delegation operation state") }
+        anyhow::ensure!(
+            deadline <= now_unix || state == "indeterminate",
+            "outbound task delegation deadline has not elapsed"
+        );
+        match state.as_str() {
+            "indeterminate" => Ok(OutboundTaskDelegateState::Indeterminate),
+            "resulted" => anyhow::bail!("outbound task delegation result is terminal"),
+            _ => anyhow::bail!("invalid outbound task delegation operation state"),
+        }
     }
 
     /// Atomically store a complete terminal result and advance the matched
@@ -6532,7 +6550,8 @@ mod tests {
     }
 
     #[test]
-    fn v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline() {
+    fn v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline()
+     {
         let home = tempfile::tempdir().unwrap();
         let store = MembershipStore::open(home.path()).unwrap();
         let path = store.path().to_path_buf();
@@ -6590,7 +6609,11 @@ mod tests {
         let migrated = MembershipStore::open_path(path.clone(), false).unwrap();
         drop(migrated);
         let conn = Connection::open(path).unwrap();
-        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 11);
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            11
+        );
         for operation_id in ["op-prepared", "op-accepted"] {
             let (state, deadline): (String, i64) = conn.query_row(
                 "SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id=?1",
@@ -6598,7 +6621,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).unwrap();
             assert_eq!(state, "indeterminate");
-            assert_eq!(deadline, 0, "v10 rows must never acquire an inferred deadline");
+            assert_eq!(
+                deadline, 0,
+                "v10 rows must never acquire an inferred deadline"
+            );
         }
         let (resulted_state, resulted_deadline): (String, i64) = conn.query_row(
             "SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id='op-resulted'",
@@ -6612,7 +6638,8 @@ mod tests {
                 "SELECT body FROM task_delegate_outbound_results WHERE operation_id='op-resulted'",
                 [],
                 |row| row.get::<_, String>(0),
-            ).unwrap(),
+            )
+            .unwrap(),
             "retained-v10-result-custody",
         );
     }

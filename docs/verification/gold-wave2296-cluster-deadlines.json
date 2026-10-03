@@ -105,5 +105,48 @@
   ],
   "integrationBase": "234e11addae443948efa1177f6fe48de880b8b35",
   "rebaseReviewSha256": "C1EF95695F7FDC1C8751EAE6172D6E968AB2BCB19E1EEF4CD0788D2D38848781",
-  "focusedWorkflowSha256": "F7AD7683AE5AFA0ADBF3AD14A02181FD6C0288D8C18AF7AC33A2AD1FC372CFE1"
+  "focusedWorkflowSha256": "F7AD7683AE5AFA0ADBF3AD14A02181FD6C0288D8C18AF7AC33A2AD1FC372CFE1",
+  "hostedFormat": {
+    "run": 37150784807,
+    "producer": "4ab88bfc26c7e9984754257ace178b2a62b0b5fc",
+    "artifact": 11283942351,
+    "originalZipSha256": "0161A75CF43D4259C065D103330D086155EC6E17C53541C349AE309094C025E7",
+    "entries": 3,
+    "patchSha256": "EDF7B559895E79021B3B3B2F8A30D25B23AF8982B12C5793ADBAD6973E3D2194",
+    "paths": [
+      "SRC/neothd/src/cli/cluster.rs",
+      "SRC/neothd/src/cluster/executor.rs",
+      "SRC/neothd/src/cluster/membership.rs",
+      "SRC/neothd/src/cluster/outbound_tests.rs",
+      "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "SRC/neothd/src/media/tts_cloud.rs"
+    ],
+    "localFormatterRan": false,
+    "postimages": [
+      {
+        "path": "SRC/neothd/src/cli/cluster.rs",
+        "blob": "fea41a11612e824d02ae480ad1b6193856e34467"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/executor.rs",
+        "blob": "b3677c2cde340deb75171a104eb4a561a3298325"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/membership.rs",
+        "blob": "342fc22432a70263bcc4033d2fe788b19a227f0f"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+        "blob": "d250983e3737d0512bb48710e23a9ad696843f61"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "blob": "855c8f0b9c968f79c89b089a36362777ea0f1e95"
+      },
+      {
+        "path": "SRC/neothd/src/media/tts_cloud.rs",
+        "blob": "bd4a61894deca4e8048642c1c5dd6012a9663e0c"
+      }
+    ]
+  }
 }

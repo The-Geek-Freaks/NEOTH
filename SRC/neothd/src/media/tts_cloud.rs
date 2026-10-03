@@ -1804,7 +1804,10 @@ mod tests {
 
         let result = configured.commit_to_file(&target).unwrap();
 
-        assert_eq!(std::fs::read(&target).unwrap(), vec![0x34, 0x12, 0x00, 0x80]);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            vec![0x34, 0x12, 0x00, 0x80]
+        );
         assert_eq!(result.provider, "azure_tts");
         assert_eq!(result.voice, "operator-voice");
         assert_eq!(result.bytes, 4);

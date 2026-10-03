@@ -1917,7 +1917,12 @@ async fn run_task_delegate_assignment(
                 OutputFormat::Table => match status {
                     Some(status) => println!(
                         "operation_id={} task_id={} peer_key={} deadline_unix={} state={:?} updated_at={}",
-                        status.operation_id, status.task_id, status.peer_key, status.deadline_unix, status.state, status.updated_at_unix
+                        status.operation_id,
+                        status.task_id,
+                        status.peer_key,
+                        status.deadline_unix,
+                        status.state,
+                        status.updated_at_unix
                     ),
                     None => println!("outbound_task_status=not_found"),
                 },
@@ -1926,7 +1931,9 @@ async fn run_task_delegate_assignment(
         ClusterTaskDelegateAction::OutboundMarkIndeterminate { operation_id } => {
             let state = crate::daemon::audit_rpc::mark_task_delegate_outbound_indeterminate(
                 &home,
-                &crate::cluster::membership::OutboundTaskDelegateMarkIndeterminateRequest { operation_id },
+                &crate::cluster::membership::OutboundTaskDelegateMarkIndeterminateRequest {
+                    operation_id,
+                },
             )
             .await
             .map_err(|error| anyhow::anyhow!(error))?;

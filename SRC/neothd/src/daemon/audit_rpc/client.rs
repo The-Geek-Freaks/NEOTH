@@ -1256,7 +1256,8 @@ pub async fn dispatch_task_delegate_outbound(
 pub async fn mark_task_delegate_outbound_indeterminate(
     home: &Path,
     request: &crate::cluster::membership::OutboundTaskDelegateMarkIndeterminateRequest,
-) -> std::result::Result<crate::cluster::membership::OutboundTaskDelegateState, AuditRpcClientError> {
+) -> std::result::Result<crate::cluster::membership::OutboundTaskDelegateState, AuditRpcClientError>
+{
     let body = serde_json::to_string(request)
         .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
     let (status, response) = post_rpc(

@@ -28,25 +28,31 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
     assign(&store, peer.clone(), &exact, true, 1, 0);
     store
         .prepare_task_delegate_outbound_operation_bound(
-            "op-deadline-status", "task-deadline-status", &peer, &exact, NOW,
-            NOW + 5, "a".repeat(64),
+            "op-deadline-status",
+            "task-deadline-status",
+            &peer,
+            &exact,
+            NOW,
+            NOW + 5,
+            "a".repeat(64),
         )
         .expect("persist deadline before queue");
-    let first = MembershipStore::task_delegate_outbound_status_read_only(
-        home.path(), "op-deadline-status",
-    )
-    .expect("first pure read")
-    .expect("status");
-    let second = MembershipStore::task_delegate_outbound_status_read_only(
-        home.path(), "op-deadline-status",
-    )
-    .expect("second pure read")
-    .expect("status");
+    let first =
+        MembershipStore::task_delegate_outbound_status_read_only(home.path(), "op-deadline-status")
+            .expect("first pure read")
+            .expect("status");
+    let second =
+        MembershipStore::task_delegate_outbound_status_read_only(home.path(), "op-deadline-status")
+            .expect("second pure read")
+            .expect("status");
     assert_eq!(first, second);
     assert_eq!(first.state, OutboundTaskDelegateState::Prepared);
-    assert!(store
-        .mark_task_delegate_outbound_indeterminate("op-deadline-status", NOW + 4)
-        .is_err(), "pre-deadline reconciliation is denied");
+    assert!(
+        store
+            .mark_task_delegate_outbound_indeterminate("op-deadline-status", NOW + 4)
+            .is_err(),
+        "pre-deadline reconciliation is denied"
+    );
     assert_eq!(
         store
             .mark_task_delegate_outbound_indeterminate("op-deadline-status", NOW + 5)
@@ -55,7 +61,9 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
     );
     assert_eq!(
         MembershipStore::task_delegate_outbound_status_read_only(home.path(), "op-deadline-status")
-            .unwrap().unwrap().state,
+            .unwrap()
+            .unwrap()
+            .state,
         OutboundTaskDelegateState::Indeterminate
     );
 }
@@ -67,18 +75,50 @@ fn outbound_deadline_rejects_expired_prepare_and_late_result_cannot_settle_indet
     let exact = scope();
     let peer = active_peer(&store, "deadline-late-result");
     assign(&store, peer.clone(), &exact, true, 1, 0);
-    assert!(store.prepare_task_delegate_outbound_operation_bound(
-        "op-expired", "task-expired", &peer, &exact, NOW, NOW, "b".repeat(64),
-    ).is_err(), "expired request creates no operation");
-    store.prepare_task_delegate_outbound_operation_bound(
-        "op-late", "task-late", &peer, &exact, NOW, NOW + 1, "c".repeat(64),
-    ).expect("live operation");
-    store.mark_task_delegate_outbound_indeterminate("op-late", NOW + 1)
+    assert!(
+        store
+            .prepare_task_delegate_outbound_operation_bound(
+                "op-expired",
+                "task-expired",
+                &peer,
+                &exact,
+                NOW,
+                NOW,
+                "b".repeat(64),
+            )
+            .is_err(),
+        "expired request creates no operation"
+    );
+    store
+        .prepare_task_delegate_outbound_operation_bound(
+            "op-late",
+            "task-late",
+            &peer,
+            &exact,
+            NOW,
+            NOW + 1,
+            "c".repeat(64),
+        )
+        .expect("live operation");
+    store
+        .mark_task_delegate_outbound_indeterminate("op-late", NOW + 1)
         .expect("explicit expired state");
-    assert!(store.receive_task_delegate_outbound_result(
-        &peer, &completed_result("task-late", "too late"), NOW + 2,
-    ).is_err(), "late result cannot settle indeterminate custody");
-    assert!(store.task_delegate_outbound_result("op-late").unwrap().is_none());
+    assert!(
+        store
+            .receive_task_delegate_outbound_result(
+                &peer,
+                &completed_result("task-late", "too late"),
+                NOW + 2,
+            )
+            .is_err(),
+        "late result cannot settle indeterminate custody"
+    );
+    assert!(
+        store
+            .task_delegate_outbound_result("op-late")
+            .unwrap()
+            .is_none()
+    );
 }
 
 fn active_peer(store: &MembershipStore, label: &str) -> String {
