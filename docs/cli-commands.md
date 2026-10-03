@@ -35,10 +35,11 @@ Inspect sub-agents loaded from `~/.neoth/agents/*.toml` + built-ins (code-review
 
 ### `neoth agents history`
 
-List private run records, or show one by id
+List private run records, show one by id, or export one content-free unqualified NCT observation with `--nct-baseline`
 
 - `<RUN_ID>`
 - `--limit <LIMIT>`
+- `--nct-baseline` — Export only a content-free, unqualified NCT observation for this one existing private run. Requires RUN_ID and --output json or jsonl
 
 ### `neoth agents list`
 

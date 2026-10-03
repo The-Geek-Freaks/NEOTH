@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T02:58:19.1809478Z",
-  "validationStatus": "W2243 authentic hosted formatting applied; final producer checks pending",
+  "capturedUtc": "2026-10-03T03:10:10.9008397Z",
+  "validationStatus": "W2246 authentic generated CLI reference imported; final producer hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -263,8 +263,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 265202,
-      "sha256": "6629C9C342D510A77BFD93A964DC5100F0F329DB14C0340E31DC8657AE4A0A2A"
+      "bytes": 265434,
+      "sha256": "FA6A4FA95A1733E93F3F94323B392FC8915CCA6B7EE52B37582C03AC361F0DBC"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3178,8 +3178,8 @@
     },
     {
       "path": "docs/verification/gold-wave2243-nct-observation-trivy.json",
-      "bytes": 5103,
-      "sha256": "6118942F2E490A3C072AD938E771F300CE5C33C73249D1A427FA67BBB4720F30"
+      "bytes": 5640,
+      "sha256": "EAC4E5E569ADFC31BD8D469E4DDF2A40CA1CFF5DDB3F952261435F97F1A15237"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4323,8 +4323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2325849,
-      "sha256": "41B7B3E028ACF51A73854A758879422D200F351FD794974E0EA392A034DA05BD"
+      "bytes": 2327202,
+      "sha256": "5686681B8D552172D687A4B6FDFCDB27B2A3541036BDEE9052CF1463BD0BE2A3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

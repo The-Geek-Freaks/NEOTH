@@ -98,5 +98,16 @@
     "sourcePostimageSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
     "localFormatterRan": false,
     "hostedValidationAfterFormatting": "pending"
+  },
+  "generatedCliReference": {
+    "producer": "0e65961461d4af4aed65f20edb372c82b9017d30",
+    "run": 37091883325,
+    "artifact": 11263465679,
+    "zipSha256": "d6cb7534c57ea45c3fac02f0325881f4ec4897114e69a11da9ea601375c69ccc",
+    "markdownSha256": "FA6A4FA95A1733E93F3F94323B392FC8915CCA6B7EE52B37582C03AC361F0DBC",
+    "exactGeneratedBytesImported": true,
+    "delta": "New agents history NCT observation description and --nct-baseline option only",
+    "finalProducerDocgenRegression": "pending",
+    "focusedRunAccepted": false
   }
 }
