@@ -316,9 +316,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("let provider_kind ="),
         dispatch_token: Some("[\"models\", \"catalog\", \"--output\", \"json\"]"),
         receipt: Evidence::Untyped("let provider_kind =", "run_neothd_probe"),
-        readback: Evidence::Missing,
+        readback: Evidence::Typed("let provider_kind =", "parse_models_catalog_readback"),
         state: OperationState::Partial(
-            "the picker consumes a parsed catalog but has no typed operation receipt/readback",
+            "the startup picker retains a typed catalog readback but has no separate refresh control or typed operation receipt",
         ),
     },
     OperationParity {

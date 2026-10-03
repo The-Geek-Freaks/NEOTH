@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2263 exact hosted Rustfmt patch imported; compilation and GUI acceptance pending",
+  "status": "W2264 typed model readback and hosted compiler corrections; hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 366907,
-    "sha256": "745D180D4B52924B2B2EFDCF8F8A568A459A2D1E18C75C72550331BC3EEFB5E5"
+    "bytes": 367096,
+    "sha256": "2DDC710AA64D033F5030BC3603E19AEAA8ECC015FBA9230ABA03920ABA7E5F38"
   },
-  "sourceInputs": 2007,
+  "sourceInputs": 2008,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
+      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
       "junitClass": "neoth"
     },
     {
@@ -3545,13 +3545,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
+      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
       "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
+      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
       "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
       "junitClass": "neoth"
     },
@@ -4890,7 +4890,7 @@
     {
       "test": "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
+      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
       "junitClass": "neoth"
     },
     {
@@ -16107,7 +16107,9 @@
     "buddy_provider_panel::tests::exact_argv_covers_show_select_mode_and_clear",
     "buddy_provider_panel::tests::literal_question_is_not_reinterpreted_as_dry_run_and_empty_replace_is_refused",
     "buddy_provider_panel::tests::queue_helpers_preserve_unique_order_and_named_membership",
-    "buddy_provider_panel::tests::outcome_is_typed_and_operation_bound"
+    "buddy_provider_panel::tests::outcome_is_typed_and_operation_bound",
+    "panel_logic::tests::parse_models_catalog_filters_and_falls_back",
+    "panel_logic::tests::models_catalog_readback_rejects_malformed_real_schema"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -16609,8 +16611,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2253307,
-      "sha256": "667B2CA7326265F1BC20ADCC1FCA09BCE8AED48DE90073A77F58CC48BC3C8FFB"
+      "bytes": 2253431,
+      "sha256": "6B7DB07BC4222843F52DD3087B30BDBFE792AADD673F1B23BFF94B8D009C91DB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -16619,8 +16621,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 607385,
-      "sha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C"
+      "bytes": 610773,
+      "sha256": "F127BB99412701DFAF6EFE345B085672497536B2564FF19BEC8631848757D9D8"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -71151,6 +71153,50 @@
       }
     ],
     "note": "Original preflight37112237603 artifact11269689641 outer API SHA256 and all inner hashes verified; producer39383fcf exact. Formatting generated only by hosted Rustfmt; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2264TypedCatalogAndBuddyCompile": {
+    "base": "4a47a0fc87d1e8dd34e9173081a34e6b34302a01",
+    "sources": [
+      {
+        "path": ".github/workflows/gui-linux-fixtures.yml",
+        "bytes": 39349,
+        "sha256": "5D1E02A17B2BE1E684A963F15794A9FFF2A2538CC277029FDBCEF312120590F3",
+        "blob": "9e0d17e2838f570bf6f0332c74f287ee55780652"
+      },
+      {
+        "path": "docs/verification/gold-wave2264-model-catalog.json",
+        "bytes": 2329,
+        "sha256": "D6A9E1D4812318ECDD01F5DF9C76398B2B97374406880091C9C3E8DE8684301E",
+        "blob": "08b73306fedfc6d8cdb3f13df2de2ba7c9de21b9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2334966,
+        "sha256": "2781FD12321230D7F4C655C0B61D5EF30DEA35F10C8F6293D12A7A31092BBA29",
+        "blob": "6dc03ff4b649925cb1a34152788d9b5d0db3f8a1"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2253431,
+        "sha256": "6B7DB07BC4222843F52DD3087B30BDBFE792AADD673F1B23BFF94B8D009C91DB",
+        "blob": "8e87bcb265ad1aa82318498ec1c2c4c96457b937"
+      },
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 610773,
+        "sha256": "F127BB99412701DFAF6EFE345B085672497536B2564FF19BEC8631848757D9D8",
+        "blob": "9c5ae547b48178d5647f1733556e4700e23a9759"
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 88948,
+        "sha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+        "blob": "4d14bc03d35989e32c4e292147622f59daa51857"
+      }
+    ],
+    "note": "Model catalog candidate independently reviewed; W2263 GUI run37112566164 executed zero tests after two production compile diagnostics, minimally corrected. GUI registration138+35=173. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2298,8 +2298,10 @@ fn main() -> Result<()> {
             read_nested_str_in_freedom(&neoth_dir.join("freedom.yaml"), "provider_kind", "");
         std::thread::spawn(move || {
             let out = run_neothd_probe(&["models", "catalog", "--output", "json"]);
-            let models = panel_logic::parse_models_catalog(&out, &provider_kind);
-            *REGEN_MODELS.lock().unwrap_or_else(|e| e.into_inner()) = models;
+            if let Ok(readback) = panel_logic::parse_models_catalog_readback(&out, &provider_kind)
+            {
+                *REGEN_MODELS.lock().unwrap_or_else(|e| e.into_inner()) = readback.model_ids;
+            }
         });
     }
 
@@ -22497,7 +22499,8 @@ fn run_buddy_provider_command(
 fn fetch_buddy_provider_readback()
 -> std::result::Result<buddy_provider_panel::BuddyProviderReadback, String> {
     let raw = run_buddy_provider_command(&buddy_provider_panel::BuddyProviderCommand::Show, false)?;
-    buddy_provider_panel::parse_buddy_provider_readback(&raw).map_err(buddy_provider_panel_error)
+    buddy_provider_panel::parse_buddy_provider_readback(&raw)
+        .map_err(|error| buddy_provider_panel_error(error).to_string())
 }
 
 fn apply_buddy_provider_readback(
@@ -22873,6 +22876,8 @@ fn register_buddy_provider_callbacks(window: &MainWindow) {
     let state = latest.clone();
     let state_for_validate = latest.clone();
     window.on_bc_buddy_fallback_replace(move |ids| {
+        use slint::Model;
+
         let ids = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
         let valid = state_for_validate
             .lock()

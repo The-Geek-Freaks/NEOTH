@@ -1,0 +1,55 @@
+{
+  "schema": "neoth-gold-wave2264-model-catalog/v1",
+  "base": "4a47a0fc87d1e8dd34e9173081a34e6b34302a01",
+  "status": "reviewed model catalog readback and concrete Buddy compile repairs; hosted validation pending",
+  "scope": [
+    "Validate current ModelsCatalog version 2 shape before publishing model picker choices",
+    "Keep existing provider order, deprecated filter, unknown-provider fallback and cap of eight",
+    "Preserve prior picker values on invalid probe output",
+    "Correct Buddy readback error conversion and Slint Model iteration trait visibility"
+  ],
+  "previousRun": {
+    "id": 37112566164,
+    "producer": "4a47a0fc87d1e8dd34e9173081a34e6b34302a01",
+    "conclusion": "failure",
+    "guiTestsExecuted": 0,
+    "compilerErrors": [
+      "E0308",
+      "E0599"
+    ],
+    "proof": "work/gold-20260906/wave2263-buddy-gui/root/gui171-validation/ROOT_FAILURE_TRIAGE.json"
+  },
+  "verification": {
+    "modelCatalogReview": "static approved exact candidates",
+    "compileRepair": "Minimal exact two-hunk repair reviewed against hosted E0308/E0599 diagnostics; executable verification pending",
+    "localExecutableValidationRan": false,
+    "hostedFormat": "pending",
+    "hostedGui": "pending",
+    "hostedFullCi": "pending"
+  },
+  "testRegistration": [
+    "panel_logic::tests::parse_models_catalog_filters_and_falls_back",
+    "panel_logic::tests::models_catalog_readback_rejects_malformed_real_schema"
+  ],
+  "newRustTests": 1,
+  "newGuiRegistrations": 2,
+  "newSlintEdits": false,
+  "releaseReady": false,
+  "importedSources": [
+    {
+      "sha": "F127BB99412701DFAF6EFE345B085672497536B2564FF19BEC8631848757D9D8",
+      "candidate": "work\\gold-20260906\\wave2264-model-catalog\\candidate\\SRC\\neothd-gui\\src\\panel_logic.rs",
+      "path": "SRC/neothd-gui/src/panel_logic.rs"
+    },
+    {
+      "sha": "6B7DB07BC4222843F52DD3087B30BDBFE792AADD673F1B23BFF94B8D009C91DB",
+      "candidate": "work\\gold-20260906\\wave2264-compile-repair\\candidate\\SRC\\neothd-gui\\src\\main.rs",
+      "path": "SRC/neothd-gui/src/main.rs"
+    },
+    {
+      "sha": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+      "candidate": "work\\gold-20260906\\wave2264-model-catalog\\candidate\\SRC\\neothd\\src\\cli\\parity_drift.rs",
+      "path": "SRC/neothd/src/cli/parity_drift.rs"
+    }
+  ]
+}

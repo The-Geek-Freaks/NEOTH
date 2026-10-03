@@ -5010,35 +5010,100 @@ pub fn parse_permissions_show(json: &str) -> (Vec<PermRowData>, String) {
 
 // ── Regenerate with model (H18) ──────────────────────────────────────────────
 
-/// Parse the models-catalog JSON into the picker list for one provider:
-/// non-deprecated model ids, provider order, capped at 8. Unknown
-/// provider (or empty kind) falls back to every provider's models
-/// merged in catalog order — still filtered, never invented.
-pub fn parse_models_catalog(json: &str, provider_kind: &str) -> Vec<String> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let Some(providers) = v.get("providers").and_then(|x| x.as_object()) else {
-        return Vec::new();
-    };
-    fn ids(pc: &serde_json::Value) -> Vec<String> {
-        pc.get("models")
-            .and_then(|x| x.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter(|m| {
-                        !m.get("deprecated")
-                            .and_then(|d| d.as_bool())
-                            .unwrap_or(false)
-                    })
-                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
+/// Validated, provider-filtered readback of `neoth models catalog --output
+/// json`.  The picker only publishes its next list after this real CLI wire
+/// has been structurally checked, so a malformed refresh cannot erase a
+/// previously valid in-memory selection list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelsCatalogReadback {
+    pub model_ids: Vec<String>,
+}
+
+/// Parse the current `ModelsCatalog` JSON shape into picker ids: non-deprecated
+/// model ids, provider/model order, capped at 8. An unknown selected provider
+/// retains the established compatibility fallback of merging every provider.
+pub fn parse_models_catalog_readback(
+    json: &str,
+    provider_kind: &str,
+) -> Result<ModelsCatalogReadback, String> {
+    let value = serde_json::from_str::<serde_json::Value>(json)
+        .map_err(|error| format!("invalid models catalog JSON: {error}"))?;
+    let root = value
+        .as_object()
+        .ok_or_else(|| "models catalog root must be an object".to_string())?;
+    let version = root
+        .get("version")
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| "models catalog version is missing or invalid".to_string())?;
+    if version != 2 {
+        return Err(format!("unsupported models catalog version {version}"));
     }
-    let picked: Vec<String> = match providers.get(provider_kind) {
-        Some(pc) if !ids(pc).is_empty() => ids(pc),
-        _ => providers.values().flat_map(ids).collect(),
+    let providers = root
+        .get("providers")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "models catalog providers is missing or invalid".to_string())?;
+
+    fn ids(provider: &str, catalog: &serde_json::Value) -> Result<Vec<String>, String> {
+        let catalog = catalog
+            .as_object()
+            .ok_or_else(|| format!("models catalog provider `{provider}` is not an object"))?;
+        let models = catalog
+            .get("models")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| format!("models catalog provider `{provider}` has invalid models"))?;
+        models
+            .iter()
+            .map(|model| {
+                let model = model.as_object().ok_or_else(|| {
+                    format!("models catalog provider `{provider}` has a non-object model")
+                })?;
+                let id = model
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| {
+                        format!("models catalog provider `{provider}` has a model without id")
+                    })?;
+                let deprecated = model
+                    .get("deprecated")
+                    .map(|value| {
+                        value.as_bool().ok_or_else(|| {
+                            format!("models catalog provider `{provider}` has invalid deprecated flag")
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                Ok((!deprecated).then(|| id.to_string()))
+            })
+            .filter_map(Result::transpose)
+            .collect()
+    }
+
+    let provider_ids = providers
+        .iter()
+        .map(|(provider, catalog)| ids(provider, catalog).map(|ids| (provider, ids)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let model_ids = match provider_ids
+        .iter()
+        .find(|(provider, ids)| provider.as_str() == provider_kind && !ids.is_empty())
+    {
+        Some((_, ids)) => ids.clone(),
+        None => provider_ids
+            .into_iter()
+            .flat_map(|(_, ids)| ids)
+            .collect(),
     };
-    picked.into_iter().take(8).collect()
+    Ok(ModelsCatalogReadback {
+        model_ids: model_ids.into_iter().take(8).collect(),
+    })
+}
+
+/// Backward-compatible picker helper for callers that deliberately want an
+/// empty list on malformed output.
+pub fn parse_models_catalog(json: &str, provider_kind: &str) -> Vec<String> {
+    parse_models_catalog_readback(json, provider_kind)
+        .map(|readback| readback.model_ids)
+        .unwrap_or_default()
 }
 
 // ── Cost & usage (C7) ────────────────────────────────────────────────────────
@@ -14835,17 +14900,31 @@ mod tests {
 
     #[test]
     fn parse_models_catalog_filters_and_falls_back() {
-        let json = r#"{"version":1,"providers":{
+        let json = r#"{"version":2,"generation":4,"providers":{
             "claude_cli":{"fetched_at_unix":1,"models":[
                 {"id":"model-alpha"},{"id":"old-model","deprecated":true},{"id":"model-beta"}]},
             "openai_compat":{"fetched_at_unix":1,"models":[{"id":"other-model"}]}}}"#;
-        let m = parse_models_catalog(json, "claude_cli");
-        assert_eq!(m, vec!["model-alpha", "model-beta"]);
+        let m = parse_models_catalog_readback(json, "claude_cli")
+            .expect("current ModelsCatalog wire parses");
+        assert_eq!(m.model_ids, vec!["model-alpha", "model-beta"]);
         // unknown provider falls back to the merged set, still filtered
-        let all = parse_models_catalog(json, "nope");
-        assert!(all.contains(&"other-model".to_string()));
-        assert!(!all.contains(&"old-model".to_string()));
+        let all = parse_models_catalog_readback(json, "nope")
+            .expect("unknown selected provider retains merged fallback");
+        assert!(all.model_ids.contains(&"other-model".to_string()));
+        assert!(!all.model_ids.contains(&"old-model".to_string()));
         assert!(parse_models_catalog("junk", "x").is_empty());
+    }
+
+    #[test]
+    fn models_catalog_readback_rejects_malformed_real_schema() {
+        let malformed_provider = r#"{"version":2,"providers":{"claude_cli":{"models":"not-an-array"}}}"#;
+        assert!(parse_models_catalog_readback(malformed_provider, "claude_cli").is_err());
+
+        let malformed_model = r#"{"version":2,"providers":{"claude_cli":{"models":[{"deprecated":false}]}}}"#;
+        assert!(parse_models_catalog_readback(malformed_model, "claude_cli").is_err());
+
+        assert!(parse_models_catalog_readback(r#"{"version":1,"providers":{}}"#, "claude_cli")
+            .is_err());
     }
 
     #[test]
