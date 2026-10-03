@@ -94,6 +94,34 @@ static EMBEDDING_MODELS_UI_REVISION: std::sync::atomic::AtomicU64 =
 static EMBEDDING_MODEL_ACTION_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Buddy provider configuration is a separate canonical CLI surface from the
+// passive Buddy retry history. One GUI operation owns its receipt and fresh
+// readback; a late Show must never overwrite that verified result.
+static BUDDY_PROVIDER_CONFIG_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static BUDDY_PROVIDER_CONFIG_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+// The existing owned-child supervisor requires a non-zero request identity.
+// Buddy provider commands are not chat turns, but they still need a unique
+// request-owned tree so provider adapters cannot leave descendants holding a
+// captured stdout/stderr pipe after the direct CLI exits.
+#[cfg(not(target_os = "macos"))]
+static BUDDY_PROVIDER_CONFIG_CHILD_REQUEST_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+// GUI callback fixtures change process-wide NEOTH_HOME.  Keep one lock at the
+// module boundary so every GUI test module serializes that shared environment.
+#[cfg(test)]
+pub(crate) static GUI_CALLBACK_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct BuddyProviderConfigFlight;
+
+impl Drop for BuddyProviderConfigFlight {
+    fn drop(&mut self) {
+        BUDDY_PROVIDER_CONFIG_OPERATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 struct EmbeddingModelActionFlight;
 
 impl Drop for EmbeddingModelActionFlight {
@@ -1221,6 +1249,9 @@ mod win_private {
 /// [`panel_logic::PanelVisibility`], populated on startup from the operator's
 /// complexity level.
 mod buddy_activity;
+mod buddy_provider_panel;
+#[cfg(test)]
+mod buddy_provider_gui_tests;
 mod chat_child_supervisor;
 mod chat_reasoning;
 mod chat_recall_chips;
@@ -8007,6 +8038,7 @@ fn main() -> Result<()> {
         register_local_model_callbacks(&window);
         register_embedding_model_callbacks(&window);
         register_buddy_embedding_callbacks(&window);
+        register_buddy_provider_callbacks(&window);
 
         // Self-activation toggle — real daemon command.
         let weak_bc_sa = window.as_weak();
@@ -22263,6 +22295,438 @@ fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, Str
         output.status.code(),
     )?;
     panel_logic::parse_buddy_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+// Provider configuration has a distinct daemon DTO.  Do not fold it into the
+// passive `buddy status` retry-history readback above: these commands mutate
+// the canonical hemispheres writer and must be bound to its own receipt.
+const BUDDY_PROVIDER_CONFIG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn buddy_provider_panel_error(_error: buddy_provider_panel::BuddyPanelError) -> &'static str {
+    // The pure contract intentionally collapses parser/validation detail. In
+    // particular, stdout, stderr, endpoints, file paths and credential
+    // references must never cross this GUI boundary.
+    "Buddy provider configuration could not be verified. Refresh and review the named provider configuration."
+}
+
+fn buddy_provider_outcome_label(outcome: &buddy_provider_panel::BuddyCommandOutcome) -> &'static str {
+    use buddy_provider_panel::{BuddyOutcomeOperation, BuddyTestOutcome};
+    match (outcome.operation, outcome.test_outcome) {
+        (BuddyOutcomeOperation::Test, Some(BuddyTestOutcome::ConstructionOnly)) =>
+            "Provider construction test completed; no live question was sent.",
+        (BuddyOutcomeOperation::Test, Some(BuddyTestOutcome::DryRunPreview)) =>
+            "Provider dry-run preview completed; no live question was sent.",
+        (BuddyOutcomeOperation::Test, Some(BuddyTestOutcome::LiveCompleted)) =>
+            "Provider live test completed after confirmation.",
+        (BuddyOutcomeOperation::Set, _) => "Provider role update was accepted; fresh configuration loaded.",
+        (BuddyOutcomeOperation::Select, _) => "Named provider selection was accepted; fresh configuration loaded.",
+        (BuddyOutcomeOperation::Mode, _) => "Provider mode update was accepted; fresh configuration loaded.",
+        (BuddyOutcomeOperation::Preset, _) => "Provider preset was accepted; fresh configuration loaded.",
+        (BuddyOutcomeOperation::FallbackReplace, _) => "Fallback order was accepted; fresh configuration loaded.",
+        (BuddyOutcomeOperation::FallbackClear, _) => "Fallback order was cleared; fresh configuration loaded.",
+        (BuddyOutcomeOperation::Test, None) => "Provider test receipt was accepted; fresh configuration loaded.",
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn next_buddy_provider_child_request_id() -> ChatStreamRequestId {
+    // `0` is deliberately not a valid owned-child identity.  The saturated
+    // fallback only matters after an impractical counter wrap and preserves
+    // the supervisor's non-zero invariant without exposing an ID to Slint.
+    let raw = BUDDY_PROVIDER_CONFIG_CHILD_REQUEST_ID
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .max(1);
+    ChatStreamRequestId::parse_wire(&raw.to_string())
+        .expect("non-zero Buddy provider child request ID")
+}
+
+/// Execute one canonical Buddy provider command inside the existing
+/// platform-specific process-tree owner.  A provider test may launch a local
+/// adapter or a CLI descendant which inherits its pipes; direct-child `kill`
+/// plus reader joins would then hang.  The supervisor proves the tree empty
+/// before the bounded reader handoff.  stdin is deliberately null: GUI
+/// configuration never grants an implicit interactive consent response.
+#[cfg(not(target_os = "macos"))]
+fn run_contained_buddy_provider_command(
+    command: &mut std::process::Command,
+    timeout: std::time::Duration,
+) -> std::result::Result<std::process::Output, &'static str> {
+    use std::{process::Stdio, time::{Duration, Instant}};
+
+    let started = Instant::now();
+    let deadline = started.checked_add(timeout).ok_or("Buddy provider command deadline is invalid")?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = OwnedChatChild::spawn(next_buddy_provider_child_request_id(), command)
+        .map_err(|_| "Buddy provider command could not start safely")?;
+    let stdout = match child.take_stdout() {
+        Some(pipe) => pipe,
+        None => {
+            let _ = child.terminate_and_reap();
+            return Err("Buddy provider command stdout is unavailable");
+        }
+    };
+    let stderr = match child.take_stderr() {
+        Some(pipe) => pipe,
+        None => {
+            let _ = child.terminate_and_reap();
+            return Err("Buddy provider command stderr is unavailable");
+        }
+    };
+    let stdout_task = std::thread::spawn(move || drain_embedding_command_pipe(stdout));
+    let stderr_task = std::thread::spawn(move || drain_embedding_command_pipe(stderr));
+    loop {
+        match child.poll_reaped_and_empty() {
+            Ok(Some(status)) => {
+                // `poll_reaped_and_empty` proves that no owned descendant can
+                // retain either pipe, so these joins cannot wait on an orphan.
+                return Ok(std::process::Output {
+                    status,
+                    stdout: stdout_task.join().unwrap_or_default(),
+                    stderr: stderr_task.join().unwrap_or_default(),
+                });
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                // Cleanup retains process-tree ownership until it proves empty;
+                // no timed-out UI operation can detach a provider descendant.
+                let _ = child.terminate_and_reap();
+                let _ = stdout_task.join();
+                let _ = stderr_task.join();
+                return Err("Buddy provider command timed out");
+            }
+            Err(_) => {
+                let _ = child.terminate_and_reap();
+                let _ = stdout_task.join();
+                let _ = stderr_task.join();
+                return Err("Buddy provider command could not be reaped safely");
+            }
+        }
+    }
+}
+
+fn run_buddy_provider_command(
+    command: &buddy_provider_panel::BuddyProviderCommand,
+    live_confirmation: bool,
+) -> std::result::Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // macOS deliberately has no complete-tree primitive for arbitrary
+        // provider adapters.  Core-only configuration commands remain useful
+        // through the bounded trusted-local CLI path below, but a provider
+        // test can launch third-party/provider processes and is refused rather
+        // than pretending a direct-child kill owns its descendants.
+        if let Some(message) = macos_buddy_provider_command_refusal(command) {
+            return Err(message.into());
+        }
+    }
+    let argv = if live_confirmation {
+        buddy_provider_panel::live_buddy_command(
+            command,
+            Some(buddy_provider_panel::BuddyLiveConfirmation::confirmed()),
+        )
+    } else {
+        buddy_provider_panel::preview_buddy_command(command).map(|preview| preview.argv)
+    }
+    .map_err(buddy_provider_panel_error)?;
+    if argv.first().map(String::as_str) != Some("neoth") {
+        return Err("Buddy provider command could not be verified.".into());
+    }
+    let bin = which_neothd().ok_or_else(|| {
+        "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string()
+    })?;
+    let mut process = spawn_neothd_plain(&bin);
+    // `BuddyProviderCommand` owns the exact public CLI grammar, including the
+    // terminal `--output json`; never reconstruct a second writer command here.
+    process.args(argv.iter().skip(1));
+    #[cfg(target_os = "macos")]
+    let output = {
+        // This path is restricted above to canonical core configuration
+        // commands. It never grants stdin and does not run a provider test;
+        // complete-tree containment remains required for adapter execution.
+        process.stdin(std::process::Stdio::null());
+        run_bounded_embedding_command(
+            &mut process,
+            BUDDY_PROVIDER_CONFIG_TIMEOUT,
+            "Buddy provider core configuration command",
+        )
+        .map_err(|_| "Buddy provider core configuration command did not complete in time.".to_string())?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let output = run_contained_buddy_provider_command(
+        &mut process,
+        BUDDY_PROVIDER_CONFIG_TIMEOUT,
+    )
+    .map_err(str::to_string)?;
+    validate_neothd_probe_exit(
+        "provider command",
+        output.status.success(),
+        &output.stderr,
+        output.status.code(),
+    )
+    .map_err(|_| "Buddy provider command was not accepted by core.".to_string())?;
+    String::from_utf8(output.stdout)
+        .map_err(|_| "Buddy provider command returned an unreadable receipt.".to_string())
+}
+
+fn fetch_buddy_provider_readback(
+) -> std::result::Result<buddy_provider_panel::BuddyProviderReadback, String> {
+    let raw = run_buddy_provider_command(&buddy_provider_panel::BuddyProviderCommand::Show, false)?;
+    buddy_provider_panel::parse_buddy_provider_readback(&raw).map_err(buddy_provider_panel_error)
+}
+
+fn apply_buddy_provider_readback(
+    window: &MainWindow,
+    readback: &buddy_provider_panel::BuddyProviderReadback,
+) {
+    use slint::{ModelRc, VecModel};
+
+    let roles = readback.roles.iter().map(|binding| BuddyProviderConfigRole {
+        role: binding.role.clone().into(),
+        provider_instance_id: binding.provider_instance_id.clone().unwrap_or_default().into(),
+        provider: binding.provider.clone().into(),
+        model: binding.model.clone().unwrap_or_default().into(),
+    }).collect::<Vec<_>>();
+    let instances = readback.available_provider_instances.iter().map(|instance| BuddyProviderInstance {
+        id: instance.id.clone().into(),
+        provider: instance.provider.clone().into(),
+        model: instance.model.clone().unwrap_or_default().into(),
+    }).collect::<Vec<_>>();
+    let selectors = readback.fallback.iter().map(|entry| BuddyFallbackSelector {
+        position: i32::try_from(entry.position).unwrap_or(i32::MAX),
+        binding_source: match entry.binding_source {
+            buddy_provider_panel::BuddyBindingSource::NamedInstance => "named_instance".into(),
+            buddy_provider_panel::BuddyBindingSource::LegacyInline => "legacy_inline".into(),
+        },
+        provider_instance_id: entry.provider_instance_id.clone().unwrap_or_default().into(),
+        provider: entry.provider.clone().into(),
+        model: entry.model.clone().unwrap_or_default().into(),
+        selectable: matches!(entry.binding_source, buddy_provider_panel::BuddyBindingSource::NamedInstance)
+            && entry.provider_instance_id.is_some(),
+    }).collect::<Vec<_>>();
+    let named_draft_ids = readback.fallback.iter().filter_map(|entry| {
+        matches!(entry.binding_source, buddy_provider_panel::BuddyBindingSource::NamedInstance)
+            .then(|| entry.provider_instance_id.clone()).flatten()
+    }).collect::<Vec<_>>();
+    let named_draft_selectors = named_draft_ids.iter().enumerate().filter_map(|(position, id)| {
+        readback.available_provider_instances.iter().find(|instance| instance.id == *id).map(|instance| BuddyFallbackSelector {
+            position: i32::try_from(position).unwrap_or(i32::MAX),
+            binding_source: "named_instance".into(),
+            provider_instance_id: instance.id.clone().into(),
+            provider: instance.provider.clone().into(),
+            model: instance.model.clone().unwrap_or_default().into(),
+            selectable: true,
+        })
+    }).collect::<Vec<_>>();
+    window.set_bc_provider_config_mode(readback.mode.clone().into());
+    window.set_bc_provider_config_roles(ModelRc::new(VecModel::from(roles)));
+    window.set_bc_provider_config_instances(ModelRc::new(VecModel::from(instances)));
+    window.set_bc_provider_config_current_fallback_selectors(ModelRc::new(VecModel::from(selectors)));
+    window.set_bc_provider_config_fallback_draft_selectors(ModelRc::new(VecModel::from(named_draft_selectors)));
+    window.set_bc_provider_config_fallback_draft_ids(ModelRc::new(VecModel::from(
+        named_draft_ids.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )));
+    window.set_bc_provider_config_fallback_max_hops(
+        i32::try_from(readback.fallback_max_hops).unwrap_or(i32::MAX),
+    );
+    window.set_bc_provider_config_current_fallback_has_legacy(
+        readback.fallback.iter().any(|entry| {
+            matches!(entry.binding_source, buddy_provider_panel::BuddyBindingSource::LegacyInline)
+        }),
+    );
+    window.set_bc_provider_config_status_valid(true);
+    window.set_bc_provider_config_error("".into());
+}
+
+fn provider_draft_ids(window: &MainWindow) -> Vec<String> {
+    use slint::Model as _;
+    window.get_bc_provider_config_fallback_draft_ids().iter().map(|id| id.to_string()).collect()
+}
+
+fn set_provider_draft_ids(
+    window: &MainWindow,
+    readback: &buddy_provider_panel::BuddyProviderReadback,
+    ids: Vec<String>,
+) {
+    use slint::{ModelRc, VecModel};
+    let draft_rows = ids.iter().enumerate().filter_map(|(position, id)| {
+        readback.available_provider_instances.iter().find(|instance| instance.id == *id).map(|instance| BuddyFallbackSelector {
+            position: i32::try_from(position).unwrap_or(i32::MAX),
+            binding_source: "named_instance".into(),
+            provider_instance_id: instance.id.clone().into(),
+            provider: instance.provider.clone().into(),
+            model: instance.model.clone().unwrap_or_default().into(),
+            selectable: true,
+        })
+    }).collect::<Vec<_>>();
+    window.set_bc_provider_config_fallback_draft_ids(ModelRc::new(VecModel::from(
+        ids.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )));
+    window.set_bc_provider_config_fallback_draft_selectors(ModelRc::new(VecModel::from(draft_rows)));
+}
+
+fn optional_buddy_text(value: slint::SharedString) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn optional_buddy_number(value: slint::SharedString) -> std::result::Result<Option<u32>, &'static str> {
+    let value = value.trim();
+    if value.is_empty() { return Ok(None); }
+    if !value.chars().all(|character| character.is_ascii_digit()) { return Err("Optional tuning must be an ASCII whole number."); }
+    value.parse::<u32>().ok().filter(|value| *value > 0).map(Some)
+        .ok_or("Optional tuning must be a positive whole number.")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_buddy_provider_command_refusal(
+    command: &buddy_provider_panel::BuddyProviderCommand,
+) -> Option<&'static str> {
+    match command {
+        buddy_provider_panel::BuddyProviderCommand::Test { .. } => Some(
+            "Provider tests are unavailable on this platform because NEOTH cannot yet contain provider process trees here. Configuration remains available.",
+        ),
+        buddy_provider_panel::BuddyProviderCommand::Preset { name, vram: None, .. }
+            if name == "local-abliterated" => Some(
+                "This local preset requires an explicit VRAM budget on this platform.",
+            ),
+        _ => None,
+    }
+}
+
+fn start_buddy_provider_command(
+    weak: slint::Weak<MainWindow>,
+    latest: std::sync::Arc<std::sync::Mutex<Option<buddy_provider_panel::BuddyProviderReadback>>>,
+    command: buddy_provider_panel::BuddyProviderCommand,
+    expected: Option<buddy_provider_panel::BuddyOutcomeOperation>,
+    live_confirmation: bool,
+) {
+    #[cfg(target_os = "macos")]
+    if let Some(message) = macos_buddy_provider_command_refusal(&command) {
+        if let Some(window) = weak.upgrade() {
+            // This preflight has no effect and deliberately preserves the last
+            // verified projection. The operation state is invalid, while a
+            // later supported Show restores configuration freshness.
+            window.set_bc_provider_config_status_valid(false);
+            window.set_bc_provider_config_error(message.into());
+        }
+        return;
+    }
+    // A callback can be queued while the window is closing.  Do not start a
+    // canonical CLI effect when there is no surface left to bind to its fresh
+    // receipt-backed readback.
+    if weak.upgrade().is_none() {
+        return;
+    }
+    if BUDDY_PROVIDER_CONFIG_OPERATION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        push_toast(&weak, "info", "Buddy providers", "A provider command and its fresh readback are already in progress.");
+        return;
+    }
+    let revision = BUDDY_PROVIDER_CONFIG_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel).wrapping_add(1);
+    if let Some(window) = weak.upgrade() {
+        window.set_bc_provider_config_busy(true);
+        window.set_bc_provider_config_error("".into());
+        window.set_bc_provider_config_receipt("".into());
+    }
+    // The flight is created before the worker. It remains owned until the
+    // event-loop closure settles; if thread spawn or event-loop scheduling
+    // fails, dropping the captured closure releases the atomic guard too.
+    let flight = BuddyProviderConfigFlight;
+    let worker_weak = weak.clone();
+    let worker_latest = latest.clone();
+    let worker = std::thread::Builder::new().name("neoth-buddy-provider-command".into()).spawn(move || {
+        let result: std::result::Result<(buddy_provider_panel::BuddyProviderReadback, String), String> = (|| {
+            let output = run_buddy_provider_command(&command, live_confirmation)?;
+            let receipt = match expected {
+                Some(expected) => buddy_provider_panel::parse_buddy_outcome(&output, expected)
+                    .map_err(buddy_provider_panel_error)
+                    .map(|outcome| buddy_provider_outcome_label(&outcome).to_string())?,
+                None => "Provider configuration verified.".to_string(),
+            };
+            let fresh = if expected.is_some() {
+                fetch_buddy_provider_readback()?
+            } else {
+                buddy_provider_panel::parse_buddy_provider_readback(&output).map_err(buddy_provider_panel_error)?
+            };
+            Ok((fresh, receipt))
+        })();
+        let _ = slint::invoke_from_event_loop(move || {
+            let _flight = flight;
+            let Some(window) = worker_weak.upgrade() else { return; };
+            window.set_bc_provider_config_busy(false);
+            if BUDDY_PROVIDER_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision { return; }
+            match result {
+                Ok((fresh, receipt)) => {
+                    if let Ok(mut slot) = worker_latest.lock() { *slot = Some(fresh.clone()); }
+                    apply_buddy_provider_readback(&window, &fresh);
+                    window.set_bc_provider_config_receipt(receipt.into());
+                    push_toast(&worker_weak, "success", "Buddy providers", "Canonical receipt matched a fresh provider readback.");
+                }
+                Err(_) => {
+                    // Keep the last typed projection. Only its freshness/error state changes.
+                    window.set_bc_provider_config_status_valid(false);
+                    window.set_bc_provider_config_error("Buddy provider command could not be verified; the prior configuration remains displayed.".into());
+                    push_toast(&worker_weak, "warn", "Buddy providers", "Provider command or fresh readback could not be verified.");
+                }
+            }
+        });
+    });
+    if worker.is_err() {
+        if let Some(window) = weak.upgrade() {
+            window.set_bc_provider_config_busy(false);
+            window.set_bc_provider_config_status_valid(false);
+            window.set_bc_provider_config_error("Buddy provider worker could not start.".into());
+        }
+    }
+}
+
+fn register_buddy_provider_callbacks(window: &MainWindow) {
+    use buddy_provider_panel::{BuddyOutcomeOperation as Outcome, BuddyProviderCommand as Command};
+    let latest = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_show(move || start_buddy_provider_command(weak.clone(), state.clone(), Command::Show, None, false));
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_set(move |role, provider, model| start_buddy_provider_command(weak.clone(), state.clone(), Command::Set { role: role.to_string(), provider: provider.to_string(), model: optional_buddy_text(model) }, Some(Outcome::Set), false));
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_select(move |role, id| start_buddy_provider_command(weak.clone(), state.clone(), Command::Select { role: role.to_string(), provider_instance_id: id.to_string() }, Some(Outcome::Select), false));
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_mode(move |provider, model| start_buddy_provider_command(weak.clone(), state.clone(), Command::Mode { provider: provider.to_string(), model: optional_buddy_text(model) }, Some(Outcome::Mode), false));
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_preset(move |name, vram, count| {
+        let (vram, count) = match (optional_buddy_number(vram), optional_buddy_number(count)) {
+            (Ok(vram), Ok(Some(count))) => match u8::try_from(count).ok().filter(|count| (1..=3).contains(count)) { Some(count) => (vram, Some(count)), None => { if let Some(window) = weak.upgrade() { window.set_bc_provider_config_error("Optional count must be between 1 and 3.".into()); } return; } },
+            (Ok(vram), Ok(None)) => (vram, None),
+            _ => { if let Some(window) = weak.upgrade() { window.set_bc_provider_config_error("Optional tuning must be a positive whole number within the supported range.".into()); } return; }
+        };
+        start_buddy_provider_command(weak.clone(), state.clone(), Command::Preset { name: name.to_string(), vram, count }, Some(Outcome::Preset), false)
+    });
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_provider_test(move |role, question, dry_run| {
+        let question = optional_buddy_text(question);
+        let live_confirmation = !dry_run && question.is_some();
+        if !dry_run && question.is_none() { if let Some(window) = weak.upgrade() { window.set_bc_provider_config_error("Enter a question before confirming a live provider test.".into()); } return; }
+        start_buddy_provider_command(weak.clone(), state.clone(), Command::Test { role: role.to_string(), question, dry_run }, Some(Outcome::Test), live_confirmation)
+    });
+    let weak = window.as_weak(); let state = latest.clone(); let state_for_validate = latest.clone();
+    window.on_bc_buddy_fallback_replace(move |ids| {
+        let ids = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        let valid = state_for_validate.lock().ok().and_then(|slot| slot.as_ref().cloned()).is_some_and(|readback| {
+            !readback.fallback.iter().any(|entry| matches!(entry.binding_source, buddy_provider_panel::BuddyBindingSource::LegacyInline))
+                && buddy_provider_panel::validate_fallback_selection(&readback, &ids).is_ok()
+        });
+        if !valid { if let Some(window) = weak.upgrade() { window.set_bc_provider_config_error("Fallback order must contain current named provider instances only.".into()); } return; }
+        start_buddy_provider_command(weak.clone(), state.clone(), Command::FallbackReplace { provider_instance_ids: ids }, Some(Outcome::FallbackReplace), false)
+    });
+    let weak = window.as_weak(); let state = latest.clone();
+    window.on_bc_buddy_fallback_clear(move || start_buddy_provider_command(weak.clone(), state.clone(), Command::FallbackClear, Some(Outcome::FallbackClear), false));
+    let state_for_queue = latest.clone(); let weak = window.as_weak();
+    window.on_bc_buddy_fallback_add(move |id| { let Some(window) = weak.upgrade() else { return; }; let current = provider_draft_ids(&window); let update = state_for_queue.lock().ok().and_then(|slot| slot.as_ref().cloned()).and_then(|readback| buddy_provider_panel::fallback_add(&current, id.as_str(), readback.fallback_max_hops).ok().filter(|next| buddy_provider_panel::validate_fallback_selection(&readback, next).is_ok()).map(|next| (readback, next))); if let Some((readback, next)) = update { set_provider_draft_ids(&window, &readback, next); } else { window.set_bc_provider_config_error("Fallback draft must contain current named provider instances only.".into()); } });
+    let weak = window.as_weak(); let state_for_queue = latest.clone();
+    window.on_bc_buddy_fallback_remove(move |position| { let Some(window) = weak.upgrade() else { return; }; let current = provider_draft_ids(&window); let update = state_for_queue.lock().ok().and_then(|slot| slot.as_ref().cloned()).and_then(|readback| usize::try_from(position).ok().and_then(|position| buddy_provider_panel::fallback_remove(&current, position).ok()).map(|next| (readback, next))); match update { Some((readback, next)) => set_provider_draft_ids(&window, &readback, next), None => window.set_bc_provider_config_error("That fallback entry cannot be removed from the editable draft.".into()), } });
+    let weak = window.as_weak(); let state_for_queue = latest.clone();
+    window.on_bc_buddy_fallback_move(move |from, to| { let Some(window) = weak.upgrade() else { return; }; let current = provider_draft_ids(&window); let update = state_for_queue.lock().ok().and_then(|slot| slot.as_ref().cloned()).and_then(|readback| usize::try_from(from).ok().zip(usize::try_from(to).ok()).and_then(|(from, to)| buddy_provider_panel::fallback_move(&current, from, to).ok()).map(|next| (readback, next))); match update { Some((readback, next)) => set_provider_draft_ids(&window, &readback, next), None => window.set_bc_provider_config_error("That fallback entry cannot be moved in the editable draft.".into()), } });
 }
 
 fn apply_buddy_vault_mirror(window: &MainWindow, mirror: &panel_logic::BuddyVaultMirrorSnap) {
@@ -43727,7 +44191,7 @@ mod w58_gui_callback_runtime_tests {
         register_code_map_enrichment_readiness_callbacks, register_embedding_model_callbacks,
         register_local_model_callbacks, register_selfimprove_accept_callback,
         register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
-        start_code_map_lifecycle_refresh, which_neothd,
+        start_code_map_lifecycle_refresh, which_neothd, GUI_CALLBACK_ENV_LOCK,
     };
 
     #[cfg(not(windows))]
@@ -43751,8 +44215,6 @@ mod w58_gui_callback_runtime_tests {
         register_wizard_daemon_callbacks, register_wizard_finish_callback, spawn_neothd_plain,
         start_wizard_session_projection, wizard_daemon_session,
     };
-
-    static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[cfg(not(windows))]
     type W167ThroughputGate = Arc<(Mutex<W167ThroughputGateState>, std::sync::Condvar)>;
@@ -51428,7 +51890,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 33] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 35] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -51456,6 +51918,8 @@ exit 7
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
         "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+        "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+        "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_preserve_legacy_and_last_good_on_rejected_or_malformed_readback",
         "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
         "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
         "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
@@ -51598,6 +52062,12 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good" => {
                         w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good()
+                    }
+                    "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback" => {
+                        super::buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback()
+                    }
+                    "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_preserve_legacy_and_last_good_on_rejected_or_malformed_readback" => {
+                        super::buddy_provider_gui_tests::w2263_buddy_provider_callbacks_preserve_legacy_and_last_good_on_rejected_or_malformed_readback()
                     }
                     "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay" => {
                         p118_gui_callbacks_cancel_real_bootstrap_without_replay()

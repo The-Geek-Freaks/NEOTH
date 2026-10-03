@@ -278,6 +278,10 @@ pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
 }
 
 async fn run_fallback(action: BuddyFallbackAction, output: OutputFormat) -> Result<()> {
+    let operation = match &action {
+        BuddyFallbackAction::Replace { .. } => "fallback_replace",
+        BuddyFallbackAction::Clear => "fallback_clear",
+    };
     let named_ids = match action {
         BuddyFallbackAction::Replace {
             provider_instance_ids,
@@ -298,6 +302,16 @@ async fn run_fallback(action: BuddyFallbackAction, output: OutputFormat) -> Resu
                 "snapshot_segment": result.snapshot_segment.display().to_string(),
                 "snapshot_offset": result.snapshot_offset,
                 "prior_source_sha256": result.prior_source_sha256,
+                "buddy_gui_receipt": {
+                    "schema_version": 1,
+                    "operation": operation,
+                    "prior_fallback_count": result.prior_count,
+                    "fallback_count": result.fallback_count,
+                    "max_hops": result.max_hops,
+                    "provider_instance_ids": result.provider_instance_ids,
+                    "snapshot_offset": result.snapshot_offset,
+                    "prior_source_sha256": result.prior_source_sha256,
+                },
             })
         ),
         OutputFormat::Table => {

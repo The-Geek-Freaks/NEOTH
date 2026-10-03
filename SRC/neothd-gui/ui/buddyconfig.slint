@@ -13,7 +13,7 @@
 //   - NeothButton prop is `label:`, NOT `text:`.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, NeothComboBox, NeothLineEdit, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, NeothComboBox, NeothLineEdit, Kicker, InfoRow, RefreshFooter, ConfirmDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -56,6 +56,33 @@ export struct BuddyEmbeddingModel {
 export struct BuddyProviderRetryRow {
     class: string, attempt: string, provider: string, wire-model: string,
     disposition: string, follow-up-lifecycle: string,
+}
+
+/// One configured Buddy role. The instance id is opaque and never an endpoint
+/// or credential identifier.
+export struct BuddyProviderConfigRole {
+    role: string,
+    provider-instance-id: string,
+    provider: string,
+    model: string,
+}
+
+/// A named instance offered by the daemon for a Buddy binding or fallback.
+export struct BuddyProviderInstance {
+    id: string,
+    provider: string,
+    model: string,
+}
+
+/// One ordered fallback selector. `selectable` is false for legacy inline
+/// selectors or a missing opaque id; those rows remain read-only context.
+export struct BuddyFallbackSelector {
+    position: int,
+    binding-source: string,
+    provider-instance-id: string,
+    provider: string,
+    model: string,
+    selectable: bool,
 }
 
 // ── Internal micro-components ─────────────────────────────────────────────────
@@ -227,6 +254,35 @@ export component BuddyConfigView inherits Rectangle {
     in property <bool> bc-provider-retry-authenticated-complete: false;
     in property <[BuddyProviderRetryRow]> bc-provider-retry-rows: [];
 
+    // Provider and fallback state from `neoth buddy provider show --output json`.
+    // This is independent from the passive provider retry-history projection.
+    in property <string> bc-provider-config-mode: "";
+    in property <[BuddyProviderConfigRole]> bc-provider-config-roles: [];
+    in property <[BuddyProviderInstance]> bc-provider-config-instances: [];
+    in property <[string]> bc-provider-config-provider-ids: [];
+    in property <[BuddyFallbackSelector]> bc-provider-config-current-fallback-selectors: [];
+    in property <[BuddyFallbackSelector]> bc-provider-config-fallback-draft-selectors: [];
+    in property <[string]> bc-provider-config-fallback-draft-ids: [];
+    in property <int> bc-provider-config-fallback-max-hops: 0;
+    in property <bool> bc-provider-config-current-fallback-has-legacy: false;
+    in property <bool> bc-provider-config-status-valid: false;
+    in property <bool> bc-provider-config-busy: false;
+    in property <string> bc-provider-config-error: "";
+    in property <string> bc-provider-config-receipt: "";
+    in-out property <string> bc-provider-config-selected-role: "";
+    in-out property <int> bc-provider-config-set-provider-index: 0;
+    in-out property <string> bc-provider-config-set-model-draft: "";
+    in-out property <int> bc-provider-config-mode-provider-index: 0;
+    in-out property <string> bc-provider-config-mode-model-draft: "";
+    in-out property <string> bc-provider-config-preset-draft: "";
+    in-out property <int> bc-provider-config-preset-index: 0;
+    in-out property <string> bc-provider-config-preset-vram-draft: "";
+    in-out property <string> bc-provider-config-preset-count-draft: "";
+    in-out property <string> bc-provider-config-test-question: "";
+    in-out property <bool> bc-provider-config-live-test-dialog-open: false;
+    in-out property <string> bc-provider-config-live-test-role: "";
+    in-out property <string> bc-provider-config-live-test-question: "";
+
     /// W218 Buddy-scoped selected embedding lifecycle projection. A status
     /// sample is cache-only until an explicit Verify returns fresh readiness.
     in property <[BuddyEmbeddingModel]> bc-embedding-models: [];
@@ -270,6 +326,17 @@ export component BuddyConfigView inherits Rectangle {
     callback bc-embedding-pull(string);
     callback bc-embedding-repair(string);
     callback bc-embedding-prune(string);
+    callback bc-buddy-provider-show();
+    callback bc-buddy-provider-set(string, string, string);
+    callback bc-buddy-provider-select(string, string);
+    callback bc-buddy-provider-mode(string, string);
+    callback bc-buddy-provider-preset(string, string, string);
+    callback bc-buddy-provider-test(string, string, bool);
+    callback bc-buddy-fallback-replace([string]);
+    callback bc-buddy-fallback-clear();
+    callback bc-buddy-fallback-add(string);
+    callback bc-buddy-fallback-remove(int);
+    callback bc-buddy-fallback-move(int, int);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -364,6 +431,252 @@ export component BuddyConfigView inherits Rectangle {
                     // ────────────────────────────────────────────────────
                     // LOCAL EMBEDDING MODEL — Buddy command surface only
                     // ────────────────────────────────────────────────────
+                    // Explicit provider configuration. It does not interpret or
+                    // mutate the passive retry receipts rendered below.
+                    Card {
+                        VerticalLayout {
+                            padding: Theme.space-4;
+                            spacing: Theme.space-3;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                Kicker { label: "BUDDY PROVIDERS"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-provider-config-error != "" ? "error"
+                                        : root.bc-provider-config-busy ? "connecting"
+                                        : root.bc-provider-config-status-valid ? "live" : "off";
+                                }
+                                NeothButton {
+                                    label: root.bc-provider-config-busy ? "Loading…" : "Show";
+                                    size: "sm";
+                                    loading: root.bc-provider-config-busy;
+                                    enabled: !root.bc-provider-config-busy;
+                                    clicked => { root.bc-buddy-provider-show(); }
+                                }
+                            }
+
+                            Note { body: "Named Buddy provider instances only. This panel never displays or accepts an endpoint, API key, or other secret."; }
+
+                            if root.bc-provider-config-error != "": Text {
+                                text: root.bc-provider-config-error;
+                                color: Theme.consent;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                                accessible-role: text;
+                                accessible-label: self.text;
+                            }
+                            if root.bc-provider-config-receipt != "": Text {
+                                text: root.bc-provider-config-receipt;
+                                color: Theme.audit;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                wrap: word-wrap;
+                                accessible-role: text;
+                                accessible-label: self.text;
+                            }
+                            if !root.bc-provider-config-status-valid: Text {
+                                text: "Provider configuration has not been verified. Load it before changing a role or fallback order.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            Divider {}
+                            Text {
+                                text: "Current topology: " + (root.bc-provider-config-mode == "" ? "unavailable" : root.bc-provider-config-mode);
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+                            for provider-role in root.bc-provider-config-roles: Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                VerticalLayout {
+                                    padding: Theme.space-3;
+                                    spacing: Theme.space-1;
+                                    Text {
+                                        text: provider-role.role + "  ·  " + provider-role.provider + "  ·  " + provider-role.model;
+                                        color: Theme.text-primary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        overflow: elide;
+                                    }
+                                    HorizontalLayout {
+                                        NeothButton {
+                                            label: root.bc-provider-config-selected-role == provider-role.role ? "Selected" : "Configure role";
+                                            size: "sm";
+                                            primary: root.bc-provider-config-selected-role == provider-role.role;
+                                            enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy;
+                                            clicked => { root.bc-provider-config-selected-role = provider-role.role; }
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                    }
+                                }
+                            }
+                            if root.bc-provider-config-roles.length == 0: Text {
+                                text: root.bc-provider-config-status-valid ? "No Buddy provider roles were returned." : "Load provider configuration to see roles.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                            }
+
+                            Text {
+                                text: root.bc-provider-config-selected-role == "" ? "Choose a role to select a named provider instance." : "Selected role: " + root.bc-provider-config-selected-role;
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+                            for instance in root.bc-provider-config-instances: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: instance.id + " · " + instance.provider + " · " + instance.model;
+                                    color: Theme.text-secondary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                NeothButton {
+                                    label: "Select instance";
+                                    size: "sm";
+                                    primary: false;
+                                    enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-selected-role != "";
+                                    clicked => { root.bc-buddy-provider-select(root.bc-provider-config-selected-role, instance.id); }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothComboBox {
+                                    model: root.bc-provider-config-provider-ids;
+                                    current-index: root.bc-provider-config-set-provider-index;
+                                    selected(i) => { root.bc-provider-config-set-provider-index = i; }
+                                }
+                                NeothLineEdit {
+                                    text <=> root.bc-provider-config-set-model-draft;
+                                    placeholder-text: "optional model for role";
+                                    horizontal-stretch: 1;
+                                }
+                                NeothButton {
+                                    label: "Set role provider";
+                                    size: "sm";
+                                    enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-selected-role != "" && root.bc-provider-config-set-provider-index >= 0 && root.bc-provider-config-set-provider-index < root.bc-provider-config-provider-ids.length;
+                                    clicked => { root.bc-buddy-provider-set(root.bc-provider-config-selected-role, root.bc-provider-config-provider-ids[root.bc-provider-config-set-provider-index], root.bc-provider-config-set-model-draft); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothComboBox {
+                                    model: root.bc-provider-config-provider-ids;
+                                    current-index: root.bc-provider-config-mode-provider-index;
+                                    selected(i) => { root.bc-provider-config-mode-provider-index = i; }
+                                }
+                                NeothLineEdit {
+                                    text <=> root.bc-provider-config-mode-model-draft;
+                                    placeholder-text: "optional model for single mode";
+                                    horizontal-stretch: 1;
+                                }
+                                NeothButton {
+                                    label: "Set single mode";
+                                    size: "sm";
+                                    enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-mode-provider-index >= 0 && root.bc-provider-config-mode-provider-index < root.bc-provider-config-provider-ids.length;
+                                    clicked => { root.bc-buddy-provider-mode(root.bc-provider-config-provider-ids[root.bc-provider-config-mode-provider-index], root.bc-provider-config-mode-model-draft); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothComboBox {
+                                    model: ["local", "local-reasoning", "local-abliterated", "single"];
+                                    current-index: root.bc-provider-config-preset-index;
+                                    selected(i) => {
+                                        root.bc-provider-config-preset-index = i;
+                                        root.bc-provider-config-preset-draft = i == 0 ? "local" : i == 1 ? "local-reasoning" : i == 2 ? "local-abliterated" : "single";
+                                    }
+                                }
+                                NeothLineEdit {
+                                    text <=> root.bc-provider-config-preset-vram-draft;
+                                    placeholder-text: "optional VRAM MiB";
+                                    horizontal-stretch: 1;
+                                }
+                                NeothLineEdit {
+                                    text <=> root.bc-provider-config-preset-count-draft;
+                                    placeholder-text: "optional count";
+                                    horizontal-stretch: 1;
+                                }
+                                NeothButton {
+                                    label: "Apply preset";
+                                    size: "sm";
+                                    enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy;
+                                    clicked => { root.bc-buddy-provider-preset(root.bc-provider-config-preset-draft == "" ? "local" : root.bc-provider-config-preset-draft, root.bc-provider-config-preset-vram-draft, root.bc-provider-config-preset-count-draft); }
+                                }
+                            }
+
+                            Divider {}
+                            Text { text: "Fallback order"; color: Theme.text-primary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; font-weight: Theme.weight-bold; }
+                            Note { body: "Fallback draft accepts named instances only. Clear removes every current fallback row."; }
+                            Text {
+                                text: root.bc-provider-config-fallback-max-hops <= 0 ? "Fallback is unavailable." : "Maximum fallback hops: " + root.bc-provider-config-fallback-max-hops;
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                            }
+                            Text { text: "Current readback"; color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; font-weight: Theme.weight-bold; }
+                            for selector in root.bc-provider-config-current-fallback-selectors: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text {
+                                    text: "#" + selector.position + "  " + selector.provider + " · " + selector.model + (selector.selectable ? " · " + selector.provider-instance-id : " · legacy inline, read-only");
+                                    color: selector.selectable ? Theme.text-secondary : Theme.warning;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                            }
+                            if root.bc-provider-config-current-fallback-has-legacy: Text {
+                                text: "Apply is unavailable while the current fallback contains legacy inline rows. Migrate or remove those rows in canonical configuration first.";
+                                color: Theme.warning;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+                            Text { text: "Editable named draft"; color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; font-weight: Theme.weight-bold; }
+                            for selector in root.bc-provider-config-fallback-draft-selectors: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "#" + selector.position + "  " + selector.provider-instance-id + " · " + selector.provider + " · " + selector.model; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; horizontal-stretch: 1; overflow: elide; }
+                                NeothButton { label: "Up"; size: "sm"; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && selector.position > 0; clicked => { root.bc-buddy-fallback-move(selector.position, selector.position - 1); } }
+                                NeothButton { label: "Down"; size: "sm"; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && selector.position + 1 < root.bc-provider-config-fallback-draft-selectors.length; clicked => { root.bc-buddy-fallback-move(selector.position, selector.position + 1); } }
+                                NeothButton { label: "Remove"; size: "sm"; danger: true; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy; clicked => { root.bc-buddy-fallback-remove(selector.position); } }
+                            }
+                            for instance in root.bc-provider-config-instances: NeothButton {
+                                label: "Add " + instance.provider + " to fallback";
+                                size: "sm";
+                                enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy;
+                                clicked => { root.bc-buddy-fallback-add(instance.id); }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothButton { label: "Apply fallback order"; size: "sm"; primary: true; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && !root.bc-provider-config-current-fallback-has-legacy && root.bc-provider-config-fallback-draft-selectors.length > 0; clicked => { root.bc-buddy-fallback-replace(root.bc-provider-config-fallback-draft-ids); } }
+                                NeothButton { label: "Clear fallback"; size: "sm"; danger: true; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-current-fallback-selectors.length > 0; clicked => { root.bc-buddy-fallback-clear(); } }
+                            }
+
+                            Divider {}
+                            Text { text: "Provider test"; color: Theme.text-primary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; font-weight: Theme.weight-bold; }
+                            Note { body: "A construction-only test is the default. A question remains local until a separate live-test confirmation is accepted."; }
+                            NeothLineEdit { text <=> root.bc-provider-config-test-question; placeholder-text: "optional test question"; enabled: root.bc-provider-config-selected-role != "" && !root.bc-provider-config-busy; horizontal-stretch: 1; }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothButton { label: "Test construction"; size: "sm"; primary: true; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-selected-role != ""; clicked => { root.bc-buddy-provider-test(root.bc-provider-config-selected-role, "", true); } }
+                                NeothButton { label: "Preview question"; size: "sm"; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-selected-role != "" && root.bc-provider-config-test-question != ""; clicked => { root.bc-buddy-provider-test(root.bc-provider-config-selected-role, root.bc-provider-config-test-question, true); } }
+                                NeothButton { label: "Request live test…"; size: "sm"; danger: true; enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-selected-role != "" && root.bc-provider-config-test-question != ""; clicked => { root.bc-provider-config-live-test-role = root.bc-provider-config-selected-role; root.bc-provider-config-live-test-question = root.bc-provider-config-test-question; root.bc-provider-config-live-test-dialog-open = true; } }
+                            }
+                        }
+                    }
+
                     Card {
                         VerticalLayout {
                             padding: Theme.space-4;
@@ -1186,5 +1499,26 @@ export component BuddyConfigView inherits Rectangle {
                 }
             }
         }
+    }
+
+    // A live provider request can leave the device. The regular test action
+    // remains construction-only; this gate binds the optional question and
+    // selected role to an explicit operator decision.
+    if root.bc-provider-config-live-test-dialog-open: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Run live provider test?";
+        body: "This sends the shown question through the selected Buddy provider role. Construction-only tests do not send a live request.";
+        preview-text: "Role: " + root.bc-provider-config-live-test-role + "\nQuestion: " + root.bc-provider-config-live-test-question;
+        confirm-label: "Run live test";
+        cancel-label: "Keep local";
+        danger: true;
+        confirm-enabled: root.bc-provider-config-status-valid && !root.bc-provider-config-busy && root.bc-provider-config-live-test-role != "" && root.bc-provider-config-live-test-question != "";
+        actions-enabled: !root.bc-provider-config-busy;
+        confirmed => {
+            root.bc-provider-config-live-test-dialog-open = false;
+            root.bc-buddy-provider-test(root.bc-provider-config-live-test-role, root.bc-provider-config-live-test-question, false);
+        }
+        cancelled => { root.bc-provider-config-live-test-dialog-open = false; }
     }
 }

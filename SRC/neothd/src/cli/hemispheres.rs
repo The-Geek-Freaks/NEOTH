@@ -163,6 +163,17 @@ pub enum PresetName {
     Single,
 }
 
+/// Stable CLI spelling for the GUI receipt.  The legacy human-facing outer
+/// receipt retains its existing Debug-format preset field for compatibility.
+fn buddy_gui_preset_name(name: PresetName) -> &'static str {
+    match name {
+        PresetName::Local => "local",
+        PresetName::LocalReasoning => "local-reasoning",
+        PresetName::LocalAbliterated => "local-abliterated",
+        PresetName::Single => "single",
+    }
+}
+
 /// Receipt for one selector-only fallback-chain replacement.  The rollback
 /// receipt refers to the exact source generation reviewed before CAS commit;
 /// it is intentionally separate from role-specific rebind audit records.
@@ -170,6 +181,8 @@ pub enum PresetName {
 pub(crate) struct FallbackReplaceResult {
     pub prior_count: usize,
     pub fallback_count: usize,
+    pub max_hops: u8,
+    pub provider_instance_ids: Vec<String>,
     pub snapshot_segment: std::path::PathBuf,
     pub snapshot_offset: Option<u64>,
     pub prior_source_sha256: String,
@@ -206,7 +219,7 @@ pub(crate) async fn replace_fallback_at(
     let selectors = fallback_selectors_from_named_ids(&named_ids)
         .context("validate fallback provider-instance selectors")?;
     let path = home.join("freedom.yaml");
-    let (prepared, (rollback, prior_count, fallback_count)) =
+    let (prepared, (rollback, prior_count, fallback_count, max_hops, provider_instance_ids)) =
         FreedomConfig::prepare_update_at(&path, |cfg| {
             cfg.inference.validate_provider_instances()?;
             for selector in &selectors {
@@ -218,7 +231,18 @@ pub(crate) async fn replace_fallback_at(
             }
             let prior_count = cfg.fallback.chain.len();
             cfg.fallback.chain = selectors.clone();
-            Ok((cfg.rollback.clone(), prior_count, cfg.fallback.chain.len()))
+            Ok((
+                cfg.rollback.clone(),
+                prior_count,
+                cfg.fallback.chain.len(),
+                cfg.fallback.max_hops,
+                cfg.fallback
+                    .chain
+                    .iter()
+                    .filter_map(|slot| slot.provider_instance_id.as_ref())
+                    .map(|id| id.as_str().to_owned())
+                    .collect(),
+            ))
         })
         .context("prepare selector-only fallback replacement")?;
     let prior_yaml_bytes = prepared
@@ -268,6 +292,8 @@ pub(crate) async fn replace_fallback_at(
     Ok(FallbackReplaceResult {
         prior_count,
         fallback_count,
+        max_hops,
+        provider_instance_ids,
         snapshot_segment,
         snapshot_offset,
         prior_source_sha256,
@@ -454,6 +480,13 @@ async fn run_preset(
                     "summary": summary,
                     "changed_roles": changed,
                     "audit_segment": audit_segment.map(|p| p.display().to_string()),
+                    "buddy_gui_receipt": {
+                        "schema_version": 1,
+                        "operation": "preset",
+                        "preset": buddy_gui_preset_name(name),
+                        "mode": cfg.inference.mode.as_str(),
+                        "changed_roles": changed,
+                    },
                 }))?
             );
         }
@@ -475,6 +508,87 @@ async fn run_preset(
         }
     }
     Ok(())
+}
+
+/// Redacted, typed provider/fallback projection consumed by Buddy GUI.
+///
+/// This is deliberately derived only from the canonical topology resolver.
+/// It never serializes a key or endpoint.  Legacy inline fallback records are
+/// retained with an explicit source marker so a GUI cannot mistake them for a
+/// named selector it is allowed to edit.
+pub(crate) fn buddy_gui_provider_readback(cfg: &FreedomConfig) -> Result<serde_json::Value> {
+    let topology = &cfg.inference;
+    topology.validate_provider_instances()?;
+
+    let roles = [
+        HemisphereRole::Left,
+        HemisphereRole::Right,
+        HemisphereRole::Cerebellum,
+    ]
+    .iter()
+    .map(|role| {
+        let binding = topology.resolve_role_binding(*role)?;
+        Ok(serde_json::json!({
+            "role": role.as_str(),
+            "binding_source": if binding.is_named_instance { "named_instance" } else { "legacy_inline" },
+            "provider_instance_id": binding.provider_instance_id,
+            "provider": binding.provider_descriptor_id,
+            "model": binding.slot.model,
+        }))
+    })
+    .collect::<Result<Vec<_>>>()?;
+
+    let provider_instances = topology
+        .provider_instances
+        .iter()
+        .map(|instance| {
+            serde_json::json!({
+                "id": instance.id.as_str(),
+                "provider": instance.descriptor,
+                "model": instance.model,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let selectors = cfg
+        .fallback
+        .chain
+        .iter()
+        .enumerate()
+        .map(|(position, slot)| {
+            let binding = topology.resolve_explicit_slot_binding(slot)?;
+            Ok(serde_json::json!({
+                "position": position,
+                "binding_source": if binding.is_named_instance { "named_instance" } else { "legacy_inline" },
+                "provider_instance_id": binding.provider_instance_id,
+                "provider": binding.provider_descriptor_id,
+                "model": binding.slot.model,
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "mode": topology.mode.as_str(),
+        "roles": roles,
+        "available_provider_instances": provider_instances,
+        "fallback": {
+            "max_hops": cfg.fallback.max_hops,
+            "selectors": selectors,
+        },
+    }))
+}
+
+/// Success-state label for the redacted GUI test receipt.  It says what the
+/// canonical test did without carrying the question, completion, or error.
+fn buddy_gui_test_outcome(question_present: bool, dry_run: bool) -> &'static str {
+    if !question_present {
+        "construction_only"
+    } else if dry_run {
+        "dry_run_preview"
+    } else {
+        "live_completed"
+    }
 }
 
 fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
@@ -519,6 +633,7 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                     // GOLD-WIRE-04: surface the specialist voice bound to this slot.
                     "voice": slot.voice.map(|v| v.as_str()),
                 })).collect::<Vec<_>>(),
+                "buddy_gui": buddy_gui_provider_readback(cfg)?,
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -678,6 +793,13 @@ async fn run_mode_single(
                     "prior_mode": prior_mode.as_str(),
                     "single_provider": provider.as_str(),
                     "model": model,
+                    "buddy_gui_receipt": {
+                        "schema_version": 1,
+                        "operation": "mode",
+                        "mode": cfg.inference.mode.as_str(),
+                        "prior_mode": prior_mode.as_str(),
+                        "provider": provider.as_str(),
+                    },
                 }))?
             );
         }
@@ -725,6 +847,14 @@ async fn run_set(
                     "model": result.new_slot.model,
                     "mode": result.mode.as_str(),
                     "audit_segment": result.audit_segment.display().to_string(),
+                    "buddy_gui_receipt": {
+                        "schema_version": 1,
+                        "operation": "set",
+                        "role": result.role.as_str(),
+                        "provider": result.provider.as_str(),
+                        "model": result.new_slot.model,
+                        "mode": result.mode.as_str(),
+                    },
                 }))?
             );
         }
@@ -780,6 +910,16 @@ async fn run_select(
                 "snapshot_segment": result.snapshot_segment.display().to_string(),
                 "snapshot_offset": result.snapshot_offset,
                 "audit_segment": result.audit_segment.display().to_string(),
+                "buddy_gui_receipt": {
+                    "schema_version": 1,
+                    "operation": "select",
+                    "role": result.role.as_str(),
+                    "provider_instance_id": result.provider_instance_id,
+                    "provider": result.new_provider.as_str(),
+                    "model": result.new_model,
+                    "mode": result.mode.as_str(),
+                    "snapshot_offset": result.snapshot_offset,
+                },
             }))?
         ),
         OutputFormat::Table => {
@@ -1321,6 +1461,7 @@ async fn run_test(
     // circuits the actual `provider.complete` so cost-sensitive operators
     // can verify routing without paying for a token.
     let operation: Result<()> = async {
+        let buddy_gui_test_outcome = buddy_gui_test_outcome(question.is_some(), dry_run);
         let live = if let Some(q) = question {
             if dry_run {
                 Some(LiveResult::dry_run(q))
@@ -1337,6 +1478,13 @@ async fn run_test(
                     "role": role.as_str(),
                     "provider": provider.name(),
                     "construct_latency_ms": construct_elapsed_ms,
+                    "buddy_gui_receipt": {
+                        "schema_version": 1,
+                        "operation": "test",
+                        "role": role.as_str(),
+                        "provider": provider.name(),
+                        "outcome": buddy_gui_test_outcome,
+                    },
                 });
                 if let Some(live) = live {
                     let obj = body.as_object_mut().unwrap();
@@ -1559,6 +1707,102 @@ mod tests {
             }],
         });
         cfg
+    }
+
+    #[test]
+    fn buddy_gui_readback_is_typed_redacted_and_preserves_fallback_order() {
+        let cfg: FreedomConfig = serde_yaml::from_str(
+            r#"inference:
+  mode: custom
+  provider_instances:
+    - id: route_a
+      descriptor: openai_compat
+      endpoint: https://a.example/v1
+      model: a-model
+      key: a-secret
+    - id: route_b
+      descriptor: claude_cli
+      model: b-model
+      key: b-secret
+  left: { provider_instance_id: route_a }
+  right: { provider_instance_id: route_b }
+  cerebellum: { provider_instance_id: route_a }
+fallback:
+  max_hops: 7
+  chain:
+    - { provider_instance_id: route_b }
+    - { provider_instance_id: route_a }
+"#,
+        )
+        .expect("parse Buddy GUI projection config");
+
+        let wire = buddy_gui_provider_readback(&cfg).expect("project resolved Buddy GUI state");
+        assert_eq!(wire["schema_version"], 1);
+        assert_eq!(wire["mode"], "custom");
+        assert_eq!(wire["roles"].as_array().map(Vec::len), Some(3));
+        assert_eq!(wire["roles"][0]["role"], "left");
+        assert_eq!(wire["roles"][0]["provider_instance_id"], "route_a");
+        assert_eq!(wire["available_provider_instances"][0]["id"], "route_a");
+        assert_eq!(wire["fallback"]["max_hops"], 7);
+        assert_eq!(wire["fallback"]["selectors"][0]["position"], 0);
+        assert_eq!(wire["fallback"]["selectors"][0]["provider_instance_id"], "route_b");
+        assert_eq!(wire["fallback"]["selectors"][1]["provider_instance_id"], "route_a");
+        let rendered = serde_json::to_string(&wire).expect("serialize redacted projection");
+        assert!(!rendered.contains("a-secret"));
+        assert!(!rendered.contains("b-secret"));
+        assert!(!rendered.contains("https://a.example/v1"));
+    }
+
+    #[test]
+    fn buddy_gui_readback_rejects_unknown_named_fallback_selector() {
+        let cfg: FreedomConfig = serde_yaml::from_str(
+            r#"inference:
+  provider_instances:
+    - id: route_a
+      descriptor: openai_compat
+fallback:
+  chain:
+    - { provider_instance_id: missing_route }
+"#,
+        )
+        .expect("parse invalid named fallback config without eager resolution");
+
+        let error = buddy_gui_provider_readback(&cfg)
+            .expect_err("readback must not hide an invalid named fallback selector");
+        assert!(format!("{error:#}").contains("unknown provider_instance_id"));
+    }
+
+    #[test]
+    fn buddy_gui_test_receipt_outcome_is_typed_and_has_no_content_channel() {
+        assert_eq!(buddy_gui_test_outcome(false, false), "construction_only");
+        assert_eq!(buddy_gui_test_outcome(false, true), "construction_only");
+        assert_eq!(buddy_gui_test_outcome(true, true), "dry_run_preview");
+        assert_eq!(buddy_gui_test_outcome(true, false), "live_completed");
+
+        let receipt = serde_json::json!({
+            "schema_version": 1,
+            "operation": "test",
+            "role": "left",
+            "provider": "openai_compat",
+            "outcome": buddy_gui_test_outcome(true, false),
+        });
+        assert!(receipt.get("question").is_none());
+        assert!(receipt.get("response").is_none());
+        assert!(receipt.get("error").is_none());
+    }
+
+    #[test]
+    fn buddy_gui_preset_receipt_uses_canonical_cli_spellings() {
+        assert_eq!(buddy_gui_preset_name(PresetName::Local), "local");
+        assert_eq!(
+            buddy_gui_preset_name(PresetName::LocalReasoning),
+            "local-reasoning"
+        );
+        assert_eq!(
+            buddy_gui_preset_name(PresetName::LocalAbliterated),
+            "local-abliterated"
+        );
+        assert_eq!(buddy_gui_preset_name(PresetName::Single), "single");
     }
 
     #[tokio::test]

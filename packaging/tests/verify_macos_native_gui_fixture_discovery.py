@@ -41,6 +41,8 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
         "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
         "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+        "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+        "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_preserve_legacy_and_last_good_on_rejected_or_malformed_readback",
     }
 )
 CONTROLLER_TEST = (

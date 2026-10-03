@@ -48,7 +48,7 @@ import { ActivitySidecar, ActivityRow } from "activity.slint";
 import { ObsidianView } from "obsidian.slint";
 import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
-import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal, BuddyEmbeddingModel, BuddyProviderRetryRow } from "buddyconfig.slint";
+import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal, BuddyEmbeddingModel, BuddyProviderRetryRow, BuddyProviderConfigRole, BuddyProviderInstance, BuddyFallbackSelector } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow, CitationChip }
@@ -70,6 +70,9 @@ export { SelfActSkill }
 export { BuddySelfImproveProposal }
 export { BuddyEmbeddingModel }
 export { BuddyProviderRetryRow }
+export { BuddyProviderConfigRole }
+export { BuddyProviderInstance }
+export { BuddyFallbackSelector }
 export { MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
@@ -936,6 +939,42 @@ export component MainWindow inherits Window {
     in property <bool> bc-provider-retry-available: false;
     in property <bool> bc-provider-retry-authenticated-complete: false;
     in property <[BuddyProviderRetryRow]> bc-provider-retry-rows: [];
+    in property <string> bc-provider-config-mode: "";
+    in property <[BuddyProviderConfigRole]> bc-provider-config-roles: [];
+    in property <[BuddyProviderInstance]> bc-provider-config-instances: [];
+    in property <bool> bc-provider-config-current-fallback-has-legacy: false;
+    in property <[BuddyFallbackSelector]> bc-provider-config-current-fallback-selectors: [];
+    in property <[BuddyFallbackSelector]> bc-provider-config-fallback-draft-selectors: [];
+    in property <[string]> bc-provider-config-fallback-draft-ids: [];
+    in property <int> bc-provider-config-fallback-max-hops: 0;
+    in property <bool> bc-provider-config-status-valid: false;
+    in property <bool> bc-provider-config-busy: false;
+    in property <string> bc-provider-config-error: "";
+    in property <string> bc-provider-config-receipt: "";
+    in-out property <string> bc-provider-config-selected-role: "";
+    in-out property <int> bc-provider-config-set-provider-index: 0;
+    in-out property <string> bc-provider-config-set-model-draft: "";
+    in-out property <int> bc-provider-config-mode-provider-index: 0;
+    in-out property <string> bc-provider-config-mode-model-draft: "";
+    in-out property <string> bc-provider-config-preset-draft: "";
+    in-out property <int> bc-provider-config-preset-index: 0;
+    in-out property <string> bc-provider-config-preset-vram-draft: "";
+    in-out property <string> bc-provider-config-preset-count-draft: "";
+    in-out property <string> bc-provider-config-test-question: "";
+    in-out property <bool> bc-provider-config-live-test-dialog-open: false;
+    in-out property <string> bc-provider-config-live-test-role: "";
+    in-out property <string> bc-provider-config-live-test-question: "";
+    callback bc-buddy-provider-show();
+    callback bc-buddy-provider-set(string, string, string);
+    callback bc-buddy-provider-select(string, string);
+    callback bc-buddy-provider-mode(string, string);
+    callback bc-buddy-provider-preset(string, string, string);
+    callback bc-buddy-provider-test(string, string, bool);
+    callback bc-buddy-fallback-replace([string]);
+    callback bc-buddy-fallback-clear();
+    callback bc-buddy-fallback-add(string);
+    callback bc-buddy-fallback-remove(int);
+    callback bc-buddy-fallback-move(int, int);
     in property <[BuddyEmbeddingModel]> bc-embedding-models: [];
     in property <bool>            bc-embedding-status-valid: false;
     in property <string>          bc-embedding-status-error: "";
@@ -5026,6 +5065,43 @@ export component MainWindow inherits Window {
                     bc-provider-retry-available: root.bc-provider-retry-available;
                     bc-provider-retry-authenticated-complete: root.bc-provider-retry-authenticated-complete;
                     bc-provider-retry-rows: root.bc-provider-retry-rows;
+                    bc-provider-config-mode: root.bc-provider-config-mode;
+                    bc-provider-config-roles: root.bc-provider-config-roles;
+                    bc-provider-config-instances: root.bc-provider-config-instances;
+                    bc-provider-config-provider-ids: root.provider-ids;
+                    bc-provider-config-current-fallback-has-legacy: root.bc-provider-config-current-fallback-has-legacy;
+                    bc-provider-config-current-fallback-selectors: root.bc-provider-config-current-fallback-selectors;
+                    bc-provider-config-fallback-draft-selectors: root.bc-provider-config-fallback-draft-selectors;
+                    bc-provider-config-fallback-draft-ids: root.bc-provider-config-fallback-draft-ids;
+                    bc-provider-config-fallback-max-hops: root.bc-provider-config-fallback-max-hops;
+                    bc-provider-config-status-valid: root.bc-provider-config-status-valid;
+                    bc-provider-config-busy: root.bc-provider-config-busy;
+                    bc-provider-config-error: root.bc-provider-config-error;
+                    bc-provider-config-receipt: root.bc-provider-config-receipt;
+                    bc-provider-config-selected-role <=> root.bc-provider-config-selected-role;
+                    bc-provider-config-set-provider-index <=> root.bc-provider-config-set-provider-index;
+                    bc-provider-config-set-model-draft <=> root.bc-provider-config-set-model-draft;
+                    bc-provider-config-mode-provider-index <=> root.bc-provider-config-mode-provider-index;
+                    bc-provider-config-mode-model-draft <=> root.bc-provider-config-mode-model-draft;
+                    bc-provider-config-preset-draft <=> root.bc-provider-config-preset-draft;
+                    bc-provider-config-preset-index <=> root.bc-provider-config-preset-index;
+                    bc-provider-config-preset-vram-draft <=> root.bc-provider-config-preset-vram-draft;
+                    bc-provider-config-preset-count-draft <=> root.bc-provider-config-preset-count-draft;
+                    bc-provider-config-test-question <=> root.bc-provider-config-test-question;
+                    bc-provider-config-live-test-dialog-open <=> root.bc-provider-config-live-test-dialog-open;
+                    bc-provider-config-live-test-role <=> root.bc-provider-config-live-test-role;
+                    bc-provider-config-live-test-question <=> root.bc-provider-config-live-test-question;
+                    bc-buddy-provider-show => { root.bc-buddy-provider-show(); }
+                    bc-buddy-provider-set(role, provider, model) => { root.bc-buddy-provider-set(role, provider, model); }
+                    bc-buddy-provider-select(role, id) => { root.bc-buddy-provider-select(role, id); }
+                    bc-buddy-provider-mode(provider, model) => { root.bc-buddy-provider-mode(provider, model); }
+                    bc-buddy-provider-preset(name, vram, count) => { root.bc-buddy-provider-preset(name, vram, count); }
+                    bc-buddy-provider-test(role, question, dry_run) => { root.bc-buddy-provider-test(role, question, dry_run); }
+                    bc-buddy-fallback-replace(ids) => { root.bc-buddy-fallback-replace(ids); }
+                    bc-buddy-fallback-clear => { root.bc-buddy-fallback-clear(); }
+                    bc-buddy-fallback-add(id) => { root.bc-buddy-fallback-add(id); }
+                    bc-buddy-fallback-remove(index) => { root.bc-buddy-fallback-remove(index); }
+                    bc-buddy-fallback-move(from, to) => { root.bc-buddy-fallback-move(from, to); }
                     bc-embedding-models: root.bc-embedding-models;
                     bc-embedding-status-valid: root.bc-embedding-status-valid;
                     bc-embedding-status-error: root.bc-embedding-status-error;

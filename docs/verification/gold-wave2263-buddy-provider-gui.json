@@ -1,0 +1,92 @@
+{
+  "schema": "neoth-gold-wave2263-buddy-provider-gui/v1",
+  "base": "c7a90f8f18238ed188d7932ec6edda693f8790be",
+  "status": "reviewed source integration; hosted validation pending",
+  "scope": [
+    "buddy provider show",
+    "buddy provider set",
+    "buddy provider select",
+    "buddy provider mode",
+    "buddy provider preset",
+    "buddy provider test",
+    "buddy fallback replace",
+    "buddy fallback clear"
+  ],
+  "authorization": "User continued the concretely proposed Buddy work after the narrow Slint approval question; local runtime hold remains.",
+  "architecture": [
+    "Existing canonical hemispheres/fallback writer and authority paths",
+    "Versioned redacted GUI readback and successful operation receipts",
+    "Linux and Windows request-owned complete process tree; macOS bounded null-stdin core configuration commands; fresh typed readback",
+    "Current fallback and named draft separation",
+    "Construction-only, dry-run preview and confirmed live outcome distinction"
+  ],
+  "priorAcceptance": {
+    "producer": "c7a90f8f18238ed188d7932ec6edda693f8790be",
+    "windowsPass": 19033,
+    "proof": "work/gold-20260906/wave2259-full-linux-phase-validation/ROOT_FULL_QUALIFICATION.json",
+    "acceptsThisChange": false,
+    "macosPass": 19151,
+    "linuxPass": 19166,
+    "jobs": 20,
+    "run": 37102618468
+  },
+  "verification": {
+    "hostedFormatting": "pending",
+    "localExecutableValidationRan": false,
+    "staticReview": "Exact seven source candidates independently reviewed; no executable acceptance claimed",
+    "hostedCallbackTests": "pending",
+    "hostedCompilation": "pending",
+    "hostedFullCi": "pending",
+    "visualAccessibilityReview": "pending"
+  },
+  "releaseReady": false,
+  "constraints": [
+    "No local compilers, code/XML parsers, runtimes or tests",
+    "No Claude polling",
+    "Root retains integration, Git and hosted dispatch",
+    "Unrelated .gitignore and raw PLAN backlog preserved"
+  ],
+  "platformBoundary": {
+    "Linux": "Provider CLI runs use OwnedChatChild containment and capped concurrent pipe drains; hosted proof pending",
+    "Windows": "Provider CLI runs use OwnedChatChild containment and capped concurrent pipe drains; hosted proof pending",
+    "macOS": "Provider Test is refused before spawning because complete provider-tree containment is unavailable. Core-only configuration remains available. local-abliterated requires explicit VRAM before launch."
+  },
+  "reviewedCandidateSha256": "31AD7629E3A1122C3EF711C12E6710BEA0214210C7FCFE46E215D8AC3ACF230F",
+  "importedSources": [
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "candidate": "backend/candidate/SRC/neothd/src/cli/buddy.rs",
+      "sha256": "6C61C28057ECE0F9E4A7CE4CE856366836B3EFBA36F5FFD96ADD9A672458376E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/hemispheres.rs",
+      "candidate": "backend/candidate/SRC/neothd/src/cli/hemispheres.rs",
+      "sha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
+      "candidate": "logic/candidate/SRC/neothd-gui/src/buddy_provider_panel.rs",
+      "sha256": "668FC799312C00C5FD36C44C5A3C8BF6C32CFA89BE5C525AD47A6AC9CBAC6FF7"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/buddyconfig.slint",
+      "candidate": "ui/candidate/buddyconfig.slint",
+      "sha256": "933AC44BB93918A72F529F6CA81846D623BD17B758D6A9DC6A940D66526A20CB"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "candidate": "ui/candidate/main.slint",
+      "sha256": "449D302AA8B198DA7CF9BC4638DB9C15E250AC9A30F8A906B51FDF60ECEC984A"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "candidate": "bridge/candidate/SRC/neothd-gui/src/main.rs",
+      "sha256": "757734D5E9AC08516869B2A9FEB9473E0F0E353701FBE19C712C79FCC60A41FF"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "candidate": "tests/candidate-v2/SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "sha256": "F41DD5FC25904A547248CE6CFB607E3CCFED2FFE99A24EB6CBAC9968CD1E00EA"
+    }
+  ]
+}
