@@ -11,13 +11,7 @@ use super::*;
 #[cfg(not(windows))]
 use slint::{ComponentHandle as _, Model as _, ModelRc, VecModel};
 #[cfg(not(windows))]
-use std::{
-    cell::Cell,
-    ffi::OsString,
-    path::Path,
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, ffi::OsString, path::Path, rc::Rc, time::Duration};
 #[cfg(not(windows))]
 use tempfile::TempDir;
 

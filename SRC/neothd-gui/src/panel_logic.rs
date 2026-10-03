@@ -4349,27 +4349,91 @@ pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
         .collect()
 }
 
-/// Parse `neoth models recommend --class <c> --output json` (a JSON array of
-/// `{rank, param_b, quant, est_vram_gb, repo, class, pull_ref, …}`) into the
-/// list of `pull_ref` model ids — the local GGUF refs (e.g.
-/// `hf.co/bartowski/Qwen2.5-…-abliterated-GGUF:Q4_K_M`) that fit this PC's VRAM.
-/// These feed the local half of the Hemispheres per-role model picker so the
-/// operator can SELECT a fitting local/abliterated model (GOLD-GUI-OVERHAUL).
-/// PURE + robust: malformed JSON → empty (never hard-fails the GUI).
-pub fn parse_model_recommend_refs(json: &str) -> Vec<String> {
-    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(json)
-    else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|m| {
-            m.get("pull_ref")
-                .or_else(|| m.get("repo"))
-                .and_then(|r| r.as_str())
-                .map(|s| s.to_string())
-        })
-        .collect()
+/// Typed readback of the existing `RecCandidate` JSON array emitted by
+/// `neoth models recommend --offline`.  The GUI only publishes candidates
+/// after validating the curator-produced rank/class/reference contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRecommendationReadback {
+    pub pull_refs: Vec<String>,
+}
+
+/// Parse one class-specific recommendation result. Order is the canonical
+/// curated rank order. `repo` remains the compatibility fallback for an older
+/// record that lacks `pull_ref`; malformed records fail the entire readback so
+/// a caller can retain its provider-default-only picker state.
+pub fn parse_model_recommend_readback(
+    json: &str,
+    expected_class: &str,
+) -> Result<ModelRecommendationReadback, String> {
+    let items = serde_json::from_str::<serde_json::Value>(json)
+        .map_err(|error| format!("invalid model recommendation JSON: {error}"))?
+        .as_array()
+        .cloned()
+        .ok_or_else(|| "model recommendation root must be an array".to_string())?;
+    let mut prior_rank = 0_u64;
+    let mut pull_refs = Vec::with_capacity(items.len());
+    for item in items {
+        let item = item
+            .as_object()
+            .ok_or_else(|| "model recommendation entry must be an object".to_string())?;
+        let rank = item
+            .get("rank")
+            .and_then(|value| value.as_u64())
+            .filter(|rank| *rank > prior_rank)
+            .ok_or_else(|| "model recommendation ranks must be ascending positive integers".to_string())?;
+        let param_b = item
+            .get("param_b")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or_else(|| "model recommendation param_b must be a positive number".to_string())?;
+        let quant = item
+            .get("quant")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "model recommendation quant is missing".to_string())?;
+        let est_vram_gb = item
+            .get("est_vram_gb")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .ok_or_else(|| "model recommendation est_vram_gb must be non-negative".to_string())?;
+        let repo = item
+            .get("repo")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "model recommendation repo is missing".to_string())?;
+        let class = item
+            .get("class")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "model recommendation class is missing".to_string())?;
+        if class != expected_class {
+            return Err(format!(
+                "model recommendation class `{class}` does not match `{expected_class}`"
+            ));
+        }
+        if let Some(command) = item.get("pull_command") {
+            let command = command
+                .as_array()
+                .ok_or_else(|| "model recommendation pull_command must be an array".to_string())?;
+            if command.iter().any(|part| part.as_str().is_none_or(str::is_empty)) {
+                return Err("model recommendation pull_command has an invalid argument".to_string());
+            }
+        }
+        let pull_ref = match item.get("pull_ref") {
+            // Older recommendation records did not include the field. Their
+            // repository id remains the documented compatibility fallback.
+            None => repo,
+            Some(value) => value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "model recommendation pull_ref must be a non-empty string".to_string())?,
+        };
+        // Keep the structurally validated fields live to make the full
+        // RecCandidate wire contract explicit without exposing extra GUI data.
+        let _ = (param_b, quant, est_vram_gb);
+        prior_rank = rank;
+        pull_refs.push(pull_ref.to_string());
+    }
+    Ok(ModelRecommendationReadback { pull_refs })
 }
 
 // ── GOLD-LOOP-03 — loop-run record views (mirror of loop_engine JSON) ──
@@ -10130,13 +10194,17 @@ mod tests {
     #[test]
     fn parse_model_recommend_refs_extracts_pull_refs_in_order() {
         let json = r#"[
-            {"rank":1,"repo":"bartowski/Qwen2.5-Coder-32B-abliterated-GGUF",
+            {"rank":1,"param_b":32.0,"quant":"Q4_K_M","est_vram_gb":20.4,
+             "repo":"bartowski/Qwen2.5-Coder-32B-abliterated-GGUF","class":"abliterated",
              "pull_ref":"hf.co/bartowski/Qwen2.5-Coder-32B-abliterated-GGUF:Q4_K_M"},
-            {"rank":2,"repo":"mradermacher/Qwen2.5-VL-7B-abliterated-GGUF",
+            {"rank":2,"param_b":7.0,"quant":"Q8_0","est_vram_gb":7.8,
+             "repo":"mradermacher/Qwen2.5-VL-7B-abliterated-GGUF","class":"abliterated",
              "pull_ref":"hf.co/mradermacher/Qwen2.5-VL-7B-abliterated-GGUF:Q8_0"}
         ]"#;
         assert_eq!(
-            parse_model_recommend_refs(json),
+            parse_model_recommend_readback(json, "abliterated")
+                .expect("typed candidate wire parses")
+                .pull_refs,
             vec![
                 "hf.co/bartowski/Qwen2.5-Coder-32B-abliterated-GGUF:Q4_K_M".to_string(),
                 "hf.co/mradermacher/Qwen2.5-VL-7B-abliterated-GGUF:Q8_0".to_string(),
@@ -10146,13 +10214,71 @@ mod tests {
 
     #[test]
     fn parse_model_recommend_refs_falls_back_to_repo_and_tolerates_garbage() {
-        // pull_ref absent → repo is the fallback id.
+        // `pull_ref` absent means `repo` is the canonical compatibility id.
         assert_eq!(
-            parse_model_recommend_refs(r#"[{"repo":"some/Model-GGUF"}]"#),
+            parse_model_recommend_readback(
+                r#"[{"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+                    "repo":"some/Model-GGUF","class":"standard"}]"#,
+                "standard",
+            )
+            .expect("repo fallback is valid RecCandidate output")
+            .pull_refs,
             vec!["some/Model-GGUF".to_string()]
         );
-        assert!(parse_model_recommend_refs("not json").is_empty());
-        assert!(parse_model_recommend_refs(r#"{"not":"an array"}"#).is_empty());
+        assert!(parse_model_recommend_readback("not json", "standard").is_err());
+        assert!(parse_model_recommend_readback(r#"{"not":"an array"}"#, "standard").is_err());
+    }
+
+    #[test]
+    fn model_recommendation_readback_preserves_real_curated_rank_order_and_repo_fallback() {
+        let abliterated = r#"[
+          {"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+           "repo":"bartowski/A-GGUF","class":"abliterated",
+           "pull_ref":"hf.co/bartowski/A-GGUF:Q4_K_M",
+           "pull_command":["ollama","pull","hf.co/bartowski/A-GGUF:Q4_K_M"]},
+          {"rank":2,"param_b":14.0,"quant":"Q8_0","est_vram_gb":12.2,
+           "repo":"bartowski/B-GGUF","class":"abliterated"}
+        ]"#;
+        let readback = parse_model_recommend_readback(abliterated, "abliterated")
+            .expect("current RecCandidate wire parses");
+        assert_eq!(
+            readback.pull_refs,
+            vec![
+                "hf.co/bartowski/A-GGUF:Q4_K_M".to_string(),
+                "bartowski/B-GGUF".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn model_recommendation_readback_rejects_malformed_or_wrong_class_records() {
+        let missing_rank = r#"[{"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+          "repo":"bartowski/A-GGUF","class":"abliterated"}]"#;
+        assert!(parse_model_recommend_readback(missing_rank, "abliterated").is_err());
+
+        let wrong_class = r#"[{"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+          "repo":"bartowski/A-GGUF","class":"standard"}]"#;
+        assert!(parse_model_recommend_readback(wrong_class, "abliterated").is_err());
+
+        let duplicate_rank = r#"[
+          {"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+           "repo":"bartowski/A-GGUF","class":"abliterated"},
+          {"rank":1,"param_b":14.0,"quant":"Q4_K_M","est_vram_gb":9.0,
+           "repo":"bartowski/B-GGUF","class":"abliterated"}
+        ]"#;
+        assert!(parse_model_recommend_readback(duplicate_rank, "abliterated").is_err());
+
+        let empty_pull_ref = r#"[{"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+          "repo":"bartowski/A-GGUF","class":"abliterated","pull_ref":""}]"#;
+        assert!(parse_model_recommend_readback(empty_pull_ref, "abliterated").is_err());
+
+        let non_string_pull_ref = r#"[{"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+          "repo":"bartowski/A-GGUF","class":"abliterated","pull_ref":7}]"#;
+        assert!(parse_model_recommend_readback(non_string_pull_ref, "abliterated").is_err());
+
+        let null_pull_ref = r#"[{"rank":1,"param_b":7.0,"quant":"Q4_K_M","est_vram_gb":5.1,
+          "repo":"bartowski/A-GGUF","class":"abliterated","pull_ref":null}]"#;
+        assert!(parse_model_recommend_readback(null_pull_ref, "abliterated").is_err());
     }
 
     // ── GR-03 trust panel parser ──────────────────────────────────────────

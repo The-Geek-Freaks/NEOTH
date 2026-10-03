@@ -357,9 +357,12 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn fetch_hemisphere_model_ids"),
         dispatch_token: Some(".arg(\"models\")"),
         receipt: Evidence::Missing,
-        readback: Evidence::Missing,
+        readback: Evidence::Typed(
+            "fn fetch_hemisphere_model_ids",
+            "parse_model_recommend_readback",
+        ),
         state: OperationState::Partial(
-            "the picker parses recommendation output but has no typed operation receipt/readback",
+            "the picker retains typed offline recommendation readback but has no typed operation receipt",
         ),
     },
     OperationParity {

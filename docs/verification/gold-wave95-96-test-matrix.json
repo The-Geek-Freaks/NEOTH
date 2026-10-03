@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2265 static warning repair; full hosted qualification pending",
+  "status": "W2266-W2267 reviewed typed offline recommendations and stale-result repair; hosted qualification pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 367264,
-    "sha256": "A84C5B275F3F8C5D66521D7D70130764970F8FA20D73393B0A8CBE1CA934309E"
+    "bytes": 367495,
+    "sha256": "90BA8E7C63E26A7D79B19407DC179334DE82E8C72CDDEDFADEC89E82BB0EC41F"
   },
-  "sourceInputs": 2009,
+  "sourceInputs": 2010,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+      "sourceSha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC",
       "junitClass": "neoth"
     },
     {
@@ -3545,13 +3545,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+      "sourceSha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC",
       "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+      "sourceSha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC",
       "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
       "junitClass": "neoth"
     },
@@ -4890,7 +4890,7 @@
     {
       "test": "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "8D13304D0F2D91BE5D5F5F74B8B59C2C3A1D42F982EB8BB9C65526FBA293E3F9",
+      "sourceSha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC",
       "junitClass": "neoth"
     },
     {
@@ -16109,7 +16109,12 @@
     "buddy_provider_panel::tests::queue_helpers_preserve_unique_order_and_named_membership",
     "buddy_provider_panel::tests::outcome_is_typed_and_operation_bound",
     "panel_logic::tests::parse_models_catalog_filters_and_falls_back",
-    "panel_logic::tests::models_catalog_readback_rejects_malformed_real_schema"
+    "panel_logic::tests::models_catalog_readback_rejects_malformed_real_schema",
+    "panel_logic::tests::parse_model_recommend_refs_extracts_pull_refs_in_order",
+    "panel_logic::tests::parse_model_recommend_refs_falls_back_to_repo_and_tolerates_garbage",
+    "panel_logic::tests::model_recommendation_readback_preserves_real_curated_rank_order_and_repo_fallback",
+    "panel_logic::tests::model_recommendation_readback_rejects_malformed_or_wrong_class_records",
+    "hemisphere_model_picker_keeps_newer_projection_when_workers_finish_out_of_order"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -16611,8 +16616,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2253419,
-      "sha256": "7635FA9423A8EB72086158282BEA7D6050EEFE1C7983927D54BB348E60A95135"
+      "bytes": 2256480,
+      "sha256": "F2010CCEDB618248885885B288DAD1BDE01F26F41DDA0785C2807CA79D386BA5"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -16621,8 +16626,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 610515,
-      "sha256": "3312BFDE139E6048E996D1F2EF5CA932A1A4BEB732EA1E4FF78B6FBBEDC9AEFD"
+      "bytes": 616852,
+      "sha256": "62462AA2AA431B46E0E369E15DD36360EE8E9A1C9C96CBFB9B1C1C87B4FC43D6"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -16706,8 +16711,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 17276,
-      "sha256": "99C4DB9E9FB3B2ECC36BE67055733B4DFDA883580964DC15AA7B4C586593C693"
+      "bytes": 17253,
+      "sha256": "A7F30C9F719A112BBD30A6F357C30FC2C2DA4CA7F4DD24C46FC3D7D708D2EE0F"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -71249,6 +71254,56 @@
       }
     ],
     "note": "Exact reviewed warnings repaired; GUI173 runner shutdown caused no test result; next full CI retains actual Buddy and catalog coverage without workflow or timeout changes.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2266And2267ModelPicker": {
+    "base": "61d13292bddbf98088ebefb4eeeff8b05102eca0",
+    "sources": [
+      {
+        "path": ".github/workflows/gui-linux-fixtures.yml",
+        "bytes": 39349,
+        "sha256": "FF6549C81E92542E67704ABE41BC273D437F8BCF4A830D6DA2B2CE90CEDD1343",
+        "blob": "b633132cd67d47c4b258e1a9b254975af24d591d"
+      },
+      {
+        "path": "docs/verification/gold-wave2266-2267-model-picker.json",
+        "bytes": 3087,
+        "sha256": "35EC149014E2E6FCB9443BCE87768037C3F7D40CFB09231CDE208B4C9C251AFC",
+        "blob": "1166c8dbd445597cf0924596623ade572fdf7688"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2338010,
+        "sha256": "F937BD20A5618129DA57D35B3E0B7FD8CFD50747CF5B015DA2388C46D455B3F3",
+        "blob": "15b31916be75b7117d5f1b0953be1011aa939607"
+      },
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+        "bytes": 17253,
+        "sha256": "A7F30C9F719A112BBD30A6F357C30FC2C2DA4CA7F4DD24C46FC3D7D708D2EE0F",
+        "blob": "221375b6ca368226d523cfd5872f476f72409584"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2256480,
+        "sha256": "F2010CCEDB618248885885B288DAD1BDE01F26F41DDA0785C2807CA79D386BA5",
+        "blob": "03329764efad183128bb18bbb0c9dca8221b7182"
+      },
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 616852,
+        "sha256": "62462AA2AA431B46E0E369E15DD36360EE8E9A1C9C96CBFB9B1C1C87B4FC43D6",
+        "blob": "85319501af58b265eddd531eda0f5644cb7af0d3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 89056,
+        "sha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC",
+        "blob": "7714cdc139d1f9e6c0fc906d2296e64fc93d06cc"
+      }
+    ],
+    "note": "143 universal+35 Linux GUI cases include current RecCandidate rejection and real generation-state reversed publication regression; exact full producer validation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

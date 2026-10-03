@@ -1,0 +1,66 @@
+{
+  "schema": "neoth-gold-wave2266-2267-model-picker/v1",
+  "base": "61d13292bddbf98088ebefb4eeeff8b05102eca0",
+  "status": "independently reviewed source; hosted validation pending",
+  "behavior": [
+    "Local model picker uses existing offline curated recommendations",
+    "Typed RecCandidate readback validates rank/class/shape and preserves curated order",
+    "Legacy repo fallback occurs only if pull_ref is absent; explicit null, empty and non-string references fail",
+    "Provider-default stays first and existing class-merge deduplication remains",
+    "One shared picker generation rejects older provider-worker completions and results superseded by hemisphere-set"
+  ],
+  "provenance": {
+    "recommendationReview": "work/gold-20260906/wave2266-model-recommend/review/STATIC_REVIEW.md",
+    "generationReview": "work/gold-20260906/wave2267-model-picker-generation/review/STATIC_REVIEW.md",
+    "rootRegressionOrderAdjustment": "work/gold-20260906/wave2267-model-picker-generation/root/regression-order-adjustment.json",
+    "hostedFormatReceipt": "work/gold-20260906/wave2265-gui-runner-recovery/hosted-format/root-custody.json"
+  },
+  "sourceImports": [
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "sha256": "62462AA2AA431B46E0E369E15DD36360EE8E9A1C9C96CBFB9B1C1C87B4FC43D6"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "sha256": "F2010CCEDB618248885885B288DAD1BDE01F26F41DDA0785C2807CA79D386BA5"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "sha256": "12370FB9CACC088718000F74630809564154C55372C8D2763169D71A6A4FDCAC"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "sha256": "A7F30C9F719A112BBD30A6F357C30FC2C2DA4CA7F4DD24C46FC3D7D708D2EE0F"
+    }
+  ],
+  "testRegistration": [
+    "panel_logic::tests::parse_model_recommend_refs_extracts_pull_refs_in_order",
+    "panel_logic::tests::parse_model_recommend_refs_falls_back_to_repo_and_tolerates_garbage",
+    "panel_logic::tests::model_recommendation_readback_preserves_real_curated_rank_order_and_repo_fallback",
+    "panel_logic::tests::model_recommendation_readback_rejects_malformed_or_wrong_class_records",
+    "hemisphere_model_picker_keeps_newer_projection_when_workers_finish_out_of_order"
+  ],
+  "newRustTests": 3,
+  "updatedRustTests": 2,
+  "counts": {
+    "portableNative": 2657,
+    "guiUniversal": 143,
+    "guiLinuxSpecific": 35,
+    "guiSelectedLinux": 178,
+    "guiMacSpecific": 31,
+    "macosNativeHarnessCallbacks": 35
+  },
+  "verification": {
+    "staticReview": "approved exact imported source hashes",
+    "hostedFormat": "pending new producer; previous one-file hosted patch authenticated",
+    "fullCi": "pending",
+    "localExecutableValidationRan": false,
+    "newSlintEdits": false
+  },
+  "remainingBoundaries": [
+    "models.recommend parity remains Partial: typed readback, no independent operation receipt",
+    "GUI runtime and native acceptance require fresh hosted evidence",
+    "No live provider, visual/accessibility, signed installer or release acceptance"
+  ],
+  "releaseReady": false
+}

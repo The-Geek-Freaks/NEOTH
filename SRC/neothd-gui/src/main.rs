@@ -94,6 +94,67 @@ static EMBEDDING_MODELS_UI_REVISION: std::sync::atomic::AtomicU64 =
 static EMBEDDING_MODEL_ACTION_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Settings exposes one shared model picker for all three Hemisphere rows.
+// A provider-catalog worker must therefore publish only if no newer picker
+// selection or persisted hemisphere lifecycle action has superseded it.
+static HEMISPHERE_MODEL_PICKER_GENERATION: std::sync::Mutex<HemisphereModelPickerGeneration> =
+    std::sync::Mutex::new(HemisphereModelPickerGeneration::new());
+
+/// The three Hemisphere rows render one shared picker model. This state owns
+/// each request generation and is the sole authority allowed to publish its
+/// result, so an older worker cannot repaint a newer operator selection.
+struct HemisphereModelPickerGeneration {
+    current: u64,
+}
+
+impl HemisphereModelPickerGeneration {
+    const fn new() -> Self {
+        Self { current: 0 }
+    }
+
+    fn issue(&mut self) -> u64 {
+        self.current = self.current.wrapping_add(1);
+        if self.current == 0 {
+            self.current = 1;
+        }
+        self.current
+    }
+
+    fn invalidate(&mut self) {
+        let _ = self.issue();
+    }
+
+    fn publish_if_current(&self, captured: u64, publish: impl FnOnce()) -> bool {
+        if captured != self.current {
+            return false;
+        }
+        publish();
+        true
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn hemisphere_model_picker_keeps_newer_projection_when_workers_finish_out_of_order() {
+    let mut generation = HemisphereModelPickerGeneration::new();
+    let first_provider = generation.issue();
+    let second_provider = generation.issue();
+    let mut applied_projection = None;
+
+    assert!(generation.publish_if_current(second_provider, || {
+        applied_projection = Some("newer provider")
+    }));
+    assert!(!generation.publish_if_current(first_provider, || {
+        applied_projection = Some("older provider")
+    }));
+    assert_eq!(applied_projection, Some("newer provider"));
+    generation.invalidate();
+    assert!(!generation.publish_if_current(second_provider, || {
+        applied_projection = Some("stale after lifecycle")
+    }));
+    assert_eq!(applied_projection, Some("newer provider"));
+}
+
 // Buddy provider configuration is a separate canonical CLI surface from the
 // passive Buddy retry history. One GUI operation owns its receipt and fresh
 // readback; a late Show must never overwrite that verified result.
@@ -5601,6 +5662,13 @@ fn main() -> Result<()> {
     // the new wiring immediately.
     let weak_hemi_set = window.as_weak();
     window.on_hemisphere_set(move |role, provider, model| {
+        // The picker model is shared by left/right/cerebellum. A committed
+        // lifecycle action supersedes any in-flight catalog request started
+        // from an earlier row or provider selection.
+        HEMISPHERE_MODEL_PICKER_GENERATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .invalidate();
         // "(provider default)" sentinel (combo row 0) → leave the model unset.
         let model = if model == "(provider default)" {
             String::new()
@@ -5646,13 +5714,23 @@ fn main() -> Result<()> {
     window.on_hemisphere_provider_picked(move |provider| {
         let weak = weak_hemi_models.clone();
         let provider = provider.to_string();
+        let revision = HEMISPHERE_MODEL_PICKER_GENERATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .issue();
         std::thread::spawn(move || {
             let models = fetch_hemisphere_model_ids(&provider);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    use slint::{ModelRc, SharedString, VecModel};
-                    let rows: Vec<SharedString> = models.into_iter().map(|s| s.into()).collect();
-                    w.set_hemisphere_model_ids(ModelRc::new(VecModel::from(rows)));
+                    let generation = HEMISPHERE_MODEL_PICKER_GENERATION
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let _ = generation.publish_if_current(revision, || {
+                        use slint::{ModelRc, SharedString, VecModel};
+                        let rows: Vec<SharedString> =
+                            models.into_iter().map(|model| model.into()).collect();
+                        w.set_hemisphere_model_ids(ModelRc::new(VecModel::from(rows)));
+                    });
                 }
             });
         });
@@ -30635,14 +30713,18 @@ fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
                 .arg("recommend")
                 .arg("--class")
                 .arg(class)
+                .arg("--offline")
                 .arg("--output")
                 .arg("json")
                 .output()
                 && o.status.success()
             {
-                out.extend(panel_logic::parse_model_recommend_refs(
+                if let Ok(readback) = panel_logic::parse_model_recommend_readback(
                     &String::from_utf8_lossy(&o.stdout),
-                ));
+                    class,
+                ) {
+                    out.extend(readback.pull_refs);
+                }
             }
         }
     } else if let Ok(o) = spawn_neothd_plain(&bin)
