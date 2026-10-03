@@ -17969,3 +17969,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Two-reference source repair only; existing test identities retained. No local executable validation. New-producer hosted checks and focused494 execution remain pending.
 
 - W2297 correction: initial42a5400a matched the earlier try_reserve branches rather than the final try_send branches. Revision2 restores both pre-transfer body borrows and changes only the two post-transfer rejections. Root checked declaration/move/send anchors and confirmed no late body borrow. The intermediate fast checks passed but were not compile evidence; no executable run was dispatched on that intermediate revision. Fresh final-producer validation remains required.
+
+
+## W2298 - Conversation approved-response ownership repair (2026-10-03)
+
+- Focused37146463481@699d9087 successfully built the actual CLI, then lib-test discovery failed before any exact regression ran. The Approved match pattern moved the response while borrowing its boot-id field. The repaired arm first owns the response, borrows its boot id for the unchanged validation, then moves the response once into the existing receipt builder.
+- Original failure artifact11283200674 ZIPA6F30C6A... was verified against API digest and producer. No local compiler/test execution; fresh focused494 validation remains pending. This file does not alter the live-audio source catalog.

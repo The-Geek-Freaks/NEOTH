@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2297 corrected post-transfer borrow scope; focused494 pending",
+  "status": "W2298 conversation response ownership repaired; focused494 execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 373111,
-    "sha256": "BE787EC016D021EC438DCAD010C734C6BE50721E552FF0129DAA7A8EDCE28ADB"
+    "bytes": 373316,
+    "sha256": "01D5BAE57AD1DBB16FC87093FFCCC6AA2839D025A129E1CE6003549E6DE4CC78"
   },
-  "sourceInputs": 2041,
+  "sourceInputs": 2042,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16081,13 +16081,13 @@
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "A31CD12B8F11667E58553EE39EC9142580B2E413BC199EB2565E0EAAFD37087F",
+      "sourceSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "A31CD12B8F11667E58553EE39EC9142580B2E413BC199EB2565E0EAAFD37087F",
+      "sourceSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
       "junitClass": "neoth"
     },
     {
@@ -72626,6 +72626,32 @@
       }
     ],
     "note": "Restored pre-transfer references, corrected only post-transfer send arms; ordered text anchors verified, no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2298ConversationPattern": {
+    "base": "699d90873f6a1a2e899c968250c0014f1d299d25",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2298-conversation-pattern.json",
+        "bytes": 854,
+        "sha256": "FF737B3EFBB19254BD078B5FC26C712D1948727D0A30212F07467AF0C3C96592",
+        "blob": "b74238eca64f37127953e1e4b0c7d77fa4f042ef"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2351449,
+        "sha256": "19C34D704D34DE60753B8C64ED4A5DD2EDB6FBEA8D3F3E3722F5F90B9BE8D30E",
+        "blob": "4cc3a9c843ccf078e479cddf4d54b9d06ed1ddd9"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+        "bytes": 25055,
+        "sha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
+        "blob": "413557da4d3d82159909f93d7e8d1b9a4fe9541d"
+      }
+    ],
+    "note": "Actual CLI compile success in prior run, lib-test pattern errors repaired without clone; new producer needs hosted execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

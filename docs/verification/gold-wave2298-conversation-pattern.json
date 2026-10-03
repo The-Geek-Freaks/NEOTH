@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-gold-wave2298-conversation-pattern/v1",
+  "base": "699d90873f6a1a2e899c968250c0014f1d299d25",
+  "failedRun": 37146463481,
+  "actualCliBuild": "success",
+  "exactRegressionExecution": "none; failed during lib-test discovery compilation",
+  "failedCoreArtifact": 11283200674,
+  "originalZipSha256": "A6F30C6A847099C7F03FBC89A2F3EE104C07470FBD52545570120E01FD4405F3",
+  "error": "Move and simultaneous field borrow in Approved response pattern",
+  "repair": "Own response once, borrow expected boot id for existing validation, end borrow, move response once to original receipt builder",
+  "source": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+  "candidateSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
+  "localExecutableValidationRan": false,
+  "hosted": "Pending new producer",
+  "newTests": 0
+}
