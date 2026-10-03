@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2298 conversation response ownership repaired; focused494 execution pending",
+  "status": "W2298 original one-line hosted format admitted; focused494 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 373316,
-    "sha256": "01D5BAE57AD1DBB16FC87093FFCCC6AA2839D025A129E1CE6003549E6DE4CC78"
+    "bytes": 373307,
+    "sha256": "FE52338AF3220D552C34D0C1236285A22F946C86DE1954247CD7AA68CBF4A100"
   },
   "sourceInputs": 2042,
   "requiredNativeTests": [
@@ -16081,13 +16081,13 @@
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
+      "sourceSha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
+      "sourceSha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC",
       "junitClass": "neoth"
     },
     {
@@ -72652,6 +72652,32 @@
       }
     ],
     "note": "Actual CLI compile success in prior run, lib-test pattern errors repaired without clone; new producer needs hosted execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2298HostedFormat": {
+    "base": "6e66e0552554edb23bf5a6709e44acd42d6eba1b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2298-conversation-pattern.json",
+        "bytes": 1282,
+        "sha256": "5325CBAEF1B0080719083454CF8205F13AF2148AA6B67C2EED53E650652ABDE2",
+        "blob": "6b145a055056bd1f6229fb5d5296ce7bb67f1605"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2351671,
+        "sha256": "3F1B07AE1DEBBE65444AF0D8AF2CF37E55EC33AC9A7C5A7478C2BD3A3090120B",
+        "blob": "76813cb01f5917412d7f3a3933cdf8e2529efac1"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+        "bytes": 25031,
+        "sha256": "66C9B71928858A9C936A58C2E93FB370198BBD1A239E163F2CCEB981A468E6BC",
+        "blob": "1be4987df119b8d4e58ed3f191a9d8c0e7d24f16"
+      }
+    ],
+    "note": "API/ZIP/internal sums/head/Git postimage verified; no local runtime",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -206,8 +206,7 @@ impl GuiChatBridge for DirectConversationGuiChatBridge {
             approved_response @ protocol::GuiChatConsentDecisionResponse::Approved { .. } => {
                 let expected_boot_id = match &approved_response {
                     protocol::GuiChatConsentDecisionResponse::Approved {
-                        expected_boot_id,
-                        ..
+                        expected_boot_id, ..
                     } => expected_boot_id,
                     protocol::GuiChatConsentDecisionResponse::Denied { .. } => unreachable!(),
                 };

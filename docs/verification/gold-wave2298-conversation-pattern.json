@@ -12,5 +12,15 @@
   "candidateSha256": "E54012A8AABECBA22C740CC74F23BC41AD9614A6F65CC21BACE27C3F9902FF6D",
   "localExecutableValidationRan": false,
   "hosted": "Pending new producer",
-  "newTests": 0
+  "newTests": 0,
+  "hostedFormat": {
+    "run": 37147339303,
+    "producer": "6e66e0552554edb23bf5a6709e44acd42d6eba1b",
+    "artifact": 11282916287,
+    "originalZipSha256": "0D7D3EE5A89778D2F4690C73A1A74CBEF83D055EACCD4E1C3ACC4D42E87B49F5",
+    "entries": 3,
+    "patchSha256": "91C963F8691C5FA847F1DAB0445B0D841C2193A0ADD54BD0D0756332F1FEBF33",
+    "postimage": "1be4987df119b8d4e58ed3f191a9d8c0e7d24f16",
+    "localFormatterRan": false
+  }
 }

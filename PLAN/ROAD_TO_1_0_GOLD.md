@@ -17975,3 +17975,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Focused37146463481@699d9087 successfully built the actual CLI, then lib-test discovery failed before any exact regression ran. The Approved match pattern moved the response while borrowing its boot-id field. The repaired arm first owns the response, borrows its boot id for the unchanged validation, then moves the response once into the existing receipt builder.
 - Original failure artifact11283200674 ZIPA6F30C6A... was verified against API digest and producer. No local compiler/test execution; fresh focused494 validation remains pending. This file does not alter the live-audio source catalog.
+
+- W2298 formatter follow-up: verified original Preflight37147339303 artifact11282916287 and exact Git postimage; imported its one-line pattern wrap only. No local rustfmt. Fresh fast gates and focused494 remain required.
