@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T18:47:23.3010604Z",
-  "validationStatus": "W2294 original hosted cluster formatting imported; focused494 acceptance pending",
+  "capturedUtc": "2026-10-03T18:55:59.9960179Z",
+  "validationStatus": "W2297 two-reference ownership repair; focused494 acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3272,6 +3272,11 @@
       "sha256": "824375DDE9A2140166C09BB085D5C52CB186182B9E22C5E86FEE5E3E10AFFB94"
     },
     {
+      "path": "docs/verification/gold-wave2297-cluster-partial-move.json",
+      "bytes": 713,
+      "sha256": "688DD67BF324925EDBD2FDB1FA39B390185FB2CDB4344BC992D60316578DD5AC"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4413,8 +4418,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2349694,
-      "sha256": "DFB71D863C935C9F9E451D670599FC962FF90E5E533F7A73455F050CC9B4C72A"
+      "bytes": 2350294,
+      "sha256": "FE82B4E670B370D34E0F01D776B98DB67FB2A6F17527DED7E41DEF8874FB0941"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5833,8 +5838,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 162629,
-      "sha256": "1AC0630074AB82B1EF1AE1B43A05C388276B5F915ADCBA6BA4793C9592EA0F68"
+      "bytes": 162649,
+      "sha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",

@@ -1,0 +1,13 @@
+{
+  "schema": "neoth-gold-wave2297-cluster-partial-move/v1",
+  "base": "1ad5519fab7b767c623023ad0710660cfda6e802",
+  "failedRun": 37145759915,
+  "failedLogSha256": "860000F501063BF4D5B5FDCC886751F643AC17C86EB2B9B3AD09E88EBD86A17E",
+  "error": "E0382: borrowed body after moving its scope into authorized job",
+  "repair": "Both Full and Closed enqueue rejection paths use the existing pre-transfer rejection_body clone",
+  "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
+  "sourceCandidateSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+  "newTests": 0,
+  "localExecutableValidationRan": false,
+  "hosted": "Pending new producer; prior run failed before regression execution"
+}

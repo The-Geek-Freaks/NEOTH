@@ -17961,3 +17961,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Hosted formatting, compilation and regression acceptance remain pending. No local runtime or Slint edit; Chat/Buddy origin-stream delivery, native device/transport use, signing and release qualification remain open.
 
 - W2294 hosted-format follow-up: Preflight37145387695@bd52bbaa produced a successful formatter receipt despite its format-check failure. Original artifact11281993126 ZIP83367B85... and all three entries/internal sums/head were verified; only the six declared cluster Rust paths were imported. A source scout also collapsed one nested pending/offer condition without changing short-circuit order. No local formatter or runtime; fresh hosted checks required. Code Quality37145387151 passed on the prior producer.
+
+
+## W2297 - Retained rejection context after task ownership transfer (2026-10-03)
+
+- Focused37145759915@1ad5519f failed CLI compilation with E0382 before regressions: after body fields entered the authorized job, the final Full/Closed queue rejection paths still borrowed body. Both now borrow the pre-existing rejection_body snapshot, preserving the exact durable rejection context without a new clone or changed effect order.
+- Two-reference source repair only; existing test identities retained. No local executable validation. New-producer hosted checks and focused494 execution remain pending.
