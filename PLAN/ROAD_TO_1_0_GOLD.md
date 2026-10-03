@@ -17929,3 +17929,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Hosted Preflight37135934144 on dc993197 identified an unclosed macro definition in the new conversation RPC route. Added its missing closing delimiter; route behavior and existing tests are unchanged.
 - Source-only correction. Hosted formatter, compile and runtime evidence remain pending; no local runtime ran under the BSOD hold. The incomplete formatter artifact was not admitted.
+
+- W2288 follow-up: Preflight37138228348 exposed an invalid async-block return annotation after the delimiter repair. Removed only the annotation; the existing JoinSet<Result<()>> still fixes the result type and propagates settlement failures. Hosted syntax/format and executable validation remain pending.

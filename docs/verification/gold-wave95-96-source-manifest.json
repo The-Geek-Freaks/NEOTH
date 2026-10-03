@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T16:38:34.2967248Z",
-  "validationStatus": "W2288 RPC delimiter corrected; hosted validation pending",
+  "capturedUtc": "2026-10-03T16:55:46.0381019Z",
+  "validationStatus": "W2288 both hosted RPC syntax diagnostics corrected; validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3238,8 +3238,8 @@
     },
     {
       "path": "docs/verification/gold-wave2288-rpc-syntax.json",
-      "bytes": 655,
-      "sha256": "5B8E5ECA546DED44FA4AF5028B9297C5D4CE28713E3E264E7E7980A7218481F1"
+      "bytes": 999,
+      "sha256": "BFC98D86C0278C546ACBC583977CA49CE94F237F4CF3B8BB2E2E3E13AE58F0FF"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4383,8 +4383,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2344891,
-      "sha256": "FBB61761130ABA5F4E7BA4B62DA1CACD6F150DB02070EB9599D98711EB256141"
+      "bytes": 2345198,
+      "sha256": "12101B6AB4ECE9B7E98E9290730589E9C1072298272A95757ECE7B83A935D5B5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6193,8 +6193,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 89844,
-      "sha256": "6EEF4D9380350C8112A10AD0D78BF7948465C917815D068AA81113DFC9713648"
+      "bytes": 89830,
+      "sha256": "70DA08B556565754018D329E1EF5D254B476CC02D8017312ABF3835BC348CAA2"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",

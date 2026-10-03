@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2288 RPC delimiter corrected; hosted validation pending",
+  "status": "W2288 both hosted RPC syntax diagnostics corrected; validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 371611,
-    "sha256": "1B5D8089C7970A8192E1404A25AB87A5AF616389B3E8F20B51D03101F6274C35"
+    "bytes": 371625,
+    "sha256": "76CBD331F21BD9347E6F50DC949B0E49118FE2786B4C6636B17779B8A31E7BE4"
   },
   "sourceInputs": 2033,
   "requiredNativeTests": [
@@ -9420,7 +9420,7 @@
     {
       "test": "daemon::audit_rpc::server::w61_code_map_result_receipt_tests::document_route_receipts_are_explicitly_allowlisted_extended_events",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "sourceSha256": "6EEF4D9380350C8112A10AD0D78BF7948465C917815D068AA81113DFC9713648",
+      "sourceSha256": "70DA08B556565754018D329E1EF5D254B476CC02D8017312ABF3835BC348CAA2",
       "junitClass": "neoth"
     },
     {
@@ -72086,6 +72086,32 @@
       }
     ],
     "note": "One missing macro definition delimiter; no behavior change or local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2288RpcSyntaxFollowup": {
+    "base": "af51e449e432a49fbc55bbac1e0471be70318738",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2288-rpc-syntax.json",
+        "bytes": 999,
+        "sha256": "BFC98D86C0278C546ACBC583977CA49CE94F237F4CF3B8BB2E2E3E13AE58F0FF",
+        "blob": "1b747909a4c7ff93d484bbca5edf385ee8e1bcfc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2345198,
+        "sha256": "12101B6AB4ECE9B7E98E9290730589E9C1072298272A95757ECE7B83A935D5B5",
+        "blob": "93747f29ce6d0e43f47ad66bbfa6f77b6abf20c2"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+        "bytes": 89830,
+        "sha256": "70DA08B556565754018D329E1EF5D254B476CC02D8017312ABF3835BC348CAA2",
+        "blob": "7231515cb027f205ef95de7a7e3e7065da8b3e8c"
+      }
+    ],
+    "note": "Remove invalid async block return annotation; typed JoinSet remains unchanged",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

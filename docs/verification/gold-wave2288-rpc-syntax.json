@@ -1,12 +1,19 @@
 {
   "schema": "neoth-gold-wave2288-rpc-syntax/v1",
   "base": "dc9931976b4dd82007ac100a391f05b7aad34b98",
-  "status": "One missing macro definition delimiter corrected; hosted syntax/format and executable validation pending",
+  "status": "Both hosted syntax diagnostics corrected; hosted formatter and executable validation pending",
   "failureRun": "37135934144",
   "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-  "sourceSha256": "6EEF4D9380350C8112A10AD0D78BF7948465C917815D068AA81113DFC9713648",
-  "change": "Close macro_rules post definition after expansion and before route match",
+  "sourceSha256": "70DA08B556565754018D329E1EF5D254B476CC02D8017312ABF3835BC348CAA2",
+  "change": "Close macro definition and remove invalid async block return annotation; existing typed JoinSet retains Result error propagation",
   "localExecutableValidationRan": false,
   "newTests": 0,
-  "note": "Existing conversation RPC tests unchanged. Broken formatter artifact11278298782 was not imported."
+  "note": "Existing conversation RPC tests unchanged. Broken formatter artifact11278298782 was not imported.",
+  "followup": {
+    "base": "af51e449e432a49fbc55bbac1e0471be70318738",
+    "failureRun": "37138228348",
+    "candidateSha256": "70DA08B556565754018D329E1EF5D254B476CC02D8017312ABF3835BC348CAA2",
+    "formatArtifactRejected": "11280080288",
+    "reason": "Formatter could not parse async block"
+  }
 }

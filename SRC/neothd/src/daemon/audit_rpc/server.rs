@@ -725,7 +725,7 @@ async fn run_accept_loop(
                 let state = state.clone();
                 let home = home.clone();
                 let attach_sem = Arc::clone(&attach_sem);
-                connections.spawn(async move -> Result<()> {
+                connections.spawn(async move {
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
                         handle_one_pre_admission(stream, &state, &home),
