@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T20:05:25.6566745Z",
-  "validationStatus": "W2299 repairs statically reviewed; fresh hosted validation pending",
+  "capturedUtc": "2026-10-03T20:10:50.9447085Z",
+  "validationStatus": "W2296 deadline integration statically reviewed; hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 136879,
-      "sha256": "527188192C12F7C6B4BF783A58CD42036B52BCB2CEDE074E508E830FA1C35AEE"
+      "bytes": 138359,
+      "sha256": "F7AD7683AE5AFA0ADBF3AD14A02181FD6C0288D8C18AF7AC33A2AD1FC372CFE1"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -1400,6 +1400,11 @@
       "path": "docs/openclaw-slack-migration.md",
       "bytes": 6928,
       "sha256": "F5B3A3C2F23F2A6A5829E5400C988E3D19AD743212D79D0467BCA47AC03AEFF7"
+    },
+    {
+      "path": "docs/operator-journey.md",
+      "bytes": 18244,
+      "sha256": "D6AAAD6EE4D24C564CBA05FF5587C0699AA473D4423192FFB018FDD1100984BD"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -3272,6 +3277,11 @@
       "sha256": "824375DDE9A2140166C09BB085D5C52CB186182B9E22C5E86FEE5E3E10AFFB94"
     },
     {
+      "path": "docs/verification/gold-wave2296-cluster-deadlines.json",
+      "bytes": 5988,
+      "sha256": "A885FB7D593856FA7BC0F41961E9DF36A2902BE1584E9FECDB38CC93EDBE9FA5"
+    },
+    {
       "path": "docs/verification/gold-wave2297-cluster-partial-move.json",
       "bytes": 981,
       "sha256": "C51B6D94A5BB79E9595946E33B8C169721E85D89980011E78172832424CDF4CF"
@@ -4428,8 +4438,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2352834,
-      "sha256": "070F19F91DF6D1D141CEAE149E2AF3693EAAE48385B4C69674F735E285AC694B"
+      "bytes": 2354306,
+      "sha256": "E4D6B2FD5B7E91CEDD5783A91BE4845700651A4B0DB0C726AD3FEBEF61318D30"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5368,8 +5378,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 276133,
-      "sha256": "92B4A9FA037B78D065264B695B0EA6530E0C7F2DDACBC3364283FA8E741A0107"
+      "bytes": 278932,
+      "sha256": "382A6A08E2626DE1518D9344069354C51CACF912D3D42CFDC28F78226C09C175"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -5833,28 +5843,28 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 83915,
-      "sha256": "5E6EDBA3759CC6BC639028779B311CBCB4C928D36882725C9F4A723C3F2731E1"
+      "bytes": 91948,
+      "sha256": "225B4B216B945D25E3DA669E624BA1ED53FECDA104BF86F4964FF9B568148556"
     },
     {
       "path": "SRC/neothd/src/cluster/gossip_wire.rs",
-      "bytes": 22255,
-      "sha256": "4BB0CCC9BF77ABA69F690067FE5A34554C502180B33F3A36395E7ABB8C349B14"
+      "bytes": 22279,
+      "sha256": "79808C57E8992849BC47FEB73156BCB253A30393A3D00E095E3C3965161C35B6"
     },
     {
       "path": "SRC/neothd/src/cluster/heartbeat.rs",
-      "bytes": 57877,
-      "sha256": "4584C4BFC340CE562DF6E49C126EDCA98FF8BE920443BB53043737A4089B3482"
+      "bytes": 61278,
+      "sha256": "31AB1F3453EF9A4B6C10433A9820B6BEB1C57BD9072EED6F610FE9A9A3C2FC29"
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 162649,
-      "sha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9"
+      "bytes": 163534,
+      "sha256": "23D6C4754EE620E5F3550B24AAB8F212ABE18A6921E4EDFC8551582EEA0AB5F8"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 325050,
-      "sha256": "8393A5BC7CE2706ABB40EE73A2217A657483BD52610BF7DB34DCE809908A6D12"
+      "bytes": 336155,
+      "sha256": "2DF265DF50E0229B00E95AF8128F7FF194F1803EBBEF17555A56691DDCC17BDC"
     },
     {
       "path": "SRC/neothd/src/cluster/mod.rs",
@@ -5863,8 +5873,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 51208,
-      "sha256": "DD432BF8ACAF5BC7E9A113312D0C1098AADFBDE32B1A2114C5A0AABC76BF287B"
+      "bytes": 54042,
+      "sha256": "217E88F2C90B2E64A22866365634CD1796853D1EC9A457A141460B3278C664B7"
     },
     {
       "path": "SRC/neothd/src/cluster/peer_streams.rs",
@@ -5873,13 +5883,13 @@
     },
     {
       "path": "SRC/neothd/src/cluster/result_outbox.rs",
-      "bytes": 7501,
-      "sha256": "4998447F34D6EFBEBF92CA3A9786D98B0528262DA26B413D1723F0949C558B63"
+      "bytes": 8400,
+      "sha256": "728CB95283E7B8BE7C37916FE1EA993A00D23F4CEFA10C8FF7DB36924EA45521"
     },
     {
       "path": "SRC/neothd/src/cluster/runtime_supervisor.rs",
-      "bytes": 90788,
-      "sha256": "A3E3AD53DE3F1AF1A7B0919C16B441853371EF15D4F0BEC6E26774C8576FE8A6"
+      "bytes": 91771,
+      "sha256": "4A0BF06FA4F06AD591FE1F8756BFC3C678815A34E45724CA2FACCC1F8CC12F16"
     },
     {
       "path": "SRC/neothd/src/code_map/chunk.rs",
@@ -6233,8 +6243,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 62281,
-      "sha256": "A6BE726A8021EA6650FF7A38256EAF786DAA878384A2440F7AA233DD4D043BDD"
+      "bytes": 62989,
+      "sha256": "95C35720438B8CF2B3EDC8DCD66F1B7D796E5E8C3B214633788889F96CFFC43E"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
@@ -6243,13 +6253,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 93440,
-      "sha256": "B66246A2D3378A3FA689CAE38F7F7600DC75E0D3B4C1BDE8E6B3D8DA55157699"
+      "bytes": 93955,
+      "sha256": "731D68736704D413B404B3E3482625FF5FFC50364FE6659B7C96FE7B82BEDE94"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 141557,
-      "sha256": "6D0787B85476D3DCC80334DF49A38D21CA1B1B2F3C641F8BC41330987EB6DCB7"
+      "bytes": 141590,
+      "sha256": "D1B7AB39070D94C89FACC04FF1D08F757D05FCEA58AB05586CC5595310E5BF02"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",

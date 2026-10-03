@@ -178,6 +178,17 @@ documents paths whose audit is best-effort or log-only.
   `neoth cluster status`, `neoth doctor`, and the GUI Mesh panel. Use `neoth cluster
   conflicts` to inspect both digests and explicitly choose the preferred materialized
   origin; NEOTH retains the resolved rows as forensic history.
+- **Outbound delegated work.** `neoth cluster task-delegate outbound-dispatch` requires an
+  exact operation and task id, a permitted peer scope, and `--deadline-unix` as a positive
+  absolute UTC Unix-second deadline. A zero or elapsed deadline is rejected before daemon,
+  peer, or provider work. `outbound-status` is a pure local read: it never marks expiry,
+  contacts a peer, dispatches, retries, re-delegates, or refunds work. For one elapsed,
+  unresolved operation, `outbound-mark-indeterminate` is explicit authenticated daemon
+  reconciliation; it neither retries nor re-delegates or refunds, and a late first result
+  cannot settle the indeterminate operation. Cluster task delegation uses protocol v9 and
+  rejects older Hello versions, including v8. The v10-to-v11 membership migration marks
+  legacy unresolved `prepared` and `accepted` operations `indeterminate`, retains completed
+  result custody, and never infers a historical deadline.
 - **Cluster revoke.** `neoth cluster revoke <stable-node-id>` (also exposed through
   `neoth buddy cluster revoke`) commits a versioned revocation tombstone and durable
   membership/audit/teardown outbox before acknowledging the mutation. A running daemon

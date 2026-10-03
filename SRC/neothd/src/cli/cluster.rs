@@ -128,6 +128,20 @@ pub enum ClusterTaskDelegateAction {
         #[arg(value_name = "OPERATION_ID")]
         operation_id: String,
     },
+    /// Read one exact persisted outbound operation.  This is a pure local
+    /// projection; it does not mark expiry, contact a peer, or retry work.
+    #[command(name = "outbound-status")]
+    OutboundStatus {
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: String,
+    },
+    /// Explicitly record an elapsed unresolved operation as indeterminate via
+    /// the authenticated daemon.  It never retries/redelegates/refunds.
+    #[command(name = "outbound-mark-indeterminate")]
+    OutboundMarkIndeterminate {
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: String,
+    },
     /// CAS one exact outbound route. This changes only local durable
     /// authority; daemon dispatch remains a separate live operation.
     #[command(name = "outbound-set")]
@@ -177,6 +191,10 @@ pub enum ClusterTaskDelegateAction {
         /// peer authorizes its own provider and rejects an unsupported cap.
         #[arg(long)]
         max_output_tokens: Option<u32>,
+        /// Required absolute UTC Unix-second deadline; past/zero values fail
+        /// before any daemon/peer/provider effect.
+        #[arg(long, value_name = "UNIX_SECONDS")]
+        deadline_unix: i64,
         #[arg(long)]
         skill: String,
         #[arg(long)]
@@ -1891,6 +1909,33 @@ async fn run_task_delegate_assignment(
                 },
             }
         }
+        ClusterTaskDelegateAction::OutboundStatus { operation_id } => {
+            let status = task_delegate_outbound_status_show_at(&home, &operation_id)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&status)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&status)?),
+                OutputFormat::Table => match status {
+                    Some(status) => println!(
+                        "operation_id={} task_id={} peer_key={} deadline_unix={} state={:?} updated_at={}",
+                        status.operation_id, status.task_id, status.peer_key, status.deadline_unix, status.state, status.updated_at_unix
+                    ),
+                    None => println!("outbound_task_status=not_found"),
+                },
+            }
+        }
+        ClusterTaskDelegateAction::OutboundMarkIndeterminate { operation_id } => {
+            let state = crate::daemon::audit_rpc::mark_task_delegate_outbound_indeterminate(
+                &home,
+                &crate::cluster::membership::OutboundTaskDelegateMarkIndeterminateRequest { operation_id },
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error))?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&state)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&state)?),
+                OutputFormat::Table => println!("outbound_task_state={state:?}"),
+            }
+        }
         ClusterTaskDelegateAction::OutboundSet {
             peer_key,
             skill,
@@ -1946,6 +1991,7 @@ async fn run_task_delegate_assignment(
             prompt,
             model_hint,
             max_output_tokens,
+            deadline_unix,
             skill,
             channel,
             account,
@@ -1956,6 +2002,7 @@ async fn run_task_delegate_assignment(
                 prompt,
                 model_hint,
                 max_output_tokens,
+                deadline_unix,
                 scope: crate::cluster::heartbeat::TaskDelegateScope {
                     skill_id: skill,
                     channel_id: channel,
@@ -1999,6 +2046,7 @@ fn task_delegate_scope_show_at(
             prompt: "scope-show".into(),
             model_hint: None,
             max_output_tokens: None,
+            deadline_unix: None,
             scope: Some(scope.clone()),
         },
     )?;
@@ -2019,6 +2067,7 @@ fn task_delegate_outbound_assignment_show_at(
             prompt: "outbound-scope-show".into(),
             model_hint: None,
             max_output_tokens: None,
+            deadline_unix: None,
             scope: Some(scope.clone()),
         },
     )?;
@@ -2032,6 +2081,16 @@ fn task_delegate_outbound_result_show_at(
     operation_id: &str,
 ) -> Result<Option<crate::cluster::membership::OutboundTaskDelegateResult>> {
     crate::cluster::membership::MembershipStore::task_delegate_outbound_result_read_only(
+        home,
+        operation_id,
+    )
+}
+
+fn task_delegate_outbound_status_show_at(
+    home: &Path,
+    operation_id: &str,
+) -> Result<Option<crate::cluster::membership::OutboundTaskDelegateStatus>> {
+    crate::cluster::membership::MembershipStore::task_delegate_outbound_status_read_only(
         home,
         operation_id,
     )

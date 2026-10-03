@@ -82,7 +82,11 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// v8 (GOLD-W2292): adds the terminal TaskResult acknowledgement.  A worker
 /// never treats queue acceptance as delivery; it retains the bounded result
 /// until the original authenticated requester acknowledges this exact digest.
-pub const PROTOCOL_VERSION: u16 = 8;
+/// v9 (GOLD-W2296): binds every live outbound TaskDelegate to a required
+/// absolute Unix deadline.  Older nodes cannot safely perform the pre-provider
+/// expiry check, so Hello rejects mixed v8/v9 sessions rather than accepting a
+/// deadline that an older worker could ignore.
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -409,6 +413,12 @@ pub struct TaskDelegateBody {
     /// Like `model_hint`, this does not select a provider or model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    /// Absolute UTC Unix-second deadline selected by the authenticated local
+    /// dispatcher.  It is optional only to deserialize historical v8 custody
+    /// records; a v9 live worker rejects an omitted or expired deadline before
+    /// reserving provider capacity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_unix: Option<i64>,
     /// An optional requested capability/channel/account tuple. Its presence
     /// narrows authority: the authenticated peer must have an exact
     /// operator-created scoped assignment. Omitting it preserves the legacy
@@ -467,12 +477,55 @@ pub fn task_result_digest(body: &TaskResultBody) -> Result<String> {
     Ok(hex::encode(Sha256::digest(encoded)))
 }
 
+/// Canonical immutable master-to-worker request binding.  This is deliberately
+/// independent of serde field order and length-delimits every string so neither
+/// missing optional values nor concatenation ambiguity can alter an accepted
+/// operation's deadline/authority identity.
+pub fn task_delegate_request_digest(
+    task_id: &str,
+    prompt: &str,
+    model_hint: Option<&str>,
+    max_output_tokens: Option<u32>,
+    deadline_unix: i64,
+    scope: &TaskDelegateScope,
+) -> Result<String> {
+    let body = TaskDelegateBody {
+        task_id: task_id.into(),
+        prompt: prompt.into(),
+        model_hint: model_hint.map(str::to_owned),
+        max_output_tokens,
+        deadline_unix: Some(deadline_unix),
+        scope: Some(scope.clone()),
+    };
+    validate_task_delegate(&body)?;
+    anyhow::ensure!(deadline_unix > 0, "task_delegate: invalid deadline binding");
+    let mut digest = Sha256::new();
+    for field in [
+        b"task_delegate_request_v1".as_slice(),
+        task_id.as_bytes(),
+        prompt.as_bytes(),
+        model_hint.unwrap_or("").as_bytes(),
+        scope.skill_id.as_bytes(),
+        scope.channel_id.as_deref().unwrap_or("").as_bytes(),
+        scope.account_id.as_deref().unwrap_or("").as_bytes(),
+    ] {
+        digest.update((field.len() as u64).to_be_bytes());
+        digest.update(field);
+    }
+    digest.update([u8::from(model_hint.is_some())]);
+    digest.update([u8::from(max_output_tokens.is_some())]);
+    digest.update(max_output_tokens.unwrap_or_default().to_be_bytes());
+    digest.update(deadline_unix.to_be_bytes());
+    Ok(hex::encode(digest.finalize()))
+}
+
 pub fn validate_task_result_ack(ack: &TaskResultAckBody) -> Result<()> {
     let task = TaskDelegateBody {
         task_id: ack.task_id.clone(),
         prompt: "task-result-ack-validation".into(),
         model_hint: None,
         max_output_tokens: None,
+        deadline_unix: None,
         scope: None,
     };
     validate_task_delegate(&task)?;
@@ -497,6 +550,7 @@ pub fn validate_task_result(body: &TaskResultBody) -> Result<()> {
         prompt: "result-validation".into(),
         model_hint: None,
         max_output_tokens: None,
+        deadline_unix: None,
         scope: None,
     };
     validate_task_delegate(&task)?;
@@ -606,6 +660,12 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
     {
         anyhow::bail!(
             "task_delegate: max_output_tokens must be within [1, {MAX_TASK_OUTPUT_TOKENS}], got {max_output_tokens}"
+        );
+    }
+    if let Some(deadline_unix) = body.deadline_unix {
+        anyhow::ensure!(
+            deadline_unix > 0,
+            "task_delegate: deadline_unix must be a positive Unix timestamp"
         );
     }
     Ok(())
@@ -864,6 +924,7 @@ mod tests {
                 prompt: "summarize this".into(),
                 model_hint: Some("qwen3".into()),
                 max_output_tokens: Some(768),
+                deadline_unix: None,
                 scope: None,
             }),
         };
@@ -910,6 +971,7 @@ mod tests {
                 prompt: "summarize this".into(),
                 model_hint: Some("advisory-only".into()),
                 max_output_tokens: Some(96),
+                deadline_unix: None,
                 scope: None,
             }),
         };
@@ -1051,6 +1113,7 @@ mod tests {
             prompt: "p".into(),
             model_hint: None,
             max_output_tokens: None,
+            deadline_unix: None,
             scope: None,
         };
         assert!(validate_task_delegate(&ok).is_ok());
@@ -1059,6 +1122,7 @@ mod tests {
             prompt: "p".into(),
             model_hint: None,
             max_output_tokens: Some(64),
+            deadline_unix: None,
             scope: Some(TaskDelegateScope {
                 skill_id: "summarize".into(),
                 channel_id: Some("telegram".into()),
@@ -1092,6 +1156,7 @@ mod tests {
                 prompt: "p".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_err()
@@ -1102,6 +1167,7 @@ mod tests {
                 prompt: String::new(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_err()
@@ -1114,6 +1180,7 @@ mod tests {
                 prompt: "x".repeat(MAX_TASK_PROMPT_BYTES + 1),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_err(),
@@ -1127,6 +1194,7 @@ mod tests {
                 prompt: "p".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_err()
@@ -1137,6 +1205,7 @@ mod tests {
                 prompt: "p".into(),
                 model_hint: Some("x".repeat(MAX_TASK_ID_BYTES + 1)),
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_err()
@@ -1151,6 +1220,7 @@ mod tests {
                     prompt: "p".into(),
                     model_hint: None,
                     max_output_tokens: None,
+                    deadline_unix: None,
                     scope: None,
                 })
                 .is_err(),
@@ -1164,6 +1234,7 @@ mod tests {
                 prompt: "p".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: None,
             })
             .is_ok()
@@ -1175,6 +1246,7 @@ mod tests {
                     prompt: "p".into(),
                     model_hint: None,
                     max_output_tokens: invalid,
+                    deadline_unix: None,
                     scope: None,
                 })
                 .is_err(),
@@ -1316,6 +1388,19 @@ mod tests {
     }
 
     #[test]
+    fn validate_hello_rejects_v8_before_deadline_worker_admission() {
+        let legacy_v8 = HelloBody {
+            protocol: PROTOCOL_NAME.to_string(),
+            version: 8,
+            cluster_name_hash: [0; 32],
+            capabilities: vec![],
+            capabilities_schema_version: 1,
+            cluster_key_proof: None,
+        };
+        assert!(validate_hello(&legacy_v8).is_err());
+    }
+
+    #[test]
     fn validate_hello_accepts_canonical_shape() {
         let good = HelloBody {
             protocol: PROTOCOL_NAME.to_string(),
@@ -1405,7 +1490,7 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 7);
+        assert_eq!(PROTOCOL_VERSION, 9);
         assert_eq!(MAX_FRAME_BYTES, 4 * 1024 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);

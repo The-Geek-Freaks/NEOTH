@@ -1250,6 +1250,24 @@ pub async fn dispatch_task_delegate_outbound(
     response_json(status, &response)
 }
 
+/// Explicit authenticated reconciliation mutation.  Read-only status never
+/// calls this route.
+#[cfg(feature = "cluster")]
+pub async fn mark_task_delegate_outbound_indeterminate(
+    home: &Path,
+    request: &crate::cluster::membership::OutboundTaskDelegateMarkIndeterminateRequest,
+) -> std::result::Result<crate::cluster::membership::OutboundTaskDelegateState, AuditRpcClientError> {
+    let body = serde_json::to_string(request)
+        .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(
+        home,
+        "/membership/task-delegate/outbound-mark-indeterminate",
+        &body,
+    )
+    .await?;
+    response_json(status, &response)
+}
+
 #[cfg(feature = "cluster")]
 pub async fn membership_revoke(
     home: &Path,

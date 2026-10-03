@@ -16,7 +16,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const AUTHORITY_SCHEMA_VERSION: i64 = 10;
+pub const AUTHORITY_SCHEMA_VERSION: i64 = 11;
 const REVOCATION_INTENTS_SCHEMA_VERSION: i64 = 4;
 pub const MEMBERSHIP_SNAPSHOT_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_WIRE_VERSION: u16 = 1;
@@ -2468,6 +2468,19 @@ impl MembershipController {
         })
     }
 
+    /// Explicit daemon-authenticated reconciliation mutation.  This does not
+    /// dispatch, resend, retry, refund, or inspect a remote worker.
+    pub fn mark_task_delegate_outbound_indeterminate(
+        &self,
+        request: &OutboundTaskDelegateMarkIndeterminateRequest,
+    ) -> Result<OutboundTaskDelegateState> {
+        let _operation = self.operations.lock().unwrap_or_else(|p| p.into_inner());
+        self.store.mark_task_delegate_outbound_indeterminate(
+            &request.operation_id,
+            crate::time::now_unix_i64(),
+        )
+    }
+
     pub fn snapshot(&self) -> Result<MembershipSnapshot> {
         self.store.full_snapshot()
     }
@@ -2828,6 +2841,26 @@ pub struct OutboundTaskDelegateOperation {
     pub task_id: String,
     pub peer_key: String,
     pub state: OutboundTaskDelegateState,
+    pub deadline_unix: i64,
+    pub request_digest: String,
+}
+
+/// Read-only operator projection.  Reading this type never advances expiry:
+/// the authenticated `outbound-mark-indeterminate` command owns that mutation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundTaskDelegateStatus {
+    pub operation_id: String,
+    pub task_id: String,
+    pub peer_key: String,
+    pub deadline_unix: i64,
+    pub state: OutboundTaskDelegateState,
+    pub updated_at_unix: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundTaskDelegateMarkIndeterminateRequest {
+    pub operation_id: String,
 }
 
 /// Immutable terminal master custody for one exactly-selected remote task.
@@ -3340,6 +3373,7 @@ impl MembershipStore {
                 prompt: "scope-validation".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: Some(scope.clone()),
             },
         )?;
@@ -3492,6 +3526,7 @@ impl MembershipStore {
                 prompt: "outbound-scope-validation".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: None,
                 scope: Some(scope.clone()),
             },
         )?;
@@ -3534,6 +3569,8 @@ impl MembershipStore {
 
     /// Persist the chosen peer before a frame is offered to its queue.  A
     /// duplicate operation/task is rejected so a caller retry cannot fan out.
+    /// Legacy in-process constructor retained solely for existing historical
+    /// custody tests. Live RPC dispatch must call the deadline-bound variant.
     pub fn prepare_task_delegate_outbound_operation(
         &self,
         operation_id: &str,
@@ -3542,6 +3579,29 @@ impl MembershipStore {
         scope: &crate::cluster::heartbeat::TaskDelegateScope,
         now_unix: i64,
     ) -> Result<OutboundTaskDelegateOperation> {
+        self.prepare_task_delegate_outbound_operation_bound(
+            operation_id,
+            task_id,
+            peer_key,
+            scope,
+            now_unix,
+            i64::MAX,
+            "0000000000000000000000000000000000000000000000000000000000000000".into(),
+        )
+    }
+
+    /// Persist the exact live RPC deadline and complete request binding before
+    /// queue admission. Only this path is used by the authenticated dispatcher.
+    pub fn prepare_task_delegate_outbound_operation_bound(
+        &self,
+        operation_id: &str,
+        task_id: &str,
+        peer_key: &str,
+        scope: &crate::cluster::heartbeat::TaskDelegateScope,
+        now_unix: i64,
+        deadline_unix: i64,
+        request_digest: String,
+    ) -> Result<OutboundTaskDelegateOperation> {
         validate_peeroxide_transport_key(peer_key)?;
         crate::cluster::heartbeat::validate_task_delegate(
             &crate::cluster::heartbeat::TaskDelegateBody {
@@ -3549,10 +3609,13 @@ impl MembershipStore {
                 prompt: "outbound-operation-validation".into(),
                 model_hint: None,
                 max_output_tokens: None,
+                deadline_unix: Some(deadline_unix),
                 scope: Some(scope.clone()),
             },
         )?;
         validate_task_delegate_operation_id(operation_id)?;
+        anyhow::ensure!(deadline_unix > now_unix, "outbound task delegation deadline is expired");
+        anyhow::ensure!(request_digest.len() == 64 && request_digest.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')), "outbound task delegation request digest is invalid");
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let channel = scope.channel_id.as_deref().unwrap_or("");
@@ -3564,13 +3627,15 @@ impl MembershipStore {
             allowed == Some(1),
             "outbound task delegation has no exact operator assignment"
         );
-        tx.execute("INSERT INTO task_delegate_outbound_operations (operation_id,task_id,transport_identity,skill_id,channel_id,account_id,state,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'prepared',?7,?7)", params![operation_id, task_id, peer_key, scope.skill_id, channel, account, now_unix])?;
+        tx.execute("INSERT INTO task_delegate_outbound_operations (operation_id,task_id,transport_identity,skill_id,channel_id,account_id,state,deadline_unix,request_digest,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'prepared',?7,?8,?9,?9)", params![operation_id, task_id, peer_key, scope.skill_id, channel, account, deadline_unix, request_digest, now_unix])?;
         tx.commit()?;
         Ok(OutboundTaskDelegateOperation {
             operation_id: operation_id.into(),
             task_id: task_id.into(),
             peer_key: peer_key.into(),
             state: OutboundTaskDelegateState::Prepared,
+            deadline_unix,
+            request_digest,
         })
     }
 
@@ -3621,6 +3686,47 @@ impl MembershipStore {
         Ok(conn.execute("UPDATE task_delegate_outbound_operations SET state='indeterminate',updated_at=?1 WHERE state='prepared'", [now_unix])?)
     }
 
+    /// Read-only exact-operation projection.  It deliberately does not infer
+    /// expiry, reoffer work, or touch the durable state.
+    pub fn task_delegate_outbound_status_read_only(
+        home: &std::path::Path,
+        operation_id: &str,
+    ) -> Result<Option<OutboundTaskDelegateStatus>> {
+        validate_task_delegate_operation_id(operation_id)?;
+        let store = Self::open(home)?;
+        let conn = store.connection()?;
+        conn.query_row(
+            "SELECT operation_id,task_id,transport_identity,deadline_unix,state,updated_at FROM task_delegate_outbound_operations WHERE operation_id=?1",
+            [operation_id],
+            |row| Ok(OutboundTaskDelegateStatus {
+                operation_id: row.get(0)?, task_id: row.get(1)?, peer_key: row.get(2)?, deadline_unix: row.get(3)?,
+                state: match row.get::<_, String>(4)?.as_str() { "prepared" => OutboundTaskDelegateState::Prepared, "accepted" => OutboundTaskDelegateState::Accepted, "resulted" => OutboundTaskDelegateState::Resulted, "indeterminate" => OutboundTaskDelegateState::Indeterminate, _ => return Err(rusqlite::Error::InvalidQuery) },
+                updated_at_unix: row.get(5)?,
+            }),
+        ).optional().map_err(Into::into)
+    }
+
+    /// Authenticated, explicit reconciliation mutation.  Status reads remain
+    /// pure; callers must knowingly record ambiguity after the persisted
+    /// deadline.  A pre-deadline, terminal, unknown or already-indeterminate
+    /// operation is rejected/idempotently returned without provider effects.
+    pub fn mark_task_delegate_outbound_indeterminate(
+        &self,
+        operation_id: &str,
+        now_unix: i64,
+    ) -> Result<OutboundTaskDelegateState> {
+        validate_task_delegate_operation_id(operation_id)?;
+        let conn = self.connection()?;
+        let changed = conn.execute(
+            "UPDATE task_delegate_outbound_operations SET state='indeterminate',updated_at=?2 WHERE operation_id=?1 AND state IN ('prepared','accepted') AND deadline_unix <= ?2",
+            params![operation_id, now_unix],
+        )?;
+        if changed == 1 { return Ok(OutboundTaskDelegateState::Indeterminate); }
+        let (state, deadline): (String, i64) = conn.query_row("SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id=?1", [operation_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        anyhow::ensure!(deadline <= now_unix || state == "indeterminate", "outbound task delegation deadline has not elapsed");
+        match state.as_str() { "indeterminate" => Ok(OutboundTaskDelegateState::Indeterminate), "resulted" => anyhow::bail!("outbound task delegation result is terminal"), _ => anyhow::bail!("invalid outbound task delegation operation state") }
+    }
+
     /// Atomically store a complete terminal result and advance the matched
     /// operation. Exact retransmits are idempotent; any conflicting, stale,
     /// foreign, or revoked result is rejected without changing durable state.
@@ -3636,12 +3742,12 @@ impl MembershipStore {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let operation = tx
             .query_row(
-                "SELECT operation_id,state FROM task_delegate_outbound_operations WHERE transport_identity=?1 AND task_id=?2",
+                "SELECT operation_id,state,deadline_unix FROM task_delegate_outbound_operations WHERE transport_identity=?1 AND task_id=?2",
                 params![peer_key, body.task_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
             )
             .optional()?;
-        let Some((operation_id, state)) = operation else {
+        let Some((operation_id, state, deadline_unix)) = operation else {
             anyhow::bail!("outbound task result does not match an exact selected peer/task");
         };
         let active: i64 = tx.query_row(
@@ -3669,6 +3775,10 @@ impl MembershipStore {
         anyhow::ensure!(
             matches!(state.as_str(), "prepared" | "accepted"),
             "outbound task result cannot settle a {state} operation"
+        );
+        anyhow::ensure!(
+            now_unix <= deadline_unix,
+            "outbound task result arrived after the persisted deadline"
         );
         let body_json =
             serde_json::to_string(body).context("serialize bounded outbound task result")?;
@@ -6003,6 +6113,22 @@ fn migrate(conn: &Connection) -> Result<()> {
          );
          PRAGMA user_version=10;",
     )?;
+    // v11 has no safe way to infer an absolute deadline for an already
+    // accepted v10 operation.  Existing unresolved rows therefore become
+    // durable indeterminate during the one atomic migration; resulted rows and
+    // their W2285 custody are retained unchanged.
+    tx.execute_batch(
+        "ALTER TABLE task_delegate_outbound_operations
+             ADD COLUMN deadline_unix INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE task_delegate_outbound_operations
+             ADD COLUMN request_digest TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000';
+         UPDATE task_delegate_outbound_operations
+            SET state='indeterminate'
+          WHERE state IN ('prepared','accepted');
+         CREATE INDEX IF NOT EXISTS task_delegate_outbound_operations_deadline
+             ON task_delegate_outbound_operations(state,deadline_unix);
+         PRAGMA user_version=11;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -6403,6 +6529,92 @@ mod tests {
                 .is_empty()
         );
         migrated.integrity_check().unwrap();
+    }
+
+    #[test]
+    fn v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline() {
+        let home = tempfile::tempdir().unwrap();
+        let store = MembershipStore::open(home.path()).unwrap();
+        let path = store.path().to_path_buf();
+        drop(store);
+
+        // Reconstruct the exact v10 operation/custody shape from a fresh
+        // authority. Dropping v11's result table first keeps its foreign-key
+        // target bound to the recreated pre-deadline operation table.
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TABLE task_delegate_outbound_results;
+             ALTER TABLE task_delegate_outbound_operations RENAME TO task_delegate_outbound_operations_v11;
+             CREATE TABLE task_delegate_outbound_operations (
+                 operation_id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL UNIQUE,
+                 transport_identity TEXT NOT NULL,
+                 skill_id TEXT NOT NULL,
+                 channel_id TEXT NOT NULL,
+                 account_id TEXT NOT NULL,
+                 state TEXT NOT NULL CHECK(state IN ('prepared','accepted','resulted','indeterminate')),
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             DROP TABLE task_delegate_outbound_operations_v11;
+             CREATE INDEX task_delegate_outbound_operations_peer_task
+                 ON task_delegate_outbound_operations(transport_identity,task_id);
+             CREATE TABLE task_delegate_outbound_results (
+                 operation_id TEXT PRIMARY KEY REFERENCES task_delegate_outbound_operations(operation_id),
+                 task_id TEXT NOT NULL UNIQUE,
+                 transport_identity TEXT NOT NULL,
+                 body TEXT NOT NULL,
+                 received_at INTEGER NOT NULL
+             );
+             CREATE UNIQUE INDEX task_delegate_outbound_results_peer_task
+                 ON task_delegate_outbound_results(transport_identity,task_id);",
+        ).unwrap();
+        let peer = "ab".repeat(32);
+        for (operation_id, task_id, state) in [
+            ("op-prepared", "task-prepared", "prepared"),
+            ("op-accepted", "task-accepted", "accepted"),
+            ("op-resulted", "task-resulted", "resulted"),
+        ] {
+            conn.execute(
+                "INSERT INTO task_delegate_outbound_operations (operation_id,task_id,transport_identity,skill_id,channel_id,account_id,state,created_at,updated_at) VALUES (?1,?2,?3,'skill','channel','account',?4,100,101)",
+                params![operation_id, task_id, peer, state],
+            ).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO task_delegate_outbound_results (operation_id,task_id,transport_identity,body,received_at) VALUES ('op-resulted','task-resulted',?1,'retained-v10-result-custody',102)",
+            [&peer],
+        ).unwrap();
+        conn.pragma_update(None, "user_version", 10).unwrap();
+        drop(conn);
+
+        let migrated = MembershipStore::open_path(path.clone(), false).unwrap();
+        drop(migrated);
+        let conn = Connection::open(path).unwrap();
+        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 11);
+        for operation_id in ["op-prepared", "op-accepted"] {
+            let (state, deadline): (String, i64) = conn.query_row(
+                "SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id=?1",
+                [operation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            assert_eq!(state, "indeterminate");
+            assert_eq!(deadline, 0, "v10 rows must never acquire an inferred deadline");
+        }
+        let (resulted_state, resulted_deadline): (String, i64) = conn.query_row(
+            "SELECT state,deadline_unix FROM task_delegate_outbound_operations WHERE operation_id='op-resulted'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(resulted_state, "resulted");
+        assert_eq!(resulted_deadline, 0);
+        assert_eq!(
+            conn.query_row(
+                "SELECT body FROM task_delegate_outbound_results WHERE operation_id='op-resulted'",
+                [],
+                |row| row.get::<_, String>(0),
+            ).unwrap(),
+            "retained-v10-result-custody",
+        );
     }
 
     #[test]

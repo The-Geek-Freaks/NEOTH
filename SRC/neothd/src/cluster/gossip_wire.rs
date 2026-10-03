@@ -37,11 +37,11 @@ use serde::{Deserialize, Serialize};
 use super::PeerPubkey;
 use super::gossip::GossipTag;
 
-/// Breaking durable-sync protocol version. v7 adds the typed budget-Raft frame
-/// to the shared authenticated transport contract. Transport handshakes reject
-/// v6 peers before either gossip or budget-control data can be decoded; there
-/// is no downgrade lane.
-pub const SYNC_PROTOCOL_VERSION: u16 = 7;
+/// Breaking durable-sync protocol version. v9 pairs the shared authenticated
+/// transport contract with TaskDelegate's required absolute deadline: v8 peers
+/// are rejected during Hello rather than being allowed to run a worker which
+/// cannot enforce the new pre-provider expiry rule.
+pub const SYNC_PROTOCOL_VERSION: u16 = 9;
 pub const SYNC_ENVELOPE_VERSION: u16 = 1;
 
 /// Canonical restore content. The type intentionally has no representation

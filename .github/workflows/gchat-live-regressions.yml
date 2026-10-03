@@ -186,6 +186,7 @@ jobs:
             SRC/neothd/src/n8n_api/handlers.rs \
             SRC/neothd/src/cluster/heartbeat.rs \
             SRC/neothd/src/cluster/executor.rs \
+            SRC/neothd/src/cluster/gossip_wire.rs \
             SRC/neothd/src/cluster/mod.rs \
             SRC/neothd/src/cluster/outbound_tests.rs \
             SRC/neothd/src/cluster/peer_streams.rs \
@@ -859,9 +860,15 @@ jobs:
           run_case 492 lib cluster::outbound_tests::worker_result_outbox_reopens_exact_duplicates_and_rejects_foreign_or_conflicting_ack cluster::outbound_tests::worker_result_outbox_reopens_exact_duplicates_and_rejects_foreign_or_conflicting_ack --lib
           run_case 493 lib cluster::outbound_tests::worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps_tombstone cluster::outbound_tests::worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps_tombstone --lib
           run_case 494 lib cluster::outbound_tests::worker_result_outbox_flushes_tail_after_current_session_queue_drains cluster::outbound_tests::worker_result_outbox_flushes_tail_after_current_session_queue_drains --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 494
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 494
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 494
+          run_case 495 lib cluster::outbound_tests::outbound_deadline_status_is_read_only_until_explicit_authenticated_reconciliation cluster::outbound_tests::outbound_deadline_status_is_read_only_until_explicit_authenticated_reconciliation --lib
+          run_case 496 lib cluster::outbound_tests::outbound_deadline_rejects_expired_prepare_and_late_result_cannot_settle_indeterminate cluster::outbound_tests::outbound_deadline_rejects_expired_prepare_and_late_result_cannot_settle_indeterminate --lib
+          run_case 497 lib cluster::executor::tests::queued_live_task_expiring_after_real_enqueue_never_calls_provider cluster::executor::tests::queued_live_task_expiring_after_real_enqueue_never_calls_provider --lib
+          run_case 498 lib cluster::executor::tests::deadline_crossing_at_final_external_permit_never_calls_provider cluster::executor::tests::deadline_crossing_at_final_external_permit_never_calls_provider --lib
+          run_case 499 lib cluster::heartbeat::tests::validate_hello_rejects_v8_before_deadline_worker_admission cluster::heartbeat::tests::validate_hello_rejects_v8_before_deadline_worker_admission --lib
+          run_case 500 lib cluster::membership::tests::v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline cluster::membership::tests::v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 500
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 500
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 500
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

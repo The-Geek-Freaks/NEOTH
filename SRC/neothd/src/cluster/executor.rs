@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 
 use crate::providers::{Provider, Request};
 
@@ -61,6 +60,9 @@ pub struct ClusterTaskJob {
     /// Optional strict ceiling copied from the authenticated task envelope.
     /// This never selects a model; it only narrows the final provider request.
     pub max_output_tokens: Option<u32>,
+    /// Required absolute deadline copied from the authenticated v9 envelope.
+    /// It is rechecked after queue delay and immediately before provider work.
+    pub deadline_unix: i64,
     /// Authenticated peer Noise pubkey hex to reply to.
     pub reply_peer_pk: String,
     /// Request-controlled resource selector, enforced only through the
@@ -69,6 +71,10 @@ pub struct ClusterTaskJob {
     /// Non-constructible authority proof captured at carrier admission.
     pub membership_grant: super::membership::MembershipGrant,
     queued_effect: Option<super::membership::MembershipEffectGuard>,
+    #[cfg(test)]
+    deadline_clock: Option<std::sync::Arc<std::sync::atomic::AtomicI64>>,
+    #[cfg(test)]
+    deadline_rejected_notify: Option<std::sync::Arc<tokio::sync::Notify>>,
 }
 
 impl ClusterTaskJob {
@@ -77,10 +83,12 @@ impl ClusterTaskJob {
         prompt: String,
         model_hint: Option<String>,
         max_output_tokens: Option<u32>,
+        deadline_unix: i64,
         reply_peer_pk: String,
         scope: Option<super::heartbeat::TaskDelegateScope>,
         membership_grant: super::membership::MembershipGrant,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(deadline_unix > 0, "cluster task deadline must be positive");
         let queued_effect = membership_grant.begin_effect_kind(
             (now_unix_ms() / 1_000) as i64,
             super::membership::MembershipEffectKind::QueuedProvider,
@@ -90,11 +98,46 @@ impl ClusterTaskJob {
             prompt,
             model_hint,
             max_output_tokens,
+            deadline_unix,
             reply_peer_pk,
             scope,
             membership_grant,
             queued_effect: Some(queued_effect),
+            #[cfg(test)]
+            deadline_clock: None,
+            #[cfg(test)]
+            deadline_rejected_notify: None,
         })
+    }
+
+    #[cfg(test)]
+    fn with_test_deadline_clock(
+        mut self,
+        clock: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    ) -> Self {
+        self.deadline_clock = Some(clock);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_deadline_rejected_notify(mut self, notify: std::sync::Arc<tokio::sync::Notify>) -> Self {
+        self.deadline_rejected_notify = Some(notify);
+        self
+    }
+}
+
+fn task_deadline_now_unix(_job: &ClusterTaskJob) -> i64 {
+    #[cfg(test)]
+    if let Some(clock) = &_job.deadline_clock {
+        return clock.load(std::sync::atomic::Ordering::SeqCst);
+    }
+    (now_unix_ms() / 1_000) as i64
+}
+
+fn notify_deadline_rejected(_job: &ClusterTaskJob) {
+    #[cfg(test)]
+    if let Some(notify) = &_job.deadline_rejected_notify {
+        notify.notify_one();
     }
 }
 
@@ -359,27 +402,15 @@ pub fn spawn_cluster_executor(
 /// scope and requested cap.  The master schema has a UNIQUE task_id operation
 /// mapping; no payload-supplied alternate operation id is accepted here.
 fn task_result_context_digest(job: &ClusterTaskJob) -> String {
-    let mut digest = Sha256::new();
-    digest.update(b"neoth.cluster.worker-task-result-context.v1\0");
-    let scope = serde_json::to_vec(&job.scope).unwrap_or_default();
-    let model_hint = job.model_hint.as_deref().unwrap_or("");
-    let ceiling = job.max_output_tokens.unwrap_or_default().to_be_bytes();
-    let cap_present = [u8::from(job.max_output_tokens.is_some())];
-    let hint_present = [u8::from(job.model_hint.is_some())];
-    for value in [
-        job.reply_peer_pk.as_bytes(),
-        job.task_id.as_bytes(),
-        job.prompt.as_bytes(),
-        model_hint.as_bytes(),
-        scope.as_slice(),
-        &ceiling,
-        &cap_present,
-        &hint_present,
-    ] {
-        digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-        digest.update(value);
-    }
-    hex::encode(digest.finalize())
+    super::result_outbox::delegate_context_digest_fields(
+        &job.reply_peer_pk,
+        &job.task_id,
+        &job.prompt,
+        job.model_hint.as_deref(),
+        job.max_output_tokens,
+        Some(job.deadline_unix),
+        job.scope.as_ref(),
+    )
 }
 
 #[derive(Debug)]
@@ -516,6 +547,19 @@ async fn run_one_task_execution_inner(
             .into();
         }
     };
+    // The ingress deadline may have elapsed while this task waited in the
+    // bounded executor queue. Check before even selecting a provider.
+    if job.deadline_unix <= task_deadline_now_unix(&job) {
+        notify_deadline_rejected(&job);
+        return TaskResultBody {
+            task_id: job.task_id.clone(),
+            status: TaskResultStatus::Rejected { reason: "deadline_expired".to_string() },
+            result: None,
+            provider_name: None,
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling: None,
+        }.into();
+    }
     let Some(provider) = provider else {
         // Honest failure (not theater): the master learns this node has no
         // provider + re-routes, instead of getting a fake OK.
@@ -634,6 +678,20 @@ async fn run_one_task_execution_inner(
     #[cfg(test)]
     if let Some(hook) = before_external_permit {
         hook();
+    }
+
+    // A task may have waited behind an earlier inference while request assembly
+    // and consent completed. Recheck at the final effect boundary.
+    if job.deadline_unix <= task_deadline_now_unix(&job) {
+        notify_deadline_rejected(&job);
+        return TaskResultBody {
+            task_id: job.task_id.clone(),
+            status: TaskResultStatus::Rejected { reason: "deadline_expired".to_string() },
+            result: None,
+            provider_name: Some(provider_name),
+            requested_max_output_tokens: job.max_output_tokens,
+            effective_output_token_ceiling,
+        }.into();
     }
 
     // The delegation CAS and external permit use one short authority gate.
@@ -876,6 +934,14 @@ mod tests {
     }
 
     fn job(home: &std::path::Path, prompt: &str) -> ClusterTaskJob {
+        job_with_deadline(home, prompt, i64::MAX)
+    }
+
+    fn job_with_deadline(
+        home: &std::path::Path,
+        prompt: &str,
+        deadline_unix: i64,
+    ) -> ClusterTaskJob {
         let now = (now_unix_ms() / 1_000) as i64;
         let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
         let transport = crate::cluster::membership::TransportIdentity::peeroxide(
@@ -919,6 +985,7 @@ mod tests {
             prompt.into(),
             None,
             None,
+            deadline_unix,
             "aa".into(),
             None,
             store
@@ -1026,6 +1093,7 @@ mod tests {
                 prompt.into(),
                 None,
                 None,
+                i64::MAX,
                 "aa".into(),
                 None,
                 grant,
@@ -1532,6 +1600,7 @@ mod tests {
             "block".into(),
             None,
             None,
+            i64::MAX,
             "aa".into(),
             None,
             grant,
@@ -2130,5 +2199,123 @@ mod tests {
             .await
             .expect("cluster executor retained the WAL sender after shutdown")
             .expect("WAL writer task panicked");
+    }
+
+    #[tokio::test]
+    async fn queued_live_task_expiring_after_real_enqueue_never_calls_provider() {
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+
+        struct BlockingProvider {
+            calls: Arc<AtomicUsize>,
+            first_started: Arc<tokio::sync::Notify>,
+            release_first: Arc<tokio::sync::Notify>,
+        }
+        #[async_trait]
+        impl Provider for BlockingProvider {
+            fn name(&self) -> &'static str { "deadline-queue" }
+            async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+                let call = self.calls.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    self.first_started.notify_one();
+                    self.release_first.notified().await;
+                    anyhow::bail!("first fixture task is released after the second task has expired")
+                }
+                anyhow::bail!("expired queued task must not reach provider")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let ingress_now = (now_unix_ms() / 1_000) as i64;
+        let deadline = ingress_now + 1;
+        let clock = Arc::new(AtomicI64::new(ingress_now));
+        let deadline_rejected = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first_started = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(BlockingProvider {
+                calls: Arc::clone(&calls),
+                first_started: Arc::clone(&first_started),
+                release_first: Arc::clone(&release_first),
+            }),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.deadline-queue",
+        );
+        let executor = spawn_cluster_executor(
+            Some(Arc::new(provider)),
+            Arc::new(PeerStreamRegistry::new()),
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        );
+        let dispatch = executor.dispatch_sender();
+        dispatch.send(job(home.path(), "hold the sole executor worker")).await.unwrap();
+        first_started.notified().await;
+
+        // The second task is live at authenticated ingress and travels through
+        // the actual bounded dispatcher.  The first provider task keeps it
+        // queued while this per-job test clock crosses its deadline.
+        dispatch.send(
+            job_with_deadline(home.path(), "must expire in the actual queue", deadline)
+                .with_test_deadline_clock(Arc::clone(&clock))
+                .with_deadline_rejected_notify(Arc::clone(&deadline_rejected)),
+        ).await.unwrap();
+        clock.store(deadline, Ordering::SeqCst);
+        release_first.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(3), deadline_rejected.notified())
+            .await
+            .expect("queued expired task did not reach the executor deadline gate");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "only the fixture blocker may call the provider");
+        drop(dispatch);
+        executor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn deadline_crossing_at_final_external_permit_never_calls_provider() {
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str { "deadline-final-permit" }
+            async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("final permit expiry must prevent provider work")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let ingress_now = (now_unix_ms() / 1_000) as i64;
+        let deadline = ingress_now + 1;
+        let clock = Arc::new(AtomicI64::new(ingress_now));
+        let hook_called = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.deadline-final-permit",
+        );
+        let clock_at_permit = Arc::clone(&clock);
+        let hook_called_at_permit = Arc::clone(&hook_called);
+        let before_external_permit = move || {
+            hook_called_at_permit.store(true, Ordering::SeqCst);
+            clock_at_permit.store(deadline, Ordering::SeqCst);
+        };
+        let result = run_one_task_execution_inner(
+            Some(Arc::new(provider)),
+            job_with_deadline(home.path(), "expire at final permit", deadline)
+                .with_test_deadline_clock(clock),
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+            Some(&before_external_permit),
+        ).await.body;
+        assert!(hook_called.load(Ordering::SeqCst), "the final external-permit seam must run");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(result.status, TaskResultStatus::Rejected { ref reason } if reason == "deadline_expired"));
     }
 }

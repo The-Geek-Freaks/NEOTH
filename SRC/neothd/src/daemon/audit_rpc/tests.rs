@@ -2024,6 +2024,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         prompt: "summarize the authorized audit fixture".into(),
         model_hint: Some("test-model".into()),
         max_output_tokens: None,
+        deadline_unix: now + 60,
         scope: scope.clone(),
     };
     let body = serde_json::to_string(&request).unwrap();

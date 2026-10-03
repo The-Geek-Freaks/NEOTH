@@ -37,6 +37,9 @@ pub struct OutboundTaskDelegateDispatchRequest {
     /// provider; the receiving node still authorizes its own configured leaf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    /// Required absolute Unix-second deadline.  It is validated before any
+    /// authority read, durable operation insert, or peer queue admission.
+    pub deadline_unix: i64,
     pub scope: crate::cluster::heartbeat::TaskDelegateScope,
 }
 
@@ -99,12 +102,18 @@ impl OutboundTaskDelegateController {
         &self,
         request: &OutboundTaskDelegateDispatchRequest,
     ) -> Result<OutboundTaskDelegateDispatchReceipt> {
+        let now_unix = crate::time::now_unix_i64();
+        anyhow::ensure!(
+            request.deadline_unix > now_unix,
+            "outbound task delegation deadline is expired"
+        );
         crate::cluster::heartbeat::validate_task_delegate(
             &crate::cluster::heartbeat::TaskDelegateBody {
                 task_id: request.task_id.clone(),
                 prompt: request.prompt.clone(),
                 model_hint: request.model_hint.clone(),
                 max_output_tokens: request.max_output_tokens,
+                deadline_unix: Some(request.deadline_unix),
                 scope: Some(request.scope.clone()),
             },
         )?;
@@ -139,12 +148,21 @@ impl OutboundTaskDelegateController {
         {
             self.membership
                 .store()
-                .prepare_task_delegate_outbound_operation(
+                .prepare_task_delegate_outbound_operation_bound(
                     &request.operation_id,
                     &request.task_id,
                     &candidate.peer_key,
                     &request.scope,
-                    crate::time::now_unix_i64(),
+                    now_unix,
+                    request.deadline_unix,
+                    crate::cluster::heartbeat::task_delegate_request_digest(
+                        &request.task_id,
+                        &request.prompt,
+                        request.model_hint.as_deref(),
+                        request.max_output_tokens,
+                        request.deadline_unix,
+                        &request.scope,
+                    )?,
                 )?;
             let capped = request.max_output_tokens.is_some();
             let frame = crate::cluster::heartbeat::WireFrame {
@@ -169,6 +187,7 @@ impl OutboundTaskDelegateController {
                             prompt: request.prompt.clone(),
                             model_hint: request.model_hint.clone(),
                             max_output_tokens: request.max_output_tokens,
+                            deadline_unix: Some(request.deadline_unix),
                             scope: Some(request.scope.clone()),
                         },
                     )
@@ -179,6 +198,7 @@ impl OutboundTaskDelegateController {
                             prompt: request.prompt.clone(),
                             model_hint: request.model_hint.clone(),
                             max_output_tokens: request.max_output_tokens,
+                            deadline_unix: Some(request.deadline_unix),
                             scope: Some(request.scope.clone()),
                         },
                     )

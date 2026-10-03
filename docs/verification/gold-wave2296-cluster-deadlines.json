@@ -1,0 +1,109 @@
+{
+  "schema": "neoth-gold-wave2296-cluster-deadlines/v1",
+  "candidateBase": "699d90873f6a1a2e899c968250c0014f1d299d25",
+  "integrationBasePending": false,
+  "manifestSha256": "31FE2E6F9BFDA4C91BDC657D5A4A45F2A01FEA7C1A028174C2422903A0670FB3",
+  "staticReviewSha256": "4BA7E95260668D3CF2BC3372FC0580EE0A7F7D86D533DD299F259612B69A5A15",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/cluster.rs",
+      "base_sha256": "92b4a9fa037b78d065264b695b0ea6530e0c7f2ddacbc3364283fa8e741a0107",
+      "candidate_sha256": "59a55f6b3e6d179df800aafe2c8950c2dc504765fd370ece6fec8f77fb81952a"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "base_sha256": "5e6edba3759cc6bc639028779b311cbcb4c928d36882725c9f4a723c3f2731e1",
+      "candidate_sha256": "225b4b216b945d25e3da669e624ba1ed53fecda104bf86f4964ff9b568148556"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/gossip_wire.rs",
+      "base_sha256": "4bb0ccc9bf77aba69f690067fe5a34554c502180b33f3a36395e7abb8c349b14",
+      "candidate_sha256": "79808c57e8992849bc47feb73156bcb253a30393a3d00e095e3c3965161c35b6"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "base_sha256": "4584c4bfc340ce562df6e49c126edca98ff8be920443bb53043737a4089b3482",
+      "candidate_sha256": "fc4727db89cb761eb71bb7a3f7df5a4795a61e9766d41d1c754497827bf0dd69"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "base_sha256": "075768b454a63e01fefd24e8c3a542c604a760b8d2662c59fff2666baaff23a9",
+      "candidate_sha256": "23d6c4754ee620e5f3550b24aab8f212abe18a6921e4edfc8551582eea0ab5f8"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "base_sha256": "8393a5bc7ce2706abb40ee73a2217a657483bd52610bf7db34dce809908a6d12",
+      "candidate_sha256": "9aef5ce44327113fa34d98a00936f94f735d928b89b7a8a2e7fe902fb68faa89"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "base_sha256": "dd432bf8acaf5bc7e9a113312d0c1098aadfbde32b1a2114c5a0aabc76bf287b",
+      "candidate_sha256": "6514beb49329d68581cd15e986f1dfac935794548a07f8517257aa382512cdf3"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/result_outbox.rs",
+      "base_sha256": "4998447f34d6efbebf92ca3a9786d98b0528262da26b413d1723f0949c558b63",
+      "candidate_sha256": "728cb95283e7b8be7c37916fe1ea993a00d23f4cefa10c8ff7db36924ea45521"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/runtime_supervisor.rs",
+      "base_sha256": "a3e3ad53de3f1af1a7b0919c16b441853371ef15d4f0bec6e26774c8576fe8a6",
+      "candidate_sha256": "4a0bf06fa4f06ad591fe1f8756bfc3c678815a34e45724ca2faccc1f8cc12f16"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "base_sha256": "a6be726a8021ea6650ff7a38256eaf786daa878384a2440f7aa233dd4d043bdd",
+      "candidate_sha256": "95c35720438b8cf2b3edc8dcd66f1b7d796e5e8c3b214633788889f96cffc43e"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "base_sha256": "b66246a2d3378a3fa689cae38f7f7600dc75e0d3b4c1bde8e6b3d8da55157699",
+      "candidate_sha256": "731d68736704d413b404b3e3482625ff5ffc50364fe6659b7c96fe7b82bede94"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "base_sha256": "6d0787b85476d3dcc80334df49a38d21ca1b1b2f3c641f8bc41330987eb6dcb7",
+      "candidate_sha256": "83225abaa572530ace46ffe07ff0236b2d262d85b58fb59847d79a475381278f"
+    }
+  ],
+  "newTests": [
+    "cluster::outbound_tests::outbound_deadline_status_is_read_only_until_explicit_authenticated_reconciliation",
+    "cluster::outbound_tests::outbound_deadline_rejects_expired_prepare_and_late_result_cannot_settle_indeterminate",
+    "cluster::executor::tests::queued_live_task_expiring_after_real_enqueue_never_calls_provider",
+    "cluster::executor::tests::deadline_crossing_at_final_external_permit_never_calls_provider",
+    "cluster::heartbeat::tests::validate_hello_rejects_v8_before_deadline_worker_admission",
+    "cluster::membership::tests::v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline"
+  ],
+  "newTestsCount": 6,
+  "portableRegistrationsAfter": 2720,
+  "focusedCasesAfter": 500,
+  "behavior": [
+    "Existing outbound-dispatch CLI requires a positive future absolute deadline; exact context persists before queue admission",
+    "Deadline remains bound through worker reservation, queue, result custody and final provider admission",
+    "Authenticated outbound-status projects current state; explicit outbound-mark-indeterminate handles elapsed unresolved operations",
+    "Schema11 migration marks legacy unresolved prepared/accepted rows indeterminate without inventing historical deadlines; stored results retained",
+    "Protocol9 explicitly rejects protocol8 peers; no downgrade",
+    "Late first results cannot settle expired or indeterminate operations; no automatic retry, re-delegation or refund"
+  ],
+  "staticReviewRepairs": [
+    "Executor deadline propagation and final external-effect revalidation",
+    "One shared context-digest implementation for ingress, rejections and terminal results",
+    "Actual bounded queue with per-job test clock plus final-permit seam",
+    "Exact version10-to11 migration custody fixture",
+    "Non-test unused-parameter warning removal"
+  ],
+  "localExecutableValidationRan": false,
+  "hosted": "Pending on integrated producer; W2299 repairs retained",
+  "cliReference": "Must be regenerated and compared using an actual hosted compiled CLI",
+  "releaseReady": false,
+  "operatorDocumentation": [
+    {
+      "path": "docs/operator-journey.md",
+      "base_sha256": "0B535B372A086BC27E59549307ED6010122872DCA237756D2B1713F9B5523233",
+      "candidate_sha256": "D6AAAD6EE4D24C564CBA05FF5587C0699AA473D4423192FFB018FDD1100984BD"
+    }
+  ],
+  "integrationBase": "234e11addae443948efa1177f6fe48de880b8b35",
+  "rebaseReviewSha256": "C1EF95695F7FDC1C8751EAE6172D6E968AB2BCB19E1EEF4CD0788D2D38848781",
+  "focusedWorkflowSha256": "F7AD7683AE5AFA0ADBF3AD14A02181FD6C0288D8C18AF7AC33A2AD1FC372CFE1"
+}

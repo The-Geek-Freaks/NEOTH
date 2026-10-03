@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 
 use super::heartbeat::{
-    FrameBody, FrameKind, TaskDelegateBody, TaskResultAckBody, TaskResultBody, WireFrame,
+    FrameBody, FrameKind, TaskDelegateBody, TaskDelegateScope, TaskResultAckBody, TaskResultBody,
+    WireFrame,
 };
 use super::membership::{
     MembershipGrant, MembershipStore, WorkerTaskExecutionReservation, WorkerTaskResultOutboxReceipt,
@@ -176,23 +177,50 @@ impl WorkerResultOutbox {
 }
 
 pub fn delegate_context_digest(grant: &MembershipGrant, delegate: &TaskDelegateBody) -> String {
+    delegate_context_digest_fields(
+        grant.transport_identity().as_str(),
+        &delegate.task_id,
+        &delegate.prompt,
+        delegate.model_hint.as_deref(),
+        delegate.max_output_tokens,
+        delegate.deadline_unix,
+        delegate.scope.as_ref(),
+    )
+}
+
+/// One exact context representation for reservation, rejection replay and the
+/// normal executor result path. Keeping this independent of a concrete body
+/// avoids a second almost-identical digest that can silently omit a new field.
+pub fn delegate_context_digest_fields(
+    transport_identity: &str,
+    task_id: &str,
+    prompt: &str,
+    model_hint: Option<&str>,
+    max_output_tokens: Option<u32>,
+    deadline_unix: Option<i64>,
+    scope: Option<&TaskDelegateScope>,
+) -> String {
     use sha2::{Digest, Sha256};
     let mut digest = Sha256::new();
-    digest.update(b"neoth.cluster.worker-task-result-context.v1\0");
-    let scope = serde_json::to_vec(&delegate.scope).unwrap_or_default();
-    let model_hint = delegate.model_hint.as_deref().unwrap_or("");
-    let ceiling = delegate.max_output_tokens.unwrap_or_default().to_be_bytes();
-    let cap_present = [u8::from(delegate.max_output_tokens.is_some())];
-    let hint_present = [u8::from(delegate.model_hint.is_some())];
+    digest.update(b"neoth.cluster.worker-task-result-context.v2\0");
+    let scope = serde_json::to_vec(&scope).unwrap_or_default();
+    let model_hint_value = model_hint.unwrap_or("");
+    let ceiling = max_output_tokens.unwrap_or_default().to_be_bytes();
+    let cap_present = [u8::from(max_output_tokens.is_some())];
+    let hint_present = [u8::from(model_hint.is_some())];
+    let deadline = deadline_unix.unwrap_or_default().to_be_bytes();
+    let deadline_present = [u8::from(deadline_unix.is_some())];
     for value in [
-        grant.transport_identity().as_str().as_bytes(),
-        delegate.task_id.as_bytes(),
-        delegate.prompt.as_bytes(),
-        model_hint.as_bytes(),
+        transport_identity.as_bytes(),
+        task_id.as_bytes(),
+        prompt.as_bytes(),
+        model_hint_value.as_bytes(),
         scope.as_slice(),
         &ceiling,
         &cap_present,
         &hint_present,
+        &deadline,
+        &deadline_present,
     ] {
         digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(value);

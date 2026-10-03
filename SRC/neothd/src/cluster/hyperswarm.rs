@@ -1990,6 +1990,44 @@ async fn handle_task_delegate_inner(
         emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "malformed");
         return;
     }
+    // v9 requires a deadline before any gate, permit, queue, or provider path.
+    // Missing legacy fields and elapsed values are rejected before capacity is
+    // reserved. An authenticated rejection still uses W2292's durable outbox.
+    let Some(deadline_unix) = body.deadline_unix else {
+        reply_task_rejected(
+            peer_streams,
+            remote_pk_hex,
+            own_peer_id,
+            &task_id,
+            "deadline_missing",
+        );
+        return;
+    };
+    if deadline_unix <= now_unix_secs() as i64 {
+        if membership_grant.carrier() == super::membership::CarrierKind::Peeroxide
+            && membership_grant.transport_identity().as_str() == remote_pk_hex
+        {
+            reply_task_rejected_durable(
+                worker_result_outbox,
+                neoth_home,
+                peer_streams,
+                remote_pk_hex,
+                own_peer_id,
+                membership_grant,
+                &body,
+                "deadline_expired",
+            );
+        } else {
+            reply_task_rejected(
+                peer_streams,
+                remote_pk_hex,
+                own_peer_id,
+                &task_id,
+                "deadline_expired",
+            );
+        }
+        return;
+    }
 
     // Checkpoint 3 (pure, zero-cost) FIRST so a flood of frames can't force
     // disk I/O on a guaranteed-Deny path (review DoS finding). Strict ⇒ Deny ⇒
@@ -2191,6 +2229,7 @@ async fn handle_task_delegate_inner(
                 &task_id,
                 &body.prompt,
                 body.max_output_tokens,
+                deadline_unix,
             );
             let gate = crate::permissions::Gate::for_policy(autonomy_policy.clone())
                 .with_confirm(crate::permissions::ConfirmStrategy::FailClosed)
@@ -2291,6 +2330,7 @@ async fn handle_task_delegate_inner(
                 body.prompt,
                 body.model_hint,
                 body.max_output_tokens,
+                deadline_unix,
                 remote_pk_hex.to_string(),
                 body.scope,
                 membership_grant.clone(),
@@ -2397,6 +2437,7 @@ fn cluster_task_admission_binding(
     task_id: &str,
     prompt: &str,
     max_output_tokens: Option<u32>,
+    deadline_unix: i64,
 ) -> String {
     let mut digest = Sha256::new();
     digest.update(b"neoth.cluster.task-delegate-admission.v1\0");
@@ -2408,6 +2449,7 @@ fn cluster_task_admission_binding(
         prompt.as_bytes(),
         &output_ceiling,
         &output_ceiling_present,
+        &deadline_unix.to_be_bytes(),
     ] {
         digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(field);
@@ -2475,27 +2517,15 @@ fn reply_task_rejected_durable(
         }
         return;
     }
-    let mut digest = Sha256::new();
-    digest.update(b"neoth.cluster.worker-task-result-context.v1\0");
-    let scope = serde_json::to_vec(&body.scope).unwrap_or_default();
-    let model_hint = body.model_hint.as_deref().unwrap_or("");
-    let ceiling = body.max_output_tokens.unwrap_or_default().to_be_bytes();
-    let cap_present = [u8::from(body.max_output_tokens.is_some())];
-    let hint_present = [u8::from(body.model_hint.is_some())];
-    for value in [
-        remote_pk_hex.as_bytes(),
-        body.task_id.as_bytes(),
-        body.prompt.as_bytes(),
-        model_hint.as_bytes(),
-        scope.as_slice(),
-        &ceiling,
-        &cap_present,
-        &hint_present,
-    ] {
-        digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-        digest.update(value);
-    }
-    let context_digest = hex::encode(digest.finalize());
+    let context_digest = super::result_outbox::delegate_context_digest_fields(
+        remote_pk_hex,
+        &body.task_id,
+        &body.prompt,
+        body.model_hint.as_deref(),
+        body.max_output_tokens,
+        body.deadline_unix,
+        body.scope.as_ref(),
+    );
     let stored = super::membership::MembershipStore::open(neoth_home).and_then(|store| {
         store.persist_worker_task_result_outbox(
             grant,
@@ -2853,6 +2883,7 @@ mod tests {
             prompt: prompt.into(),
             model_hint: None,
             max_output_tokens: None,
+            deadline_unix: Some(i64::MAX),
             scope: None,
         }
     }
@@ -3090,6 +3121,7 @@ mod tests {
             &body.task_id,
             &body.prompt,
             body.max_output_tokens,
+            body.deadline_unix.unwrap(),
         );
 
         handle_task_delegate(
