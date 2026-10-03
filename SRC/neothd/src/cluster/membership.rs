@@ -16,7 +16,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const AUTHORITY_SCHEMA_VERSION: i64 = 8;
+pub const AUTHORITY_SCHEMA_VERSION: i64 = 10;
 const REVOCATION_INTENTS_SCHEMA_VERSION: i64 = 4;
 pub const MEMBERSHIP_SNAPSHOT_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_WIRE_VERSION: u16 = 1;
@@ -2848,6 +2848,34 @@ pub enum OutboundTaskDelegateResultReceipt {
     Duplicate,
 }
 
+/// Worker-side terminal result retained before its first transport attempt.
+/// `operation_id` deliberately equals the globally unique wire task id: the
+/// current TaskDelegate contract has no separate operation field, while the
+/// master schema already enforces one operation per task id.  The additional
+/// context digest prevents a duplicate task id from being rebound to a
+/// different authenticated requester, scope, or requested ceiling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerTaskResultOutboxEntry {
+    pub operation_id: String,
+    pub task_id: String,
+    pub peer_key: String,
+    pub context_digest: String,
+    pub result_digest: String,
+    pub body: crate::cluster::heartbeat::TaskResultBody,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerTaskResultOutboxReceipt {
+    Stored,
+    Duplicate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerTaskExecutionReservation {
+    Reserved,
+    Existing,
+}
+
 /// Strict authenticated daemon request for one operator-owned delegation CAS.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3666,6 +3694,170 @@ impl MembershipStore {
         validate_task_delegate_operation_id(operation_id)?;
         let conn = self.connection()?;
         Self::read_task_delegate_outbound_result_on(&conn, operation_id)
+    }
+
+    /// Persist a worker terminal result before it is offered to the live
+    /// session.  This shares the membership authority DB, so the same exact
+    /// authenticated grant is revalidated inside the write transaction.  An
+    /// exact retry is harmless; any route/context/body collision is rejected
+    /// without changing state.
+    pub fn persist_worker_task_result_outbox(
+        &self,
+        grant: &MembershipGrant,
+        context_digest: &str,
+        body: &crate::cluster::heartbeat::TaskResultBody,
+        now_unix: i64,
+    ) -> Result<WorkerTaskResultOutboxReceipt> {
+        crate::cluster::heartbeat::validate_task_result(body)?;
+        validate_lower_sha256(context_digest, "worker result context digest")?;
+        let result_digest = crate::cluster::heartbeat::task_result_digest(body)?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let existing = tx.query_row(
+            "SELECT context_digest,result_digest,body FROM task_delegate_result_outbox WHERE transport_identity=?1 AND task_id=?2",
+            params![grant.transport_identity().as_str(), body.task_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        ).optional()?;
+        if let Some((existing_context, existing_digest, existing_body)) = existing {
+            let encoded = serde_json::to_string(body)?;
+            anyhow::ensure!(
+                existing_context == context_digest && existing_digest == result_digest && existing_body == encoded,
+                "worker task result outbox collision for authenticated peer/task"
+            );
+            tx.commit()?;
+            return Ok(WorkerTaskResultOutboxReceipt::Duplicate);
+        }
+        let body_json = serde_json::to_string(body).context("serialize bounded worker task result")?;
+        tx.execute(
+            "INSERT INTO task_delegate_result_outbox (operation_id,task_id,transport_identity,context_digest,result_digest,body,state,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'pending',?7,?7)",
+            params![body.task_id, body.task_id, grant.transport_identity().as_str(), context_digest, result_digest, body_json, now_unix],
+        )?;
+        tx.commit()?;
+        Ok(WorkerTaskResultOutboxReceipt::Stored)
+    }
+
+    /// Create the pre-provider exactly-once reservation. It is intentionally
+    /// never recovered into executable work: a crash leaves `reserved` and a
+    /// later duplicate remains fail-closed instead of paying twice.
+    pub fn reserve_worker_task_execution(
+        &self,
+        grant: &MembershipGrant,
+        task_id: &str,
+        context_digest: &str,
+        now_unix: i64,
+    ) -> Result<WorkerTaskExecutionReservation> {
+        validate_task_delegate_operation_id(task_id)?;
+        validate_lower_sha256(context_digest, "worker task reservation context digest")?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let existing = tx.query_row(
+            "SELECT context_digest FROM task_delegate_worker_reservations WHERE transport_identity=?1 AND task_id=?2",
+            params![grant.transport_identity().as_str(), task_id],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+        if let Some(existing) = existing {
+            anyhow::ensure!(existing == context_digest, "worker task reservation conflicts with existing authenticated task id");
+            tx.commit()?;
+            return Ok(WorkerTaskExecutionReservation::Existing);
+        }
+        tx.execute(
+            "INSERT INTO task_delegate_worker_reservations (transport_identity,task_id,context_digest,state,created_at,updated_at) VALUES (?1,?2,?3,'reserved',?4,?4)",
+            params![grant.transport_identity().as_str(), task_id, context_digest, now_unix],
+        )?;
+        tx.commit()?;
+        Ok(WorkerTaskExecutionReservation::Reserved)
+    }
+
+    /// Load only pending rows for this exact authenticated route.  A fresh
+    /// grant is required for reconnect replay; revoked membership therefore
+    /// cannot cause retained private results to be delivered later.
+    pub fn pending_worker_task_result_outbox(
+        &self,
+        grant: &MembershipGrant,
+        now_unix: i64,
+    ) -> Result<Vec<WorkerTaskResultOutboxEntry>> {
+        grant.revalidate(now_unix)?;
+        let conn = self.connection()?;
+        let mut statement = conn.prepare(
+            "SELECT operation_id,task_id,transport_identity,context_digest,result_digest,body FROM task_delegate_result_outbox WHERE transport_identity=?1 AND state='pending' ORDER BY created_at ASC",
+        )?;
+        statement.query_map([grant.transport_identity().as_str()], |row| {
+            let body_json: String = row.get(5)?;
+            let body = serde_json::from_str(&body_json).map_err(|error| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error)))?;
+            Ok(WorkerTaskResultOutboxEntry { operation_id: row.get(0)?, task_id: row.get(1)?, peer_key: row.get(2)?, context_digest: row.get(3)?, result_digest: row.get(4)?, body })
+        })?.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn mark_worker_task_result_offered(&self, grant: &MembershipGrant, task_id: &str, result_digest: &str, now_unix: i64) -> Result<bool> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let changed = tx.execute("UPDATE task_delegate_result_outbox SET state='offered',updated_at=?4 WHERE transport_identity=?1 AND task_id=?2 AND result_digest=?3 AND state='pending'", params![grant.transport_identity().as_str(), task_id, result_digest, now_unix])?;
+        tx.commit()?;
+        Ok(changed == 1)
+    }
+
+    pub fn reset_offered_worker_task_results(&self, grant: &MembershipGrant, now_unix: i64) -> Result<usize> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let changed = tx.execute("UPDATE task_delegate_result_outbox SET state='pending',updated_at=?2 WHERE transport_identity=?1 AND state='offered'", params![grant.transport_identity().as_str(), now_unix])?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// A retained offered result has no remote delivery proof.  Reopen only
+    /// rows older than the caller's bounded retry interval; fresh offers stay
+    /// in flight and cannot be churned by every heartbeat.
+    pub fn reopen_stale_offered_worker_task_results(&self, grant: &MembershipGrant, older_than_unix: i64, now_unix: i64) -> Result<usize> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let changed = tx.execute("UPDATE task_delegate_result_outbox SET state='pending',updated_at=?3 WHERE transport_identity=?1 AND state='offered' AND updated_at<=?2", params![grant.transport_identity().as_str(), older_than_unix, now_unix])?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    pub fn worker_task_result_outbox_for_task(
+        &self,
+        grant: &MembershipGrant,
+        task_id: &str,
+        now_unix: i64,
+    ) -> Result<Option<(WorkerTaskResultOutboxEntry, String)>> {
+        grant.revalidate(now_unix)?;
+        let conn = self.connection()?;
+        conn.query_row(
+            "SELECT operation_id,task_id,transport_identity,context_digest,result_digest,body,state FROM task_delegate_result_outbox WHERE transport_identity=?1 AND task_id=?2",
+            params![grant.transport_identity().as_str(), task_id],
+            |row| {
+                let body_json: String = row.get(5)?;
+                let body = serde_json::from_str(&body_json).map_err(|error| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error)))?;
+                Ok((WorkerTaskResultOutboxEntry { operation_id: row.get(0)?, task_id: row.get(1)?, peer_key: row.get(2)?, context_digest: row.get(3)?, result_digest: row.get(4)?, body }, row.get(6)?))
+            },
+        ).optional().map_err(Into::into)
+    }
+
+    /// Settle only the exact body digest from the exact original route. A
+    /// replayed ACK from another peer or for a different terminal body cannot
+    /// erase a pending outbox row.
+    pub fn acknowledge_worker_task_result_outbox(
+        &self,
+        grant: &MembershipGrant,
+        ack: &crate::cluster::heartbeat::TaskResultAckBody,
+        now_unix: i64,
+    ) -> Result<bool> {
+        crate::cluster::heartbeat::validate_task_result_ack(ack)?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let changed = tx.execute(
+            "UPDATE task_delegate_result_outbox SET state='acknowledged',updated_at=?4 WHERE transport_identity=?1 AND task_id=?2 AND result_digest=?3 AND state IN ('pending','offered')",
+            params![grant.transport_identity().as_str(), ack.task_id, ack.result_digest, now_unix],
+        )?;
+        tx.commit()?;
+        Ok(changed == 1)
     }
 
     fn read_task_delegate_outbound_result_on(
@@ -5742,6 +5934,38 @@ fn migrate(conn: &Connection) -> Result<()> {
              ON task_delegate_outbound_results(transport_identity,task_id);
          PRAGMA user_version=8;",
     )?;
+    // W2292: worker-side terminal delivery is durable before any live session
+    // enqueue.  Existing v8 master custody remains untouched; a row is scoped
+    // to the authenticated requester transport and cannot be rebound.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_delegate_result_outbox (
+             operation_id TEXT PRIMARY KEY,
+             task_id TEXT NOT NULL,
+             transport_identity TEXT NOT NULL,
+             context_digest TEXT NOT NULL CHECK(length(context_digest)=64),
+             result_digest TEXT NOT NULL CHECK(length(result_digest)=64),
+             body TEXT NOT NULL,
+             state TEXT NOT NULL CHECK(state IN ('pending','offered','acknowledged','indeterminate')),
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             UNIQUE(transport_identity,task_id)
+         );
+         CREATE INDEX IF NOT EXISTS task_delegate_result_outbox_pending_peer
+             ON task_delegate_result_outbox(transport_identity,state,created_at);
+         PRAGMA user_version=9;",
+    )?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_delegate_worker_reservations (
+             transport_identity TEXT NOT NULL,
+             task_id TEXT NOT NULL,
+             context_digest TEXT NOT NULL CHECK(length(context_digest)=64),
+             state TEXT NOT NULL CHECK(state IN ('reserved','indeterminate')),
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY(transport_identity,task_id)
+         );
+         PRAGMA user_version=10;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -5767,6 +5991,15 @@ fn validate_task_delegate_operation_id(value: &str) -> Result<()> {
                 .all(|character| character.is_ascii_alphanumeric()
                     || matches!(character, '-' | '_' | '.' | ':')),
         "outbound task delegation operation id is invalid"
+    );
+    Ok(())
+}
+
+fn validate_lower_sha256(value: &str, label: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "{label} must be lowercase sha256 hex"
     );
     Ok(())
 }

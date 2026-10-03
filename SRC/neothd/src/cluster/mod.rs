@@ -52,6 +52,9 @@ pub mod peer_streams;
 /// SL-01 cluster task executor — runs a delegated task through the local
 /// provider off the per-peer read loop + replies via the peer-stream registry.
 pub mod executor;
+/// W2292 durable worker terminal TaskResult outbox.  Retains bounded results
+/// before a send and replays only over the original authenticated route.
+pub mod result_outbox;
 
 /// SL-01b cluster WAL gossip — band-filter ACL (the security boundary) +
 /// anti-entropy state (VectorClock + dedup) that make the gossip primitives

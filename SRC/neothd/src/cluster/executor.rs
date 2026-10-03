@@ -20,9 +20,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
+
 use crate::providers::{Provider, Request};
 
-use super::heartbeat::{FrameBody, FrameKind, TaskResultBody, TaskResultStatus, WireFrame};
+use super::heartbeat::{TaskResultBody, TaskResultStatus};
 use super::peer_streams::PeerStreamRegistry;
 
 /// Maximum bytes of completion text returned in a `TaskResult`. Keeps the
@@ -55,6 +57,7 @@ const CLUSTER_DELEGATED_SYSTEM: &str = "You are executing one isolated task dele
 pub struct ClusterTaskJob {
     pub task_id: String,
     pub prompt: String,
+    pub model_hint: Option<String>,
     /// Optional strict ceiling copied from the authenticated task envelope.
     /// This never selects a model; it only narrows the final provider request.
     pub max_output_tokens: Option<u32>,
@@ -72,6 +75,7 @@ impl ClusterTaskJob {
     pub fn authorized(
         task_id: String,
         prompt: String,
+        model_hint: Option<String>,
         max_output_tokens: Option<u32>,
         reply_peer_pk: String,
         scope: Option<super::heartbeat::TaskDelegateScope>,
@@ -84,6 +88,7 @@ impl ClusterTaskJob {
         Ok(Self {
             task_id,
             prompt,
+            model_hint,
             max_output_tokens,
             reply_peer_pk,
             scope,
@@ -161,6 +166,7 @@ pub struct ClusterExecutorHandle {
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
+    result_outbox: Arc<super::result_outbox::WorkerResultOutbox>,
 }
 
 impl ClusterExecutorHandle {
@@ -174,6 +180,10 @@ impl ClusterExecutorHandle {
             .as_ref()
             .expect("cluster executor sender unavailable after shutdown")
             .clone()
+    }
+
+    pub(crate) fn result_outbox(&self) -> Arc<super::result_outbox::WorkerResultOutbox> {
+        Arc::clone(&self.result_outbox)
     }
 
     /// Stop accepting jobs, cancel and await any in-flight inference, then
@@ -217,8 +227,16 @@ pub fn spawn_cluster_executor(
     // A stable peer_id for this executor's reply frames (master correlates by
     // task_id; this is observability only).
     let executor_peer_id = uuid::Uuid::now_v7().to_string();
+    let result_outbox = Arc::new(
+        super::result_outbox::WorkerResultOutbox::new(
+            &execution_context.home,
+            Arc::clone(&peer_streams),
+            executor_peer_id.clone(),
+        )
+        .expect("cluster worker result outbox must open before provider work"),
+    );
+    let task_outbox = Arc::clone(&result_outbox);
     let task = tokio::spawn(async move {
-        let mut seq: u64 = 0;
         loop {
             let job = tokio::select! {
                 biased;
@@ -228,7 +246,6 @@ pub fn spawn_cluster_executor(
                     None => break,
                 },
             };
-            seq = seq.wrapping_add(1);
             // Panic-isolation: run the inference in a sub-task so a panicking
             // provider can't kill the executor loop (which would silently drop
             // ALL future tasks). On panic, synthesize a Failed result so every
@@ -237,6 +254,8 @@ pub fn spawn_cluster_executor(
             // Capture the reply target + id BEFORE the sub-task consumes `job`.
             let task_id = job.task_id.clone();
             let reply_peer_pk = job.reply_peer_pk.clone();
+            let membership_grant = job.membership_grant.clone();
+            let result_context = task_result_context_digest(&job);
             let provider_clone = provider.clone();
             let task_context = execution_context.clone();
             // JoinSet is load-bearing: explicit shutdown calls `shutdown()`
@@ -304,30 +323,18 @@ pub fn spawn_cluster_executor(
                 );
                 continue;
             }
-            let frame = WireFrame {
-                kind: FrameKind::TaskResult,
-                sequence: seq,
-                sent_unix_ms: now_unix_ms(),
-                peer_id: executor_peer_id.clone(),
-                body: FrameBody::TaskResult(execution.body),
-            };
-            match peer_streams.send_to(&reply_peer_pk, frame) {
-                Ok(()) => {
-                    tracing::debug!(
-                        task_id = %task_id,
-                        peer = %&reply_peer_pk[..16.min(reply_peer_pk.len())],
-                        "cluster executor: TaskResult queued for delivery"
-                    );
-                }
-                Err(e) => {
-                    // The peer disconnected before we could reply — the master
-                    // will time out + re-delegate. Nothing to retry to.
-                    tracing::warn!(
-                        task_id = %task_id,
-                        error = %e,
-                        "cluster executor: could not deliver TaskResult (peer gone)"
-                    );
-                }
+            if let Err(error) = task_outbox.persist_and_offer(
+                &membership_grant,
+                &result_context,
+                &execution.body,
+            ) {
+                // A terminal provider outcome without durable custody is never
+                // retried.  The failure is surfaced locally, while the master
+                // sees no fabricated completion and must classify its own
+                // accepted operation indeterminate.
+                tracing::error!(task_id = %task_id, %error, "cluster executor: could not persist terminal TaskResult outbox");
+            } else {
+                tracing::debug!(task_id = %task_id, peer = %&reply_peer_pk[..16.min(reply_peer_pk.len())], "cluster executor: durable TaskResult offered to original peer");
             }
             if let Some(guard) = execution.delivery_guard.take()
                 && let Err(error) = guard.finish()
@@ -345,7 +352,27 @@ pub fn spawn_cluster_executor(
         dispatch_tx: Some(tx),
         shutdown_tx: Some(shutdown_tx),
         task: Some(task),
+        result_outbox,
     }
+}
+
+/// Bind retained terminal output to the only worker admission identity already
+/// present on the wire: authenticated requester, globally-unique task id,
+/// scope and requested cap.  The master schema has a UNIQUE task_id operation
+/// mapping; no payload-supplied alternate operation id is accepted here.
+fn task_result_context_digest(job: &ClusterTaskJob) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth.cluster.worker-task-result-context.v1\0");
+    let scope = serde_json::to_vec(&job.scope).unwrap_or_default();
+    let model_hint = job.model_hint.as_deref().unwrap_or("");
+    let ceiling = job.max_output_tokens.unwrap_or_default().to_be_bytes();
+    let cap_present = [u8::from(job.max_output_tokens.is_some())];
+    let hint_present = [u8::from(job.model_hint.is_some())];
+    for value in [job.reply_peer_pk.as_bytes(), job.task_id.as_bytes(), job.prompt.as_bytes(), model_hint.as_bytes(), scope.as_slice(), &ceiling, &cap_present, &hint_present] {
+        digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+        digest.update(value);
+    }
+    hex::encode(digest.finalize())
 }
 
 #[derive(Debug)]
@@ -884,6 +911,7 @@ mod tests {
             "t-1".into(),
             prompt.into(),
             None,
+            None,
             "aa".into(),
             None,
             store
@@ -986,7 +1014,7 @@ mod tests {
             )
             .unwrap();
         (
-            ClusterTaskJob::authorized("t-1".into(), prompt.into(), None, "aa".into(), None, grant)
+            ClusterTaskJob::authorized("t-1".into(), prompt.into(), None, None, "aa".into(), None, grant)
                 .unwrap(),
             controller,
         )
@@ -1487,6 +1515,7 @@ mod tests {
         let queued = ClusterTaskJob::authorized(
             "cancel-me".into(),
             "block".into(),
+            None,
             None,
             "aa".into(),
             None,

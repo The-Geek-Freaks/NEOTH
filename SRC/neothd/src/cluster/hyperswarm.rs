@@ -597,6 +597,7 @@ pub async fn spawn_discovery_with_wal(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    worker_result_outbox: Arc<super::result_outbox::WorkerResultOutbox>,
     // Recovered budget authority, if the runtime has enabled the fixed-voter
     // budget mode. `None` means budget frames are not accepted.
     budget_carrier: Option<Arc<BudgetPeerCarrier>>,
@@ -733,6 +734,7 @@ pub async fn spawn_discovery_with_wal(
             let state = Arc::clone(&gossip_state);
             let home = neoth_home.clone();
             let dtx = dispatch_tx.clone();
+            let result_outbox = Arc::clone(&worker_result_outbox);
             let reload = Arc::clone(&reload_controller);
             let budget = budget_carrier.clone();
             let outbound = Arc::clone(&outbound_dispatch);
@@ -753,6 +755,7 @@ pub async fn spawn_discovery_with_wal(
                     reload,
                     home,
                     dtx,
+                    result_outbox,
                     budget,
                     outbound,
                 )
@@ -869,6 +872,7 @@ async fn handle_peeroxide_connection(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    worker_result_outbox: Arc<super::result_outbox::WorkerResultOutbox>,
     budget_carrier: Option<Arc<BudgetPeerCarrier>>,
     outbound_dispatch: Arc<super::runtime_supervisor::OutboundTaskDelegateController>,
 ) -> Result<()> {
@@ -1125,6 +1129,11 @@ async fn handle_peeroxide_connection(
         key: remote_pk_hex.clone(),
         generation: session_generation,
     };
+    // Reconnect delivery is a replay of already committed terminal bytes.  It
+    // runs only after Noise/membership admission and never reaches a provider.
+    // The guard is already live, so any DB/serde failure cannot orphan a
+    // registered sender generation.
+    worker_result_outbox.replay_for_session(&membership_grant)?;
     // The route-registration lease becomes the lifetime lease for the exact
     // authenticated transport generation. Revoke therefore waits for the
     // SecretStream task itself to exit; a short route-map teardown timeout can
@@ -1148,6 +1157,7 @@ async fn handle_peeroxide_connection(
     };
     let mut hb_interval = heartbeat::next_jittered_interval(&mut hb_rng);
     let mut last_heartbeat = tokio::time::Instant::now();
+    let mut last_task_result_retry_unix = 0i64;
 
     loop {
         // Reconnect and every loop turn re-read authority. This closes stale
@@ -1155,6 +1165,16 @@ async fn handle_peeroxide_connection(
         membership_grant
             .revalidate(now_unix_secs() as i64)
             .context("peeroxide membership revoked during session")?;
+        let retry_now = now_unix_secs() as i64;
+        if retry_now.saturating_sub(last_task_result_retry_unix)
+            >= super::result_outbox::TASK_RESULT_ACK_RETRY_SECS
+        {
+            // Reopen only stale offered rows and use the already-owned session
+            // queue.  This covers a healthy master whose result-store commit
+            // failed and therefore correctly emitted no ACK.
+            worker_result_outbox.retry_stale_for_session(&membership_grant, retry_now)?;
+            last_task_result_retry_unix = retry_now;
+        }
 
         // ── (a) Send our heartbeat — once immediately, then every interval.
         // Driven here (between reads) rather than from a cancellable timer so a
@@ -1278,6 +1298,12 @@ async fn handle_peeroxide_connection(
                                 "membership changed before outbound write classification",
                             );
                         }
+                        // A successful write freed one bounded sender slot.
+                        // Offer only still-pending terminal rows; offered rows
+                        // stay put until ACK/reconnect, so this drains a tail
+                        // larger than OUTBOUND_QUEUE_DEPTH without a busy loop
+                        // or re-sending the same head forever.
+                        worker_result_outbox.flush_session(&membership_grant)?;
                     }
                     Err(e) => {
                         warn!(peer_id = %peer_id, error = %e, "encode outbound frame failed; dropping")
@@ -1374,6 +1400,31 @@ async fn handle_peeroxide_connection(
             if let FrameBody::TaskDelegate(delegate) | FrameBody::TaskDelegateCapped(delegate) =
                 frame.body
             {
+                // A terminal row is a durable exactly-once tombstone for this
+                // authenticated requester/task.  Check it before autonomy or
+                // provider work; a lost ACK/duplicate delegate can only replay
+                // the bounded stored body, never run a second provider call.
+                if heartbeat::validate_task_delegate(&delegate).is_ok()
+                    && worker_result_outbox.replay_duplicate_task(&membership_grant, &delegate)?
+                {
+                    continue;
+                }
+                if heartbeat::validate_task_delegate(&delegate).is_ok() {
+                    match worker_result_outbox.reserve_delegate(&membership_grant, &delegate) {
+                        Ok(super::membership::WorkerTaskExecutionReservation::Reserved) => {}
+                        Ok(super::membership::WorkerTaskExecutionReservation::Existing) => {
+                            // A crash or concurrent first request left a durable
+                            // pre-provider reservation. Never infer it is safe
+                            // to execute again; the original operation remains
+                            // indeterminate until an operator resolves it.
+                            continue;
+                        }
+                        Err(error) => {
+                            debug!(task_id = %delegate.task_id, %error, "cluster: conflicting or revoked duplicate TaskDelegate refused before provider");
+                            continue;
+                        }
+                    }
+                }
                 let autonomy_policy = reload_controller.autonomy_policy();
                 handle_task_delegate(
                     delegate,
@@ -1385,6 +1436,7 @@ async fn handle_peeroxide_connection(
                     &peer_streams,
                     dispatch_tx.as_ref(),
                     &membership_grant,
+                    Some(worker_result_outbox.as_ref()),
                 )
                 .await;
             }
@@ -1395,12 +1447,35 @@ async fn handle_peeroxide_connection(
                 // Master-side: only the exact authenticated Noise peer chosen
                 // for this task id can settle its durable operation.
                 let correlated = outbound_dispatch.receive_result(&remote_pk_hex, r);
+                if matches!(&correlated, Ok(super::membership::OutboundTaskDelegateResultReceipt::Stored | super::membership::OutboundTaskDelegateResultReceipt::Duplicate)) {
+                    let ack = super::heartbeat::TaskResultAckBody {
+                        task_id: r.task_id.clone(),
+                        result_digest: super::heartbeat::task_result_digest(r)?,
+                    };
+                    let frame = WireFrame {
+                        kind: FrameKind::TaskResultAck,
+                        sequence: 0,
+                        sent_unix_ms: now_unix_ms(),
+                        peer_id: own_peer_id.clone(),
+                        body: FrameBody::TaskResultAck(ack),
+                    };
+                    if let Err(error) = peer_streams.send_to(&remote_pk_hex, frame) {
+                        debug!(task_id = %r.task_id, %error, "cluster: durable TaskResult ACK not queued; worker will replay");
+                    }
+                }
                 info!(
                     peer_id = %peer_id,
                     task_id = %r.task_id,
                     correlated = ?correlated,
                     "cluster: received TaskResult from peer"
                 );
+            }
+            continue;
+        }
+        if frame.kind == FrameKind::TaskResultAck {
+            if let FrameBody::TaskResultAck(ack) = &frame.body {
+                let settled = worker_result_outbox.acknowledge(&membership_grant, ack)?;
+                debug!(task_id = %ack.task_id, settled, "cluster: received exact TaskResult ACK");
             }
             continue;
         }
@@ -1854,6 +1929,7 @@ async fn handle_task_delegate(
     peer_streams: &PeerStreamRegistry,
     dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
     membership_grant: &super::membership::MembershipGrant,
+    worker_result_outbox: Option<&super::result_outbox::WorkerResultOutbox>,
 ) {
     handle_task_delegate_inner(
         body,
@@ -1865,6 +1941,7 @@ async fn handle_task_delegate(
         peer_streams,
         dispatch_tx,
         membership_grant,
+        worker_result_outbox,
         #[cfg(test)]
         None,
         #[cfg(test)]
@@ -1888,6 +1965,7 @@ async fn handle_task_delegate_inner(
     peer_streams: &PeerStreamRegistry,
     dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
     membership_grant: &super::membership::MembershipGrant,
+    worker_result_outbox: Option<&super::result_outbox::WorkerResultOutbox>,
     #[cfg(test)] before_final_gate: Option<&(dyn Fn() + Sync)>,
     #[cfg(test)] after_gate_before_job: Option<&(dyn Fn() + Sync)>,
     #[cfg(test)] final_gate_now_unix: Option<i64>,
@@ -1914,13 +1992,13 @@ async fn handle_task_delegate_inner(
     // reject without touching the registry or lease store.
     let decision = permissions::evaluate(&Action::ClusterTaskAccept, autonomy_policy);
     if matches!(decision, Decision::Deny(_)) {
-        reply_task_rejected(
-            peer_streams,
-            remote_pk_hex,
-            own_peer_id,
-            &task_id,
-            "autonomy_deny",
-        );
+        if membership_grant.carrier() == super::membership::CarrierKind::Peeroxide
+            && membership_grant.transport_identity().as_str() == remote_pk_hex
+        {
+            reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "autonomy_deny");
+        } else {
+            reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "autonomy_deny");
+        }
         emit_task_rejected_wal(
             wal_writer.as_deref(),
             &task_id,
@@ -1956,13 +2034,7 @@ async fn handle_task_delegate_inner(
         .task_delegate_scope_authorized(body.scope.as_ref())
         .unwrap_or(false)
     {
-        reply_task_rejected(
-            peer_streams,
-            remote_pk_hex,
-            own_peer_id,
-            &task_id,
-            "operator_assignment_denied",
-        );
+        reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "operator_assignment_denied");
         emit_task_rejected_wal(
             wal_writer.as_deref(),
             &task_id,
@@ -1994,7 +2066,7 @@ async fn handle_task_delegate_inner(
 
     match cluster_task_gate(is_paired, &decision, lease_active) {
         TaskGateOutcome::Reject(reason) => {
-            reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, reason);
+            reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, reason);
             emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, reason);
         }
         TaskGateOutcome::Accept { lease_backed } => {
@@ -2003,13 +2075,7 @@ async fn handle_task_delegate_inner(
             // task can be queued; dropping a reservation releases it on every
             // later denial path.
             let Some(dispatch_tx) = dispatch_tx else {
-                reply_task_rejected(
-                    peer_streams,
-                    remote_pk_hex,
-                    own_peer_id,
-                    &task_id,
-                    "no_provider",
-                );
+                reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "no_provider");
                 emit_task_rejected_wal(
                     wal_writer.as_deref(),
                     &task_id,
@@ -2021,19 +2087,13 @@ async fn handle_task_delegate_inner(
             let permit = match dispatch_tx.try_reserve() {
                 Ok(permit) => permit,
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
+                    reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "busy");
                     emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
                     return;
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     error!(task_id = %task_id, "cluster executor channel closed — executor task is gone");
-                    reply_task_rejected(
-                        peer_streams,
-                        remote_pk_hex,
-                        own_peer_id,
-                        &task_id,
-                        "executor_dead",
-                    );
+                    reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "executor_dead");
                     emit_task_rejected_wal(
                         wal_writer.as_deref(),
                         &task_id,
@@ -2045,13 +2105,7 @@ async fn handle_task_delegate_inner(
             };
 
             let Some(writer) = wal_writer.as_deref() else {
-                reply_task_rejected(
-                    peer_streams,
-                    remote_pk_hex,
-                    own_peer_id,
-                    &task_id,
-                    "audit_unavailable",
-                );
+                reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "audit_unavailable");
                 emit_task_rejected_wal(None, &task_id, remote_pk_hex, "audit_unavailable");
                 return;
             };
@@ -2109,7 +2163,7 @@ async fn handle_task_delegate_inner(
                 } else {
                     "autonomy_deny"
                 };
-                reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, reason);
+                reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, reason);
                 emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, reason);
                 return;
             }
@@ -2126,13 +2180,7 @@ async fn handle_task_delegate_inner(
                 .task_delegate_scope_authorized(body.scope.as_ref())
                 .unwrap_or(false)
             {
-                reply_task_rejected(
-                    peer_streams,
-                    remote_pk_hex,
-                    own_peer_id,
-                    &task_id,
-                    "operator_assignment_denied",
-                );
+                reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "operator_assignment_denied");
                 emit_task_rejected_wal(
                     wal_writer.as_deref(),
                     &task_id,
@@ -2146,9 +2194,11 @@ async fn handle_task_delegate_inner(
             // revalidates the exact generation after the durable Gate append.
             // A revocation in this interval keeps its truthful one Allow
             // decision, but must never consume the reserved queue permit.
+            let rejection_body = body.clone();
             let job = match ClusterTaskJob::authorized(
                 task_id.clone(),
                 body.prompt,
+                body.model_hint,
                 body.max_output_tokens,
                 remote_pk_hex.to_string(),
                 body.scope,
@@ -2162,13 +2212,7 @@ async fn handle_task_delegate_inner(
                         %error,
                         "cluster: membership generation revoked before task queue registration"
                     );
-                    reply_task_rejected(
-                        peer_streams,
-                        remote_pk_hex,
-                        own_peer_id,
-                        &task_id,
-                        "membership_revoked",
-                    );
+                    reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &rejection_body, "membership_revoked");
                     emit_task_rejected_wal(
                         wal_writer.as_deref(),
                         &task_id,
@@ -2187,19 +2231,13 @@ async fn handle_task_delegate_inner(
             match dispatch_tx.try_send(job) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
+                    reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "busy");
                     emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
                     return;
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     error!(task_id = %task_id, "cluster executor channel closed after task admission");
-                    reply_task_rejected(
-                        peer_streams,
-                        remote_pk_hex,
-                        own_peer_id,
-                        &task_id,
-                        "executor_dead",
-                    );
+                    reply_task_rejected_durable(worker_result_outbox, neoth_home, peer_streams, remote_pk_hex, own_peer_id, membership_grant, &body, "executor_dead");
                     emit_task_rejected_wal(
                         wal_writer.as_deref(),
                         &task_id,
@@ -2285,6 +2323,65 @@ fn reply_task_rejected(
     };
     if let Err(e) = peer_streams.send_to(remote_pk_hex, frame) {
         debug!(error = %e, task_id, "cluster: could not deliver rejection (peer gone)");
+    }
+}
+
+/// Durable terminal rejection for a TaskDelegate whose authenticated membership
+/// grant and bounded body have already passed the prefilter.  A malformed or
+/// unauthenticated frame deliberately never reaches this helper: it has no
+/// trusted route/context that could safely be retained or replayed.
+fn reply_task_rejected_durable(
+    worker_result_outbox: Option<&super::result_outbox::WorkerResultOutbox>,
+    neoth_home: &std::path::Path,
+    peer_streams: &PeerStreamRegistry,
+    remote_pk_hex: &str,
+    own_peer_id: &str,
+    grant: &super::membership::MembershipGrant,
+    body: &TaskDelegateBody,
+    reason: &str,
+) {
+    let result = TaskResultBody {
+        task_id: body.task_id.clone(),
+        status: TaskResultStatus::Rejected { reason: reason.to_string() },
+        result: None,
+        provider_name: None,
+        requested_max_output_tokens: body.max_output_tokens,
+        effective_output_token_ceiling: None,
+    };
+    if let Some(outbox) = worker_result_outbox {
+        let context = super::result_outbox::delegate_context_digest(grant, body);
+        if outbox.persist_and_offer(grant, &context, &result).is_err() {
+            debug!(task_id = %body.task_id, "cluster: authenticated rejection could not enter durable outbox");
+        }
+        return;
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"neoth.cluster.worker-task-result-context.v1\0");
+    let scope = serde_json::to_vec(&body.scope).unwrap_or_default();
+    let model_hint = body.model_hint.as_deref().unwrap_or("");
+    let ceiling = body.max_output_tokens.unwrap_or_default().to_be_bytes();
+    let cap_present = [u8::from(body.max_output_tokens.is_some())];
+    let hint_present = [u8::from(body.model_hint.is_some())];
+    for value in [remote_pk_hex.as_bytes(), body.task_id.as_bytes(), body.prompt.as_bytes(), model_hint.as_bytes(), scope.as_slice(), &ceiling, &cap_present, &hint_present] {
+        digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+        digest.update(value);
+    }
+    let context_digest = hex::encode(digest.finalize());
+    let stored = super::membership::MembershipStore::open(neoth_home)
+        .and_then(|store| store.persist_worker_task_result_outbox(grant, &context_digest, &result, now_unix_secs() as i64));
+    if stored.is_err() {
+        debug!(task_id = %body.task_id, "cluster: authenticated rejection could not enter durable outbox");
+        return;
+    }
+    let frame = WireFrame {
+        kind: FrameKind::TaskResult,
+        sequence: 0,
+        sent_unix_ms: now_unix_ms(),
+        peer_id: own_peer_id.to_string(),
+        body: FrameBody::TaskResult(result),
+    };
+    if let Err(error) = peer_streams.send_to(remote_pk_hex, frame) {
+        debug!(task_id = %body.task_id, %error, "cluster: durable rejection retained for authenticated reconnect");
     }
 }
 
@@ -2521,6 +2618,7 @@ pub fn handle_inbound_frame(
         FrameBody::TaskDelegate(_)
         | FrameBody::TaskDelegateCapped(_)
         | FrameBody::TaskResult(_)
+        | FrameBody::TaskResultAck(_)
         | FrameBody::Gossip(_)
         | FrameBody::GossipAck(_)
         | FrameBody::BudgetRaft(_) => {
@@ -2869,6 +2967,7 @@ mod tests {
             &peer_streams,
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -2948,6 +3047,7 @@ mod tests {
             &peer_streams,
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -2985,6 +3085,7 @@ mod tests {
             &peer_streams,
             Some(&tx),
             &grant,
+            None,
             None,
             Some(&revoke_after_gate),
             None,
@@ -3031,6 +3132,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3090,6 +3192,7 @@ mod tests {
             &grant,
             None,
             None,
+            None,
             Some(now + 3_601),
         )
         .await;
@@ -3140,6 +3243,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
             None,
             Some(&revoke_after_gate),
             None,
@@ -3196,6 +3300,7 @@ mod tests {
             Some(&tx),
             &grant,
             None,
+            None,
             Some(&close_receiver_after_gate),
             None,
         )
@@ -3247,6 +3352,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3275,6 +3381,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3302,6 +3409,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3320,6 +3428,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3349,6 +3458,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 
@@ -3380,6 +3490,7 @@ mod tests {
             &PeerStreamRegistry::new(),
             Some(&tx),
             &grant,
+            None,
         )
         .await;
 

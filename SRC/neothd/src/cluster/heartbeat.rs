@@ -42,6 +42,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Protocol identifier in the Hello frame. Hard-coded so a
@@ -78,7 +79,10 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// v7 (GOLD-W429): adds the authenticated, bounded BudgetRaft request/reply
 /// lane.  It has no downgrade because an older peer cannot safely ignore a
 /// quorum-control frame.
-pub const PROTOCOL_VERSION: u16 = 7;
+/// v8 (GOLD-W2292): adds the terminal TaskResult acknowledgement.  A worker
+/// never treats queue acceptance as delivery; it retains the bounded result
+/// until the original authenticated requester acknowledges this exact digest.
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -145,6 +149,10 @@ pub enum FrameKind {
     /// SL-01: the slave's reply to a `TaskDelegate` — the
     /// completion, a rejection reason, or an execution error.
     TaskResult,
+    /// W2292: post-commit acknowledgement for exactly one bounded TaskResult.
+    /// This is deliberately a distinct finite message family: a result can
+    /// never be reflected into its own delivery acknowledgement.
+    TaskResultAck,
     /// SL-01b: a WAL-gossip frame (anti-entropy). Carries a replicable WAL
     /// frame + the sender's VectorClock. Subject to the band-filter ACL.
     Gossip,
@@ -191,6 +199,7 @@ pub enum FrameBody {
     TaskDelegate(TaskDelegateBody),
     TaskDelegateCapped(TaskDelegateBody),
     TaskResult(TaskResultBody),
+    TaskResultAck(TaskResultAckBody),
     Gossip(Box<super::gossip_wire::GossipFrame>),
     GossipAck(super::gossip_wire::GossipAck),
     BudgetRaft(Box<BudgetRaftEnvelope>),
@@ -439,6 +448,40 @@ pub struct TaskResultBody {
     /// observation of the remote provider response or a wire-delivery claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_output_token_ceiling: Option<u32>,
+}
+
+/// Master receipt emitted only after its durable result custody committed.
+/// The worker compares both fields against its original authenticated outbox
+/// row; neither field selects a route or authorizes a different task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskResultAckBody {
+    pub task_id: String,
+    /// Lowercase SHA-256 of canonical CBOR-independent serde JSON for the
+    /// exact bounded TaskResultBody retained by the worker.
+    pub result_digest: String,
+}
+
+pub fn task_result_digest(body: &TaskResultBody) -> Result<String> {
+    validate_task_result(body)?;
+    let encoded = serde_json::to_vec(body).context("serialize bounded task result for digest")?;
+    Ok(hex::encode(Sha256::digest(encoded)))
+}
+
+pub fn validate_task_result_ack(ack: &TaskResultAckBody) -> Result<()> {
+    let task = TaskDelegateBody {
+        task_id: ack.task_id.clone(),
+        prompt: "task-result-ack-validation".into(),
+        model_hint: None,
+        max_output_tokens: None,
+        scope: None,
+    };
+    validate_task_delegate(&task)?;
+    anyhow::ensure!(
+        ack.result_digest.len() == 64
+            && ack.result_digest.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "task_result_ack: result_digest must be lowercase sha256 hex"
+    );
+    Ok(())
 }
 
 /// Validate a received task result before it can enter the master's durable

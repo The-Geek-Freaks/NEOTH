@@ -783,6 +783,7 @@ impl CarrierRuntime {
             ),
         );
         let dispatch_tx = executor.dispatch_sender();
+        let worker_result_outbox = executor.result_outbox();
         let swarm = match crate::cluster::hyperswarm::spawn_discovery_with_wal(
             &identity.name,
             Arc::new(identity.key.clone()),
@@ -793,6 +794,7 @@ impl CarrierRuntime {
             Arc::clone(&deps.reload_controller),
             deps.home.clone(),
             Some(dispatch_tx),
+            worker_result_outbox,
             budget_carrier.clone(),
             Arc::clone(&deps.outbound_dispatch),
         )

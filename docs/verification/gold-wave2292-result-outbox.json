@@ -1,0 +1,83 @@
+{
+  "schema": "neoth-gold-wave2292-result-outbox/v1",
+  "base": "211b1426c0c10503351dd33988c0aa6a0d526afc",
+  "candidateManifestSha256": "BF3DDBFC8162E339496B578D4A2AF4F577DCE16D7B8F4E67AB6C5FA964C93797",
+  "reviewSha256": "1850C9644FC572B7E2C7E839A6BD4C493030C0E4599ADA394A1E2591EE527553",
+  "review": "Static approval for integration and hosted verification; no remaining high or critical findings",
+  "behavior": [
+    "Reserve authenticated full request binding before enqueue/provider work",
+    "Persist terminal result before first offer; schema10 retains master custody",
+    "ACK only after master custody commit; exact peer/task/body digest and retained tombstone",
+    "Reconnect replay and same-session queue-tail drain reuse stored bodies without provider execution",
+    "Existing session cadence retries stale offered rows after15seconds; no new service"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "base_sha256": "43E9738F5067152A86DD05FF5577F9B31EE840E5AB829578985BCDE97906A5EF",
+      "candidate_sha256": "DEE8D130F145EC5D0B069E2DCA6CBED15A8B5E50361D2D92465C75D72F36C261"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "base_sha256": "CEFC133933257C0D1863F5852707A171FC40B7989B53213BCF27C5969BA450DC",
+      "candidate_sha256": "711D4FC907E12256A851FF135453A3B94C6B275D9746B8467BAF8606FB77FC44"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "base_sha256": "C712FF3B6F9978ADEEEFE1F1C767CBC314A89F3778A0CB125C0CF7C6239568E1",
+      "candidate_sha256": "86E75C079D505531F965785DA25ED7B3BF55CB6FE243E6978565CD0FDF541C18"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "base_sha256": "2EB9AF04D8D1B3DB1F21A170225F57F1583C2B7815292620A15EC1BE14D9F7D9",
+      "candidate_sha256": "D305A79D4677A15D1CD59F9D0508E6FE8A9E91BF2CD27212936F51BF970C515F"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/mod.rs",
+      "base_sha256": "7CAB85B25F2866CB8CD6F28F67E8A95C83D2BCB1DA7B321624685A39BCA4E4D5",
+      "candidate_sha256": "93C1A38AD18968F09F90C0DDE2B159A9592FC89D45562EDFE1BF68771261E9A8"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "base_sha256": "6A63C5B09FE8E17A11776C3CE1AA534841D8BAD84ED5D52776BEB5941AFCE028",
+      "candidate_sha256": "9322CDCC0877276AA75F5225493BE497CFE9759B2A42134873A1DE9346D95808"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/peer_streams.rs",
+      "base_sha256": "2C36B139A24C21B36BE56976821CB6EA8741EB26E1267B97D6227C80FB1F00A8",
+      "candidate_sha256": "2C36B139A24C21B36BE56976821CB6EA8741EB26E1267B97D6227C80FB1F00A8"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/result_outbox.rs",
+      "base_sha256": null,
+      "candidate_sha256": "AD08B6A8D66741650FA6CF8F56FB5B9A377C4B956E367C15B13CE2BB9483BE45"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/runtime_supervisor.rs",
+      "base_sha256": "467DD5263A49CEC1E43FF5503DFAA80167A524470C664441F8F9FA85670B7B5B",
+      "candidate_sha256": "A3E3AD53DE3F1AF1A7B0919C16B441853371EF15D4F0BEC6E26774C8576FE8A6"
+    }
+  ],
+  "newTests": [
+    "cluster::outbound_tests::worker_result_outbox_reopens_exact_duplicates_and_rejects_foreign_or_conflicting_ack",
+    "cluster::outbound_tests::worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps_tombstone",
+    "cluster::outbound_tests::worker_result_outbox_flushes_tail_after_current_session_queue_drains"
+  ],
+  "focusedCases": 494,
+  "portableRegistrations": 2714,
+  "localExecutableValidationRan": false,
+  "hosted": "Pending on new producer",
+  "boundaries": [
+    "No Chat or Buddy origin-stream delivery claim",
+    "No native transport or release acceptance",
+    "No .slint change; local BSOD hold remains active"
+  ],
+  "recovery": {
+    "sourceCandidateHashesVerified": 9,
+    "committedPriorBatchHashesVerified": 9,
+    "nulArtifacts": 3,
+    "registration": "Reconstructed from intact candidate and tracked focused491 workflow",
+    "unrelatedCargoLockSha256": "A53BF380469CD0242E9F64735AEAAF2ABF6BCE4098E32200E8EF00DB61B2552A",
+    "unrelatedCargoLockPreserved": true
+  }
+}
