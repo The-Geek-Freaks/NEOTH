@@ -5068,7 +5068,9 @@ pub fn parse_models_catalog_readback(
                     .get("deprecated")
                     .map(|value| {
                         value.as_bool().ok_or_else(|| {
-                            format!("models catalog provider `{provider}` has invalid deprecated flag")
+                            format!(
+                                "models catalog provider `{provider}` has invalid deprecated flag"
+                            )
                         })
                     })
                     .transpose()?
@@ -5088,10 +5090,7 @@ pub fn parse_models_catalog_readback(
         .find(|(provider, ids)| provider.as_str() == provider_kind && !ids.is_empty())
     {
         Some((_, ids)) => ids.clone(),
-        None => provider_ids
-            .into_iter()
-            .flat_map(|(_, ids)| ids)
-            .collect(),
+        None => provider_ids.into_iter().flat_map(|(_, ids)| ids).collect(),
     };
     Ok(ModelsCatalogReadback {
         model_ids: model_ids.into_iter().take(8).collect(),
@@ -14917,14 +14916,17 @@ mod tests {
 
     #[test]
     fn models_catalog_readback_rejects_malformed_real_schema() {
-        let malformed_provider = r#"{"version":2,"providers":{"claude_cli":{"models":"not-an-array"}}}"#;
+        let malformed_provider =
+            r#"{"version":2,"providers":{"claude_cli":{"models":"not-an-array"}}}"#;
         assert!(parse_models_catalog_readback(malformed_provider, "claude_cli").is_err());
 
-        let malformed_model = r#"{"version":2,"providers":{"claude_cli":{"models":[{"deprecated":false}]}}}"#;
+        let malformed_model =
+            r#"{"version":2,"providers":{"claude_cli":{"models":[{"deprecated":false}]}}}"#;
         assert!(parse_models_catalog_readback(malformed_model, "claude_cli").is_err());
 
-        assert!(parse_models_catalog_readback(r#"{"version":1,"providers":{}}"#, "claude_cli")
-            .is_err());
+        assert!(
+            parse_models_catalog_readback(r#"{"version":1,"providers":{}}"#, "claude_cli").is_err()
+        );
     }
 
     #[test]

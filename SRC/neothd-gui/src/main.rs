@@ -2298,8 +2298,7 @@ fn main() -> Result<()> {
             read_nested_str_in_freedom(&neoth_dir.join("freedom.yaml"), "provider_kind", "");
         std::thread::spawn(move || {
             let out = run_neothd_probe(&["models", "catalog", "--output", "json"]);
-            if let Ok(readback) = panel_logic::parse_models_catalog_readback(&out, &provider_kind)
-            {
+            if let Ok(readback) = panel_logic::parse_models_catalog_readback(&out, &provider_kind) {
                 *REGEN_MODELS.lock().unwrap_or_else(|e| e.into_inner()) = readback.model_ids;
             }
         });

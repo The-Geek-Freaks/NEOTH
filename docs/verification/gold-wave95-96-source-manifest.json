@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T09:36:46.9917986Z",
-  "validationStatus": "W2264 typed model readback and hosted compiler corrections; hosted validation pending",
+  "capturedUtc": "2026-10-03T09:40:18.4384253Z",
+  "validationStatus": "W2264 exact hosted format applied; GUI173 and full CI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4618,8 +4618,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2253431,
-      "sha256": "6B7DB07BC4222843F52DD3087B30BDBFE792AADD673F1B23BFF94B8D009C91DB"
+      "bytes": 2253419,
+      "sha256": "7635FA9423A8EB72086158282BEA7D6050EEFE1C7983927D54BB348E60A95135"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -4633,8 +4633,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 610773,
-      "sha256": "F127BB99412701DFAF6EFE345B085672497536B2564FF19BEC8631848757D9D8"
+      "bytes": 610829,
+      "sha256": "4ADA4B115A2CFEF8B8CC0EC657585A06584D169CBBFCFBE1927AAB81F4F32064"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",

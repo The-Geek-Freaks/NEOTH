@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2264 typed model readback and hosted compiler corrections; hosted validation pending",
+  "status": "W2264 exact hosted format applied; GUI173 and full CI pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 367096,
-    "sha256": "2DDC710AA64D033F5030BC3603E19AEAA8ECC015FBA9230ABA03920ABA7E5F38"
+    "bytes": 367072,
+    "sha256": "F89C91587C2811D11E3D5994AAC4ECF7987B2AA5E6EC3E67F35E756869B3BBC4"
   },
   "sourceInputs": 2008,
   "requiredNativeTests": [
@@ -16611,8 +16611,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2253431,
-      "sha256": "6B7DB07BC4222843F52DD3087B30BDBFE792AADD673F1B23BFF94B8D009C91DB"
+      "bytes": 2253419,
+      "sha256": "7635FA9423A8EB72086158282BEA7D6050EEFE1C7983927D54BB348E60A95135"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -16621,8 +16621,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 610773,
-      "sha256": "F127BB99412701DFAF6EFE345B085672497536B2564FF19BEC8631848757D9D8"
+      "bytes": 610829,
+      "sha256": "4ADA4B115A2CFEF8B8CC0EC657585A06584D169CBBFCFBE1927AAB81F4F32064"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -71197,6 +71197,26 @@
       }
     ],
     "note": "Model catalog candidate independently reviewed; W2263 GUI run37112566164 executed zero tests after two production compile diagnostics, minimally corrected. GUI registration138+35=173. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2264HostedFormat": {
+    "base": "8c4b59405660db82238bbf4e86371e6aa562eaf0",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2253419,
+        "sha256": "7635FA9423A8EB72086158282BEA7D6050EEFE1C7983927D54BB348E60A95135",
+        "blob": "7f44bfa43c6118db131c2b1c9b3a87107c3733f7"
+      },
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 610829,
+        "sha256": "4ADA4B115A2CFEF8B8CC0EC657585A06584D169CBBFCFBE1927AAB81F4F32064",
+        "blob": "bd79f876ec03251e2fd7c901808315ae39b82a66"
+      }
+    ],
+    "note": "Preflight37113788278 exact original format archive bound to8c4b5940; outer API digest and inner hashes verified. No local formatter/runtime executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
