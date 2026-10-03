@@ -4380,7 +4380,9 @@ pub fn parse_model_recommend_readback(
             .get("rank")
             .and_then(|value| value.as_u64())
             .filter(|rank| *rank > prior_rank)
-            .ok_or_else(|| "model recommendation ranks must be ascending positive integers".to_string())?;
+            .ok_or_else(|| {
+                "model recommendation ranks must be ascending positive integers".to_string()
+            })?;
         let param_b = item
             .get("param_b")
             .and_then(|value| value.as_f64())
@@ -4414,7 +4416,10 @@ pub fn parse_model_recommend_readback(
             let command = command
                 .as_array()
                 .ok_or_else(|| "model recommendation pull_command must be an array".to_string())?;
-            if command.iter().any(|part| part.as_str().is_none_or(str::is_empty)) {
+            if command
+                .iter()
+                .any(|part| part.as_str().is_none_or(str::is_empty))
+            {
                 return Err("model recommendation pull_command has an invalid argument".to_string());
             }
         }
@@ -4425,7 +4430,9 @@ pub fn parse_model_recommend_readback(
             Some(value) => value
                 .as_str()
                 .filter(|value| !value.is_empty())
-                .ok_or_else(|| "model recommendation pull_ref must be a non-empty string".to_string())?,
+                .ok_or_else(|| {
+                    "model recommendation pull_ref must be a non-empty string".to_string()
+                })?,
         };
         // Keep the structurally validated fields live to make the full
         // RecCandidate wire contract explicit without exposing extra GUI data.

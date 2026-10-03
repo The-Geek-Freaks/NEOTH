@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2266-W2267 reviewed typed offline recommendations and stale-result repair; hosted qualification pending",
+  "status": "W2266-W2267 authenticated hosted formatting applied; exact producer validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 367495,
-    "sha256": "90BA8E7C63E26A7D79B19407DC179334DE82E8C72CDDEDFADEC89E82BB0EC41F"
+    "bytes": 367477,
+    "sha256": "18FC4AFFB0D308A0B52C28FC174C28DF36BCF2D900E22FAB0BD104E75BF10201"
   },
   "sourceInputs": 2010,
   "requiredNativeTests": [
@@ -16626,8 +16626,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 616852,
-      "sha256": "62462AA2AA431B46E0E369E15DD36360EE8E9A1C9C96CBFB9B1C1C87B4FC43D6"
+      "bytes": 616970,
+      "sha256": "6193D5A46C64B2479C17DEEBC280450768E90F6DFA01848334F6FA50B722AEE9"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -71304,6 +71304,20 @@
       }
     ],
     "note": "143 universal+35 Linux GUI cases include current RecCandidate rejection and real generation-state reversed publication regression; exact full producer validation pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2266HostedFormat": {
+    "base": "e08589c77e658284886db229b4ded59a754cd6bb",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 616970,
+        "sha256": "6193D5A46C64B2479C17DEEBC280450768E90F6DFA01848334F6FA50B722AEE9",
+        "blob": "99eeac3d8250c40fb03dd88570960736abb4cc6e"
+      }
+    ],
+    "note": "Only panel_logic.rs rustfmt formatting imported from producer e08589c7 Preflight37117106911 authenticated original archive; no local formatter executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
