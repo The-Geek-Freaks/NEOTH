@@ -637,12 +637,22 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error:", doctests)
         self.assertIn(
             "if: ${{ !cancelled() && (steps.doctests.outcome == 'success' "
-            "|| steps.doctests.outcome == 'failure') }}",
+            "|| steps.doctests.outcome == 'failure') && "
+            "steps.gui-runtime-prerequisites.outcome == 'success' }}",
             runtime,
         )
         self.assertNotIn("continue-on-error:", runtime)
+        prerequisites = steps["Prepare Linux GUI callback runtime prerequisites"]
+        cleanup = steps["Remove Linux GUI callback containment profile"]
+        self.assertIn("id: gui-runtime-prerequisites", prerequisites)
+        self.assertIn(
+            "if: ${{ !cancelled() && (steps.doctests.outcome == 'success' "
+            "|| steps.doctests.outcome == 'failure') }}",
+            prerequisites,
+        )
+        self.assertIn("timeout-minutes: 50", prerequisites)
         self.assertEqual(
-            step_run_command(steps["cargo nextest workspace (Linux)"]),
+            step_run_command(prerequisites),
             "\n".join(
                 [
                     "rm -f target/nextest/ci/junit.xml",
@@ -664,14 +674,14 @@ class CiCadenceContractTests(unittest.TestCase):
                     "test \"$(stat -c '%u:%g:%a:%F' \"$XDG_RUNTIME_DIR\")\" = \"$uid:$gid:700:directory\"",
                     "timeout 1 /usr/bin/systemctl --user show-environment >/dev/null",
                     "command -v apparmor_parser >/dev/null",
-                    "export NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1",
                     "",
                     "cargo build -p neoth --bin neoth --locked",
-                    "export PATH=\"$PWD/target/debug:$PATH\"",
+                    "printf '%s\\n' \"$PWD/target/debug\" >> \"$GITHUB_PATH\"",
                     "cargo build -p neothd-gui --bin neothd-gui --locked",
                     "contained_gui_helper=\"$(realpath \"$PWD/target/debug/neothd-gui\")\"",
                     "test -f \"$contained_gui_helper\" && test -x \"$contained_gui_helper\"",
                     "[[ \"$contained_gui_helper\" != *[$'\\t\\n '\\\"\\#\\{\\}\\*\\?\\[\\]]* ]] || exit 1",
+                    "cargo nextest run --workspace --locked --profile ci --no-run",
                     "profile_file=\"$RUNNER_TEMP/neoth-w272-neothd-gui.profile\"",
                     "cat > \"$profile_file\" <<EOF",
                     "#include <tunables/global>",
@@ -680,13 +690,35 @@ class CiCadenceContractTests(unittest.TestCase):
                     "  userns,",
                     "}",
                     "EOF",
+                    "{",
+                    "  printf 'XDG_RUNTIME_DIR=%s\\n' \"$XDG_RUNTIME_DIR\"",
+                    "  printf 'DBUS_SESSION_BUS_ADDRESS=%s\\n' \"$DBUS_SESSION_BUS_ADDRESS\"",
+                    "  printf 'NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1\\n'",
+                    "  printf 'NEOTH_GUI_TEST_SYSTEMD_HELPER=%s\\n' \"$contained_gui_helper\"",
+                    "  printf 'NEOTH_GUI_TEST_APPARMOR_PROFILE=%s\\n' \"$profile_file\"",
+                    "} >> \"$GITHUB_ENV\"",
                     "sudo timeout 10 apparmor_parser -r \"$profile_file\"",
-                    "cleanup_containment_apparmor() {",
-                    "  sudo timeout 10 apparmor_parser -R \"$profile_file\" >/dev/null 2>&1 || true",
-                    "}",
-                    "trap cleanup_containment_apparmor EXIT",
-                    "export NEOTH_GUI_TEST_SYSTEMD_HELPER=\"$contained_gui_helper\"",
+                ]
+            ),
+        )
+        self.assertIn("timeout-minutes: 50", runtime)
+        self.assertEqual(
+            step_run_command(runtime),
+            "\n".join(
+                [
+                    "rm -f target/nextest/ci/junit.xml",
                     "xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast",
+                ]
+            ),
+        )
+        self.assertIn("if: always()", cleanup)
+        self.assertEqual(
+            step_run_command(cleanup),
+            "\n".join(
+                [
+                    "if [[ -n \"${NEOTH_GUI_TEST_APPARMOR_PROFILE:-}\" ]]; then",
+                    "  sudo timeout 10 apparmor_parser -R \"$NEOTH_GUI_TEST_APPARMOR_PROFILE\" >/dev/null 2>&1 || true",
+                    "fi",
                 ]
             ),
         )

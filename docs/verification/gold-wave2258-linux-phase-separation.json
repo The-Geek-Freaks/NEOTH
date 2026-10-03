@@ -1,0 +1,103 @@
+{
+  "schema": "neoth.w2258.linux-phase-separation.v1",
+  "base": "d28f9a4c0d620ecad4438937a972f364c619c612",
+  "status": "static_reviewed_pending_hosted",
+  "capturedUtc": "2026-10-03T06:11:05.0841956Z",
+  "sources": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "6AF79D699BBF183152A3646C11F9108FBAC6026141BD7F1BBFA7538CAA40D67A"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "sha256": "26FCE658AE44F89E87DB9846D180DF71650796EEB2EF2924869AE351E6114FD3"
+    }
+  ],
+  "staticReviewSha256": "60AA1872755FEF4DCD5CF2773359EE0A1D277C26B43DB4296882CC9BF102C76E",
+  "priorFull": {
+    "run": 37094131161,
+    "producer": "d28f9a4c0d620ecad4438937a972f364c619c612",
+    "conclusion": "failure",
+    "successfulJobs": 18,
+    "failedJobs": [
+      "Linux quality / Rust 1.91",
+      "Gold CI"
+    ]
+  },
+  "priorLinux": {
+    "job": 111120457545,
+    "admissionSha256": "B2A1548D0F23221864B9B055A09FA696C12EA175563BA34AFEE31329748D142D",
+    "selected": 19166,
+    "skippedAtDiscovery": 26,
+    "passed": null,
+    "failed": null,
+    "completeSummary": false,
+    "junitUploaded": false,
+    "stepStart": "2026-10-03T04:30:18Z",
+    "testStart": "2026-10-03T05:14:07Z",
+    "timeout": "2026-10-03T05:20:31Z",
+    "cause": "Real CLI and production GUI helper builds plus test compilation consumed about 44 minutes of the former combined 50-minute step"
+  },
+  "priorWindows": {
+    "passed": 19033,
+    "failed": 0,
+    "skipped": 28,
+    "admissionSha256": "CD90B0089F1C46A8BA2CA221A3527E1A4052E9049C376B29EB5285212501B1D5",
+    "reviewSha256": "C7D314C5662965D04764E3AA0259D600EB1FB36440504386FA01D57978D8E3B9"
+  },
+  "priorMacos": {
+    "passed": 19151,
+    "failed": 0,
+    "skipped": 29,
+    "admissionSha256": "97183D86FE4ADC971E94ABFC0F5959D910653469E752DAC538B50AC8E12DECEB",
+    "reviewSha256": "7984AA5DBA94B15A5B138E419D2D5811EFF799DB34FC3957CC385B705A58BAC4"
+  },
+  "priorFocused": {
+    "run": 37094437234,
+    "cases": 437,
+    "guards": 20,
+    "pythonContracts": 63,
+    "products": 4,
+    "daemonProducts": 2,
+    "archives": 8,
+    "entries": 909,
+    "sourceBindings": 195,
+    "admissionSha256": "1D512897D80F08B2CCD16FC3E15A0C3B5BCB1D71AC24206503D4BB60D4E9F3DC",
+    "reviewSha256": "308270ACE11F40A71C0CCE8B875B9719C72D57FBCD68858D6EC7A623ED6ACEEB"
+  },
+  "priorAudio": {
+    "testsPerPlatform": 19,
+    "platforms": 3,
+    "admissionSha256": "F1B0D3A22C8FEDB6C499E227924110FF0771F3D30161065A7AE4F45CCD079AF1"
+  },
+  "repair": {
+    "preparationMinutes": 50,
+    "runtimeMinutes": 50,
+    "totalJobMinutes": 150,
+    "testBuild": "cargo nextest run --workspace --locked --profile ci --no-run",
+    "runtime": "xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast",
+    "runtimeRequiresSuccessfulPreparation": true,
+    "preparationAlsoRunsAfterDoctestFailure": true,
+    "staleJunitRemovedBeforePreparationAndRuntime": true,
+    "cleanupPathPersistedBeforeAppArmorLoad": true,
+    "authenticHelperRetained": true,
+    "serialBuildWorkers": 1
+  },
+  "unchanged": {
+    "jobTimeout": true,
+    "runtimeTimeout": true,
+    "fullTestSelection": true,
+    "productionContainment": true,
+    "testAssertions": true
+  },
+  "pending": [
+    "New producer Preflight and Code Quality",
+    "New full Linux/runtime qualification and exact-producer full CI",
+    "CodeQL Rust runner-shutdown diagnosis and Security qualification",
+    "Native signing and remaining operator-dependent acceptance"
+  ],
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "fullCiAccepted": false,
+  "releaseReady": false
+}

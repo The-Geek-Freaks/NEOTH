@@ -157,9 +157,9 @@ jobs:
   linux-quality:
     name: Linux quality / Rust 1.91
     runs-on: ubuntu-24.04
-    # Cold-cache serial workspace validation needs 140 minutes of declared
-    # command budgets (5 + 20 + 45 + 20 + 50); retain a 10-minute setup/upload
-    # margin without changing targets, features, lints, or compiler parallelism.
+    # The measured cold path is about 46 minutes of lint/docs plus about 44
+    # minutes of authentic GUI preparation before runtime. It leaves the full
+    # 50-minute execution window within this unchanged 150-minute job budget.
     timeout-minutes: 150
     env:
       # FullCI954's original Linux job and its targeted retry both received a
@@ -269,20 +269,15 @@ jobs:
         working-directory: SRC
         run: cargo test --workspace --doc --locked
 
-      - name: cargo nextest workspace (Linux)
-        # A documentation failure remains fatal to the job, but must not hide
-        # the independent runtime suite. Earlier setup/lint failures still stop it.
+      # The native GUI callback prerequisites can cold-compile for nearly 44 minutes.
+      # Keep that authenticated product preparation outside the existing 50-minute
+      # runtime window so the complete workspace suite retains its execution budget.
+      - name: Prepare Linux GUI callback runtime prerequisites
+        id: gui-runtime-prerequisites
         if: ${{ !cancelled() && (steps.doctests.outcome == 'success' || steps.doctests.outcome == 'failure') }}
-        # A milestone must expose remaining failures across the full suite.
-        # Continue after test failures within the existing timeout; no retries.
         timeout-minutes: 50
         working-directory: SRC
         env:
-          # On a cold/evicted cache this step compiles the whole workspace
-          # test profile; at 2 build jobs the parallel neothd + GUI frontend
-          # compiles exceed the hosted runner's memory budget (3x exit 143 at
-          # the same compile point, 2026-07-20). One job keeps the peak
-          # bounded; the warm-cache case loses nothing.
           CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
@@ -304,14 +299,14 @@ jobs:
           test "$(stat -c '%u:%g:%a:%F' "$XDG_RUNTIME_DIR")" = "$uid:$gid:700:directory"
           timeout 1 /usr/bin/systemctl --user show-environment >/dev/null
           command -v apparmor_parser >/dev/null
-          export NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1
 
           cargo build -p neoth --bin neoth --locked
-          export PATH="$PWD/target/debug:$PATH"
+          printf '%s\n' "$PWD/target/debug" >> "$GITHUB_PATH"
           cargo build -p neothd-gui --bin neothd-gui --locked
           contained_gui_helper="$(realpath "$PWD/target/debug/neothd-gui")"
           test -f "$contained_gui_helper" && test -x "$contained_gui_helper"
           [[ "$contained_gui_helper" != *[$'\t\n '\"\#\{\}\*\?\[\]]* ]] || exit 1
+          cargo nextest run --workspace --locked --profile ci --no-run
           profile_file="$RUNNER_TEMP/neoth-w272-neothd-gui.profile"
           cat > "$profile_file" <<EOF
           #include <tunables/global>
@@ -320,14 +315,37 @@ jobs:
             userns,
           }
           EOF
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$XDG_RUNTIME_DIR"
+            printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "$DBUS_SESSION_BUS_ADDRESS"
+            printf 'NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1\n'
+            printf 'NEOTH_GUI_TEST_SYSTEMD_HELPER=%s\n' "$contained_gui_helper"
+            printf 'NEOTH_GUI_TEST_APPARMOR_PROFILE=%s\n' "$profile_file"
+          } >> "$GITHUB_ENV"
           sudo timeout 10 apparmor_parser -r "$profile_file"
-          cleanup_containment_apparmor() {
-            sudo timeout 10 apparmor_parser -R "$profile_file" >/dev/null 2>&1 || true
-          }
-          trap cleanup_containment_apparmor EXIT
-          export NEOTH_GUI_TEST_SYSTEMD_HELPER="$contained_gui_helper"
+
+      - name: cargo nextest workspace (Linux)
+        # A documentation failure remains fatal to the job, but must not hide
+        # the independent runtime suite. Earlier setup/lint failures still stop it.
+        if: ${{ !cancelled() && (steps.doctests.outcome == 'success' || steps.doctests.outcome == 'failure') && steps.gui-runtime-prerequisites.outcome == 'success' }}
+        # A milestone must expose remaining failures across the full suite.
+        # Continue after test failures within the existing timeout; no retries.
+        timeout-minutes: 50
+        working-directory: SRC
+        env:
+          # Preparation compiled the selected test binaries. Keep Cargo's normal
+          # freshness check and one-worker memory boundary for actual execution.
+          CARGO_BUILD_JOBS: 1
+        run: |
+          rm -f target/nextest/ci/junit.xml
           xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci --no-fail-fast
 
+      - name: Remove Linux GUI callback containment profile
+        if: always()
+        run: |
+          if [[ -n "${NEOTH_GUI_TEST_APPARMOR_PROFILE:-}" ]]; then
+            sudo timeout 10 apparmor_parser -R "$NEOTH_GUI_TEST_APPARMOR_PROFILE" >/dev/null 2>&1 || true
+          fi
       - name: Upload Linux JUnit report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

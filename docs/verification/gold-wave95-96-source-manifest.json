@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T03:37:08.2055705Z",
-  "validationStatus": "W2251 reviewed native fixture repairs; final producer hosted pending",
+  "capturedUtc": "2026-10-03T06:11:06.2662042Z",
+  "validationStatus": "static_reviewed_pending_hosted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 43437,
-      "sha256": "77171BD6E9C277183F678A203F53C8FC50A1C121CFD1DCE871335B8647206031"
+      "bytes": 44369,
+      "sha256": "6AF79D699BBF183152A3646C11F9108FBAC6026141BD7F1BBFA7538CAA40D67A"
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
@@ -3187,6 +3187,11 @@
       "sha256": "91D2DF78EE8915A45AAC70DBF2734E99C3F908BE31ED1C77FD97EED8D4104A4E"
     },
     {
+      "path": "docs/verification/gold-wave2258-linux-phase-separation.json",
+      "bytes": 3614,
+      "sha256": "965A6FD5A6FB97D29CBDE2229C23E89CE393BCF33D4B6C760BCE5E6088F1BD6B"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4148,8 +4153,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 50917,
-      "sha256": "9314B64B5C99CC9A09EC6E80FB4A5C377755D0BA8423CDFB470E17CC1947E5F9"
+      "bytes": 52329,
+      "sha256": "26FCE658AE44F89E87DB9846D180DF71650796EEB2EF2924869AE351E6114FD3"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -4328,8 +4333,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2329272,
-      "sha256": "FDFAA0F5C4652BD6C85FF104812FD6424ABDDF01C7A8BE097046EC06F30689E2"
+      "bytes": 2331424,
+      "sha256": "6AE5A39C57835B5AA5F85FEB61C2A1BCE5B8CA196DCCAA1806BCD714A894EAA1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
