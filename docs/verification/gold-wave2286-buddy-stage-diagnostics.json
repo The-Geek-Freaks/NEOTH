@@ -1,0 +1,43 @@
+{
+  "schema": "neoth-gold-wave2286-buddy-stage-diagnostics/v1",
+  "base": "c33ef12f0d7dce0f4d6debb3e94551044d38affe",
+  "status": "Diagnostic source integrated; macOS root cause unresolved; hosted validation pending",
+  "boundFailure": {
+    "run": "37127028297",
+    "producer": "6a8942a9b554b674598d1bd61a6b4d79c1f4b055",
+    "job": "111214292109",
+    "identity": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+    "phase": "set_left_openai_api",
+    "passed": 19176,
+    "failed": 1,
+    "skipped": 29,
+    "nativeReceiptSha256": "D26E64F23CB1761091F42952920A20333C4C25F444E6748664744318E77CEE68"
+  },
+  "sourceImports": [
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "sha256": "19ADCBA26EC00B45A24AA4AF5782D929CBA2CDF48321B6EDFADB94F1FD3099A9",
+      "baseSha256": "AA6D50A3BBE327F3201ADF2DEF8975FB7D4E60E18935022592C4C50BCB24D1A5"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "sha256": "5AA3010EF79B7FEB78D2418DDA23CFA5D315EB893B1143C7D6B0D6758538E0A3",
+      "baseSha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35"
+    }
+  ],
+  "behavior": [
+    "One unchanged worker and fresh-readback call chain; identity error mapping retains existing error strings and command count",
+    "Only cfg(test) emits fixed argv/resolve/bounded_execution/exit/utf8/receipt_parse/fresh_show_command/fresh_show_parse labels",
+    "Existing native test observes only changed/unchanged/unreadable owned freedom.yaml state; no configuration content is emitted",
+    "UI messages, status/success predicates, toasts and containment are unchanged"
+  ],
+  "guiEvidence": {
+    "slintChanged": false,
+    "visualAccessibility": "N/A: no control, layout, token, motion or UI-copy change",
+    "applicableContract": "SRC/neothd-gui/AGENTS.md; design-system/lint_rules.md and AUDIT_CHECKLIST.md",
+    "runtime": "not run locally; native hosted callback must verify"
+  },
+  "localExecutableValidationRan": false,
+  "rootCauseConfirmed": false,
+  "hosted": "pending"
+}

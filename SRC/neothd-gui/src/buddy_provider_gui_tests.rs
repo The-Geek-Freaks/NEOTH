@@ -189,6 +189,15 @@ fn buddy_provider_error_category(error: &str) -> &'static str {
 }
 
 #[cfg(not(windows))]
+fn fixture_freedom_state(home: &Path, baseline: &str) -> &'static str {
+    match std::fs::read_to_string(home.join("freedom.yaml")) {
+        Ok(current) if current == baseline => "unchanged",
+        Ok(_) => "changed",
+        Err(_) => "unreadable",
+    }
+}
+
+#[cfg(not(windows))]
 fn assert_accepted(window: &MainWindow, phase: &str, receipt_fragment: &str) {
     let status_valid = window.get_bc_provider_config_status_valid();
     let error = window.get_bc_provider_config_error().to_string();
@@ -271,7 +280,11 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
 
     window.invoke_bc_buddy_provider_set("left".into(), "openai_api".into(), "gpt-4o-mini".into());
     pump(&window, "real provider set plus fresh show");
-    assert_accepted(&window, "set_left_openai_api", "role update was accepted");
+    let set_phase = format!(
+        "set_left_openai_api; fixture_freedom={}",
+        fixture_freedom_state(fixture.path(), &before)
+    );
+    assert_accepted(&window, &set_phase, "role update was accepted");
     let left = window
         .get_bc_provider_config_roles()
         .row_data(0)

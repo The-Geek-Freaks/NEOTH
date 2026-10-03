@@ -22510,6 +22510,44 @@ fn run_contained_buddy_provider_command(
     }
 }
 
+enum BuddyProviderFailureStage {
+    Argv,
+    Resolve,
+    BoundedExecution,
+    Exit,
+    Utf8,
+    ReceiptParse,
+    FreshShowCommand,
+    FreshShowParse,
+}
+
+#[cfg(test)]
+impl BuddyProviderFailureStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Argv => "argv",
+            Self::Resolve => "resolve",
+            Self::BoundedExecution => "bounded_execution",
+            Self::Exit => "exit",
+            Self::Utf8 => "utf8",
+            Self::ReceiptParse => "receipt_parse",
+            Self::FreshShowCommand => "fresh_show_command",
+            Self::FreshShowParse => "fresh_show_parse",
+        }
+    }
+}
+
+#[cfg(test)]
+fn buddy_provider_stage_error(error: String, stage: BuddyProviderFailureStage) -> String {
+    eprintln!("buddy_provider_failure_stage={}", stage.label());
+    error
+}
+
+#[cfg(not(test))]
+fn buddy_provider_stage_error(error: String, _: BuddyProviderFailureStage) -> String {
+    error
+}
+
 fn run_buddy_provider_command(
     command: &buddy_provider_panel::BuddyProviderCommand,
     live_confirmation: bool,
@@ -22533,12 +22571,23 @@ fn run_buddy_provider_command(
     } else {
         buddy_provider_panel::preview_buddy_command(command).map(|preview| preview.argv)
     }
-    .map_err(buddy_provider_panel_error)?;
+    .map_err(|error| {
+        buddy_provider_stage_error(
+            buddy_provider_panel_error(error).to_string(),
+            BuddyProviderFailureStage::Argv,
+        )
+    })?;
     if argv.first().map(String::as_str) != Some("neoth") {
-        return Err("Buddy provider command could not be verified.".into());
+        return Err(buddy_provider_stage_error(
+            "Buddy provider command could not be verified.".into(),
+            BuddyProviderFailureStage::Argv,
+        ));
     }
     let bin = which_neothd().ok_or_else(|| {
-        "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string()
+        buddy_provider_stage_error(
+            "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string(),
+            BuddyProviderFailureStage::Resolve,
+        )
     })?;
     let mut process = spawn_neothd_plain(&bin);
     // `BuddyProviderCommand` owns the exact public CLI grammar, including the
@@ -22556,28 +22605,54 @@ fn run_buddy_provider_command(
             "Buddy provider core configuration command",
         )
         .map_err(|_| {
-            "Buddy provider core configuration command did not complete in time.".to_string()
+            buddy_provider_stage_error(
+                "Buddy provider core configuration command did not complete in time.".to_string(),
+                BuddyProviderFailureStage::BoundedExecution,
+            )
         })?
     };
     #[cfg(not(target_os = "macos"))]
     let output = run_contained_buddy_provider_command(&mut process, BUDDY_PROVIDER_CONFIG_TIMEOUT)
-        .map_err(str::to_string)?;
+        .map_err(|error| {
+            buddy_provider_stage_error(
+                error.to_string(),
+                BuddyProviderFailureStage::BoundedExecution,
+            )
+        })?;
     validate_neothd_probe_exit(
         "provider command",
         output.status.success(),
         &output.stderr,
         output.status.code(),
     )
-    .map_err(|_| "Buddy provider command was not accepted by core.".to_string())?;
+    .map_err(|_| {
+        buddy_provider_stage_error(
+            "Buddy provider command was not accepted by core.".to_string(),
+            BuddyProviderFailureStage::Exit,
+        )
+    })?;
     String::from_utf8(output.stdout)
-        .map_err(|_| "Buddy provider command returned an unreadable receipt.".to_string())
+        .map_err(|_| {
+            buddy_provider_stage_error(
+                "Buddy provider command returned an unreadable receipt.".to_string(),
+                BuddyProviderFailureStage::Utf8,
+            )
+        })
 }
 
 fn fetch_buddy_provider_readback()
 -> std::result::Result<buddy_provider_panel::BuddyProviderReadback, String> {
-    let raw = run_buddy_provider_command(&buddy_provider_panel::BuddyProviderCommand::Show, false)?;
+    let raw = run_buddy_provider_command(&buddy_provider_panel::BuddyProviderCommand::Show, false)
+        .map_err(|error| {
+            buddy_provider_stage_error(error, BuddyProviderFailureStage::FreshShowCommand)
+        })?;
     buddy_provider_panel::parse_buddy_provider_readback(&raw)
-        .map_err(|error| buddy_provider_panel_error(error).to_string())
+        .map_err(|error| {
+            buddy_provider_stage_error(
+                buddy_provider_panel_error(error).to_string(),
+                BuddyProviderFailureStage::FreshShowParse,
+            )
+        })
 }
 
 fn apply_buddy_provider_readback(
@@ -22822,14 +22897,24 @@ fn start_buddy_provider_command(
             let output = run_buddy_provider_command(&command, live_confirmation)?;
             let receipt = match expected {
                 Some(expected) => buddy_provider_panel::parse_buddy_outcome(&output, expected)
-                    .map_err(buddy_provider_panel_error)
+                    .map_err(|error| {
+                        buddy_provider_stage_error(
+                            buddy_provider_panel_error(error).to_string(),
+                            BuddyProviderFailureStage::ReceiptParse,
+                        )
+                    })
                     .map(|outcome| buddy_provider_outcome_label(&outcome).to_string())?,
                 None => "Provider configuration verified.".to_string(),
             };
             let fresh = if expected.is_some() {
                 fetch_buddy_provider_readback()?
             } else {
-                buddy_provider_panel::parse_buddy_provider_readback(&output).map_err(buddy_provider_panel_error)?
+                buddy_provider_panel::parse_buddy_provider_readback(&output).map_err(|error| {
+                    buddy_provider_stage_error(
+                        buddy_provider_panel_error(error).to_string(),
+                        BuddyProviderFailureStage::FreshShowParse,
+                    )
+                })?
             };
             Ok((fresh, receipt))
         })();

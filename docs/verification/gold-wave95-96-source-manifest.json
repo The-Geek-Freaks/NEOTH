@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T16:03:25.8396929Z",
-  "validationStatus": "W2285 durable cluster result custody integrated; hosted validation pending",
+  "capturedUtc": "2026-10-03T16:08:32.5593346Z",
+  "validationStatus": "W2286 actual Buddy failure stages instrumented; new-producer hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3232,6 +3232,11 @@
       "sha256": "9D772982DC41563EC6FEB29DAB9F2A35A89486A5A9D89D9FEB6E2529A5AF43BA"
     },
     {
+      "path": "docs/verification/gold-wave2286-buddy-stage-diagnostics.json",
+      "bytes": 2078,
+      "sha256": "1E02C9150894F1F2C4694270EAC6E861442EE0FFCDBEE9865256A600D00698F2"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4373,8 +4378,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2343432,
-      "sha256": "E6C6F2F2134588FF891225DC7D92E4F066148BA6F2847687F347F820743F5F26"
+      "bytes": 2344447,
+      "sha256": "2E030AF2E0A0A87613520E293552048D52F28350941FC82B79E01C5973C9946D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4568,8 +4573,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 18564,
-      "sha256": "6E5639D4ABE54737651C625B714AB84488C656F9B01D4B0A7CA083C604E37B35"
+      "bytes": 18979,
+      "sha256": "5AA3010EF79B7FEB78D2418DDA23CFA5D315EB893B1143C7D6B0D6758538E0A3"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
@@ -4648,8 +4653,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2256436,
-      "sha256": "AA6D50A3BBE327F3201ADF2DEF8975FB7D4E60E18935022592C4C50BCB24D1A5"
+      "bytes": 2258948,
+      "sha256": "19ADCBA26EC00B45A24AA4AF5782D929CBA2CDF48321B6EDFADB94F1FD3099A9"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

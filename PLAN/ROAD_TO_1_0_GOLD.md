@@ -17917,3 +17917,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - The completed result survives database reopen and is available through `cluster task-delegate outbound-result OPERATION_ID`, including the existing Buddy CLI nesting. The command does not dispatch or retry paid work.
 - Four new portable regressions cover terminal payload shape, reopen/idempotency/conflict, prepared/accepted and revocation races, and failure of the state UPDATE after an inserted result. The latter proves intended cross-statement rollback in source; it has not run locally.
 - Static R2 review closed all three findings. Portable registrations are now 2711. Hosted formatting/compilation/tests and generated CLI-reference comparison remain pending. Origin-stream delivery, deadlines/redelegation and complete cluster product acceptance remain open; existing backlog bytes are preserved.
+
+### W2286 - actual Buddy provider stage diagnostics (2026-10-03 UTC)
+
+- Full run 37127028297 finished on producer 6a8942: Windows passed all 19057 selected tests; macOS passed 19176 of 19177 with one Buddy configuration callback failure at set_left_openai_api. Linux completed Clippy and doctests, then received an unexplained runner shutdown while preparing native GUI prerequisites. The whole run remains failed, not accepted.
+- The existing single Buddy worker and actual fresh-Show path now retain test-only closed failure-stage diagnostics. Identity error mapping preserves production behavior and UI messages; no command is replayed. The callback regression also reports only whether its owned public-config fixture changed, without printing source data, credentials, endpoints, paths or subprocess output.
+- The failing macOS cause is still unconfirmed. This batch is diagnostic instrumentation, not a behavior repair or a pass. No Slint, rendered UI or local executable validation ran under the BSOD hold.
