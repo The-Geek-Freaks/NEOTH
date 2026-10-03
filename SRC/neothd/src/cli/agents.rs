@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -95,11 +96,16 @@ pub enum AgentsAction {
         #[arg(long)]
         retry_failed: bool,
     },
-    /// List private run records, or show one by id.
+    /// List private run records, show one by id, or export one content-free
+    /// unqualified NCT observation with `--nct-baseline`.
     History {
         run_id: Option<String>,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Export only a content-free, unqualified NCT observation for this
+        /// one existing private run. Requires RUN_ID and --output json or jsonl.
+        #[arg(long, requires = "run_id")]
+        nct_baseline: bool,
     },
 }
 
@@ -138,9 +144,17 @@ pub async fn run_agents(args: AgentsArgs) -> Result<()> {
             )
             .await
         }
-        AgentsAction::History { run_id, limit } => {
-            render_history(&home, run_id.as_deref(), limit, &args.output)
-        }
+        AgentsAction::History {
+            run_id,
+            limit,
+            nct_baseline,
+        } => render_history(
+            &home,
+            run_id.as_deref(),
+            limit,
+            nct_baseline,
+            &args.output,
+        ),
     }
 }
 
@@ -377,8 +391,17 @@ fn render_history(
     home: &std::path::Path,
     run_id: Option<&str>,
     limit: usize,
+    nct_baseline: bool,
     output: &OutputFormat,
 ) -> Result<()> {
+    if nct_baseline {
+        let run_id = run_id.context("--nct-baseline requires RUN_ID")?;
+        if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            anyhow::bail!("--nct-baseline requires --output json or --output jsonl");
+        }
+        let record = crate::sub_agents::runtime::load_run(home, run_id)?;
+        return render_nct_baseline_observation(&record, output);
+    }
     if let Some(run_id) = run_id {
         let record = crate::sub_agents::runtime::load_run(home, run_id)?;
         let path = home.join("sub-agent-runs").join(format!("{run_id}.json"));
@@ -431,6 +454,162 @@ fn render_history(
             fail,
             blocked
         );
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct NctBaselineObservation {
+    schema: &'static str,
+    purpose: &'static str,
+    source_kind: &'static str,
+    source_run_id: String,
+    source_schema_version: u8,
+    source_record_status: &'static str,
+    route_qualification_status: &'static str,
+    evidence_status: &'static str,
+    qualification_status: &'static str,
+    request_binding_status: &'static str,
+    wal_lifecycle_pairing_status: &'static str,
+    config_admission_status: &'static str,
+    cost_status: &'static str,
+    result_count: usize,
+    results: Vec<NctBaselineObservationResult>,
+}
+
+#[derive(Serialize)]
+struct NctBaselineObservationResult {
+    result_index: usize,
+    outcome: &'static str,
+    attempts: u8,
+    provider_leaf_count: usize,
+    provider_leaves: Vec<NctBaselineObservationLeaf>,
+}
+
+#[derive(Serialize)]
+struct NctBaselineObservationLeaf {
+    stage: String,
+    attempt: u8,
+    provider: String,
+    wire_model: String,
+    measurement_status: &'static str,
+    prompt_baseline: Option<NctBaselinePromptBaseline>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NctBaselinePromptBaseline {
+    shape: NctBaselinePromptShape,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
+    completion_latency_ms: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NctBaselinePromptShape {
+    prompt_bytes: u64,
+    system_bytes: u64,
+    context_bytes: u64,
+    candidate_bytes: u64,
+    qa_failure_bytes: u64,
+    repeated_segment_bytes: u64,
+    prompt_tokens_upper_bound: u64,
+    system_tokens_upper_bound: u64,
+    context_tokens_upper_bound: u64,
+    candidate_tokens_upper_bound: u64,
+    qa_failure_tokens_upper_bound: u64,
+    total_request_tokens_upper_bound: u64,
+}
+
+fn nct_baseline_observation(
+    record: &crate::sub_agents::runtime::SubAgentRunRecord,
+) -> Result<NctBaselineObservation> {
+    let results = record
+        .results
+        .iter()
+        .enumerate()
+        .map(|(result_index, result)| {
+            let provider_leaves = result
+                .provider_calls
+                .iter()
+                .map(|call| {
+                    let prompt_baseline = call
+                        .prompt_baseline
+                        .as_ref()
+                        .map(|baseline| {
+                            serde_json::to_value(baseline)
+                                .context("serialize source sub-agent prompt baseline")
+                                .and_then(|value| {
+                                    serde_json::from_value(value).context(
+                                        "validate source sub-agent prompt baseline against NCT whitelist",
+                                    )
+                                })
+                        })
+                        .transpose()?;
+                    Ok(NctBaselineObservationLeaf {
+                        stage: call.stage.clone(),
+                        attempt: call.attempt,
+                        provider: call.provider.clone(),
+                        wire_model: call.wire_model.clone(),
+                        measurement_status: if prompt_baseline.is_some() {
+                            "present"
+                        } else {
+                            "missing_in_source_record"
+                        },
+                        prompt_baseline,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(NctBaselineObservationResult {
+                result_index,
+                outcome: nct_baseline_outcome(&result.verdict),
+                attempts: result.attempts,
+                provider_leaf_count: provider_leaves.len(),
+                provider_leaves,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(NctBaselineObservation {
+        schema: "neoth.nct-subagent-observation.v1",
+        purpose: "existing_private_subagent_run_content_free_observation",
+        source_kind: "private_subagent_run",
+        source_run_id: record.run_id.clone(),
+        source_schema_version: record.schema_version,
+        source_record_status: "validated_existing_private_run",
+        route_qualification_status: "unavailable_in_source_record",
+        evidence_status: "incomplete_unqualified_observation",
+        qualification_status: "not_eligible",
+        request_binding_status: "unavailable_in_subagent_run_record",
+        wal_lifecycle_pairing_status: "unavailable_in_subagent_run_record",
+        config_admission_status: "unavailable_in_subagent_run_record",
+        cost_status: "unknown",
+        result_count: results.len(),
+        results,
+    })
+}
+
+fn nct_baseline_outcome(verdict: &crate::council::qa_verdict::QaVerdict) -> &'static str {
+    match verdict {
+        crate::council::qa_verdict::QaVerdict::Pass { .. } => "pass",
+        crate::council::qa_verdict::QaVerdict::Fail { .. } => "fail",
+        crate::council::qa_verdict::QaVerdict::Blocked { .. } => "blocked",
+    }
+}
+
+fn render_nct_baseline_observation(
+    record: &crate::sub_agents::runtime::SubAgentRunRecord,
+    output: &OutputFormat,
+) -> Result<()> {
+    let observation = nct_baseline_observation(record)?;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&observation)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&observation)?),
+        OutputFormat::Table => {
+            anyhow::bail!("--nct-baseline requires --output json or --output jsonl")
+        }
     }
     Ok(())
 }
@@ -746,5 +925,152 @@ mod tests {
             output: OutputFormat::Json,
         };
         run_agents(args).await.unwrap();
+    }
+
+    fn write_nct_observation_source_run(home: &Path, run_id: &str) {
+        let dir = home.join("sub-agent-runs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = r#"{
+  "schema_version": 1,
+  "run_id": "run-nct-observation",
+  "ts_unix": 1700000000,
+  "prompt_hash_xxh3": 99,
+  "results": [{
+    "from": "private-agent-name",
+    "to": "private-recipient",
+    "task_id": "NCT_PRIVATE_TASK_ID",
+    "verdict": {"kind": "pass", "evidence": ["NCT_PRIVATE_QA_EVIDENCE"]},
+    "evidence": ["NCT_PRIVATE_RESULT_EVIDENCE"],
+    "output": "NCT_PRIVATE_OUTPUT_AND_PROVIDER_ERROR",
+    "provider_calls": [
+      {
+        "stage": "primary", "attempt": 1, "provider": "openai_api", "wire_model": "wire-model-v1",
+        "input_tokens": 0, "output_tokens": null,
+        "prompt_baseline": {
+          "shape": {
+            "prompt_bytes": 11, "system_bytes": 22, "context_bytes": 33,
+            "candidate_bytes": 0, "qa_failure_bytes": 0, "repeated_segment_bytes": 0,
+            "prompt_tokens_upper_bound": 11, "system_tokens_upper_bound": 22,
+            "context_tokens_upper_bound": 33, "candidate_tokens_upper_bound": 0,
+            "qa_failure_tokens_upper_bound": 0, "total_request_tokens_upper_bound": 33
+          },
+          "input_tokens": 0, "output_tokens": null,
+          "cache_creation_tokens": 0, "cache_read_tokens": null, "completion_latency_ms": 0
+        }
+      },
+      {
+        "stage": "qa", "attempt": 1, "provider": "openai_api", "wire_model": "wire-model-v1",
+        "input_tokens": 4, "output_tokens": 2,
+        "prompt_baseline": {
+          "shape": {
+            "prompt_bytes": 44, "system_bytes": 55, "context_bytes": 33,
+            "candidate_bytes": 10, "qa_failure_bytes": 0, "repeated_segment_bytes": 43,
+            "prompt_tokens_upper_bound": 44, "system_tokens_upper_bound": 55,
+            "context_tokens_upper_bound": 33, "candidate_tokens_upper_bound": 10,
+            "qa_failure_tokens_upper_bound": 0, "total_request_tokens_upper_bound": 99
+          },
+          "input_tokens": 4, "output_tokens": 2,
+          "cache_creation_tokens": null, "cache_read_tokens": 0, "completion_latency_ms": 7
+        }
+      },
+      {
+        "stage": "primary", "attempt": 2, "provider": "openai_api", "wire_model": "wire-model-v1",
+        "input_tokens": null, "output_tokens": null, "prompt_baseline": null
+      }
+    ],
+    "attempts": 2,
+    "next_agent": "NCT_PRIVATE_NEXT_AGENT",
+    "ts_unix": 1700000001
+  }]
+}"#;
+        let record = record.replace("run-nct-observation", run_id);
+        std::fs::write(dir.join(format!("{run_id}.json")), record).unwrap();
+    }
+
+    #[test]
+    fn nct_baseline_flag_requires_a_history_run_id_at_clap_boundary() {
+        use clap::Parser;
+
+        let error = <crate::cli::Cli as Parser>::try_parse_from([
+            "neoth", "--output", "json", "agents", "history", "--nct-baseline",
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("--nct-baseline"));
+    }
+
+    #[test]
+    fn nct_baseline_projection_uses_validated_private_run_and_excludes_private_content() {
+        let home = tempfile::tempdir().unwrap();
+        let run_id = "run-nct-observation";
+        write_nct_observation_source_run(home.path(), run_id);
+
+        let record = crate::sub_agents::runtime::load_run(home.path(), run_id).unwrap();
+        let observation = nct_baseline_observation(&record).unwrap();
+        let serialized = serde_json::to_string(&observation).unwrap();
+
+        assert_eq!(observation.source_run_id, run_id);
+        assert_eq!(observation.route_qualification_status, "unavailable_in_source_record");
+        assert_eq!(observation.evidence_status, "incomplete_unqualified_observation");
+        assert_eq!(observation.qualification_status, "not_eligible");
+        assert_eq!(observation.cost_status, "unknown");
+        let leaves = &observation.results[0].provider_leaves;
+        assert_eq!(leaves.len(), 3);
+        assert_eq!(
+            leaves
+                .iter()
+                .map(|leaf| leaf.stage.as_str())
+                .collect::<Vec<_>>(),
+            vec!["primary", "qa", "primary"]
+        );
+        assert_eq!(
+            leaves.iter().map(|leaf| leaf.attempt).collect::<Vec<_>>(),
+            vec![1, 1, 2]
+        );
+        let primary = leaves[0].prompt_baseline.as_ref().unwrap();
+        assert_eq!(primary.input_tokens, Some(0));
+        assert_eq!(primary.output_tokens, None);
+        assert_eq!(primary.cache_creation_tokens, Some(0));
+        assert_eq!(primary.cache_read_tokens, None);
+        assert_eq!(primary.completion_latency_ms, 0);
+        assert_eq!(leaves[2].measurement_status, "missing_in_source_record");
+        assert!(leaves[2].prompt_baseline.is_none());
+        for private_fragment in [
+            "NCT_PRIVATE_TASK_ID",
+            "NCT_PRIVATE_QA_EVIDENCE",
+            "NCT_PRIVATE_RESULT_EVIDENCE",
+            "NCT_PRIVATE_OUTPUT_AND_PROVIDER_ERROR",
+            "NCT_PRIVATE_NEXT_AGENT",
+            "private-agent-name",
+            "private-recipient",
+            "prompt_hash_xxh3",
+        ] {
+            assert!(!serialized.contains(private_fragment), "leaked {private_fragment}");
+        }
+    }
+
+    #[test]
+    fn nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path() {
+        let missing = tempfile::tempdir().unwrap();
+        let error = render_history(
+            missing.path(),
+            Some("run-missing"),
+            20,
+            true,
+            &OutputFormat::Table,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("--output json or --output jsonl"));
+
+        let home = tempfile::tempdir().unwrap();
+        let run_id = "run-nct-render";
+        write_nct_observation_source_run(home.path(), run_id);
+        render_history(
+            home.path(),
+            Some(run_id),
+            20,
+            true,
+            &OutputFormat::Json,
+        )
+        .unwrap();
     }
 }

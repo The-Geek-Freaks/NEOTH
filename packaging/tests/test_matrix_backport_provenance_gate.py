@@ -33,11 +33,17 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
             '[[package]]\nname = "matrix-sdk-crypto"\nversion = "0.18.0"\n\n'
             '[[package]]\nname = "anymap3"\nversion = "1.1.0"\n'
             'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
-            f'checksum = "{gate.ANYMAP3_CHECKSUM}"\n', encoding="utf-8")
+            f'checksum = "{gate.ANYMAP3_CHECKSUM}"\n\n'
+            '[[package]]\nname = "quinn-proto"\nversion = "0.11.15"\n'
+            'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+            f'checksum = "{gate.QUINN_PROTO_CHECKSUM}"\n',
+            encoding="utf-8",
+        )
         (root / gate.AUDIT_RELATIVE).write_text(
             f'[advisories]\nignore = ["{gate.ADVISORY}"]\n', encoding="utf-8")
         (root / gate.DENY_RELATIVE).write_text(
             f'[advisories]\nignore = [{{ id = "{gate.ADVISORY}", reason = "fixed vendor backport; re-evaluate 2026-11-01" }}]\n', encoding="utf-8")
+        shutil.copy2(ROOT / ".trivyignore.yaml", root / ".trivyignore.yaml")
         return temporary
 
     def test_reviewed_postimages_and_final_graph_pass(self) -> None:
@@ -116,6 +122,59 @@ class MatrixBackportProvenanceGateTests(unittest.TestCase):
             with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "expired"):
                 gate.validate(Path(temporary), today=gate.EXPIRY_DATE)
 
+    def test_canonical_quinn_proto_old_source_duplicate_and_checksum_fail(self) -> None:
+        canonical = (
+            'name = "quinn-proto"\nversion = "0.11.15"\n'
+            'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+            f'checksum = "{gate.QUINN_PROTO_CHECKSUM}"'
+        )
+        with self.fixture_root() as temporary:
+            root = Path(temporary); lock = root / gate.LOCK_RELATIVE
+            lock.write_text(lock.read_text(encoding="utf-8").replace('version = "0.11.15"', 'version = "0.11.14"', 1), encoding="utf-8")
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical quinn-proto"):
+                gate.validate(root, today=date(2026, 10, 31))
+        with self.fixture_root() as temporary:
+            root = Path(temporary); lock = root / gate.LOCK_RELATIVE
+            lock.write_text(lock.read_text(encoding="utf-8").replace(canonical, canonical.replace('registry+https://github.com/rust-lang/crates.io-index', 'git+https://example.invalid/quinn'), 1), encoding="utf-8")
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical quinn-proto"):
+                gate.validate(root, today=date(2026, 10, 31))
+        with self.fixture_root() as temporary:
+            root = Path(temporary); lock = root / gate.LOCK_RELATIVE
+            lock.write_text(lock.read_text(encoding="utf-8").replace(gate.QUINN_PROTO_CHECKSUM, "0" * 64, 1), encoding="utf-8")
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical quinn-proto"):
+                gate.validate(root, today=date(2026, 10, 31))
+        with self.fixture_root() as temporary:
+            root = Path(temporary); lock = root / gate.LOCK_RELATIVE
+            lock.write_text(lock.read_text(encoding="utf-8") + "\n[[package]]\n" + canonical + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical quinn-proto"):
+                gate.validate(root, today=date(2026, 10, 31))
+
+    def test_trivy_ignore_byte_binding_rejects_scope_widening_and_tampering(self) -> None:
+        mutations = (
+            ("wrong-section", lambda text: text.replace("vulnerabilities:\n", "secrets:\n", 1)),
+            ("global", lambda text: text.replace("    paths:\n      - SRC/vendor/matrix-sdk/Cargo.lock\n", "", 1)),
+            ("wildcard", lambda text: text.replace("SRC/vendor/matrix-sdk/Cargo.lock", "SRC/vendor/matrix-sdk/**", 1)),
+            ("duplicate-path", lambda text: text.replace("      - SRC/vendor/matrix-sdk/Cargo.lock\n", "      - SRC/vendor/matrix-sdk/Cargo.lock\n      - SRC/Cargo.lock\n", 1)),
+            ("duplicate-key", lambda text: text.replace("    expired_at:", "    paths:\n      - SRC/Cargo.lock\n    expired_at:", 1)),
+            ("changed-expiry", lambda text: text.replace("2026-11-01", "2026-11-02", 1)),
+            ("comment", lambda text: text + "# tampered\n"),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label), self.fixture_root() as temporary:
+                root = Path(temporary); ignore = root / ".trivyignore.yaml"
+                ignore.write_text(mutate(ignore.read_text(encoding="utf-8")), encoding="utf-8")
+                with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "canonical provenance-bound byte hash"):
+                    gate.validate(root, today=date(2026, 10, 31))
+
+    def test_trivy_reference_exception_expiry_and_vendor_lock_tamper_fail_closed(self) -> None:
+        with self.fixture_root() as temporary:
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "Trivy exception expired"):
+                gate._require_trivy_reference_lock_exception(Path(temporary), gate.TRIVY_EXCEPTION_EXPIRY_DATE)
+        with self.fixture_root() as temporary:
+            root = Path(temporary); reference = root / gate.PACKAGES[gate.SDK]["vendor"] / "Cargo.lock"
+            reference.write_bytes(reference.read_bytes() + b"x")
+            with self.assertRaisesRegex(gate.MatrixBackportProvenanceError, "vendor postimage mismatch: Cargo.lock"):
+                gate.validate(root, today=date(2026, 10, 31))
 
 if __name__ == "__main__":
     unittest.main()

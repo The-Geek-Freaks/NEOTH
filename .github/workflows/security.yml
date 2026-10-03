@@ -489,7 +489,7 @@ jobs:
 
   trivy:
     if: github.ref == 'refs/heads/main'
-    needs: trusted-main
+    needs: [trusted-main, advisory-exception-gate]
     name: trivy (filesystem vuln scan)
     runs-on: ubuntu-24.04
     permissions:

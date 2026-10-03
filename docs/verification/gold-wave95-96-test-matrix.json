@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static-reviewed-hosted-pending",
+  "status": "W2243 static reviewed; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 365725,
-    "sha256": "33669816C7A68A913095D4D2820FF1CD5CC71995A4FEF53905B4EB75F6FF601D"
+    "bytes": 365926,
+    "sha256": "9C419267AA2F99895C4D742D2B2338363A0E4B876FAEA0323ADABBB4904504C8"
   },
-  "sourceInputs": 2001,
+  "sourceInputs": 2002,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4800,7 +4800,7 @@
     {
       "test": "cli::agents::tests::fan_out_registry_admits_only_enabled_skills_and_suppresses_eval",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "FBDF2A7DFB45A38BB04B922C70E04929BC03E898A9DFD8A9A5212F6CA5F9D481",
+      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
       "junitClass": "neoth"
     },
     {
@@ -15921,6 +15921,24 @@
       "sourceSha256": "6EA749D0A887860EC4E8F3506B9ACABBC847FA6DF5BC236D2DB79D1455FE7A65",
       "junitClass": "neoth",
       "platform": "all"
+    },
+    {
+      "test": "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -70757,6 +70775,68 @@
       }
     ],
     "note": "Authentic protected input47350/47808 exceeded artificialNCT20000; admit ordinary100000 max without changing configured caps. One real lowercap1 regression and early failure diagnostics. Focused433/full pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2243NctObservationTrivy": {
+    "base": "dfa694a34c4f0c23af9c84bb5c165450ad5d821a",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 121758,
+        "sha256": "8CEE9454FFDE1717496661FCCF73B3C6055FB78F7655930E872C623A72E4F5C7",
+        "blob": "7c80d7a63fc29219fd7843a5a56e5e7297ceeb30"
+      },
+      {
+        "path": ".github/workflows/security.yml",
+        "bytes": 23664,
+        "sha256": "1F5669DC42A4C88A57BC92C604A52424F94C7D18AA5C28EC91945BB7265C72F6",
+        "blob": "689ee9c8987d665f9ce7ac15298364cb31750427"
+      },
+      {
+        "path": ".trivyignore.yaml",
+        "bytes": 1676,
+        "sha256": "0EB5D0F692C6DCDF0FFC76353CC401E68FC16A02A94103E2444FA2299F8A6CF5",
+        "blob": "c7c1accf568d42c035ca98bab0df0881b8deb8ec"
+      },
+      {
+        "path": "docs/verification/gold-wave2243-nct-observation-trivy.json",
+        "bytes": 4440,
+        "sha256": "6557E9CDFD7E2AB6E052B0B072A24F824AA642CA06B2E43FE5427838FC06AA58",
+        "blob": "7be2f6b3fc5a41ff3e2bc3e9911e88d23fba99ec"
+      },
+      {
+        "path": "packaging/matrix_backport_provenance_gate.py",
+        "bytes": 54050,
+        "sha256": "55AD5E8425860DF476698F7AFD3F67A749850B3CB629FA70AD8BFB77A0E35530",
+        "blob": "658dc63ff24bc4db1bd544ac55fcf1aa84db1d59"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 48081,
+        "sha256": "F989D25DEB7D7531113352E087F7B160E80D01B6198344DDEED692BA82A5B64B",
+        "blob": "d84d69d7163b76daf320f0bf8ef7450efbf4a779"
+      },
+      {
+        "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+        "bytes": 11894,
+        "sha256": "4FC5A51790A40C660CEDE69D7A8FAB51D7F8570B69DE785B646BD19F5A4C30E7",
+        "blob": "eb590ce3ec121b370c1591c733d932ab4d582f56"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2325849,
+        "sha256": "41B7B3E028ACF51A73854A758879422D200F351FD794974E0EA392A034DA05BD",
+        "blob": "97203182237b3f7d87b09d1158c5cd1cfc840ad6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/agents.rs",
+        "bytes": 40508,
+        "sha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+        "blob": "56428813807e82090cb939b6dc5eaa6edfffb046"
+      }
+    ],
+    "note": "Exact reviewed postimages; three new portable tests; immutable dfa full continues separately; no local runtime or Slint changes.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

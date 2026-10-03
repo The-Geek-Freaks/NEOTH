@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-02T23:33:58.2191100Z",
-  "validationStatus": "static-reviewed-hosted-pending",
+  "capturedUtc": "2026-10-03T02:49:42.1004158Z",
+  "validationStatus": "W2243 static reviewed; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 121093,
-      "sha256": "62EA6B959437FCE53E522BF6CF90F28EEB3F75B54EE451FBE340FD5E1363C6A1"
+      "bytes": 121758,
+      "sha256": "8CEE9454FFDE1717496661FCCF73B3C6055FB78F7655930E872C623A72E4F5C7"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -193,8 +193,8 @@
     },
     {
       "path": ".github/workflows/security.yml",
-      "bytes": 23637,
-      "sha256": "B4A56A687110A2BA8B13214801941250F4D9D6DE94C1E97C381BFE5504E59F98"
+      "bytes": 23664,
+      "sha256": "1F5669DC42A4C88A57BC92C604A52424F94C7D18AA5C28EC91945BB7265C72F6"
     },
     {
       "path": ".github/workflows/silero-specialize.yml",
@@ -228,8 +228,8 @@
     },
     {
       "path": ".trivyignore.yaml",
-      "bytes": 1335,
-      "sha256": "17321E2E60B74FCEC3FCF96742D928497C96EB73AD8586ED3640A7C769A608EE"
+      "bytes": 1676,
+      "sha256": "0EB5D0F692C6DCDF0FFC76353CC401E68FC16A02A94103E2444FA2299F8A6CF5"
     },
     {
       "path": "design-system/AUDIT_CHECKLIST.md",
@@ -3177,6 +3177,11 @@
       "sha256": "79D6CCD3B91CFE731E0B8F1CEC715A1CED6ACB2B0713B8A8DE89A3DCCD388D66"
     },
     {
+      "path": "docs/verification/gold-wave2243-nct-observation-trivy.json",
+      "bytes": 4440,
+      "sha256": "6557E9CDFD7E2AB6E052B0B072A24F824AA642CA06B2E43FE5427838FC06AA58"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4048,8 +4053,8 @@
     },
     {
       "path": "packaging/matrix_backport_provenance_gate.py",
-      "bytes": 52410,
-      "sha256": "1CD89E459B8EEE58FB2718F01E440AFCFB854C81B9BAC681166B6AE56EC0FC11"
+      "bytes": 54050,
+      "sha256": "55AD5E8425860DF476698F7AFD3F67A749850B3CB629FA70AD8BFB77A0E35530"
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
@@ -4138,8 +4143,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 47990,
-      "sha256": "CA34DB9294C0F576586F535A2EEE860D8EBCFB743E06AEDEE0E1D565303790AF"
+      "bytes": 48081,
+      "sha256": "F989D25DEB7D7531113352E087F7B160E80D01B6198344DDEED692BA82A5B64B"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -4163,8 +4168,8 @@
     },
     {
       "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
-      "bytes": 7394,
-      "sha256": "77EBF7F732461768333E143715BD32543A2C6664ACA48ED255CC7A58555D86BD"
+      "bytes": 11894,
+      "sha256": "4FC5A51790A40C660CEDE69D7A8FAB51D7F8570B69DE785B646BD19F5A4C30E7"
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
@@ -4318,8 +4323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2323762,
-      "sha256": "EEDD3E08A68DAF7162BA6DC3E2E9B651CD1D2E154AF2BB85D0FC170D07CD8EE9"
+      "bytes": 2325849,
+      "sha256": "41B7B3E028ACF51A73854A758879422D200F351FD794974E0EA392A034DA05BD"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5128,8 +5133,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 28014,
-      "sha256": "FBDF2A7DFB45A38BB04B922C70E04929BC03E898A9DFD8A9A5212F6CA5F9D481"
+      "bytes": 40508,
+      "sha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",

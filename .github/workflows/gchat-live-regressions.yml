@@ -764,9 +764,12 @@ jobs:
           run_case 431 lib cli::nct_baseline::tests::nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair cli::nct_baseline::tests::nct_stream_projection_requires_local_terminal_trace_and_complete_wal_pair --lib
           run_case 432 lib updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback --lib
           run_case 433 lib cli::nct_baseline::tests::wrapper_preserves_lower_operator_input_cap_before_provider_dispatch cli::nct_baseline::tests::wrapper_preserves_lower_operator_input_cap_before_provider_dispatch --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 433
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 433
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 433
+          run_case 434 lib cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary --lib
+          run_case 435 lib cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content --lib
+          run_case 436 lib cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 436
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 436
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 436
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

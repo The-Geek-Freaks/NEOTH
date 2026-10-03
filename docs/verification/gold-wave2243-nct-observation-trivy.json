@@ -1,0 +1,88 @@
+{
+  "schema": "neoth.w2243.nct-observation-trivy.v1",
+  "base": "dfa694a34c4f0c23af9c84bb5c165450ad5d821a",
+  "status": "static_reviewed_pending_hosted",
+  "capturedUtc": "2026-10-03T02:49:39.5509547Z",
+  "sources": [
+    {
+      "path": ".trivyignore.yaml",
+      "candidate": "work/gold-20260906/wave2241-trivy-vendor-lock/candidate-r3/.trivyignore.yaml",
+      "sha256": "0eb5d0f692c6dcdf0ffc76353cc401e68fc16a02a94103e2444fa2299f8a6cf5"
+    },
+    {
+      "path": "packaging/matrix_backport_provenance_gate.py",
+      "candidate": "work/gold-20260906/wave2241-trivy-vendor-lock/candidate-r3/packaging/matrix_backport_provenance_gate.py",
+      "sha256": "93a5b8b8a0dc9c76c4d1f8d7b664db885bac31bc2878fdfc85265b31bab3beba"
+    },
+    {
+      "path": "packaging/tests/test_matrix_backport_provenance_gate.py",
+      "candidate": "work/gold-20260906/wave2241-trivy-vendor-lock/candidate-r3/packaging/tests/test_matrix_backport_provenance_gate.py",
+      "sha256": "4fc5a51790a40c660cede69d7a8fab51d7f8570b69de785b646bd19f5a4c30e7"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "candidate": "work/gold-20260906/wave2241-trivy-vendor-lock/candidate-r3/packaging/tests/test_ci_cadence_contract.py",
+      "sha256": "f989d25deb7d7531113352e087f7b160e80d01b6198344ddeed692ba82a5b64b"
+    },
+    {
+      "path": ".github/workflows/security.yml",
+      "candidate": "work/gold-20260906/wave2241-trivy-vendor-lock/candidate-r3/.github/workflows/security.yml",
+      "sha256": "1f5669dc42a4c88a57bc92c604a52424f94c7d18aa5c28ec91945bb7265c72f6"
+    },
+    {
+      "path": "SRC/neothd/src/cli/agents.rs",
+      "candidate": "work/gold-20260906/wave2240-nct-observation/candidate-r2/SRC/neothd/src/cli/agents.rs",
+      "sha256": "7845E6B357CF320EDF95FC42DDF78A835EDDB00999F62CAAC780F3344ABC099B"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "candidate": "work/gold-20260906/wave2242-focused436-preparation/gchat-live-regressions-r2.yml",
+      "sha256": "8CEE9454FFDE1717496661FCCF73B3C6055FB78F7655930E872C623A72E4F5C7"
+    }
+  ],
+  "implementation": [
+    "Opt-in agents history RUN_ID --nct-baseline exports ordered content-free private-run observations as JSON/JSONL through the existing validated loader.",
+    "Observation remains incomplete, unqualified, not eligible, unknown cost; no invented route/request/WAL/configuration proof.",
+    "Path-specific expiring GHSA-4w2j-m93h-cj5j classification applies only to the immutable authenticated Matrix SDK reference lock.",
+    "Existing final provenance gate enforces canonical active quinn-proto 0.11.15, complete ignore-file byte binding, expiry and unchanged vendor custody; Trivy still scans the full root and depends on that gate."
+  ],
+  "review": {
+    "focusedWorkflow": "8CEE9454FFDE1717496661FCCF73B3C6055FB78F7655930E872C623A72E4F5C7",
+    "trivy": "2C55DF81729D9228C45B7107CDCCFD5EA99E759D3BABFC95C9465C672E1E45F0",
+    "nct": "5F02A884BEAAB78B3DEBFA2938E176D7006DAF1AF288ED85C603E9887B8868EF"
+  },
+  "registration": {
+    "newRustTests": [
+      "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
+      "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
+      "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path"
+    ],
+    "portable": 2652,
+    "combinedSourceBindings": 195,
+    "newMatrixGateTests": 3,
+    "focused": 436,
+    "workflowSourceBindings": 185
+  },
+  "priorEvidence": {
+    "focusedAdmitted": 433,
+    "securityRun": 37088147547,
+    "codeqlRust": "Runner shutdown signal; cause unresolved, no retry or coverage change",
+    "fullStatus": "in_progress_not_accepted",
+    "liveAudioAdmittedPerPlatform": 19,
+    "liveAudioRun": 37087877186,
+    "producer": "dfa694a34c4f0c23af9c84bb5c165450ad5d821a",
+    "securityStatus": "failure",
+    "focusedRun": 37078553521,
+    "fullRun": 37087877186
+  },
+  "pending": [
+    "Hosted formatting, compilation and regression execution for this batch",
+    "Authentic CLI reference generation and final-producer stale-reference regression",
+    "Full native qualification on final producer",
+    "Security CodeQL Rust completion",
+    "Native signed release, configured-provider route qualification and separate GUI boundary"
+  ],
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "claudePolling": false
+}

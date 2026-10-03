@@ -29,6 +29,18 @@ REGISTRY_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 ANYMAP3_CHECKSUM = "fb5dfbc6d8d2675589ccbe4d0fd61df2419075625f8c1a62325e718e2b0049f9"
 ADVISORY = "RUSTSEC-2026-0318"
 EXPIRY_DATE = date(2026, 11, 1)
+TRIVY_ADVISORY = "GHSA-4w2j-m93h-cj5j"
+TRIVY_EXCEPTION_PATH = "SRC/vendor/matrix-sdk/Cargo.lock"
+TRIVY_EXCEPTION_EXPIRY_DATE = date(2026, 11, 1)
+TRIVY_EXCEPTION_STATEMENT = (
+    "The immutable authenticated Matrix SDK reference lock is not the root\n"
+    "workspace resolver; the patched root workspace lock is enforced by the\n"
+    "Matrix provenance gate and resolves quinn-proto 0.11.15."
+)
+QUINN_PROTO = "quinn-proto"
+QUINN_PROTO_VERSION = "0.11.15"
+QUINN_PROTO_CHECKSUM = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
+TRIVY_IGNORE_SHA256 = "0eb5d0f692c6dcdf0ffc76353cc401e68fc16a02a94103e2444fa2299f8a6cf5"
 
 SDK = "matrix-sdk"
 CRYPTO = "matrix-sdk-crypto"
@@ -607,6 +619,9 @@ def _require_patch_and_lock(root: Path) -> None:
     anymap3 = [p for p in packages if isinstance(p, dict) and p.get("name") == "anymap3"]
     if len(anymap3) != 1 or (anymap3[0].get("version"), anymap3[0].get("source"), anymap3[0].get("checksum")) != ("1.1.0", REGISTRY_SOURCE, ANYMAP3_CHECKSUM):
         raise MatrixBackportProvenanceError("workspace must contain one canonical anymap3@1.1.0")
+    quinn_proto = [p for p in packages if isinstance(p, dict) and p.get("name") == QUINN_PROTO]
+    if len(quinn_proto) != 1 or (quinn_proto[0].get("version"), quinn_proto[0].get("source"), quinn_proto[0].get("checksum")) != (QUINN_PROTO_VERSION, REGISTRY_SOURCE, QUINN_PROTO_CHECKSUM):
+        raise MatrixBackportProvenanceError("workspace must contain one canonical quinn-proto@0.11.15")
 
 def _require_0318_exception(root: Path, today: date) -> None:
     if today >= EXPIRY_DATE: raise MatrixBackportProvenanceError(f"{ADVISORY} exception expired on {EXPIRY_DATE.isoformat()}")
@@ -620,10 +635,22 @@ def _require_0318_exception(root: Path, today: date) -> None:
     if Counter(x for x in ids if x == ADVISORY) != Counter({ADVISORY: 1}):
         raise MatrixBackportProvenanceError(f"{ADVISORY} must occur exactly once in deny.toml")
 
+def _require_trivy_reference_lock_exception(root: Path, today: date) -> None:
+    if today >= TRIVY_EXCEPTION_EXPIRY_DATE:
+        raise MatrixBackportProvenanceError(
+            f"{TRIVY_ADVISORY} Trivy exception expired on {TRIVY_EXCEPTION_EXPIRY_DATE.isoformat()}"
+        )
+    ignore_file = root / ".trivyignore.yaml"
+    if _sha256_path(ignore_file) != TRIVY_IGNORE_SHA256:
+        raise MatrixBackportProvenanceError(
+            "Trivy ignore file must match the canonical provenance-bound byte hash"
+        )
 def validate(root: Path = ROOT, *, today: date | None = None) -> None:
     """Final acceptance: source custody, final workspace graph, and synchronized exception."""
     root = root.resolve(); validate_sources(root); _require_patch_and_lock(root)
-    _require_0318_exception(root, datetime.now(timezone.utc).date() if today is None else today)
+    current_day = datetime.now(timezone.utc).date() if today is None else today
+    _require_0318_exception(root, current_day)
+    _require_trivy_reference_lock_exception(root, current_day)
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__); result.add_argument("--root", type=Path, default=ROOT)

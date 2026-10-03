@@ -515,6 +515,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 "audit": r"(?m)^    needs: \[trusted-main, advisory-exception-gate\]\s*$",
                 "deny": r"(?m)^    needs: \[trusted-main, advisory-exception-gate\]\s*$",
                 "codeql-gate": r"(?m)^    needs: \[trusted-main, codeql, codeql-javascript\]\s*$",
+                "trivy": r"(?m)^    needs: \[trusted-main, advisory-exception-gate\]\s*$",
             }.get(name, r"(?m)^    needs: trusted-main\s*$")
             self.assertRegex(
                 body,

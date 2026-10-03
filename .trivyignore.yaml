@@ -15,6 +15,14 @@ vulnerabilities:
   - id: RUSTSEC-2026-0194 # quick-xml; build-time vendored wayland scanner only.
   - id: RUSTSEC-2026-0195 # quick-xml; build-time vendored wayland scanner only.
 
+  - id: GHSA-4w2j-m93h-cj5j
+    paths:
+      - SRC/vendor/matrix-sdk/Cargo.lock
+    expired_at: 2026-11-01
+    statement: >-
+      The immutable authenticated Matrix SDK reference lock is not the root
+      workspace resolver; the patched root workspace lock is enforced by the
+      Matrix provenance gate and resolves quinn-proto 0.11.15.
 secrets:
   - id: gcp-service-account
     paths:
