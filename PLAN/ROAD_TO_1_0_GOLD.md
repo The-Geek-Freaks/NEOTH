@@ -18007,3 +18007,8 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Strengthen the existing focused495 case with missing-database no-create, repeated current-database byte identity and exact v10-shaped bytes/schema retained after refusal. Same500 focused and2720 portable identities; no new test count. Independent static review accepted the two-file candidate; local runtimes remain suspended.
 - CLI-reference37152303345@414eacced successfully type-checked all core test targets and built the actual CLI, validating W2301 missing-binding repairs. Original reference artifact11284378480 ZIP7A1264B4... and all3entries/head/internal digest verified. Import the actual generated26-line command reference addition (deadline plus status/reconciliation for canonical and Buddy aliases), never a manual reconstruction.
 - The compile predecessor does not include this new read-only repair. Fresh focused500 execution is still required, followed by native/full qualification. Root Clippy configuration already admits the eight-argument binding method; no lint suppression was introduced. During-provider deadline expiry remains a separate queued source gap, with no ordinary completion or refund claim.
+
+
+## W2302 hosted formatting custody
+- Exact Preflight37153600176 artifact11284099463 (producer1bfcdd06) admitted after ZIP/API/internal digests and both full Git postimages matched; only read-only status/test wrapping changed.
+- Focused500 behavior, full native matrix and release acceptance remain pending. Local BSOD hold remains; no local formatter, compiler, tests or runtime ran.

@@ -133,7 +133,9 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
     )
     .expect_err("legacy status cannot fabricate a v11 deadline projection");
     assert!(
-        legacy_error.to_string().contains("requires authority schema v11"),
+        legacy_error
+            .to_string()
+            .contains("requires authority schema v11"),
         "legacy status error remains controlled and truthful: {legacy_error}"
     );
     assert_eq!(

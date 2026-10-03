@@ -58,5 +58,20 @@
   "lint": "Root clippy.toml threshold8 already covers eight arguments; no lint suppression added",
   "localExecutableValidationRan": false,
   "hosted": "Current read-only repair and all focused500 behaviors pending new producer",
-  "releaseReady": false
+  "releaseReady": false,
+  "hostedFormatting": {
+    "run": 37153600176,
+    "producer": "1bfcdd06ea3b08f93ed42887325bfdd36d55e18b",
+    "artifact": 11284099463,
+    "zipSha256": "F623276B93DF234DE9625D9A6EB3DF4142596393E6294C51677036A768DCD724",
+    "scope": [
+      "SRC/neothd/src/cluster/membership.rs",
+      "SRC/neothd/src/cluster/outbound_tests.rs"
+    ],
+    "verifiedExactPostimages": [
+      "a9dfeb609aa7f16e67964e54a217df29c1644fdc",
+      "557c24bfe647f9c43ab597ae057df6f3c3104a9e"
+    ],
+    "localFormatterRan": false
+  }
 }

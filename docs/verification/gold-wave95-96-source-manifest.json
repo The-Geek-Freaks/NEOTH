@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T20:58:19.1198281Z",
-  "validationStatus": "Read-only status statically repaired; compiled predecessor CLI reference admitted; focused500 pending",
+  "capturedUtc": "2026-10-03T21:08:46.6122570Z",
+  "validationStatus": "W2302 hosted formatting imported; focused500 behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3303,8 +3303,8 @@
     },
     {
       "path": "docs/verification/gold-wave2302-cluster-status-read-only.json",
-      "bytes": 2732,
-      "sha256": "E2789C31A111184B0147A679451F2443E09EDBA41329CEE36BB0AEFBC36CA2B0"
+      "bytes": 3246,
+      "sha256": "8F4217B0DD4D4F848ADD909E62B8E8F7DE8FABAF5D525292CE8F0C53B95A8746"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4448,8 +4448,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2357190,
-      "sha256": "FC235530757F448889C297250DAECF35C59CEE96D93F4063BEDAD0A8122FFDA8"
+      "bytes": 2357576,
+      "sha256": "1964E25F8A067154400A4ADBF157BA5243333B217D977CC486279FDFF7007390"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5873,8 +5873,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 337034,
-      "sha256": "C4656C0920F9700FF19084B12E92428B82E10770E1931BA74B759392932A7663"
+      "bytes": 337046,
+      "sha256": "F6AB5314B693BC2C98468EC02CC62151FFC8B371CE77E313667FCB534178A8B7"
     },
     {
       "path": "SRC/neothd/src/cluster/mod.rs",
@@ -5883,8 +5883,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 58464,
-      "sha256": "4E18936B2FDC7ED683E13F4C2D3E66DD868684290EA756B34959BCCF1FB27C82"
+      "bytes": 58490,
+      "sha256": "E48022508D4523AAAF60D4AD726B5D410698182B729F2C72674612F949F9CF13"
     },
     {
       "path": "SRC/neothd/src/cluster/peer_streams.rs",

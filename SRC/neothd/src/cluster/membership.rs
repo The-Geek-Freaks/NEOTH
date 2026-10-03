@@ -3708,7 +3708,8 @@ impl MembershipStore {
         }
         let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("open membership authority read-only {}", path.display()))?;
-        let schema_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let schema_version: i64 =
+            conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         anyhow::ensure!(
             schema_version == AUTHORITY_SCHEMA_VERSION,
             "outbound task delegation status requires authority schema v{AUTHORITY_SCHEMA_VERSION}; legacy authority was not migrated"
