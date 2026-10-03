@@ -237,12 +237,13 @@ fn worker_result_outbox_reopens_exact_duplicates_and_rejects_foreign_or_conflict
 fn worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps_tombstone() {
     let home = tempfile::tempdir().expect("create worker outbox home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
-    let peer_key = active_peer(&store, "worker-live-offer");
+    let live_now = crate::time::now_unix_i64();
+    let peer_key = active_live_peer(&store, "worker-live-offer", live_now);
     let grant = store
         .admit(
             CarrierKind::Peeroxide,
             &TransportIdentity::parse(peer_key.clone()).expect("parse peer"),
-            NOW,
+            live_now,
         )
         .expect("admit peer");
     let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
@@ -330,12 +331,13 @@ fn worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps
 fn worker_result_outbox_flushes_tail_after_current_session_queue_drains() {
     let home = tempfile::tempdir().expect("create queue-drain home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
-    let peer_key = active_peer(&store, "worker-backlog");
+    let live_now = crate::time::now_unix_i64();
+    let peer_key = active_live_peer(&store, "worker-backlog", live_now);
     let grant = store
         .admit(
             CarrierKind::Peeroxide,
             &TransportIdentity::parse(peer_key.clone()).expect("parse peer"),
-            NOW,
+            live_now,
         )
         .expect("admit peer");
     let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
@@ -353,7 +355,7 @@ fn worker_result_outbox_flushes_tail_after_current_session_queue_drains() {
                 &grant,
                 &format!("{index:064x}"),
                 &body,
-                NOW + index as i64,
+                live_now + index as i64,
             )
             .expect("persist backlog row");
     }

@@ -15,6 +15,7 @@ use crate::n8n_api::auth::AuthCooldown;
 struct ConversationSettlementFixture {
     entered: tokio::sync::Notify,
     attach_entered: tokio::sync::Notify,
+    attach_started: std::sync::atomic::AtomicBool,
     release: tokio::sync::Notify,
     aborted: std::sync::atomic::AtomicBool,
     joined: std::sync::atomic::AtomicBool,
@@ -131,6 +132,8 @@ impl crate::daemon::conversation_registry::ConversationRuntime for ConversationS
         _: crate::daemon::conversation_protocol::ConversationAttachRequest,
         _: &mut dyn crate::daemon::conversation_protocol::ConversationProjectionSink,
     ) -> crate::daemon::conversation_protocol::ConversationResult<()> {
+        self.attach_started
+            .store(true, std::sync::atomic::Ordering::Release);
         self.attach_entered.notify_waiters();
         self.release.notified().await;
         Ok(())
@@ -176,6 +179,7 @@ fn settlement_fixture(abort_fails: bool) -> Arc<ConversationSettlementFixture> {
     Arc::new(ConversationSettlementFixture {
         entered: tokio::sync::Notify::new(),
         attach_entered: tokio::sync::Notify::new(),
+        attach_started: std::sync::atomic::AtomicBool::new(false),
         release: tokio::sync::Notify::new(),
         aborted: std::sync::atomic::AtomicBool::new(false),
         joined: std::sync::atomic::AtomicBool::new(false),
@@ -262,7 +266,16 @@ async fn conversation_attach_failed_abort_after_peer_close_returns_error_from_pr
     ));
     let mut header = [0u8; 96];
     let _ = client.read(&mut header).await.unwrap();
-    fixture.attach_entered.notified().await;
+    loop {
+        let entered = fixture.attach_entered.notified();
+        if fixture
+            .attach_started
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            break;
+        }
+        entered.await;
+    }
     drop(client);
     assert!(task.await.unwrap().is_err());
     assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst));

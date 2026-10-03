@@ -840,7 +840,7 @@ jobs:
           run_case 473 lib media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation media::conversation_scope::tests::token_identity_requires_the_same_scope_and_generation --lib
           run_case 474 lib media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block --lib
           run_case 475 lib media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress --lib
-          run_case 476 lib media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response --lib
+          run_case 476 lib media::tts_cloud::tests::configured_response_file_consumer_preserves_little_endian_pcm_and_reports_generic_mime media::tts_cloud::tests::configured_response_file_consumer_preserves_little_endian_pcm_and_reports_generic_mime --lib
           run_case 477 lib media::tts_cloud::tests::only_azure_raw_pcm_has_a_proved_playback_format media::tts_cloud::tests::only_azure_raw_pcm_has_a_proved_playback_format --lib
           run_case 478 lib media::tts_cloud::tests::configured_local_wav_response_normalizes_through_the_existing_decoder media::tts_cloud::tests::configured_local_wav_response_normalizes_through_the_existing_decoder --lib
           run_case 479 lib media::tts_cloud::tests::configured_playback_request_format_keeps_local_wav_available media::tts_cloud::tests::configured_playback_request_format_keeps_local_wav_available --lib

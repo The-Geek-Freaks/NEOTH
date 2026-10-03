@@ -17977,3 +17977,10 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Original failure artifact11283200674 ZIPA6F30C6A... was verified against API digest and producer. No local compiler/test execution; fresh focused494 validation remains pending. This file does not alter the live-audio source catalog.
 
 - W2298 formatter follow-up: verified original Preflight37147339303 artifact11282916287 and exact Git postimage; imported its one-line pattern wrap only. No local rustfmt. Fresh fast gates and focused494 remain required.
+
+## W2299 - Focused failure repairs (2026-10-03)
+
+- Focused37147699156@29aa35bd executed all494 cases:484 passed and10 failed. The real CLI built; the public BlueBubbles CLI scenario was skipped after the focused failure. Remaining daemon/GoogleChat steps succeeded per job metadata, without whole-run acceptance.
+- Fix the two-reference quiescent supervisor invariant while retaining live-consumer/pending-settlement rejection. Close the fixture attach-start lost-notify race with an atomic latch. Use current membership time for two live outbox fixtures without weakening expiry checks.
+- Record seven statically reviewed local completion callsites in the cost guard using its hosted callsite-context digest. Correct raw little-endian PCM metadata from audio/L16 to audio/pcm and strengthen its existing file-consumer case with asymmetric byte preservation; rename the exact registration consistently.
+- All five isolated candidates independently reviewed; source integration only. Portable2714,focused494,liveAudio52 registrations remain unchanged in count. No local executable validation; fresh hosted acceptance and native/release qualification remain open.

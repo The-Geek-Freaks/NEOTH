@@ -9055,6 +9055,15 @@ mod tests {
                 "4ce0b460cb469820624602a02fd5d70e1442eb3d94548b1307f99fb61fdf25c8",
             ),
             (
+                "media/conversation_loop.rs",
+                7,
+                // Six calls complete the already-durable microphone-open
+                // terminal authority; the remaining call marks the local CPAL
+                // playback queue complete. Neither receiver implements the
+                // Provider boundary or can invoke a remote model.
+                "161e1748c87fd4b32597403177f51fdb76e9a55253a8a15fcdf54aa76b842080",
+            ),
+            (
                 "memory/entities.rs",
                 1,
                 "5ab7e44d148dc4e3f8121e7efc4dbe0e86cf5ae0fe086f30c52fbc1403f3d175",

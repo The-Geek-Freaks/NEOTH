@@ -1,0 +1,71 @@
+{
+  "schema": "neoth-gold-wave2299-focused-failure-repairs/v1",
+  "base": "29aa35bd8574b16530492a486ea6319b6fea30a7",
+  "failedRun": 37147699156,
+  "previousReceipts": {
+    "bluebubblesPublicCli": "skipped",
+    "failed": 10,
+    "wholeRun": "failure",
+    "otherProductSteps": "success per job API, not independent artifact acceptance",
+    "started": 494,
+    "executed": 494,
+    "actualCliBuild": "success",
+    "passed": 484
+  },
+  "failedCoreArtifact": 11282204207,
+  "originalZipSha256": "6EE0757BB34D4E1678B7B4728F518262B427BB6A53ECDB5308BF02588CB37AF1",
+  "sources": [
+    {
+      "base": "29522FC76DDA62D508B5C901F3167E26185C2BF695D4B8731F59B75A99B0BA79",
+      "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "dir": "wave2299-conversation-failures",
+      "candidate": "B1AE9D4FCCFACD291EB08529B3F7B9789364550D2B02CB60CFDDB90016941C7A"
+    },
+    {
+      "base": "BE815D79677FE4FAE8DC26D36FEB86C8B156BA16F66BB9F0FC6DDCA9028F50AD",
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "dir": "wave2299-rpc-abort",
+      "candidate": "6D0787B85476D3DCC80334DF49A38D21CA1B1B2F3C641F8BC41330987EB6DCB7"
+    },
+    {
+      "base": "F5EFED1E6237A69B685A0A077DC0E0908B3D9148316B1F95F7A154CE586843B7",
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "dir": "wave2299-cluster-fixtures",
+      "candidate": "DD432BF8ACAF5BC7E9A113312D0C1098AADFBDE32B1A2114C5A0AABC76BF287B"
+    },
+    {
+      "base": "FDD6D898AA04BCD6B63049CEB0EA83591023A7F86CC03960ED36B61189E2B94F",
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "dir": "wave2299-cost-guard",
+      "candidate": "9D09497CFDD4543DEF51867FB2545CFE744C3A2D6CF56DCE0209534C6E3C72E1"
+    },
+    {
+      "base": "725E0CC4730ACB04774A2BAE223373208C28F6C724AAC8CAD694EC34FF9E2E4B",
+      "path": "SRC/neothd/src/media/tts_cloud.rs",
+      "dir": "wave2299-tts-mime/revision2",
+      "candidate": "045E07076EFBE455EF232BB052A503380C2DA44D93568BE3179AF351C574A169"
+    }
+  ],
+  "independentReviewSha256": "5D0EC43802EB6668293A41D86CCB71FC8DA0D1FB9FB5285BADADDC2A538F8621",
+  "repairs": [
+    "Quiescent authorized text-turn supervisor owns two references, including retained cleanup worker; third consumer and pending settlement still prevent shutdown",
+    "Test-only attach-start latch closes a concrete lost-notification race; hosted timeout was consistent with this race, not a definitive interleaving trace",
+    "Two live outbox fixtures use one current grant clock instead of historical expired membership",
+    "Cost guard records seven reviewed local completion callsites using the hosted callsite-context digest, not whole-file SHA",
+    "PcmS16le file MIME becomes audio/pcm; little-endian payload bytes and existing ownership/validation remain unchanged"
+  ],
+  "mimeReference": "https://www.rfc-editor.org/rfc/rfc2586",
+  "testIdentityRename": {
+    "new": "media::tts_cloud::tests::configured_response_file_consumer_preserves_little_endian_pcm_and_reports_generic_mime",
+    "old": "media::tts_cloud::tests::configured_response_file_consumer_commits_the_authoritative_validated_response"
+  },
+  "registrations": {
+    "liveAudio": 52,
+    "newTests": 0,
+    "portable": 2714,
+    "focused": 494
+  },
+  "localExecutableValidationRan": false,
+  "hosted": "pending fresh producer",
+  "releaseReady": false
+}

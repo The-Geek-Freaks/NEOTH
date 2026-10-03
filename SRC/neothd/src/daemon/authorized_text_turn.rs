@@ -200,7 +200,10 @@ impl AuthorizedTextTurnSupervisor {
     /// then performs the actual join during `GuiChatRuntime::close_and_drain`
     /// before WAL shutdown; this adapter never owns or detaches that task.
     pub(crate) async fn shutdown_and_join(self) -> GuiChatBridgeResult<()> {
-        if Arc::strong_count(&self.owner) != 1 {
+        // The retained cleanup worker owns one stable reference in addition
+        // to this supervisor. Any third reference is an active consumer and
+        // must keep shutdown fail-closed until its terminal is observed.
+        if Arc::strong_count(&self.owner) != 2 {
             return Err(GuiChatBridgeError::invalid(
                 "authorized_text_turn_shutdown_with_live_consumer",
             ));

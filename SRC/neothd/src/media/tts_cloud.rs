@@ -1141,7 +1141,10 @@ fn open_tts_audit_writer(
 
 pub fn format_mime(format: TtsFormat) -> &'static str {
     match format {
-        TtsFormat::PcmS16le => "audio/L16",
+        // `PcmS16le` is an explicitly little-endian local/file contract.
+        // RFC 2586 `audio/L16` instead denotes network-byte-order samples and
+        // requires a `rate` parameter, so it must not label these bytes.
+        TtsFormat::PcmS16le => "audio/pcm",
         TtsFormat::Wav => "audio/wav",
         TtsFormat::Mp3 => "audio/mpeg",
         TtsFormat::Opus => "audio/opus",
@@ -1780,14 +1783,16 @@ mod tests {
     }
 
     #[test]
-    fn configured_response_file_consumer_commits_the_authoritative_validated_response() {
+    fn configured_response_file_consumer_preserves_little_endian_pcm_and_reports_generic_mime() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("voice.pcm");
         let configured = ConfiguredTtsResponse {
             provider: TtsProviderKind::AzureTts,
             voice: "operator-voice".to_owned(),
             response: TtsResponse {
-                audio_bytes: vec![4, 2, 4, 2],
+                // Non-symmetric bytes bind this file path to the explicitly
+                // little-endian `PcmS16le` contract (0x1234, -32768).
+                audio_bytes: vec![0x34, 0x12, 0x00, 0x80],
                 format: TtsFormat::PcmS16le,
                 duration_ms: 37,
             },
@@ -1799,11 +1804,12 @@ mod tests {
 
         let result = configured.commit_to_file(&target).unwrap();
 
-        assert_eq!(std::fs::read(&target).unwrap(), vec![4, 2, 4, 2]);
+        assert_eq!(std::fs::read(&target).unwrap(), vec![0x34, 0x12, 0x00, 0x80]);
         assert_eq!(result.provider, "azure_tts");
         assert_eq!(result.voice, "operator-voice");
         assert_eq!(result.bytes, 4);
         assert_eq!(result.mime, "audio/pcm");
+        assert_eq!(format_mime(TtsFormat::PcmS16le), "audio/pcm");
         assert_eq!(result.duration_ms, 37);
     }
 
