@@ -3698,12 +3698,21 @@ impl MembershipStore {
     /// Read-only exact-operation projection.  It deliberately does not infer
     /// expiry, reoffer work, or touch the durable state.
     pub fn task_delegate_outbound_status_read_only(
-        home: &std::path::Path,
+        home: &Path,
         operation_id: &str,
     ) -> Result<Option<OutboundTaskDelegateStatus>> {
         validate_task_delegate_operation_id(operation_id)?;
-        let store = Self::open(home)?;
-        let conn = store.connection()?;
+        let path = home.join(AUTHORITY_DB_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open membership authority read-only {}", path.display()))?;
+        let schema_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        anyhow::ensure!(
+            schema_version == AUTHORITY_SCHEMA_VERSION,
+            "outbound task delegation status requires authority schema v{AUTHORITY_SCHEMA_VERSION}; legacy authority was not migrated"
+        );
         conn.query_row(
             "SELECT operation_id,task_id,transport_identity,deadline_unix,state,updated_at FROM task_delegate_outbound_operations WHERE operation_id=?1",
             [operation_id],

@@ -299,9 +299,16 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--prompt <PROMPT>`
 - `--model-hint <MODEL_HINT>`
 - `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Strict completion ceiling forwarded to the authenticated peer. The peer authorizes its own provider and rejects an unsupported cap
+- `--deadline-unix <UNIX_SECONDS>` — Required absolute UTC Unix-second deadline; past/zero values fail before any daemon/peer/provider effect
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+
+##### `neoth buddy cluster task-delegate outbound-mark-indeterminate`
+
+Explicitly record an elapsed unresolved operation as indeterminate via the authenticated daemon.  It never retries/redelegates/refunds
+
+- `<OPERATION_ID>`
 
 ##### `neoth buddy cluster task-delegate outbound-reset`
 
@@ -340,6 +347,12 @@ Read one exact operator-owned outbound delegation route
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+
+##### `neoth buddy cluster task-delegate outbound-status`
+
+Read one exact persisted outbound operation.  This is a pure local projection; it does not mark expiry, contact a peer, or retry work
+
+- `<OPERATION_ID>`
 
 ##### `neoth buddy cluster task-delegate scope-reset`
 
@@ -1013,9 +1026,16 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--prompt <PROMPT>`
 - `--model-hint <MODEL_HINT>`
 - `--max-output-tokens <MAX_OUTPUT_TOKENS>` — Strict completion ceiling forwarded to the authenticated peer. The peer authorizes its own provider and rejects an unsupported cap
+- `--deadline-unix <UNIX_SECONDS>` — Required absolute UTC Unix-second deadline; past/zero values fail before any daemon/peer/provider effect
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+
+#### `neoth cluster task-delegate outbound-mark-indeterminate`
+
+Explicitly record an elapsed unresolved operation as indeterminate via the authenticated daemon.  It never retries/redelegates/refunds
+
+- `<OPERATION_ID>`
 
 #### `neoth cluster task-delegate outbound-reset`
 
@@ -1054,6 +1074,12 @@ Read one exact operator-owned outbound delegation route
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+
+#### `neoth cluster task-delegate outbound-status`
+
+Read one exact persisted outbound operation.  This is a pure local projection; it does not mark expiry, contact a peer, or retry work
+
+- `<OPERATION_ID>`
 
 #### `neoth cluster task-delegate scope-reset`
 

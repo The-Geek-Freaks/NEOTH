@@ -21,6 +21,20 @@ fn scope() -> TaskDelegateScope {
 
 #[test]
 fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconciliation() {
+    let missing_home = tempfile::tempdir().expect("missing home");
+    assert_eq!(
+        MembershipStore::task_delegate_outbound_status_read_only(
+            missing_home.path(),
+            "op-deadline-status",
+        )
+        .expect("missing authority is an absent status"),
+        None
+    );
+    assert!(
+        !missing_home.path().join("cluster-membership.db").exists(),
+        "a read-only status must not create an authority database"
+    );
+
     let home = tempfile::tempdir().expect("home");
     let store = MembershipStore::open(home.path()).expect("store");
     let exact = scope();
@@ -37,6 +51,9 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
             "a".repeat(64),
         )
         .expect("persist deadline before queue");
+    let authority_path = store.path().to_path_buf();
+    drop(store);
+    let before_current_reads = std::fs::read(&authority_path).expect("current authority bytes");
     let first =
         MembershipStore::task_delegate_outbound_status_read_only(home.path(), "op-deadline-status")
             .expect("first pure read")
@@ -47,6 +64,12 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
             .expect("status");
     assert_eq!(first, second);
     assert_eq!(first.state, OutboundTaskDelegateState::Prepared);
+    assert_eq!(
+        std::fs::read(&authority_path).expect("authority bytes after pure reads"),
+        before_current_reads,
+        "current operation status reads must not mutate authority bytes"
+    );
+    let store = MembershipStore::open(home.path()).expect("reopen for explicit mutation");
     assert!(
         store
             .mark_task_delegate_outbound_indeterminate("op-deadline-status", NOW + 4)
@@ -65,6 +88,66 @@ fn outbound_deadline_status_is_read_only_until_explicit_authenticated_reconcilia
             .unwrap()
             .state,
         OutboundTaskDelegateState::Indeterminate
+    );
+
+    let legacy_home = tempfile::tempdir().expect("legacy home");
+    let legacy_store = MembershipStore::open(legacy_home.path()).expect("legacy fixture store");
+    let legacy_path = legacy_store.path().to_path_buf();
+    drop(legacy_store);
+    let legacy_conn = rusqlite::Connection::open(&legacy_path).expect("legacy fixture connection");
+    legacy_conn
+        .execute_batch(
+            "DROP TABLE task_delegate_outbound_results;
+             ALTER TABLE task_delegate_outbound_operations RENAME TO task_delegate_outbound_operations_v11;
+             CREATE TABLE task_delegate_outbound_operations (
+                 operation_id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL UNIQUE,
+                 transport_identity TEXT NOT NULL,
+                 skill_id TEXT NOT NULL,
+                 channel_id TEXT NOT NULL,
+                 account_id TEXT NOT NULL,
+                 state TEXT NOT NULL CHECK(state IN ('prepared','accepted','resulted','indeterminate')),
+                 created_at INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             DROP TABLE task_delegate_outbound_operations_v11;
+             CREATE INDEX task_delegate_outbound_operations_peer_task
+                 ON task_delegate_outbound_operations(transport_identity,task_id);
+             CREATE TABLE task_delegate_outbound_results (
+                 operation_id TEXT PRIMARY KEY REFERENCES task_delegate_outbound_operations(operation_id),
+                 task_id TEXT NOT NULL UNIQUE,
+                 transport_identity TEXT NOT NULL,
+                 body TEXT NOT NULL,
+                 received_at INTEGER NOT NULL
+             );
+             CREATE UNIQUE INDEX task_delegate_outbound_results_peer_task
+                 ON task_delegate_outbound_results(transport_identity,task_id);
+             PRAGMA user_version=10;",
+        )
+        .expect("exact v10 fixture");
+    drop(legacy_conn);
+    let legacy_before = std::fs::read(&legacy_path).expect("v10 authority bytes");
+    let legacy_error = MembershipStore::task_delegate_outbound_status_read_only(
+        legacy_home.path(),
+        "op-deadline-status",
+    )
+    .expect_err("legacy status cannot fabricate a v11 deadline projection");
+    assert!(
+        legacy_error.to_string().contains("requires authority schema v11"),
+        "legacy status error remains controlled and truthful: {legacy_error}"
+    );
+    assert_eq!(
+        std::fs::read(&legacy_path).expect("v10 authority bytes after status"),
+        legacy_before,
+        "legacy status must not migrate or otherwise rewrite authority bytes"
+    );
+    let legacy_conn = rusqlite::Connection::open(&legacy_path).expect("verify v10 schema");
+    assert_eq!(
+        legacy_conn
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .expect("legacy schema version"),
+        10,
+        "legacy status must not advance schema"
     );
 }
 

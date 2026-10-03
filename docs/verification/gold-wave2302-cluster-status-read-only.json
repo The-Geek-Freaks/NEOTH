@@ -1,0 +1,62 @@
+{
+  "schema": "neoth-gold-wave2302-cluster-status-read-only/v1",
+  "base": "414eacced1f0d5f8565a715785a041df904671ee",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "base_sha256": "700c2dd4230da07765dddfed5c3ff05e5914f3fb2c8739da821f0d8f6fe105c3",
+      "candidate_sha256": "c4656c0920f9700ff19084b12e92428b82e10770e1931ba74b759392932a7663"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "base_sha256": "0299c17f100c366a7e273660046324ac435729371ca448f57cbaf756f3167039",
+      "candidate_sha256": "4e18936b2fdc7ed683e13f4c2d3e66dd868684290ea756b34959bccf1fb27c82"
+    }
+  ],
+  "independentReviewSha256": "B435E782E868ED87D32F8DAA6315F95D7CAA1EC8517A61A7A914CA5D55E06BB4",
+  "previousDefect": "Status used write-capable Self::open, migrating authority and importing legacy state despite pure-read promise",
+  "repair": "Missing DB yields None before open; existing DB opens SQLITE_OPEN_READ_ONLY; schema11 required, legacy rejected without mutation",
+  "regression": "Existing focused495 now checks missing DB, current DB byte identity and controlled legacy v10 error with unchanged bytes and version",
+  "focusedCases": 500,
+  "portableRegistrations": 2720,
+  "newTests": 0,
+  "cliReference": {
+    "run": 37152303345,
+    "producer": "414eacced1f0d5f8565a715785a041df904671ee",
+    "conclusion": "success",
+    "artifact": 11284378480,
+    "originalZipSha256": "7A1264B48CCA1F64DE460CE980979886EFCB1B097B316994DC1E85DF201EB7C7",
+    "entries": [
+      {
+        "path": "SHA256SUMS",
+        "bytes": 82,
+        "sha256": "E0B86076A44976F20540F1C0131E4F702C76D051084D458D22EF3E6C74044B0C"
+      },
+      {
+        "path": "cli-commands.md",
+        "bytes": 267013,
+        "sha256": "872DD944285D461A090261411FD47B4020E60AAAB65F9EFE79CA77C9795E50D3"
+      },
+      {
+        "path": "source-head.txt",
+        "bytes": 41,
+        "sha256": "91151526A2F73A430EC3620352006459952B6AB90134C8A589BE2F2AF0950645"
+      }
+    ],
+    "generatedReferenceSha256": "872DD944285D461A090261411FD47B4020E60AAAB65F9EFE79CA77C9795E50D3",
+    "oldReferenceSha256": "BA169F7A998F94C6B6F7B2DF38B9C2239E544714D7FE9DB58FB392B37C8FC9A7",
+    "localRuntimeRan": false
+  },
+  "compilePredecessor": {
+    "run": 37152303345,
+    "producer": "414eacced1f0d5f8565a715785a041df904671ee",
+    "actualCliBuild": "success",
+    "coreTestTypeCheck": "success",
+    "referenceExport": "success",
+    "newReadOnlyRepairIncluded": false
+  },
+  "lint": "Root clippy.toml threshold8 already covers eight arguments; no lint suppression added",
+  "localExecutableValidationRan": false,
+  "hosted": "Current read-only repair and all focused500 behaviors pending new producer",
+  "releaseReady": false
+}

@@ -23,7 +23,7 @@
   "actualCliBuild": "skipped on previous run",
   "referenceExport": "skipped on previous run",
   "localExecutableValidationRan": false,
-  "hosted": "pending fresh producer",
+  "hosted": "Missing bindings verified by successful core-test typecheck and actual CLI build on414eacced; behavior acceptance remains separate",
   "newTests": 0,
   "releaseReady": false,
   "hostedFormat": {
@@ -38,5 +38,13 @@
     ],
     "localFormatterRan": false,
     "postimage": "46addf32e2e263587655057e6f8352888386ba12"
+  },
+  "compileVerification": {
+    "run": 37152303345,
+    "producer": "414eacced1f0d5f8565a715785a041df904671ee",
+    "actualCliBuild": "success",
+    "coreTestTypeCheck": "success",
+    "referenceExport": "success",
+    "newReadOnlyRepairIncluded": false
   }
 }

@@ -182,7 +182,9 @@ documents paths whose audit is best-effort or log-only.
   exact operation and task id, a permitted peer scope, and `--deadline-unix` as a positive
   absolute UTC Unix-second deadline. A zero or elapsed deadline is rejected before daemon,
   peer, or provider work. `outbound-status` is a pure local read: it never marks expiry,
-  contacts a peer, dispatches, retries, re-delegates, or refunds work. For one elapsed,
+  contacts a peer, dispatches, retries, re-delegates, or refunds work. A missing authority
+  returns no status; an older schema returns a controlled error until the authority owner
+  migrates it. The status command itself never creates or migrates the database. For one elapsed,
   unresolved operation, `outbound-mark-indeterminate` is explicit authenticated daemon
   reconciliation; it neither retries nor re-delegates or refunds, and a late first result
   cannot settle the indeterminate operation. Cluster task delegation uses protocol v9 and

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T20:34:02.2105598Z",
-  "validationStatus": "W2301 exact hosted import formatting applied; compile pending",
+  "capturedUtc": "2026-10-03T20:58:19.1198281Z",
+  "validationStatus": "Read-only status statically repaired; compiled predecessor CLI reference admitted; focused500 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -268,8 +268,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 265857,
-      "sha256": "BA169F7A998F94C6B6F7B2DF38B9C2239E544714D7FE9DB58FB392B37C8FC9A7"
+      "bytes": 267013,
+      "sha256": "872DD944285D461A090261411FD47B4020E60AAAB65F9EFE79CA77C9795E50D3"
     },
     {
       "path": "docs/cli-reference.md",
@@ -1403,8 +1403,8 @@
     },
     {
       "path": "docs/operator-journey.md",
-      "bytes": 18244,
-      "sha256": "D6AAAD6EE4D24C564CBA05FF5587C0699AA473D4423192FFB018FDD1100984BD"
+      "bytes": 18435,
+      "sha256": "020312492A8CF6A6BF17661D970B7B100D023FF417C4DD08B583D4BA86B7666F"
     },
     {
       "path": "docs/paperless-readiness.md",
@@ -3298,8 +3298,13 @@
     },
     {
       "path": "docs/verification/gold-wave2301-cluster-compile.json",
-      "bytes": 1574,
-      "sha256": "4BE2BDEF1482D906CC002407F8EE93016FBE0AA2AA13D49143336BEAF9BC94B1"
+      "bytes": 1940,
+      "sha256": "9A615AE748C3BB261BEF8E22E219351052B6F9B98A9C545D55DF34EAF01F5F21"
+    },
+    {
+      "path": "docs/verification/gold-wave2302-cluster-status-read-only.json",
+      "bytes": 2732,
+      "sha256": "E2789C31A111184B0147A679451F2443E09EDBA41329CEE36BB0AEFBC36CA2B0"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4443,8 +4448,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2355613,
-      "sha256": "C0563E2F04A0250606404ECBBB5B41F76460A939921CD9E50F76E245F04E6E17"
+      "bytes": 2357190,
+      "sha256": "FC235530757F448889C297250DAECF35C59CEE96D93F4063BEDAD0A8122FFDA8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5868,8 +5873,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 336495,
-      "sha256": "700C2DD4230DA07765DDDFED5C3FF05E5914F3FB2C8739DA821F0D8F6FE105C3"
+      "bytes": 337034,
+      "sha256": "C4656C0920F9700FF19084B12E92428B82E10770E1931BA74B759392932A7663"
     },
     {
       "path": "SRC/neothd/src/cluster/mod.rs",
@@ -5878,8 +5883,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 54592,
-      "sha256": "0299C17F100C366A7E273660046324AC435729371CA448F57CBAF756F3167039"
+      "bytes": 58464,
+      "sha256": "4E18936B2FDC7ED683E13F4C2D3E66DD868684290EA756B34959BCCF1FB27C82"
     },
     {
       "path": "SRC/neothd/src/cluster/peer_streams.rs",
