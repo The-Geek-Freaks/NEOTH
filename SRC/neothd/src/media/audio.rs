@@ -339,6 +339,144 @@ pub(crate) fn decode_file_to_pcm(
         .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))
 }
 
+/// Owned, decoder-proven PCM for a response already admitted under the
+/// caller's audio-work lease. The shared decoder always produces 16 kHz mono.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DecodedPcmS16le {
+    pub(crate) audio_bytes: Vec<u8>,
+    pub(crate) sample_rate_hz: u32,
+    pub(crate) channels: u16,
+}
+
+/// Decode an in-memory WAV response through the existing bounded Symphonia
+/// path and return its actual normalized 16 kHz mono s16le representation.
+///
+/// The caller supplies an already-held audio work permit; this helper never
+/// reacquires the global lease and never stages provider bytes to a file.
+/// Blocking — call from the existing audio owner thread or `spawn_blocking`.
+pub(crate) fn decode_wav_bytes_to_pcm_s16le(
+    bytes: Vec<u8>,
+    _permit: &AudioWorkPermit,
+) -> anyhow::Result<DecodedPcmS16le> {
+    enforce_audio_byte_ceiling(bytes.len() as u64)
+        .map_err(|error| anyhow::anyhow!("bound TTS WAV response: {error}"))?;
+    validate_pcm_s16le_wav_container(&bytes)
+        .map_err(|error| anyhow::anyhow!("validate TTS WAV response: {error}"))?;
+    let decoded = decode_from_bytes(bytes, "audio/wav")
+        .map_err(|error| anyhow::anyhow!("decode TTS WAV response: {error}"))?;
+    let audio_bytes = normalized_samples_to_s16le(decoded.samples)?;
+    if audio_bytes.is_empty() {
+        return Err(anyhow::anyhow!("decoded TTS WAV response contains no PCM frames"));
+    }
+    Ok(DecodedPcmS16le {
+        audio_bytes,
+        sample_rate_hz: TARGET_SAMPLE_RATE,
+        channels: 1,
+    })
+}
+
+/// Convert the bounded, normalized decoder output to owned s16le frames.
+fn normalized_samples_to_s16le(samples: Vec<f32>) -> anyhow::Result<Vec<u8>> {
+    if samples.is_empty() {
+        return Err(anyhow::anyhow!("decoded TTS WAV response contains no PCM frames"));
+    }
+    let byte_len = samples
+        .len()
+        .checked_mul(size_of::<i16>())
+        .ok_or_else(|| anyhow::anyhow!("decoded TTS WAV PCM byte length overflow"))?;
+    let mut audio_bytes = Vec::new();
+    audio_bytes
+        .try_reserve_exact(byte_len)
+        .map_err(|error| anyhow::anyhow!("reserve decoded TTS WAV PCM: {error}"))?;
+    for sample in samples {
+        if !sample.is_finite() {
+            return Err(anyhow::anyhow!("decoded TTS WAV PCM contains a non-finite sample"));
+        }
+        let pcm = (sample.clamp(-1.0, 1.0) * 32_767.0).round() as i16;
+        audio_bytes.extend_from_slice(&pcm.to_le_bytes());
+    }
+    Ok(audio_bytes)
+}
+
+/// Admit only an actual RIFF/WAVE PCM s16le payload before the generic
+/// decoder probes it. This keeps a declared WAV response from becoming an
+/// MP3/Opus auto-probe path and rejects an empty `data` chunk before a typed
+/// playback result can be made.
+fn validate_pcm_s16le_wav_container(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("expected a RIFF/WAVE container".to_string());
+    }
+    let riff_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    if riff_size
+        .checked_add(8)
+        .filter(|declared| *declared == bytes.len())
+        .is_none()
+    {
+        return Err("RIFF container length does not match its payload".to_string());
+    }
+    let mut cursor = 12usize;
+    let mut format_seen = false;
+    let mut pcm_block_align = None;
+    let mut data_seen = false;
+    while cursor < bytes.len() {
+        let chunk_header_end = cursor
+            .checked_add(8)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "truncated WAV chunk header".to_string())?;
+        let chunk_id = &bytes[cursor..cursor + 4];
+        let chunk_len = u32::from_le_bytes(bytes[cursor + 4..chunk_header_end].try_into().unwrap()) as usize;
+        let data_start = chunk_header_end;
+        let data_end = data_start
+            .checked_add(chunk_len)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "truncated WAV chunk payload".to_string())?;
+        if chunk_id == b"fmt " {
+            if format_seen || chunk_len < 16 {
+                return Err("invalid WAV fmt chunk".to_string());
+            }
+            let format = u16::from_le_bytes(bytes[data_start..data_start + 2].try_into().unwrap());
+            let channels = u16::from_le_bytes(bytes[data_start + 2..data_start + 4].try_into().unwrap());
+            let sample_rate = u32::from_le_bytes(bytes[data_start + 4..data_start + 8].try_into().unwrap());
+            let byte_rate = u32::from_le_bytes(bytes[data_start + 8..data_start + 12].try_into().unwrap());
+            let block_align = u16::from_le_bytes(bytes[data_start + 12..data_start + 14].try_into().unwrap());
+            let bits_per_sample = u16::from_le_bytes(bytes[data_start + 14..data_start + 16].try_into().unwrap());
+            let expected_align = channels
+                .checked_mul(2)
+                .ok_or_else(|| "WAV channel block alignment overflow".to_string())?;
+            let expected_rate = sample_rate
+                .checked_mul(u32::from(expected_align))
+                .ok_or_else(|| "WAV byte rate overflow".to_string())?;
+            if format != 1
+                || channels == 0
+                || channels as usize > AUDIO_DECODE_LIMITS.channels
+                || !(super::resampler::MIN_SAMPLE_RATE_HZ..=super::resampler::MAX_SAMPLE_RATE_HZ)
+                    .contains(&sample_rate)
+                || bits_per_sample != 16
+                || block_align != expected_align
+                || byte_rate != expected_rate
+            {
+                return Err("WAV must be bounded PCM s16le".to_string());
+            }
+            format_seen = true;
+            pcm_block_align = Some(usize::from(block_align));
+        } else if chunk_id == b"data" {
+            let block_align = pcm_block_align.ok_or_else(|| "WAV data precedes fmt".to_string())?;
+            if data_seen || chunk_len == 0 || !chunk_len.is_multiple_of(block_align) {
+                return Err("WAV data must contain complete non-empty PCM frames".to_string());
+            }
+            data_seen = true;
+        }
+        cursor = data_end
+            .checked_add(chunk_len % 2)
+            .filter(|next| *next <= bytes.len())
+            .ok_or_else(|| "truncated WAV chunk padding".to_string())?;
+    }
+    if !format_seen || !data_seen {
+        return Err("WAV requires one PCM fmt chunk and one non-empty data chunk".to_string());
+    }
+    Ok(())
+}
+
 struct DecodedAudio {
     /// 16 kHz mono f32 samples, range [-1.0, 1.0].
     samples: Vec<f32>,
@@ -899,6 +1037,37 @@ mod tests {
             (15_900..=16_100).contains(&count),
             "expected ~16000 samples, got {count}"
         );
+    }
+
+    #[tokio::test]
+    async fn in_memory_tts_wav_decoder_returns_bounded_pcm_and_rejects_bad_inputs() {
+        let permit = acquire_audio_work_permit().await.expect("audio permit");
+        let decoded = decode_wav_bytes_to_pcm_s16le(synth_wav_tone(), &permit)
+            .expect("decode valid TTS WAV");
+        assert_eq!(decoded.sample_rate_hz, TARGET_SAMPLE_RATE);
+        assert_eq!(decoded.channels, 1);
+        assert!(!decoded.audio_bytes.is_empty());
+        assert!(decoded.audio_bytes.len().is_multiple_of(2));
+
+        assert!(decode_wav_bytes_to_pcm_s16le(vec![b'R', b'I', b'F', b'F'], &permit).is_err());
+        assert!(decode_wav_bytes_to_pcm_s16le(b"ID3\x04\0\0not-wav".to_vec(), &permit).is_err());
+        let mut header_only = synth_wav_tone();
+        header_only[4..8].copy_from_slice(&36u32.to_le_bytes());
+        header_only[40..44].copy_from_slice(&0u32.to_le_bytes());
+        header_only.truncate(44);
+        assert!(decode_wav_bytes_to_pcm_s16le(header_only, &permit).is_err());
+        assert!(
+            decode_wav_bytes_to_pcm_s16le(
+                vec![0; usize::try_from(MAX_AUDIO_BYTES + 1).unwrap()],
+                &permit,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn normalized_tts_pcm_rejects_an_impossible_empty_decoder_result() {
+        assert!(normalized_samples_to_s16le(Vec::new()).is_err());
     }
 
     #[test]

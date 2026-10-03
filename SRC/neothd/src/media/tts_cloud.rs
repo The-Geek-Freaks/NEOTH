@@ -594,19 +594,168 @@ pub struct TtsFileResult {
     pub out_path: String,
 }
 
-/// Canonical production entry point used by both `neoth tts speak` and the
-/// deprecated `tools::tts` compatibility layer. It performs provider dispatch,
-/// cloud consent, credential resolution, metadata-only audit, response-format
-/// validation, fallback, and a crash-safe atomic output commit.
-pub async fn synthesize_to_file_at(
+/// A validated response produced by the canonical configured TTS transaction.
+///
+/// This intentionally stays crate-private. It carries the exact provider and
+/// voice selected after fallback together with the validated bytes, so file and
+/// future playback consumers cannot reconstruct dispatch results themselves.
+pub(crate) struct ConfiguredTtsResponse {
+    provider: TtsProviderKind,
+    voice: String,
+    pub(crate) response: TtsResponse,
+    /// Present only when the selected provider's raw-PCM wire contract proves
+    /// the returned interleaved s16le rate and channel count. This is separate
+    /// from `TtsRequest::sample_rate_hz`, which providers may ignore.
+    pub(crate) pcm_s16le: Option<VerifiedPcmS16leFormat>,
+}
+
+/// Source metadata proved by the selected provider's raw PCM wire contract.
+///
+/// This intentionally does not describe a device output format. The concrete
+/// playback owner must either convert this source format or reject its device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedPcmS16leFormat {
+    pub(crate) sample_rate_hz: u32,
+    pub(crate) channels: u16,
+}
+
+/// Complete raw PCM handoff for the later native playback owner.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedPcmS16leResponse {
+    pub(crate) audio_bytes: Vec<u8>,
+    pub(crate) sample_rate_hz: u32,
+    pub(crate) channels: u16,
+}
+
+impl ConfiguredTtsResponse {
+    /// The existing CLI/file consumer. The response remains authoritative for
+    /// bytes, format, and duration; no second provider call or format decision
+    /// is made while committing the target.
+    fn commit_to_file(self, out_path: &std::path::Path) -> Result<TtsFileResult, String> {
+        write_tts_output_atomic(out_path, &self.response.audio_bytes)?;
+        Ok(TtsFileResult {
+            provider: self.provider.as_str().to_string(),
+            voice: self.voice,
+            bytes: self.response.audio_bytes.len(),
+            mime: format_mime(self.response.format).to_string(),
+            duration_ms: self.response.duration_ms,
+            out_path: out_path.display().to_string(),
+        })
+    }
+
+    /// Normalize this configured response into truthful raw PCM for playback.
+    ///
+    /// Raw PCM is accepted only with provider-proven metadata. Existing WAV
+    /// responses are decoded through the established bounded Symphonia path
+    /// under the caller's existing audio-work lease; no provider bytes are
+    /// staged to disk and no lease is reacquired. Encoded responses stay
+    /// rejected until a separately owned decoder path is introduced.
+    pub(crate) fn into_verified_pcm_s16le(
+        self,
+        permit: &crate::media::audio::AudioWorkPermit,
+    ) -> Result<VerifiedPcmS16leResponse, String> {
+        match self.response.format {
+            TtsFormat::PcmS16le => {
+                let format = self.pcm_s16le.ok_or_else(|| {
+                    format!(
+                        "{} returned raw PCM without a verified sample-rate/channel contract",
+                        self.provider.as_str()
+                    )
+                })?;
+                Ok(VerifiedPcmS16leResponse {
+                    audio_bytes: self.response.audio_bytes,
+                    sample_rate_hz: format.sample_rate_hz,
+                    channels: format.channels,
+                })
+            }
+            TtsFormat::Wav => {
+                let decoded = crate::media::audio::decode_wav_bytes_to_pcm_s16le(
+                    self.response.audio_bytes,
+                    permit,
+                )
+                .map_err(|error| format!("decode configured {} WAV response: {error}", self.provider.as_str()))?;
+                Ok(VerifiedPcmS16leResponse {
+                    audio_bytes: decoded.audio_bytes,
+                    sample_rate_hz: decoded.sample_rate_hz,
+                    channels: decoded.channels,
+                })
+            }
+            format => Err(format!(
+                "{} response is {}; playback accepts only verified raw PCM or decoder-validated WAV",
+                self.provider.as_str(),
+                format.as_str()
+            )),
+        }
+    }
+}
+
+/// Return PCM framing only where the current provider implementation proves it.
+///
+/// Azure's `raw-24khz-16bit-mono-pcm` output header is fixed in
+/// `azure_output_format`. ViitorVoice currently only echoes the requested
+/// container and the other providers return WAV or MP3, so none of them may be
+/// represented as playback-ready raw PCM without a separate verified decoder.
+fn verified_pcm_s16le_format(
+    provider: TtsProviderKind,
+    response: &TtsResponse,
+) -> Option<VerifiedPcmS16leFormat> {
+    match (provider, response.format) {
+        (TtsProviderKind::AzureTts, TtsFormat::PcmS16le) => Some(VerifiedPcmS16leFormat {
+            sample_rate_hz: 24_000,
+            channels: 1,
+        }),
+        _ => None,
+    }
+}
+
+/// Select the one configured request container that can reach the verified
+/// playback handoff for the active provider set.
+///
+/// WAV keeps Piper/SystemNative available and is decoder-validated after the
+/// configured transaction. Azure and ViitorVoice also declare WAV support.
+/// Edge and ElevenLabs remain encoded-only, so a configuration with neither a
+/// WAV-capable primary nor fallback has no truthful initial playback request.
+pub(crate) fn configured_playback_request_format(
+    primary: TtsProviderKind,
+    fallback: Option<TtsProviderKind>,
+) -> Result<TtsFormat, String> {
+    let supports_wav = |provider| {
+        matches!(
+            provider,
+            TtsProviderKind::Piper
+                | TtsProviderKind::SystemNative
+                | TtsProviderKind::AzureTts
+                | TtsProviderKind::ViitorVoice
+        )
+    };
+    if supports_wav(primary) || fallback.is_some_and(supports_wav) {
+        Ok(TtsFormat::Wav)
+    } else {
+        Err(format!(
+            "configured TTS providers {}{} cannot produce decoder-validated WAV for playback",
+            primary.as_str(),
+            fallback
+                .map(|provider| format!(" or {}", provider.as_str()))
+                .unwrap_or_default()
+        ))
+    }
+}
+
+/// Canonical configured TTS transaction for non-file consumers.
+///
+/// This is the only crate-private response seam: it retains the existing
+/// dispatch, credential resolution, cloud permission, metadata-only audit,
+/// response validation, fallback, and audit-writer finalization path. It does
+/// not represent playback or file delivery as complete; the caller owns that
+/// terminal outcome. In particular, it never performs a second provider call.
+pub(crate) async fn synthesize_configured_response(
     neoth_home: &std::path::Path,
     config: &crate::config::FreedomConfig,
     credentials: &crate::config::credentials::Credentials,
     text: String,
     format: TtsFormat,
-    out_path: &std::path::Path,
     overrides: TtsRunOverrides,
-) -> Result<TtsFileResult, String> {
+) -> Result<ConfiguredTtsResponse, String> {
     let confirm_mode = overrides.confirm_mode;
     let mut media = config.media.clone();
     if let Some(provider) = overrides.provider {
@@ -707,16 +856,38 @@ pub async fn synthesize_to_file_at(
         }
         tracing::warn!(%error, "local TTS audit WAL finalization failed (non-fatal)");
     }
-    let (actual_kind, actual_request, response) = synthesis?;
-    write_tts_output_atomic(out_path, &response.audio_bytes)?;
-    Ok(TtsFileResult {
-        provider: actual_kind.as_str().to_string(),
-        voice: actual_request.voice_id,
-        bytes: response.audio_bytes.len(),
-        mime: format_mime(response.format).to_string(),
-        duration_ms: response.duration_ms,
-        out_path: out_path.display().to_string(),
+    let (provider, request, response) = synthesis?;
+    Ok(ConfiguredTtsResponse {
+        provider,
+        voice: request.voice_id,
+        pcm_s16le: verified_pcm_s16le_format(provider, &response),
+        response,
     })
+}
+
+/// Canonical production entry point used by both `neoth tts speak` and the
+/// deprecated `tools::tts` compatibility layer. It retains the existing
+/// configured transaction and consumes its authoritative response through one
+/// crash-safe atomic output commit.
+pub async fn synthesize_to_file_at(
+    neoth_home: &std::path::Path,
+    config: &crate::config::FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    text: String,
+    format: TtsFormat,
+    out_path: &std::path::Path,
+    overrides: TtsRunOverrides,
+) -> Result<TtsFileResult, String> {
+    synthesize_configured_response(
+        neoth_home,
+        config,
+        credentials,
+        text,
+        format,
+        overrides,
+    )
+    .await?
+    .commit_to_file(out_path)
 }
 
 /// Commit a complete, validated audio response with a same-directory atomic
@@ -996,6 +1167,28 @@ async fn append_tts_audit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tiny_pcm16_wav() -> Vec<u8> {
+        let samples = [1i16, -1i16];
+        let data_len = (samples.len() * std::mem::size_of::<i16>()) as u32;
+        let mut wav = Vec::with_capacity(44 + data_len as usize);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&16_000u32.to_le_bytes());
+        wav.extend_from_slice(&32_000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        wav
+    }
 
     fn req(text: &str, voice: &str, fmt: TtsFormat) -> TtsRequest {
         TtsRequest {
@@ -1586,6 +1779,126 @@ mod tests {
                 .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")),
             "failed TTS write left a staged file behind"
         );
+    }
+
+    #[test]
+    fn configured_response_file_consumer_commits_the_authoritative_validated_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("voice.pcm");
+        let configured = ConfiguredTtsResponse {
+            provider: TtsProviderKind::AzureTts,
+            voice: "operator-voice".to_owned(),
+            response: TtsResponse {
+                audio_bytes: vec![4, 2, 4, 2],
+                format: TtsFormat::PcmS16le,
+                duration_ms: 37,
+            },
+            pcm_s16le: Some(VerifiedPcmS16leFormat {
+                sample_rate_hz: 24_000,
+                channels: 1,
+            }),
+        };
+
+        let result = configured.commit_to_file(&target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), vec![4, 2, 4, 2]);
+        assert_eq!(result.provider, "azure_tts");
+        assert_eq!(result.voice, "operator-voice");
+        assert_eq!(result.bytes, 4);
+        assert_eq!(result.mime, "audio/pcm");
+        assert_eq!(result.duration_ms, 37);
+    }
+
+    #[test]
+    fn only_azure_raw_pcm_has_a_proved_playback_format() {
+        let pcm = TtsResponse {
+            audio_bytes: vec![4, 2],
+            format: TtsFormat::PcmS16le,
+            duration_ms: 0,
+        };
+        assert_eq!(
+            verified_pcm_s16le_format(TtsProviderKind::AzureTts, &pcm),
+            Some(VerifiedPcmS16leFormat {
+                sample_rate_hz: 24_000,
+                channels: 1,
+            })
+        );
+        assert_eq!(verified_pcm_s16le_format(TtsProviderKind::ViitorVoice, &pcm), None);
+        assert_eq!(verified_pcm_s16le_format(TtsProviderKind::Piper, &pcm), None);
+        assert_eq!(
+            verified_pcm_s16le_format(
+                TtsProviderKind::AzureTts,
+                &TtsResponse {
+                    audio_bytes: vec![4, 2],
+                    format: TtsFormat::Wav,
+                    duration_ms: 0,
+                },
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_local_wav_response_normalizes_through_the_existing_decoder() {
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .expect("audio permit");
+        let configured = ConfiguredTtsResponse {
+            provider: TtsProviderKind::SystemNative,
+            voice: "local-voice".to_owned(),
+            response: TtsResponse {
+                audio_bytes: tiny_pcm16_wav(),
+                format: TtsFormat::Wav,
+                duration_ms: 0,
+            },
+            pcm_s16le: None,
+        };
+        let pcm = configured
+            .into_verified_pcm_s16le(&permit)
+            .expect("decode configured local WAV");
+        assert_eq!(pcm.sample_rate_hz, 16_000);
+        assert_eq!(pcm.channels, 1);
+        assert_eq!(pcm.audio_bytes.len(), 4);
+
+        let encoded = ConfiguredTtsResponse {
+            provider: TtsProviderKind::EdgeTts,
+            voice: "cloud-voice".to_owned(),
+            response: TtsResponse {
+                audio_bytes: vec![1, 2],
+                format: TtsFormat::Mp3,
+                duration_ms: 0,
+            },
+            pcm_s16le: None,
+        };
+        assert!(encoded.into_verified_pcm_s16le(&permit).is_err());
+
+        let mislabeled = ConfiguredTtsResponse {
+            provider: TtsProviderKind::SystemNative,
+            voice: "local-voice".to_owned(),
+            response: TtsResponse {
+                audio_bytes: b"ID3\x04\0\0not-wav".to_vec(),
+                format: TtsFormat::Wav,
+                duration_ms: 0,
+            },
+            pcm_s16le: None,
+        };
+        assert!(mislabeled.into_verified_pcm_s16le(&permit).is_err());
+    }
+
+    #[test]
+    fn configured_playback_request_format_keeps_local_wav_available() {
+        assert_eq!(
+            configured_playback_request_format(TtsProviderKind::Piper, None),
+            Ok(TtsFormat::Wav)
+        );
+        assert_eq!(
+            configured_playback_request_format(
+                TtsProviderKind::EdgeTts,
+                Some(TtsProviderKind::SystemNative),
+            ),
+            Ok(TtsFormat::Wav)
+        );
+        assert!(configured_playback_request_format(TtsProviderKind::EdgeTts, None).is_err());
     }
 
     // ── GOLD-ADAPT-SYS-02 — ViitorVoice voice-cloning sidecar ────────────────

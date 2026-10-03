@@ -722,6 +722,14 @@ pub(crate) enum GuiChatProtocolError {
 
 pub(crate) type GuiChatResult<T> = std::result::Result<T, GuiChatProtocolError>;
 
+/// A daemon-local typed attachment sink.  It is deliberately not an audit-RPC
+/// stream: callers already hold a sealed attach capability and receive only
+/// validated runtime frames.
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) trait GuiChatFrameSink: Send {
+    fn on_frame(&mut self, frame: GuiChatStreamFrame) -> GuiChatResult<()>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GuiChatStagedAttachmentBinding {
     pub(crate) ordinal: u16,
@@ -750,6 +758,16 @@ pub(crate) trait GuiChatRuntime: Send + Sync {
 
     async fn attach(&self, stream: AuditStream, request: GuiChatAttachRequest)
     -> GuiChatResult<()>;
+
+    /// Retained direct attachment for daemon-owned consumers.  This preserves
+    /// the ordinary attachment's capability, replay cursor, live-reasoning
+    /// lease and terminal semantics without constructing an audit transport.
+    #[cfg(any(test, feature = "live-audio"))]
+    async fn attach_frames(
+        &self,
+        request: GuiChatAttachRequest,
+        sink: &mut dyn GuiChatFrameSink,
+    ) -> GuiChatResult<()>;
 
     /// Bounded, non-blocking replay for the loopback browser facade. Unlike
     /// `attach`, this never leases live reasoning delivery or owns a socket.

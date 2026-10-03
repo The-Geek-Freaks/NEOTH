@@ -308,6 +308,14 @@ pub enum ExtendedSubtype {
     /// ADOPT31-B7 — a document proposal applied an already-approved Vault-note route.
     /// The payload is metadata-only and never contains the operator's note body.
     DocumentNoteApplied = 0x37,
+    /// A2 — durable intent emitted after local microphone capability consumption
+    /// and before opening the capture device.
+    MicrophoneOpenIntent = 0x38,
+    /// A2 — terminal outcome for `MicrophoneOpenIntent`; a missing result is an
+    /// interrupted/indeterminate device-open operation.
+    MicrophoneOpenResult = 0x39,
+    /// A2 — closed cancellation settlement for one opaque conversation turn.
+    RealtimeTurnCancel = 0x3A,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -417,6 +425,9 @@ impl ExtendedSubtype {
             ExtendedSubtype::DocumentSkillApplied => "document_skill_applied",
             ExtendedSubtype::DocumentMemoryApplied => "document_memory_applied",
             ExtendedSubtype::DocumentNoteApplied => "document_note_applied",
+            ExtendedSubtype::MicrophoneOpenIntent => "microphone_open_intent",
+            ExtendedSubtype::MicrophoneOpenResult => "microphone_open_result",
+            ExtendedSubtype::RealtimeTurnCancel => "realtime_turn_cancel",
         }
     }
 
@@ -478,6 +489,9 @@ impl ExtendedSubtype {
             0x35 => Some(ExtendedSubtype::DocumentSkillApplied),
             0x36 => Some(ExtendedSubtype::DocumentMemoryApplied),
             0x37 => Some(ExtendedSubtype::DocumentNoteApplied),
+            0x38 => Some(ExtendedSubtype::MicrophoneOpenIntent),
+            0x39 => Some(ExtendedSubtype::MicrophoneOpenResult),
+            0x3A => Some(ExtendedSubtype::RealtimeTurnCancel),
             _ => None,
         }
     }
@@ -541,6 +555,9 @@ impl ExtendedSubtype {
             Self::DocumentSkillApplied,
             Self::DocumentMemoryApplied,
             Self::DocumentNoteApplied,
+            Self::MicrophoneOpenIntent,
+            Self::MicrophoneOpenResult,
+            Self::RealtimeTurnCancel,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))

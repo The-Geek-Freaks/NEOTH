@@ -4375,6 +4375,10 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
     pub(crate) gui_chat_runtime:
         std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
+    /// A2 registry is constructed once by `serve`; audit-RPC only borrows its
+    /// closed projection runtime and must never construct a second owner.
+    pub(crate) conversation_runtime:
+        std::sync::Arc<dyn crate::daemon::conversation_registry::ConversationRuntime>,
     pub(crate) webchat: Option<std::sync::Arc<crate::daemon::webchat::WebChatState>>,
     pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
     pub(crate) endpoint_nonce: &'a str,
@@ -4405,6 +4409,7 @@ pub(crate) async fn spawn_audit_rpc(
         writer,
         chat_runtime,
         gui_chat_runtime,
+        conversation_runtime,
         webchat,
         pid_guard,
         endpoint_nonce,
@@ -4426,6 +4431,7 @@ pub(crate) async fn spawn_audit_rpc(
         writer: writer.clone(),
         chat_runtime: Some(chat_runtime),
         gui_chat_runtime: Some(gui_chat_runtime),
+        conversation_runtime: Some(conversation_runtime),
         webchat,
         cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
         // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.

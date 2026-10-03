@@ -43,7 +43,6 @@ impl Default for GuiChatRequestId {
         Self::new()
     }
 }
-
 /// Daemon-minted correlation only. It cannot authorize status, attach, cancel,
 /// or provider work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -283,12 +282,24 @@ impl GuiChatBridgePreflightReceipt {
             sealed: GuiChatSealedHandle::live(bytes),
         }
     }
+
+    pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
+        self.sealed
+            .live_bytes()
+            .ok_or_else(|| GuiChatBridgeError::invalid("fixture_receipt"))
+    }
 }
 impl GuiChatBridgeDecisionReceipt {
     pub(crate) fn from_live(bytes: Vec<u8>) -> Self {
         Self {
             sealed: GuiChatSealedHandle::live(bytes),
         }
+    }
+
+    pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
+        self.sealed
+            .live_bytes()
+            .ok_or_else(|| GuiChatBridgeError::invalid("fixture_receipt"))
     }
 }
 impl GuiChatBridgeTurn {
@@ -298,6 +309,12 @@ impl GuiChatBridgeTurn {
             sealed: GuiChatSealedHandle::live(bytes),
         }
     }
+
+    pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
+        self.sealed
+            .live_bytes()
+            .ok_or_else(|| GuiChatBridgeError::invalid("fixture_turn"))
+    }
 }
 impl GuiChatBridgeSubscription {
     pub(crate) fn from_live(metadata: GuiChatSubscriptionMetadata, bytes: Vec<u8>) -> Self {
@@ -305,6 +322,12 @@ impl GuiChatBridgeSubscription {
             metadata,
             sealed: GuiChatSealedHandle::live(bytes),
         }
+    }
+
+    pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
+        self.sealed
+            .live_bytes()
+            .ok_or_else(|| GuiChatBridgeError::invalid("fixture_subscription"))
     }
 }
 
@@ -469,6 +492,14 @@ impl GuiChatBridgeError {
             detail,
         }
     }
+
+    pub(crate) const fn unavailable_for_daemon(detail: &'static str) -> Self {
+        Self {
+            code: GuiChatBridgeErrorCode::Unavailable,
+            retryable: true,
+            detail,
+        }
+    }
 }
 impl fmt::Debug for GuiChatBridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -608,12 +639,12 @@ pub mod gui_bridge_test_support {
         let main_events = capture
             .main_frames
             .into_iter()
-            .map(|frame| map_frame(frame, main_subscription.clone()))
+            .map(|frame| map_frame_for_daemon(frame, main_subscription.clone()))
             .collect();
         let buddy_events = capture
             .buddy_frames
             .into_iter()
-            .map(|frame| map_frame(frame, buddy_subscription.clone()))
+            .map(|frame| map_frame_for_daemon(frame, buddy_subscription.clone()))
             .collect();
         Ok(W458ProducerBridgeCapture {
             turn,
@@ -1065,7 +1096,7 @@ impl GuiChatBridge for CoreGuiChatBridge {
         let mut deliver=|frame:crate::daemon::gui_chat_protocol::GuiChatStreamFrame| -> Result<(),crate::daemon::audit_rpc::GuiChatClientError> {
             if frame.boot_id != expected_boot { return Err(crate::daemon::audit_rpc::GuiChatClientError::Indeterminate("frame boot changed".into())); }
             terminal=matches!(&frame.payload,crate::daemon::gui_chat_protocol::GuiChatFramePayload::Terminal{..});
-            sink.on_event(map_frame(frame,metadata.clone())).map_err(|_|crate::daemon::audit_rpc::GuiChatClientError::Indeterminate("GUI sink rejected frame".into()))
+            sink.on_event(map_frame_for_daemon(frame,metadata.clone())).map_err(|_|crate::daemon::audit_rpc::GuiChatClientError::Indeterminate("GUI sink rejected frame".into()))
         };
         bridge_client(
             crate::daemon::audit_rpc::gui_chat_attach(&self.home, &request, &mut deliver).await,
@@ -1293,7 +1324,7 @@ fn map_throughput_state(
     }
 }
 
-fn map_frame(
+pub(crate) fn map_frame_for_daemon(
     frame: crate::daemon::gui_chat_protocol::GuiChatStreamFrame,
     subscription: GuiChatSubscriptionMetadata,
 ) -> GuiChatBridgeEvent {
@@ -1450,7 +1481,7 @@ mod tests {
         use crate::daemon::gui_chat_protocol as protocol;
 
         let turn_id = Uuid::now_v7();
-        let event = map_frame(
+        let event = map_frame_for_daemon(
             protocol::GuiChatStreamFrame {
                 schema_version: protocol::GUI_CHAT_V1_SCHEMA_VERSION,
                 boot_id: "boot".into(),
@@ -1512,7 +1543,7 @@ mod tests {
         use crate::daemon::gui_chat_protocol as protocol;
 
         let turn_id = Uuid::now_v7();
-        let event = map_frame(
+        let event = map_frame_for_daemon(
             protocol::GuiChatStreamFrame {
                 schema_version: protocol::GUI_CHAT_V1_SCHEMA_VERSION,
                 boot_id: "boot".into(),

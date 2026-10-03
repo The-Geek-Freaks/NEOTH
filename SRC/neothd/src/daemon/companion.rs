@@ -1599,6 +1599,13 @@ mod tests {
         ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
             panic!("listener readiness test never invokes runtime")
         }
+        async fn attach_frames(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+            _: &mut dyn crate::daemon::gui_chat_protocol::GuiChatFrameSink,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
+            panic!("listener readiness test never invokes runtime")
+        }
         async fn replay(
             &self,
             _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,

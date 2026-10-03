@@ -24,6 +24,9 @@ pub mod confirm_bus;
 pub mod gate;
 pub mod ifc;
 pub mod lease;
+/// W2274 closed local microphone authority; distinct from provider consent.
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) mod microphone;
 pub mod policy;
 pub mod tier_classifier;
 pub mod trust_ledger;

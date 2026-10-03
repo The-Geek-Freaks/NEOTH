@@ -143,6 +143,14 @@ impl gui::GuiChatRuntime for RecordingRuntime {
         panic!("WebChat uses bounded replay, never a live AuditStream attach")
     }
 
+    async fn attach_frames(
+        &self,
+        _: gui::GuiChatAttachRequest,
+        _: &mut dyn gui::GuiChatFrameSink,
+    ) -> gui::GuiChatResult<()> {
+        panic!("WebChat uses bounded replay, never a direct live attachment")
+    }
+
     async fn replay(
         &self,
         request: gui::GuiChatAttachRequest,

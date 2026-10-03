@@ -1,0 +1,392 @@
+{
+  "schema": "neoth-gold-wave2274-2282-conversation-backend/v1",
+  "base": "6a8942a9b554b674598d1bd61a6b4d79c1f4b055",
+  "status": "37 reviewed backend source candidates integrated with exact source/test bindings; hosted compilation and execution pending",
+  "behavior": [
+    "Daemon-owned conversation session binds the boot, Buddy surface, session, subscription, request and generation before microphone admission",
+    "Microphone permission retains its WAL decision and exactly one audio work permit; cancellation waits for the actual capture open and join",
+    "Ordered VAD progress qualifies utterances once, configured STT produces text, and each transcript receives a fresh authorized GuiChat request",
+    "Provider confirmation exposes safe route and endpoint information while sealed authority stays in the daemon; denied provider turns return to listening",
+    "Bounded Unicode text batching, generation-bound synthesis and PCM playback retain ordering and suppress stale results",
+    "Existing authenticated audit RPC provides bound availability, preflight, decision, start, abort, control, revoke, replay and attach operations",
+    "Owner and relay settlement retain typed failures and fully join cleanup before final status",
+    "Per-session retained settlement keeps the exact worker handle and cached error after a caller timeout; only the matching successfully joined reap can release its slot",
+    "Feature-off builds omit audio-only implementation roots; unit tests and live-audio retain them, while subtype decoding and closed-header rejection remain always active"
+  ],
+  "candidateSources": 37,
+  "nativeEntry": "backend and authenticated RPC only; no new Slint entry",
+  "completedStaticReviews": [
+    {
+      "scope": "opening owner and capture loop",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/OPENING_REVIEW.md",
+      "sha256": "98B14105A38B2490879BCEC4016F584BE7EA7CB5FA826805631A69AA62AFB8B5"
+    },
+    {
+      "scope": "single-session registry and independent relay",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/RUNTIME_REVIEW_R5.md",
+      "sha256": "9242479D603545E8EA6FF0EF8F2ED41242F45CB174AA8E6309756C77EC9FAB02"
+    },
+    {
+      "scope": "direct authorized GuiChat adapter",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/DIRECT_ADAPTER_REVIEW_R2.md",
+      "sha256": "A20EF07B41AF4882B2664714987436EAB60EEA8F41FD05E7673569A678BBFAC7"
+    },
+    {
+      "scope": "safe public DTO bridge",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/BRIDGE_REVIEW_R2.md",
+      "sha256": "8A50AE6AAC374CC4D8FC522D291E674AE0C47A50E3C3E28904024BF6ED2C6251"
+    },
+    {
+      "scope": "serve dependencies and module junction",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/JUNCTION_REVIEW.md",
+      "sha256": "C633C88A4BF528D593CF0760DCA3902602D275B6A39CDA0CEAFA8C2598C9853A"
+    },
+    {
+      "scope": "cross-file signatures, traits, module visibility and default/live-audio cfg",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/TYPE_COHERENCE_REVIEW.md",
+      "sha256": "0ADA51DEAB5AC5D7559ECB5053BACED054BA558481396FA043893FADB7A0CAEC"
+    },
+    {
+      "scope": "transport propagation only; retained-owner cancellation safety explicitly excluded by R4",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/RPC_REVIEW_R3.md",
+      "sha256": "DBAD458A5C8780BED039FE009B3FF0A4CEC3E55647041B7E34A40DA0C6FA5E53"
+    },
+    {
+      "scope": "retained owner settlement, cancellation-safe join custody and exact reap identity",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/RETAINED_SETTLEMENT_REVIEW_R3.md",
+      "sha256": "AD7567E23C0413A9A3FFAAD594C8735718ED0438A2F4A901AB33C840C2C96DF6"
+    },
+    {
+      "scope": "Feature-only production implementation guarded while test builds, default unavailable RPC and all generic WAL wire/header safeguards remain",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/FEATURE_OFF_REVIEW.md",
+      "sha256": "6851DD6DB2E5E8DA28ED6589724990828705960DA002D155D8A937AE1EC243EF"
+    },
+    {
+      "scope": "Borrowed watch guard released before retained owner take",
+      "path": "work/gold-20260906/wave2277-conversation-entry/review/OWNER_BORROW_REVIEW.md",
+      "sha256": "FD6718DA8CD6D5961BAAB38360FB75EB1F08B10E26E8CF936FA8D6263F76BBC2"
+    }
+  ],
+  "validation": {
+    "localExecutableValidationRan": false,
+    "hostedCandidateExecution": "not yet run",
+    "tests": "83 new identities and source bindings independently checked as text/JSON; no execution",
+    "hardwareAcceptance": "not performed",
+    "guiAcceptance": "not implemented in this batch",
+    "releaseAcceptance": "not claimed"
+  },
+  "currentUnchangedProducer": {
+    "run": "37127028297",
+    "producer": "6a8942a9b554b674598d1bd61a6b4d79c1f4b055",
+    "status": "completed failure; Windows 19057 passed, macOS 19176 passed and one Buddy callback failed, Linux runner shutdown; not candidate evidence",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37127028297",
+    "terminalReceipt": "work/gold-20260906/wave2276-full-buddy-diagnostics-validation/ROOT_FULL_TERMINAL.json",
+    "terminalReceiptSha256": "219F61F2CA88DACF8EE0140A71169DAA7FB125BDBDF9C85A63D1624CC41D5121"
+  },
+  "sourceImports": [
+    {
+      "path": "SRC/neothd/src/cli/dictate.rs",
+      "sha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0",
+      "bytes": 33487,
+      "baseBlob": "50b4a28a1518fb87fd910a7737aaa503ef61aa1c",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sha256": "A20450213189EADF3FD33E9E1295CC9C736DC02EA2AAE2EF1E9B8CC4DFFCFA22",
+      "bytes": 580638,
+      "baseBlob": "cc3d374c765d82c486c30f83599313b72f120fec",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "sha256": "3F6AEEA723AD66117C63E191E502D14719BABA546AC09BE86DCCABEE9A4BA98D",
+      "bytes": 183733,
+      "baseBlob": "72183c3e94a43a5cdcf56ddf3dbec70f03eafc9c",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "sha256": "03A762C57235155B3EE6FE2E949AF5B71263C5A1D7396A284F51AB8D987516D9",
+      "bytes": 60351,
+      "baseBlob": "5edcf9c2268fa91a600974731ad6a73bed12ba71",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "sha256": "857378D1B3409958510A1197CAE9E3AC52521523DCC89F9FE8335E73D1FCBF56",
+      "bytes": 20450,
+      "baseBlob": "2f2a66175c7c3ba07b969c878ca2768953ed2a5d",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "sha256": "44E18860C86D68FB78E80723B48EEFA2743A7C6018DA78CD55AB5B2E749A9188",
+      "bytes": 89838,
+      "baseBlob": "38706f93d5bf38cf32d30ef2e5650694ad98705a",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sha256": "00F3BD8B257A85AE05870BBCA8B04D7E804104448B58A9185DE43888A91DDC73",
+      "bytes": 139841,
+      "baseBlob": "a68825afaa04fa238a8356792477e7c59437c954",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "sha256": "4C9429BB53A1D5C666BF7EB5EE1C59B3837A6E04C429B6C304C29137DEBB03C0",
+      "bytes": 44987,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion.rs",
+      "sha256": "6721671123EA20C116CCBF2990B5A8EDED3F977B49279D1D580695BD7E3575C6",
+      "bytes": 101722,
+      "baseBlob": "2103c325a7074608dae56c1aee7a79a5d80ac446",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_bridge.rs",
+      "sha256": "4DD94AD4371DC6C198AE97A8C69FECF302970578BBEEF1E6FDCE352191C627EC",
+      "bytes": 21648,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "sha256": "6B4E75A2482F7F95B82FFBEA80F0EC4DDC479BA25663E6D838AAC060F7C450E6",
+      "bytes": 20389,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403",
+      "bytes": 43577,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_protocol.rs",
+      "sha256": "BF51BE032487E16B817C326252AEB9351F11A74E8F0CD146F9F2508ABE36ACA8",
+      "bytes": 9672,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "sha256": "1108F64E256C40AF692FC9C2E0BF2427C070972541BCC4DEC5C6A992CDC190F4",
+      "bytes": 44896,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_session.rs",
+      "sha256": "89B4B8B018AF4A84FE132C9BE759C3AD7BAFC217A1A915B6793FCAA663AD3916",
+      "bytes": 6400,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_transport_regressions.rs",
+      "sha256": "8B64E783702DDE0D8EDD37CE949558D7AE727EC11795D6A82DC323428C967B78",
+      "bytes": 4044,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "sha256": "603EF294CC24A9EA116F9481AE966068909D0EC456284A7669FD10AA9ED13425",
+      "bytes": 62750,
+      "baseBlob": "ed4345537052132fd0f740aaa088225bdda9c0b6",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "sha256": "55C34B1124BD332C2A85567D2DEA08F08269C34E65A1EBA5CA5FA6E71B8FFA0C",
+      "bytes": 89120,
+      "baseBlob": "1a66a049d9293660eded3dda4a9f3e351ab0bb95",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "sha256": "E6EF267FAD5154466F218305BC6EFFBE9BA4867950AE6F5133F85BECEABF982D",
+      "bytes": 202531,
+      "baseBlob": "aec9af7caac194f1b23a60f3741d21c3ea4c423a",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "sha256": "F17AB37A061EDE4FF90119AD32B4EDB992366CD8EE28C474DEE07036714832AA",
+      "bytes": 20207,
+      "baseBlob": "fbe1029bfc5cada9f1fb3acc85bec86d21b52312",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "sha256": "480170437FF6EB9E18084BAFA68E42651CE837742EE7120455E1314BEB00F38F",
+      "bytes": 38971,
+      "baseBlob": "9406ef53c1b9f7bb725246d6fa0f65c541b432f5",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/audio.rs",
+      "sha256": "35D53A9C765ADE2907EC990F612B13B68BF48C3D4938A59C03E8433771B6F970",
+      "bytes": 48484,
+      "baseBlob": "0a50eb37bb02b08dd2d9afb78f17c0cb5e71ef8a",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/conversation_loop.rs",
+      "sha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60",
+      "bytes": 46579,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/media/conversation_scope.rs",
+      "sha256": "CA99E246BD742DCF70176A987A7F4157F12520D2DFC1A6C755EFEDA46AE24575",
+      "bytes": 8324,
+      "baseBlob": "6aab1c25e5a86356b4817af7b80aecef1245148b",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/dictation.rs",
+      "sha256": "58485FAB57D531F06A7C2AC3A0D75D21D32901D65624EBA051A83AA588E607EC",
+      "bytes": 31746,
+      "baseBlob": "57f72df9f306d558cc33e6d675c260b57162b50c",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497",
+      "bytes": 7692,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/media/mod.rs",
+      "sha256": "C1438143F86805092594DC9132DA69A9C8CA40BFD3449FD2C95F2D9F4DCC1D32",
+      "bytes": 14683,
+      "baseBlob": "bc725c0b81a7330df05329943e602b04777fd3a4",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/playback.rs",
+      "sha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2",
+      "bytes": 30645,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/media/tts_cloud.rs",
+      "sha256": "8CE179212432BA33316567FF5B8B6A82340F94060136602D06E28E5AC65CEF63",
+      "bytes": 72209,
+      "baseBlob": "109f4d59834984b397ab59285e4803f10fca64ee",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/tts_dispatch.rs",
+      "sha256": "B65472A50B5072D795E1FD9D2CD78F42C7BC4D4FA24367DD8B096719E6837F99",
+      "bytes": 26233,
+      "baseBlob": "bf72b7723248b18d5f9939373a8cbd3e69f16c5c",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/media/turn_tracker.rs",
+      "sha256": "43858E38B219B89336963962F002B88AAD2FAA4656850C08880853303039A552",
+      "bytes": 3974,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/permissions/microphone.rs",
+      "sha256": "119590F5703A3747A758C5B63F95934D9A8FDE8255369A7726789F0A58F4F634",
+      "bytes": 16086,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/permissions/mod.rs",
+      "sha256": "9E695025A9653FD4081F92F7FEBE2AFA059999780592F7C8C42A633D2832B60F",
+      "bytes": 95071,
+      "baseBlob": "f9e03258a08879aeb65be3d884a8d936d21727f7",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "sha256": "7DB3357F113B8B4ABF67EBA3FDAFEC857CE3662B23DEC77F9A3A70284A80C75C",
+      "bytes": 274932,
+      "baseBlob": "d740a98888438a9937c5e493eb1b1e74a09842fe",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/wal/microphone_receipts.rs",
+      "sha256": "513D4193DFF20F3ED3923DFF571EF92923F1CBA4BFD547C4F39F127D4696FFF8",
+      "bytes": 8706,
+      "baseBlob": null,
+      "newTrackedPath": true
+    },
+    {
+      "path": "SRC/neothd/src/wal/mod.rs",
+      "sha256": "D7359A6EC2961EE040C78FCE84BADA2ACB1D36729CEC5D1CDF285CB827C244CD",
+      "bytes": 6781,
+      "baseBlob": "925f3ea8b78803783c7c47fb84de685429b546da",
+      "newTrackedPath": false
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "sha256": "0D3026CFEAF8E65DA345214BB74E9675E9A8205CE2B10E3E8D7CD4822258BE21",
+      "bytes": 460927,
+      "baseBlob": "eda649040857abb702d63e01b1586809eac0261f",
+      "newTrackedPath": false
+    }
+  ],
+  "testRegistrations": {
+    "portableNew": 50,
+    "portableAfterIntegration": 2707,
+    "liveAudioExisting": 19,
+    "liveAudioNew": 33,
+    "liveAudioAfterIntegration": 52,
+    "allNew": 83,
+    "portableCandidateSha256": "11DDE06C399E29E768A72E8957568BB0DD6E0D04D2DF3D433CF34768E45B4792",
+    "audioCandidateSha256": "D6FF2F1AB0715B442B990022E478872F73062ADCF0240BB0DA81EF862013A882",
+    "bindingMismatches": 0,
+    "localExecution": false,
+    "hostedExecution": "pending",
+    "identityCorrection": {
+      "previous": "daemon::audit_rpc::tests::conversation_start_broken_reply_write_aborts_and_joins_before_handler_returns",
+      "actualSourceIdentity": "daemon::audit_rpc::tests::conversation_start_broken_reply_write_aborts_before_handler_returns",
+      "countChanged": false
+    }
+  },
+  "lineEndingDeltas": [
+    {
+      "path": "SRC/neothd/src/daemon/conversation_registry.rs",
+      "reviewedSha256": "798806D8FC62AAB053A6359E8363F8BA547D4F4435659B35FA7568EA0434014D",
+      "normalizedSha256": "1108F64E256C40AF692FC9C2E0BF2427C070972541BCC4DEC5C6A992CDC190F4",
+      "gitBlob": "bc379a21cec506310bde227842b8e540eadb4bea",
+      "change": "CRLF to LF only, matches Git text eol=lf"
+    },
+    {
+      "path": "SRC/neothd/src/media/playback.rs",
+      "reviewedSha256": "9FE9E846355EC6339939ACB9AD8B67943593BA11CB088904B68DC645D890C4CA",
+      "normalizedSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2",
+      "gitBlob": "f772508c8b5225e5984f1d32f3c300eae82a27d1",
+      "change": "CRLF to LF only, matches Git text eol=lf"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "reviewedSha256": "60E053F6E18285880896DE967C1B556B39CD0498FF7A6170E8E770EA9104A1ED",
+      "normalizedSha256": "7DB3357F113B8B4ABF67EBA3FDAFEC857CE3662B23DEC77F9A3A70284A80C75C",
+      "gitBlob": "03772ab446b5db64d4108e457fb6635b16302508",
+      "change": "CRLF to LF only, matches Git text eol=lf"
+    }
+  ],
+  "documentation": {
+    "path": "docs/architecture/conversational-voice-backend.md",
+    "sha256": "D9CA244F1C79015AC86E185404C32C94CBB9906CF39405599782EF132E0C2A6B"
+  }
+}

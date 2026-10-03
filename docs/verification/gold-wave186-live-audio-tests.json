@@ -1,7 +1,7 @@
 {
   "schema": "neoth-live-audio-tests/v1",
   "feature": "live-audio",
-  "status": "Source identities; Hosted compile/discovery/execution pending",
+  "status": "source identities; hosted compile/discovery/execution pending",
   "requiredTests": [
     {
       "test": "media::live_capture::tests::terminal_published_during_pcm_wait_survives_every_wait_result",
@@ -61,42 +61,214 @@
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "82EAEB255091A16820BE39F132BAFEA4E3A4EC59B45748FFB6B23AD05768AF6F"
+      "sourceSha256": "58485FAB57D531F06A7C2AC3A0D75D21D32901D65624EBA051A83AA588E607EC"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "82EAEB255091A16820BE39F132BAFEA4E3A4EC59B45748FFB6B23AD05768AF6F"
+      "sourceSha256": "58485FAB57D531F06A7C2AC3A0D75D21D32901D65624EBA051A83AA588E607EC"
     },
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
     },
     {
       "test": "cli::dictate::tests::bounded_pending_utterances_keep_order_and_drop_the_newest_overflow",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
     },
     {
       "test": "cli::dictate::tests::stale_scope_never_calls_the_fake_stt_dispatcher",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
     },
     {
       "test": "cli::dictate::tests::full_fake_capture_relay_surfaces_through_the_owned_worker_join",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
     },
     {
       "test": "cli::dictate::tests::draining_fake_stt_waits_for_its_fake_wal_sender_and_returns_stale_result",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
     },
     {
       "test": "cli::dictate::tests::outer_future_drop_guard_aborts_an_active_task_and_signals_scope",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "386C9191832EE4951BC2C74BE1190CC3177BB22484BB2199F46F0F6C7B2F500A"
+      "sourceSha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
+    },
+    {
+      "test": "media::conversation_loop::tests::cancelled_opening_fake_stage_is_detected_before_native_effect",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::response_scope_barge_in_is_independent_from_capture_scope",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::qualified_turn_is_once_and_zero_length_fragment_is_cancelled",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::one_vad_block_never_invalidates_an_active_response",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::pending_turn_cannot_start_before_the_old_generation_has_settled",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::stale_audio_completion_cannot_release_a_different_generation_owner",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::four_ordered_vad_blocks_qualify_once_without_a_later_reset",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::configured_250ms_does_not_qualify_at_128ms_and_noise_never_qualifies",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::conversation_loop::tests::transcript_preflight_gets_a_fresh_correlation_id_but_keeps_bound_route",
+      "sourcePath": "SRC/neothd/src/media/conversation_loop.rs",
+      "sourceSha256": "B05B5D8002078C0A01A3FB6B0C207FA2E44A7D96EA0DD2836771A6BEBED00E60"
+    },
+    {
+      "test": "media::lm_output_processor::tests::batches_three_sentences_and_flushes_final_fragment_once",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::lm_output_processor::tests::repeated_unterminated_deltas_fail_before_pending_growth",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::lm_output_processor::tests::multibyte_limits_are_unicode_scalar_limits",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::lm_output_processor::tests::repeated_terminal_flush_preserves_order_and_never_duplicates_tail",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::lm_output_processor::tests::coalesced_four_sentence_delta_yields_two_batches",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::lm_output_processor::tests::completed_queue_rejects_before_sixty_fifth_sentence_grows_it",
+      "sourcePath": "SRC/neothd/src/media/lm_output_processor.rs",
+      "sourceSha256": "8664DD28CA7E615481A8AF386468CD987FF73CB3FC051554BB40306908A1C497"
+    },
+    {
+      "test": "media::playback::tests::callback_drains_bounded_pcm_then_reports_completion_once",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "media::playback::tests::pcm_block_rejects_misaligned_or_unknown_metadata",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "media::playback::tests::stale_generation_is_rejected_before_ready_or_callback_render",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "media::playback::tests::callback_device_failure_publishes_exactly_one_terminal_error",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "media::playback::tests::join_releases_permit_slot_only_after_owner_has_ended",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "media::playback::tests::source_proven_mono_pcm_can_be_resampled_before_enqueue",
+      "sourcePath": "SRC/neothd/src/media/playback.rs",
+      "sourceSha256": "31103F95BA899A5509323DCB538293B78CB12C9115A3CA3747CBC51E15B4F2F2"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::aborted_fake_stage_is_joined_before_stop_ack_and_leaves_no_active_slot",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::foreign_request_or_generation_never_matches_active_control_binding",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::task_error_still_drains_the_event_pump",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::timed_out_abort_waiter_leaves_retained_settlement_busy_until_inner_cleanup_joins",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::old_waiter_cannot_join_a_later_retained_worker",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::cancelled_join_waiter_leaves_pending_handle_owned_for_the_next_waiter",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::captured_reap_token_cannot_clear_later_or_failed_retained_join",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::completed_active_is_removed_before_the_next_preflight",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::settled_opening_failure_projects_a_terminal_before_slot_reuse",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "daemon::conversation_owner::tests::replacement_store_must_be_opened_before_consuming_start_capability",
+      "sourcePath": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "sourceSha256": "DC417F8FF4BD6296326B7DCB9EF253DC9F6C81CB84AD7757AC402C6A95194403"
+    },
+    {
+      "test": "media::turn_tracker::tests::speculative_pause_reopens_once_but_committed_turn_never_replays",
+      "sourcePath": "SRC/neothd/src/media/turn_tracker.rs",
+      "sourceSha256": "43858E38B219B89336963962F002B88AAD2FAA4656850C08880853303039A552"
+    },
+    {
+      "test": "media::turn_tracker::tests::short_fragment_never_reaches_a_turn_commit",
+      "sourcePath": "SRC/neothd/src/media/turn_tracker.rs",
+      "sourceSha256": "43858E38B219B89336963962F002B88AAD2FAA4656850C08880853303039A552"
     }
-  ]
+  ],
+  "metadata": {
+    "originalEntriesPreserved": 19,
+    "newFeatureGatedEntries": 33,
+    "selection": "effective live-audio module/test gate; hardware-free source cases only",
+    "ownerSourceState": "refreshed after retained-settlement candidate update",
+    "localExecutableValidationRan": false
+  }
 }

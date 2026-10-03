@@ -193,6 +193,32 @@ fn refuse_generic_counterparty_consent_receipt(header: &EventHeaderV2) -> Result
     Ok(())
 }
 
+fn is_microphone_realtime_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && matches!(
+            crate::wal::events::ExtendedSubtype::from_u8(header.event_subtype),
+            Some(
+                crate::wal::events::ExtendedSubtype::MicrophoneOpenIntent
+                    | crate::wal::events::ExtendedSubtype::MicrophoneOpenResult
+                    | crate::wal::events::ExtendedSubtype::RealtimeTurnCancel
+            )
+        )
+}
+
+/// These local-device receipt subtypes are a closed lifecycle.  A caller must
+/// use the dedicated typed microphone writer methods, which build payload/header from the
+/// typed receipt after capability consumption; generic frame APIs cannot mint
+/// an intent, a successful open, or a turn settlement.
+fn refuse_generic_microphone_realtime_receipt(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_microphone_realtime_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Microphone realtime receipts require the writer-owned closed append API",
+        )));
+    }
+    Ok(())
+}
+
 /// Immutable identity of a closed predecessor as observed through the
 /// capability-bound WAL directory after its final sync/seal.
 struct ClosedSegmentBinding {
@@ -1638,12 +1664,75 @@ impl WalWriterHandle {
         payload: Vec<u8>,
         force_authentication_marker: bool,
     ) -> Result<u64, WalError> {
+        self.append_with_marker_policy_inner(header, payload, force_authentication_marker, false)
+            .await
+    }
+
+    /// Consume an admitted microphone-open transition and return terminal
+    /// authority only after the intent is durable.
+    #[cfg(any(test, feature = "live-audio"))]
+    pub(crate) async fn append_microphone_open_intent(
+        &self,
+        admission: crate::wal::microphone_receipts::MicOpenIntentAdmission,
+    ) -> Result<crate::wal::microphone_receipts::MicOpenTerminalAuthority, WalError> {
+        let (header, payload, terminal) = admission.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "microphone intent encoding refused")))?;
+        self.append_closed_microphone_frame(header, payload).await?;
+        Ok(terminal)
+    }
+
+    /// Consume the exact terminal authority returned from a durable intent.
+    #[cfg(any(test, feature = "live-audio"))]
+    pub(crate) async fn append_microphone_open_result(
+        &self,
+        result: crate::wal::microphone_receipts::MicOpenResultAdmission,
+    ) -> Result<u64, WalError> {
+        let (header, payload) = result.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "microphone result encoding refused")))?;
+        self.append_closed_microphone_frame(header, payload).await
+    }
+
+    /// Consume a settled authorized-text-turn proof; no raw turn identifier is accepted.
+    #[cfg(any(test, feature = "live-audio"))]
+    pub(crate) async fn append_realtime_turn_cancel(
+        &self,
+        cancel: crate::wal::microphone_receipts::TurnCancelAdmission,
+    ) -> Result<u64, WalError> {
+        let (header, payload) = cancel.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "turn cancel encoding refused")))?;
+        self.append_closed_microphone_frame(header, payload).await
+    }
+
+    #[cfg(any(test, feature = "live-audio"))]
+    async fn append_closed_microphone_frame(
+        &self, header: EventHeaderV2, payload: Vec<u8>,
+    ) -> Result<u64, WalError> {
+        if !self.authentication_markers_enabled {
+            return Err(compaction_recovery_error(
+                "microphone realtime receipts require an HMAC-marker-enabled WAL writer",
+            ));
+        }
+        self.append_with_marker_policy_inner(header, payload, true, true).await
+    }
+
+    async fn append_with_marker_policy_inner(
+        &self,
+        header: EventHeaderV2,
+        payload: Vec<u8>,
+        force_authentication_marker: bool,
+        closed_microphone_receipt: bool,
+    ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
         refuse_generic_redaction_rewrite_receipt(&header)?;
+        if !closed_microphone_receipt {
+            refuse_generic_microphone_realtime_receipt(&header)?;
+        } else if !is_microphone_realtime_header(&header) {
+            return Err(WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "closed microphone writer received a non-microphone receipt",
+            )));
+        }
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1694,6 +1783,7 @@ impl WalWriterHandle {
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
         refuse_generic_redaction_rewrite_receipt(&header)?;
+        refuse_generic_microphone_realtime_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -2395,6 +2485,7 @@ impl WalWriterHandle {
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
         refuse_generic_redaction_rewrite_receipt(&header)?;
+        refuse_generic_microphone_realtime_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -2449,6 +2540,7 @@ impl WalWriterHandle {
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
         refuse_generic_redaction_rewrite_receipt(&header)?;
+        refuse_generic_microphone_realtime_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -10902,6 +10994,79 @@ mod tests {
                 .expect_err("W209 protected subtype must refuse generic append");
             assert!(error.to_string().contains("append-once"));
         }
+    }
+
+    #[test]
+    fn microphone_realtime_subtypes_refuse_every_generic_writer_entry() {
+        for subtype in [
+            crate::wal::events::ExtendedSubtype::MicrophoneOpenIntent,
+            crate::wal::events::ExtendedSubtype::MicrophoneOpenResult,
+            crate::wal::events::ExtendedSubtype::RealtimeTurnCancel,
+        ] {
+            let payload = b"generic-microphone-receipt".to_vec();
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                &payload,
+            )
+            .event_subtype(subtype as u8)
+            .build();
+            let error = refuse_generic_microphone_realtime_receipt(&header)
+                .expect_err("A2 protected subtype must refuse generic append");
+            assert!(error.to_string().contains("closed append API"));
+        }
+    }
+
+    #[tokio::test]
+    async fn microphone_intent_becomes_terminal_authority_only_after_authenticated_writer_append() {
+        use crate::permissions::microphone::{MicConsentStore, MicDecision, MicPreflight};
+        use crate::wal::microphone_receipts::{MicOpenIntentAdmission, MicOpenOutcome};
+
+        const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let home = tempdir().expect("temporary microphone home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).expect("wal directory");
+        let policy = RotationPolicy {
+            max_bytes: 1024 * 1024,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        };
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("microphone-authority-000001.wal"),
+            home.path(),
+            policy,
+            CompressionPolicy::None,
+        ).expect("HMAC-marker-enabled test writer");
+        let mut store = MicConsentStore::open(home.path()).expect("consent store");
+        let MicPreflight::ConfirmationRequired { challenge } = store
+            .preflight(DIGEST, 10)
+            .expect("preflight") else { panic!("fresh microphone store requires confirmation") };
+        let capability = store.decide(challenge, MicDecision::AllowOnce, 11)
+            .expect("allow once")
+            .expect("capability");
+        let admission = store.consume_for_open(capability, DIGEST, 12)
+            .expect("consume capability");
+
+        let terminal = writer.append_microphone_open_intent(
+            MicOpenIntentAdmission::from_consumed(admission),
+        ).await.expect("durable authenticated intent returns terminal authority");
+        terminal.revalidate_device_open(&store).expect("same-home pre-open check");
+        let result = terminal.complete(MicOpenOutcome::Opened, None, 13)
+            .expect("actual Ready produces terminal result");
+        writer.append_microphone_open_result(result).await
+            .expect("durable authenticated terminal");
+        drop(writer);
+        join.await.expect("writer task join");
+
+        let bytes = std::fs::read(wal.join("microphone-authority-000001.wal"))
+            .expect("read persisted writer output");
+        let mut protected_subtypes = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED {
+                protected_subtypes.push(frame.header.event_subtype);
+            }
+            Ok(())
+        }).expect("scan persisted WAL frames");
+        assert!(protected_subtypes.contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenIntent as u8)));
+        assert!(protected_subtypes.contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenResult as u8)));
     }
 
     fn counterparty_consent_input_descriptor(

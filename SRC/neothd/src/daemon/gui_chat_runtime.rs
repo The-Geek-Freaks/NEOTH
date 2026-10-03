@@ -2281,6 +2281,134 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
         }
         result
     }
+    #[cfg(any(test, feature = "live-audio"))]
+    async fn attach_frames(
+        &self,
+        request: GuiChatAttachRequest,
+        sink: &mut dyn GuiChatFrameSink,
+    ) -> GuiChatResult<()> {
+        let mut leased_live_delivery = false;
+        let result = async {
+            self.require_boot(&request.expected_boot_id)?;
+            let mut cursor = request.after_sequence;
+            loop {
+                let (frames, terminal) = {
+                    let mut state = self.state.lock().await;
+                    let turn = state
+                        .turns
+                        .get_mut(&request.turn_id.0)
+                        .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
+                    let earliest = turn
+                        .replay
+                        .front()
+                        .map(|frame| frame.sequence.saturating_sub(1))
+                        .unwrap_or(0);
+                    {
+                        let subscription = turn
+                            .subscriptions
+                            .get(&request.surface)
+                            .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
+                        validate_attach_request(&request, subscription.cursor_upper_bound)?;
+                        if turn.session != request.session_id
+                            || subscription.capability != request.attach_capability.0
+                            || subscription.generation != request.subscription_generation
+                        {
+                            return Err(Self::reject(
+                                GuiChatErrorCode::Forbidden,
+                                "attach_capability",
+                            ));
+                        }
+                    }
+                    if cursor < earliest {
+                        return Err(Self::reject(GuiChatErrorCode::ReplayGap, "replay_gap"));
+                    }
+                    Self::claim_live_delivery(
+                        turn,
+                        request.surface,
+                        request.subscription_generation,
+                        &mut leased_live_delivery,
+                    )?;
+                    let subscription = turn
+                        .subscriptions
+                        .get_mut(&request.surface)
+                        .expect("subscription was claimed");
+                    let mut live_reasoning = std::mem::take(&mut subscription.live_reasoning);
+                    subscription.live_reasoning_bytes = 0;
+                    let frames = turn
+                        .replay
+                        .iter()
+                        .filter(|frame| frame.sequence > cursor)
+                        .map(|frame| {
+                            let payload = match &frame.payload {
+                                GuiChatFramePayload::ReasoningCheckpoint {
+                                    reasoning_sequence,
+                                    ..
+                                } => live_reasoning
+                                    .iter()
+                                    .position(|item| {
+                                        item.sequence == frame.sequence
+                                            && item.reasoning_sequence == *reasoning_sequence
+                                    })
+                                    .and_then(|index| live_reasoning.remove(index))
+                                    .map(|item| GuiChatFramePayload::ReasoningDelta {
+                                        reasoning_sequence: item.reasoning_sequence,
+                                        delta: item.delta.as_str().to_owned(),
+                                    })
+                                    .unwrap_or_else(|| frame.payload.clone()),
+                                _ => frame.payload.clone(),
+                            };
+                            GuiChatStreamFrame {
+                                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                                boot_id: self.boot_id.to_string(),
+                                turn_id: request.turn_id.clone(),
+                                subscription: GuiChatSubscription {
+                                    session_id: request.session_id.clone(),
+                                    surface: request.surface,
+                                    generation: request.subscription_generation,
+                                },
+                                sequence: frame.sequence,
+                                payload,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    (frames, turn.terminal.is_some())
+                };
+                for mut frame in frames {
+                    let raw_reasoning = matches!(
+                        frame.payload,
+                        GuiChatFramePayload::ReasoningDelta { .. }
+                    );
+                    let validated = validate_stream_frame(&frame);
+                    if validated.is_err()
+                        && let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload
+                    {
+                        delta.zeroize();
+                    }
+                    validated?;
+                    cursor = frame.sequence;
+                    if raw_reasoning && !self.is_current_live_owner(&request).await {
+                        if let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload {
+                            delta.zeroize();
+                        }
+                        return Err(Self::reject(
+                            GuiChatErrorCode::Forbidden,
+                            "subscription_lease_revoked",
+                        ));
+                    }
+                    sink.on_frame(frame)?;
+                }
+                if terminal {
+                    return Ok(());
+                }
+                self.changed.notified().await;
+            }
+        }
+        .await;
+        if leased_live_delivery {
+            self.release_live_subscription(&request).await;
+        }
+        result
+    }
     async fn replay(
         &self,
         request: GuiChatAttachRequest,

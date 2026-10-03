@@ -39,6 +39,9 @@ pub mod hlc;
 /// restore), reusing the existing DPAPI-wrap key path. Recovery for the
 /// lose-key-lose-content footgun.
 pub mod master_key;
+/// W2274 closed microphone intent/result/cancellation receipt descriptors.
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) mod microphone_receipts;
 pub mod payloads_u04;
 pub mod payloads_w08;
 pub mod proof_bundle;

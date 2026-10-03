@@ -349,7 +349,8 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
                             }
                             match event {
                                 LiveUtteranceEvent::SpeechStarted => emit_live_event(args.output, serde_json::json!({ "type": "live_dictation", "state": "speech_started" })),
-                                LiveUtteranceEvent::UtteranceReady { sequence, pcm } if owned_tasks.transcription.is_none() && pending.is_empty() => {
+                                LiveUtteranceEvent::SpeechProgress { .. } => {}
+                                LiveUtteranceEvent::UtteranceReady { sequence, pcm, .. } if owned_tasks.transcription.is_none() && pending.is_empty() => {
                                     if scope.is_stale(&token) {
                                         cancelled = true;
                                         break;
@@ -357,7 +358,7 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
                                     emit_live_event(args.output, serde_json::json!({ "type": "live_dictation", "state": "transcribing", "sequence": sequence }));
                                     owned_tasks.transcription = Some(start_live_transcription(sequence, pcm, media_cfg.clone(), updater_cfg.clone(), neoth_home.clone(), writer_for_stt.clone(), permit.clone(), scope.clone(), token.clone()));
                                 }
-                                LiveUtteranceEvent::UtteranceReady { sequence, pcm } if pending.len() < MAX_PENDING_LIVE_UTTERANCES => {
+                                LiveUtteranceEvent::UtteranceReady { sequence, pcm, .. } if pending.len() < MAX_PENDING_LIVE_UTTERANCES => {
                                     let accepted = enqueue_live_utterance(&mut pending, sequence, pcm);
                                     debug_assert!(accepted, "guard and pending admission must agree");
                                     emit_live_event(args.output, serde_json::json!({ "type": "live_dictation", "state": "queued", "sequence": sequence, "pending": pending.len() }));

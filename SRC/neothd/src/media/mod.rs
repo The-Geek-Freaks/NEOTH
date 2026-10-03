@@ -29,6 +29,9 @@ pub mod audio;
 /// realtime conversation loop. It is deliberately only a primitive here; A2
 /// owns wiring its tokens into the LLM stream and TTS synthesis loop.
 pub mod conversation_scope;
+/// W2274 retained A2 session owner.
+#[cfg(feature = "live-audio")]
+pub(crate) mod conversation_loop;
 /// GOLD-ADOPT-25 — Dictation input mode: caller-supplied PCM → VAD → configured STT.
 /// Scope: dictation-surface-only (reuses existing candle WhisperEngine; no
 /// second GGML engine). Dictation is runtime-gated by `media.dictation_enabled`;
@@ -50,12 +53,18 @@ pub mod frame_decoder;
 pub mod hw_probe;
 #[cfg(feature = "live-audio")]
 pub(crate) mod live_capture;
+/// W2274 bounded visible-text sentence batcher.
+#[cfg(feature = "live-audio")]
+pub(crate) mod lm_output_processor;
 /// GOLD-ADAPT-HANDY-04 — model download manager: SHA-256 verify, resumable
 /// `Range` downloads, and atomic tmp→dest rename.
 pub mod model_manager;
 /// MM-02b — multimodal vision synthesizers (Anthropic / OpenAI / Gemini REST).
 pub mod multimodal_synth;
 pub mod pdf;
+/// W2274 CPAL output owner.
+#[cfg(feature = "live-audio")]
+pub(crate) mod playback;
 /// HANDY-01 — band-limited sinc resampler (rubato) for the STT capture path.
 pub mod resampler;
 /// SPEAKR-02c — self-contained log-mel + statistics-pooling speaker-embedding
@@ -90,6 +99,9 @@ pub mod stt_provider;
 pub mod tts_cloud;
 pub mod tts_dispatch;
 pub mod tts_provider;
+/// W2274 committed-turn tracker.
+#[cfg(feature = "live-audio")]
+pub(crate) mod turn_tracker;
 /// GOLD-ADAPT-HANDY-02 — SmoothedVad: energy-based voice-activity detector with
 /// probability smoothing + hangover, wired as a pre-STT gate in the dictation
 /// capture path. It has no model/runtime dependency and is present in every

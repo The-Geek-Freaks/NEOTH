@@ -12,6 +12,90 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::n8n_api::auth::AuthCooldown;
 
+struct ConversationSettlementFixture {
+    entered: tokio::sync::Notify,
+    attach_entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    aborted: std::sync::atomic::AtomicBool,
+    joined: std::sync::atomic::AtomicBool,
+    cancelled: std::sync::atomic::AtomicBool,
+    abort_fails: bool,
+}
+
+struct StartCancellation<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for StartCancellation<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::daemon::conversation_registry::ConversationRuntime for ConversationSettlementFixture {
+    async fn availability(&self, _: crate::daemon::conversation_protocol::ConversationAvailabilityRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationAvailabilityResponse> { unreachable!() }
+    async fn preflight(&self, _: crate::daemon::conversation_protocol::ConversationPreflightRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
+    async fn decide_microphone(&self, _: crate::daemon::conversation_protocol::ConversationMicrophoneDecisionRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
+    async fn decide_provider(&self, _: crate::daemon::conversation_protocol::ConversationProviderDecisionRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
+    async fn start(&self, request: crate::daemon::conversation_protocol::ConversationStartRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { let _cancelled = StartCancellation(&self.cancelled); self.entered.notify_waiters(); self.release.notified().await; self.joined.store(true, std::sync::atomic::Ordering::SeqCst); Ok(conversation_progress(&request)) }
+    async fn abort_start(&self, request: crate::daemon::conversation_protocol::ConversationAbortStartRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { self.aborted.store(true, std::sync::atomic::Ordering::SeqCst); if self.abort_fails { return Err(crate::daemon::conversation_protocol::ConversationError::new(crate::daemon::conversation_protocol::ConversationErrorCode::StreamSettlementIndeterminate, false, "fixture_abort_failed")); } self.release.notify_waiters(); Ok(crate::daemon::conversation_protocol::ConversationProgressResponse { schema_version: 1, expected_boot_id: request.expected_boot_id, request_id: request.request_id, subscription_id: Some(request.subscription_id), generation: request.expected_generation, latest_sequence: 1, event: crate::daemon::conversation_protocol::ConversationEvent::State { state: crate::daemon::conversation_protocol::ConversationState::Stopped } }) }
+    async fn control(&self, _: crate::daemon::conversation_protocol::ConversationControlRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
+    async fn revoke_microphone(&self, _: crate::daemon::conversation_protocol::ConversationRevokeMicrophoneRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
+    async fn replay(&self, _: crate::daemon::conversation_protocol::ConversationAttachRequest) -> crate::daemon::conversation_protocol::ConversationResult<Vec<crate::daemon::conversation_protocol::ConversationStreamFrame>> { unreachable!() }
+    async fn attach(&self, _: crate::daemon::conversation_protocol::ConversationAttachRequest, _: &mut dyn crate::daemon::conversation_protocol::ConversationProjectionSink) -> crate::daemon::conversation_protocol::ConversationResult<()> { self.attach_entered.notify_waiters(); self.release.notified().await; Ok(()) }
+    async fn close_and_drain(&self) -> crate::daemon::conversation_protocol::ConversationResult<()> { Ok(()) }
+}
+
+fn conversation_start_request() -> crate::daemon::conversation_protocol::ConversationStartRequest { crate::daemon::conversation_protocol::ConversationStartRequest { schema_version: 1, expected_boot_id: "boot".into(), request_id: crate::daemon::conversation_protocol::ConversationRequestId(uuid::Uuid::now_v7()), subscription_id: crate::daemon::conversation_protocol::ConversationSubscriptionId("sub".into()), session_id: "session".into(), origin_surface: crate::daemon::conversation_protocol::ConversationSurface::Buddy, expected_generation: 1 } }
+fn conversation_progress(request: &crate::daemon::conversation_protocol::ConversationStartRequest) -> crate::daemon::conversation_protocol::ConversationProgressResponse { crate::daemon::conversation_protocol::ConversationProgressResponse { schema_version: 1, expected_boot_id: request.expected_boot_id.clone(), request_id: request.request_id, subscription_id: Some(request.subscription_id.clone()), generation: request.expected_generation, latest_sequence: 1, event: crate::daemon::conversation_protocol::ConversationEvent::State { state: crate::daemon::conversation_protocol::ConversationState::Ready } } }
+fn settlement_fixture(abort_fails: bool) -> Arc<ConversationSettlementFixture> { Arc::new(ConversationSettlementFixture { entered: tokio::sync::Notify::new(), attach_entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new(), aborted: std::sync::atomic::AtomicBool::new(false), joined: std::sync::atomic::AtomicBool::new(false), cancelled: std::sync::atomic::AtomicBool::new(false), abort_fails }) }
+fn conversation_attach_request() -> crate::daemon::conversation_protocol::ConversationAttachRequest { let start = conversation_start_request(); crate::daemon::conversation_protocol::ConversationAttachRequest { schema_version: start.schema_version, expected_boot_id: start.expected_boot_id, request_id: start.request_id, subscription_id: start.subscription_id, session_id: start.session_id, origin_surface: start.origin_surface, expected_generation: start.expected_generation, after_sequence: 0 } }
+
+#[tokio::test]
+async fn conversation_start_peer_eof_aborts_and_joins_before_handler_returns() {
+    let fixture = settlement_fixture(false);
+    let (server, client) = tokio::io::duplex(64);
+    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
+    fixture.entered.notified().await; drop(client); task.await.unwrap().unwrap();
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst)); assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn conversation_start_broken_reply_write_aborts_before_handler_returns() {
+    let fixture = settlement_fixture(false);
+    // One byte prevents the HTTP acknowledgement from completing until this
+    // peer is dropped, exercising the real response-write failure branch.
+    let (server, client) = tokio::io::duplex(1);
+    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
+    fixture.entered.notified().await; fixture.release.notify_waiters(); tokio::task::yield_now().await; drop(client); task.await.unwrap().unwrap();
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst)); assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_returns_error() {
+    let fixture = settlement_fixture(true);
+    let (server, client) = tokio::io::duplex(64);
+    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
+    fixture.entered.notified().await;
+    drop(client);
+    assert!(task.await.unwrap().is_err());
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(fixture.cancelled.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn conversation_attach_failed_abort_after_peer_close_returns_error_from_production_helper() {
+    let fixture = settlement_fixture(true);
+    let (server, mut client) = tokio::io::duplex(256);
+    let task = tokio::spawn(super::server::serve_conversation_attach(Box::new(server), fixture.clone(), conversation_attach_request()));
+    let mut header = [0u8; 96];
+    let _ = client.read(&mut header).await.unwrap();
+    fixture.attach_entered.notified().await;
+    drop(client);
+    assert!(task.await.unwrap().is_err());
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst));
+}
+
 const HEALTH_PROBE_CHILD_HOME_ENV: &str = "NEOTH_AUDIT_RPC_HEALTH_PROBE_CHILD_HOME";
 const WEBCHAT_STATUS_PROBE_CHILD_HOME_ENV: &str = "NEOTH_AUDIT_RPC_WEBCHAT_STATUS_PROBE_CHILD_HOME";
 const WEBCHAT_STATUS_PROBE_EXPECTED_ENV: &str = "NEOTH_AUDIT_RPC_WEBCHAT_STATUS_PROBE_EXPECTED";
@@ -60,6 +144,13 @@ impl crate::daemon::gui_chat_protocol::GuiChatRuntime for WebChatStatusFixtureRu
         &self,
         _: crate::daemon::audit_rpc::AuditStream,
         _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+    async fn attach_frames(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+        _: &mut dyn crate::daemon::gui_chat_protocol::GuiChatFrameSink,
     ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
         unreachable!("WebChat runtime-status never invokes the chat runtime")
     }
@@ -250,6 +341,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: Some(Arc::clone(&webchat)),
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -282,6 +374,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (absent_endpoint, absent_listener) =
@@ -369,6 +462,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -454,6 +548,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -539,6 +634,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -968,6 +1064,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -1014,6 +1111,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -1077,6 +1175,7 @@ async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -1199,6 +1298,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -1755,6 +1855,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -1819,6 +1920,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let unavailable_nonce = test_endpoint_nonce();
@@ -1866,6 +1968,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -1938,6 +2041,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2010,6 +2114,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2109,6 +2214,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2528,6 +2634,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2573,6 +2680,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2611,6 +2719,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2652,6 +2761,7 @@ async fn client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2703,6 +2813,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2766,6 +2877,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2803,6 +2915,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2879,6 +2992,7 @@ async fn listener_serves_more_than_one_connection() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2926,6 +3040,7 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        conversation_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();

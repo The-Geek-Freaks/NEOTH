@@ -807,6 +807,41 @@ pub(crate) async fn gui_chat_attach(
         }
     }
 }
+
+#[derive(Debug)]
+pub(crate) enum ConversationClientError { PreWriteUnavailable(String), Indeterminate(String), Refused(u16, String) }
+fn map_conversation_client_error(error: GuiChatClientError) -> ConversationClientError { match error { GuiChatClientError::PreWriteUnavailable(value) => ConversationClientError::PreWriteUnavailable(value), GuiChatClientError::Indeterminate(value) => ConversationClientError::Indeterminate(value), GuiChatClientError::Refused(status, value) => ConversationClientError::Refused(status, value) } }
+pub(crate) fn attested_conversation_boot_id(home: &Path) -> Result<String, ConversationClientError> { attested_gui_chat_boot_id(home).map_err(map_conversation_client_error) }
+pub(crate) async fn conversation_post<T, R>(home: &Path, path: &str, request: &T) -> Result<R, ConversationClientError> where T: serde::Serialize, R: serde::de::DeserializeOwned { gui_chat_post(home, path, request).await.map_err(map_conversation_client_error) }
+/// Only an indeterminate post-write failure needs an idempotent owner-side
+/// abort. Pre-write discovery failures prove no start was submitted; a typed
+/// refusal is already a settled daemon response.
+pub(crate) async fn conversation_post_cancellable<T, R>(home: &Path, path: &str, request: &T, abort: &crate::daemon::conversation_protocol::ConversationAbortStartRequest) -> Result<R, ConversationClientError> where T: serde::Serialize, R: serde::de::DeserializeOwned {
+    match conversation_post(home, path, request).await {
+        Ok(response) => Ok(response),
+        Err(error @ ConversationClientError::PreWriteUnavailable(_)) => Err(error),
+        Err(error @ ConversationClientError::Refused(_, _)) => Err(error),
+        Err(ConversationClientError::Indeterminate(detail)) => {
+            let _: crate::daemon::conversation_protocol::ConversationProgressResponse = conversation_post(home, crate::daemon::conversation_protocol::CONVERSATION_V1_ABORT_START_PATH, abort).await.map_err(|abort_error| ConversationClientError::Indeterminate(format!("start outcome indeterminate ({detail}); abort settlement unconfirmed: {abort_error:?}")))?;
+            Err(ConversationClientError::Indeterminate(detail))
+        }
+    }
+}
+
+pub(crate) async fn conversation_attach(home: &Path, request: &crate::daemon::conversation_protocol::ConversationAttachRequest, on_frame: &mut (dyn FnMut(crate::daemon::conversation_protocol::ConversationStreamFrame) -> Result<(), ConversationClientError> + Send)) -> Result<(), ConversationClientError> {
+    let body = serde_json::to_string(request).map_err(|error| ConversationClientError::PreWriteUnavailable(format!("serialize attach: {error}")))?;
+    let sidecar = read_sidecar(home).map_err(|error| ConversationClientError::PreWriteUnavailable(format!("sidecar: {error}")))?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) { return Err(ConversationClientError::PreWriteUnavailable("stale audit-RPC sidecar".into())); }
+    let token = read_rpc_token(home).map_err(|error| ConversationClientError::PreWriteUnavailable(format!("token: {error}")))?;
+    let wire = format!("POST {} HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", crate::daemon::conversation_protocol::CONVERSATION_V1_ATTACH_PATH, body.len());
+    let mut stream = tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, super::transport::connect(&sidecar.endpoint)).await.map_err(|_| ConversationClientError::PreWriteUnavailable("attach connect deadline".into())).and_then(|value| value.map_err(|error| ConversationClientError::PreWriteUnavailable(format!("attach connect: {error}"))))?;
+    tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(wire.as_bytes())).await.map_err(|_| ConversationClientError::Indeterminate("attach write deadline".into()))?.map_err(|error| ConversationClientError::Indeterminate(format!("attach write: {error}")))?;
+    let mut bytes = Vec::new(); let mut chunk = [0u8; 4096]; let mut header = false; let mut expected = request.after_sequence.saturating_add(1);
+    loop { let n = if header { stream.read(&mut chunk).await } else { tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.read(&mut chunk)).await.map_err(|_| ConversationClientError::Indeterminate("attach header deadline".into()))? }.map_err(|error| ConversationClientError::Indeterminate(format!("attach read: {error}")))?; if n == 0 { return Err(ConversationClientError::Indeterminate("attach EOF before terminal".into())); } bytes.extend_from_slice(&chunk[..n]); if !header { let Some(pos) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else { if bytes.len() > 8192 { return Err(ConversationClientError::Indeterminate("attach headers too large".into())); } continue; }; let head = std::str::from_utf8(&bytes[..pos]).map_err(|_| ConversationClientError::Indeterminate("attach headers utf8".into()))?; let mut lines = head.split("\r\n"); if lines.next() != Some("HTTP/1.1 200 OK") { return Err(ConversationClientError::Indeterminate("attach refused after write".into())); } for line in lines { let (name, _) = line.split_once(':').ok_or_else(|| ConversationClientError::Indeterminate("malformed attach header".into()))?; if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("transfer-encoding") { return Err(ConversationClientError::Indeterminate("attach must be close-delimited NDJSON".into())); } } bytes.drain(..pos + 4); header = true; }
+        while let Some(pos) = bytes.iter().position(|byte| *byte == b'\n') { let line: Vec<u8> = bytes.drain(..=pos).collect(); if line.len() > crate::daemon::conversation_protocol::CONVERSATION_FRAME_MAX_BYTES { return Err(ConversationClientError::Indeterminate("attach frame too large".into())); } let text = std::str::from_utf8(&line).map_err(|_| ConversationClientError::Indeterminate("attach frame utf8".into()))?.trim(); if text.is_empty() { continue; } let frame: crate::daemon::conversation_protocol::ConversationStreamFrame = serde_json::from_str(text).map_err(|_| ConversationClientError::Indeterminate("malformed NDJSON frame".into()))?; if frame.schema_version != crate::daemon::conversation_protocol::CONVERSATION_V1_SCHEMA_VERSION || frame.expected_boot_id != request.expected_boot_id || frame.subscription_id != request.subscription_id || frame.generation != request.expected_generation || frame.sequence != expected { return Err(ConversationClientError::Indeterminate("attach rotation or sequence mismatch".into())); } expected = expected.saturating_add(1); let terminal = matches!(frame.event, crate::daemon::conversation_protocol::ConversationEvent::Terminal { .. }); on_frame(frame)?; if terminal { return Ok(()); } }
+        if bytes.len() > crate::daemon::conversation_protocol::CONVERSATION_FRAME_MAX_BYTES { return Err(ConversationClientError::Indeterminate("unterminated attach frame too large".into())); }
+    }
+}
 /// Shared same-user IPC POST to the daemon's audit-RPC listener (same
 /// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
 /// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.

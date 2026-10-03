@@ -33,6 +33,15 @@ pub struct GenerationToken {
     generation: u32,
 }
 
+impl GenerationToken {
+    /// Identity is deliberately narrower than value equality: two tokens are
+    /// equal only when they came from the same cancellation allocation and
+    /// carry the same issued generation.  No token constructor is exposed.
+    pub(crate) fn same_generation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.scope, &other.scope) && self.generation == other.generation
+    }
+}
+
 /// Returned when a scope can no longer issue or advance a generation safely.
 ///
 /// This is terminal for the scope: it remains invalidated and every previously
@@ -164,6 +173,18 @@ mod tests {
             .expect("fresh independent scope must issue a token");
 
         assert!(first.is_stale(&token));
+    }
+
+    #[test]
+    fn token_identity_requires_the_same_scope_and_generation() {
+        let first = CancelScope::new();
+        let same_scope_clone = first.clone();
+        let first_token = first.snapshot().unwrap();
+        let clone_token = same_scope_clone.snapshot().unwrap();
+        let second = CancelScope::new();
+        let same_integer_other_scope = second.snapshot().unwrap();
+        assert!(first_token.same_generation(&clone_token));
+        assert!(!first_token.same_generation(&same_integer_other_scope));
     }
 
     #[test]
