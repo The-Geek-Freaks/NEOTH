@@ -25,5 +25,18 @@
   "localExecutableValidationRan": false,
   "hosted": "pending fresh producer",
   "newTests": 0,
-  "releaseReady": false
+  "releaseReady": false,
+  "hostedFormat": {
+    "run": 37151961367,
+    "producer": "7c7c79f64d4576b54e5c7d6890c98de81bdb7d7a",
+    "artifact": 11284780098,
+    "originalZipSha256": "45C20ED9BC4AED36B26F5F249DC20FFDE4681BCC823E0FCE00C05C2098B68A5E",
+    "entries": 3,
+    "patchSha256": "9DEE897E6B812952D53F7D3597688693D5BCD56056A0F3A0F3C04FC9536CD12B",
+    "paths": [
+      "SRC/neothd/src/daemon/audit_rpc/mod.rs"
+    ],
+    "localFormatterRan": false,
+    "postimage": "46addf32e2e263587655057e6f8352888386ba12"
+  }
 }

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2301 missing export and test import repaired; hosted verification pending",
+  "status": "W2301 exact hosted import formatting applied; compile pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 374046,
-    "sha256": "C41B561B8905BC011FCFC5D1425821A63CEEFF968A3ECACD64E28D11B5D20778"
+    "bytes": 374033,
+    "sha256": "6136721772ACD1439AE87BA6798136D466562B7AAC223771684D5FDB26BCE1FC"
   },
   "sourceInputs": 2046,
   "requiredNativeTests": [
@@ -2232,13 +2232,13 @@
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "7DCC83BF7C714DB8E562B89942EC1441ECEA63DAE70710CAD63BE0126B3FAA81",
+      "sourceSha256": "879461A71D4985B78FB94BF77397CF0B7310CBBE13766800797E121FB02BCC75",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_feedback_target_requires_exact_terminal_session",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "7DCC83BF7C714DB8E562B89942EC1441ECEA63DAE70710CAD63BE0126B3FAA81",
+      "sourceSha256": "879461A71D4985B78FB94BF77397CF0B7310CBBE13766800797E121FB02BCC75",
       "junitClass": "neoth"
     },
     {
@@ -4122,7 +4122,7 @@
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::silence_timeout_error_is_typed_retry_guidance_not_a_success_response",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "7DCC83BF7C714DB8E562B89942EC1441ECEA63DAE70710CAD63BE0126B3FAA81",
+      "sourceSha256": "879461A71D4985B78FB94BF77397CF0B7310CBBE13766800797E121FB02BCC75",
       "junitClass": "neoth"
     },
     {
@@ -72962,6 +72962,32 @@
       }
     ],
     "note": "Only two missing bindings; four hosted diagnostics, zero executed tests; rerun current-source CLI export before focused500.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2301HostedFormatting": {
+    "base": "7c7c79f64d4576b54e5c7d6890c98de81bdb7d7a",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2301-cluster-compile.json",
+        "bytes": 1574,
+        "sha256": "4BE2BDEF1482D906CC002407F8EE93016FBE0AA2AA13D49143336BEAF9BC94B1",
+        "blob": "99331855ded47b447dee65757b06f6e49da7ecdd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2355613,
+        "sha256": "C0563E2F04A0250606404ECBBB5B41F76460A939921CD9E50F76E245F04E6E17",
+        "blob": "5fced804b2e5a4ace4afe8dedf454d963d65efb3"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+        "bytes": 20493,
+        "sha256": "879461A71D4985B78FB94BF77397CF0B7310CBBE13766800797E121FB02BCC75",
+        "blob": "46addf32e2e263587655057e6f8352888386ba12"
+      }
+    ],
+    "note": "Verified single-path RPC import formatting from original11284780098; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

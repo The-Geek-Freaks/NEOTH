@@ -17998,3 +17998,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Hosted CLI-reference37151172564@916f5886 failed core-test type checking before CLI build or reference export. Four diagnostics resolve to two missing bindings: the cluster-gated RPC facade did not reexport its new client method, and two executor test providers lacked Completion in scope. The CLI map_err inference error is a cascade from the missing export.
 - Add only the existing RPC reexport and a cfg(test) Completion import. No behavior or test identities changed; no local execution. Repeat hosted type checking/reference generation before focused500; native and release acceptance remain open.
+
+- W2301 formatting: exact hosted artifact11284780098 from Preflight37151961367 verified with ZIP/API SHA45C20ED9..., internal sums/head and Git postimage46addf32. Imported only RPC reexport ordering/wrapping. No local rustfmt; fresh hosted validation remains required.
