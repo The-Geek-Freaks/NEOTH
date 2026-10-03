@@ -1745,8 +1745,14 @@ fallback:
         assert_eq!(wire["available_provider_instances"][0]["id"], "route_a");
         assert_eq!(wire["fallback"]["max_hops"], 7);
         assert_eq!(wire["fallback"]["selectors"][0]["position"], 0);
-        assert_eq!(wire["fallback"]["selectors"][0]["provider_instance_id"], "route_b");
-        assert_eq!(wire["fallback"]["selectors"][1]["provider_instance_id"], "route_a");
+        assert_eq!(
+            wire["fallback"]["selectors"][0]["provider_instance_id"],
+            "route_b"
+        );
+        assert_eq!(
+            wire["fallback"]["selectors"][1]["provider_instance_id"],
+            "route_a"
+        );
         let rendered = serde_json::to_string(&wire).expect("serialize redacted projection");
         assert!(!rendered.contains("a-secret"));
         assert!(!rendered.contains("b-secret"));

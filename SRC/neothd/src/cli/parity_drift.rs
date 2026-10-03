@@ -596,8 +596,13 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Show"),
         receipt: Evidence::Missing,
-        readback: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_provider_readback"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_provider_readback",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.provider.set",
@@ -608,9 +613,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-provider-set"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Set"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.provider.select",
@@ -621,9 +634,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-provider-select"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Select"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.provider.mode",
@@ -634,9 +655,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-provider-mode"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Mode"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.provider.preset",
@@ -647,9 +676,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-provider-preset"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Preset"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.provider.test",
@@ -660,9 +697,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-provider-test"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::Test"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("hosted GUI qualification is pending; provider test is unavailable on macOS until process-tree containment exists"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "hosted GUI qualification is pending; provider test is unavailable on macOS until process-tree containment exists",
+        ),
     },
     OperationParity {
         id: "buddy.fallback.replace",
@@ -673,9 +718,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-fallback-replace"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::FallbackReplace"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     OperationParity {
         id: "buddy.fallback.clear",
@@ -686,9 +739,17 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("bc-buddy-fallback-clear"),
         rust_handler: Some("fn register_buddy_provider_callbacks"),
         dispatch_token: Some("Command::FallbackClear"),
-        receipt: Evidence::Typed("fn start_buddy_provider_command", "buddy_provider_panel::parse_buddy_outcome"),
-        readback: Evidence::Typed("fn start_buddy_provider_command", "fetch_buddy_provider_readback()"),
-        state: OperationState::Partial("source integration and hosted GUI qualification are pending"),
+        receipt: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "buddy_provider_panel::parse_buddy_outcome",
+        ),
+        readback: Evidence::Typed(
+            "fn start_buddy_provider_command",
+            "fetch_buddy_provider_readback()",
+        ),
+        state: OperationState::Partial(
+            "source integration and hosted GUI qualification are pending",
+        ),
     },
     unwired_operation(
         "buddy.embedding.list",

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2263 reviewed Buddy provider GUI source; hosted validation pending",
+  "status": "W2263 exact hosted Rustfmt patch imported; compilation and GUI acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 366893,
-    "sha256": "B1504638637EB7B326CF4AB148CF399D4E1820BD003D2603132B93188CE7C73C"
+    "bytes": 366907,
+    "sha256": "745D180D4B52924B2B2EFDCF8F8A568A459A2D1E18C75C72550331BC3EEFB5E5"
   },
   "sourceInputs": 2007,
   "requiredNativeTests": [
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "B55B79FE40830862CCD6DCEF5095E30EA0AE36DDC029CA19AAC8FA29F45D4ABC",
+      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
       "junitClass": "neoth"
     },
     {
@@ -3545,13 +3545,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "B55B79FE40830862CCD6DCEF5095E30EA0AE36DDC029CA19AAC8FA29F45D4ABC",
+      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
       "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "B55B79FE40830862CCD6DCEF5095E30EA0AE36DDC029CA19AAC8FA29F45D4ABC",
+      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
       "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
       "junitClass": "neoth"
     },
@@ -4890,7 +4890,7 @@
     {
       "test": "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "B55B79FE40830862CCD6DCEF5095E30EA0AE36DDC029CA19AAC8FA29F45D4ABC",
+      "sourceSha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
       "junitClass": "neoth"
     },
     {
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
@@ -15522,49 +15522,49 @@
     {
       "test": "cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
@@ -15949,25 +15949,25 @@
     {
       "test": "cli::hemispheres::tests::buddy_gui_readback_is_typed_redacted_and_preserves_fallback_order",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_readback_rejects_unknown_named_fallback_selector",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_test_receipt_outcome_is_typed_and_has_no_content_channel",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_preset_receipt_uses_canonical_cli_spellings",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385",
+      "sourceSha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
       "junitClass": "neoth"
     }
   ],
@@ -16609,8 +16609,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2249785,
-      "sha256": "757734D5E9AC08516869B2A9FEB9473E0F0E353701FBE19C712C79FCC60A41FF"
+      "bytes": 2253307,
+      "sha256": "667B2CA7326265F1BC20ADCC1FCA09BCE8AED48DE90073A77F58CC48BC3C8FFB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -16699,13 +16699,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
-      "bytes": 27871,
-      "sha256": "668FC799312C00C5FD36C44C5A3C8BF6C32CFA89BE5C525AD47A6AC9CBAC6FF7"
+      "bytes": 34603,
+      "sha256": "E7320BACDF13664C8A9CD62EB5C09AAD4C16FA37B2E3E5E18272EC196A671142"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 15523,
-      "sha256": "F41DD5FC25904A547248CE6CFB607E3CCFED2FFE99A24EB6CBAC9968CD1E00EA"
+      "bytes": 17287,
+      "sha256": "46497C27FA3CF4F058B19DEA18DE4C874FC738F31D274998399B0B7D0440FF9D"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -16719,8 +16719,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 109956,
-      "sha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385"
+      "bytes": 110024,
+      "sha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224"
     }
   ],
   "remoteFormatCorrection": {
@@ -71113,6 +71113,44 @@
       }
     ],
     "note": "Eight canonical Buddy GUI operations, redacted typed outcomes and fresh readback; 4 native, 10 universal GUI, 2 Linux/macOS callback tests registered. Mac provider execution refused before spawn; configuration available. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2263HostedFormat": {
+    "base": "39383fcfd047c1ef78b50d3ca759d0a7dfcb5afd",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+        "bytes": 17287,
+        "sha256": "46497C27FA3CF4F058B19DEA18DE4C874FC738F31D274998399B0B7D0440FF9D",
+        "blob": "f606a69e5ec185a389f05915b1a3b3a6efaa8082"
+      },
+      {
+        "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
+        "bytes": 34603,
+        "sha256": "E7320BACDF13664C8A9CD62EB5C09AAD4C16FA37B2E3E5E18272EC196A671142",
+        "blob": "6aa9c3ff30cb07f355c2fca3664bc3a7e62b2905"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2253307,
+        "sha256": "667B2CA7326265F1BC20ADCC1FCA09BCE8AED48DE90073A77F58CC48BC3C8FFB",
+        "blob": "466fb1f71e88f1c6a79407617392ff749eba5701"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 110024,
+        "sha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224",
+        "blob": "53fd412b085bf649080c1f9c3a7205fd88432c04"
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 88860,
+        "sha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D",
+        "blob": "e9ff39056aff3130a13c80f576e0129bd5d6c5d8"
+      }
+    ],
+    "note": "Original preflight37112237603 artifact11269689641 outer API SHA256 and all inner hashes verified; producer39383fcf exact. Formatting generated only by hosted Rustfmt; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

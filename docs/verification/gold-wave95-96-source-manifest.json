@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T09:09:08.0214246Z",
-  "validationStatus": "W2263 reviewed Buddy provider GUI source; hosted validation pending",
+  "capturedUtc": "2026-10-03T09:13:11.9903719Z",
+  "validationStatus": "W2263 exact hosted Rustfmt patch imported; compilation and GUI acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4533,13 +4533,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 15523,
-      "sha256": "F41DD5FC25904A547248CE6CFB607E3CCFED2FFE99A24EB6CBAC9968CD1E00EA"
+      "bytes": 17287,
+      "sha256": "46497C27FA3CF4F058B19DEA18DE4C874FC738F31D274998399B0B7D0440FF9D"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
-      "bytes": 27871,
-      "sha256": "668FC799312C00C5FD36C44C5A3C8BF6C32CFA89BE5C525AD47A6AC9CBAC6FF7"
+      "bytes": 34603,
+      "sha256": "E7320BACDF13664C8A9CD62EB5C09AAD4C16FA37B2E3E5E18272EC196A671142"
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
@@ -4613,8 +4613,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2249785,
-      "sha256": "757734D5E9AC08516869B2A9FEB9473E0F0E353701FBE19C712C79FCC60A41FF"
+      "bytes": 2253307,
+      "sha256": "667B2CA7326265F1BC20ADCC1FCA09BCE8AED48DE90073A77F58CC48BC3C8FFB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -5423,8 +5423,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 109956,
-      "sha256": "9EDCC2D108599973FB498C0A9B1C710AC1E541845F0577B33E41BEBC5ECBD385"
+      "bytes": 110024,
+      "sha256": "6AF8B802AD4348B4DBBDDE449389D9A8DC785687BEDEA28FC041B6023AD94224"
     },
     {
       "path": "SRC/neothd/src/cli/identity.rs",
@@ -5558,8 +5558,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 88151,
-      "sha256": "B55B79FE40830862CCD6DCEF5095E30EA0AE36DDC029CA19AAC8FA29F45D4ABC"
+      "bytes": 88860,
+      "sha256": "0CA88C7C7B35174FB57A9BE1FAD124D177AFE3CDEF6B2EE99E49558C7BC3288D"
     },
     {
       "path": "SRC/neothd/src/cli/privacy.rs",
