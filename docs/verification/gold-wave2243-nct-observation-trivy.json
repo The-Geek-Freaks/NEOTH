@@ -84,5 +84,19 @@
   ],
   "localExecutableValidationRan": false,
   "slintChanged": false,
-  "claudePolling": false
+  "claudePolling": false,
+  "hostedFormatting": {
+    "producer": "d94b50b75190bf2a3e8d2e5eccfc2d4acbee50cb",
+    "preflight": 37091399563,
+    "codeQuality": 37091399041,
+    "codeQualityConclusion": "success",
+    "preflightFailure": "Rust formatting only",
+    "matrixProvenanceFixtureTestsPassed": 9,
+    "artifact": 11262503698,
+    "zipSha256": "A0D1423FB318CEB22F3BB3301F05CC1F278CA1BE4B435E770F37C446B820044B",
+    "patchSha256": "E3E4C6EA9548E2268FACFF8FDCE96FE73F86413A1C3DCB3B889D8450D83D9F15",
+    "sourcePostimageSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+    "localFormatterRan": false,
+    "hostedValidationAfterFormatting": "pending"
+  }
 }

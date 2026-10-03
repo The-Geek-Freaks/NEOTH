@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2243 static reviewed; hosted pending",
+  "status": "W2243 authentic hosted formatting applied; final producer checks pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 365926,
-    "sha256": "9C419267AA2F99895C4D742D2B2338363A0E4B876FAEA0323ADABBB4904504C8"
+    "bytes": 365961,
+    "sha256": "921F51D3AB209BC2A63D3C06865B7363CF2B494BEDD916D44ABCFA9AAF6F9D89"
   },
   "sourceInputs": 2002,
   "requiredNativeTests": [
@@ -4800,7 +4800,7 @@
     {
       "test": "cli::agents::tests::fan_out_registry_admits_only_enabled_skills_and_suppresses_eval",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
       "junitClass": "neoth"
     },
     {
@@ -15925,19 +15925,19 @@
     {
       "test": "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "4E23E2BC994E41379D84BD936565D80A09C6ED18871B89C22EA758FB83D80ACC",
+      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
       "junitClass": "neoth"
     }
   ],
@@ -70837,6 +70837,26 @@
       }
     ],
     "note": "Exact reviewed postimages; three new portable tests; immutable dfa full continues separately; no local runtime or Slint changes.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2243HostedFormatting": {
+    "base": "d94b50b75190bf2a3e8d2e5eccfc2d4acbee50cb",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2243-nct-observation-trivy.json",
+        "bytes": 5103,
+        "sha256": "6118942F2E490A3C072AD938E771F300CE5C33C73249D1A427FA67BBB4720F30",
+        "blob": "49b58762e041805b06d86d6ab4efe4259b09bf4e"
+      },
+      {
+        "path": "SRC/neothd/src/cli/agents.rs",
+        "bytes": 40587,
+        "sha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+        "blob": "bd5b1a24497a0b0264b94d01b9e9ce057abfd40b"
+      }
+    ],
+    "note": "One-file authentic formatting patch from preflight37091399563; nine Matrix provenance fixtures and final provenance gate succeeded before formatting failure. No local formatter or runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -148,13 +148,7 @@ pub async fn run_agents(args: AgentsArgs) -> Result<()> {
             run_id,
             limit,
             nct_baseline,
-        } => render_history(
-            &home,
-            run_id.as_deref(),
-            limit,
-            nct_baseline,
-            &args.output,
-        ),
+        } => render_history(&home, run_id.as_deref(), limit, nct_baseline, &args.output),
     }
 }
 
@@ -992,7 +986,12 @@ mod tests {
         use clap::Parser;
 
         let error = <crate::cli::Cli as Parser>::try_parse_from([
-            "neoth", "--output", "json", "agents", "history", "--nct-baseline",
+            "neoth",
+            "--output",
+            "json",
+            "agents",
+            "history",
+            "--nct-baseline",
         ])
         .unwrap_err();
         assert!(error.to_string().contains("--nct-baseline"));
@@ -1009,8 +1008,14 @@ mod tests {
         let serialized = serde_json::to_string(&observation).unwrap();
 
         assert_eq!(observation.source_run_id, run_id);
-        assert_eq!(observation.route_qualification_status, "unavailable_in_source_record");
-        assert_eq!(observation.evidence_status, "incomplete_unqualified_observation");
+        assert_eq!(
+            observation.route_qualification_status,
+            "unavailable_in_source_record"
+        );
+        assert_eq!(
+            observation.evidence_status,
+            "incomplete_unqualified_observation"
+        );
         assert_eq!(observation.qualification_status, "not_eligible");
         assert_eq!(observation.cost_status, "unknown");
         let leaves = &observation.results[0].provider_leaves;
@@ -1044,7 +1049,10 @@ mod tests {
             "private-recipient",
             "prompt_hash_xxh3",
         ] {
-            assert!(!serialized.contains(private_fragment), "leaked {private_fragment}");
+            assert!(
+                !serialized.contains(private_fragment),
+                "leaked {private_fragment}"
+            );
         }
     }
 
@@ -1059,18 +1067,15 @@ mod tests {
             &OutputFormat::Table,
         )
         .unwrap_err();
-        assert!(error.to_string().contains("--output json or --output jsonl"));
+        assert!(
+            error
+                .to_string()
+                .contains("--output json or --output jsonl")
+        );
 
         let home = tempfile::tempdir().unwrap();
         let run_id = "run-nct-render";
         write_nct_observation_source_run(home.path(), run_id);
-        render_history(
-            home.path(),
-            Some(run_id),
-            20,
-            true,
-            &OutputFormat::Json,
-        )
-        .unwrap();
+        render_history(home.path(), Some(run_id), 20, true, &OutputFormat::Json).unwrap();
     }
 }
