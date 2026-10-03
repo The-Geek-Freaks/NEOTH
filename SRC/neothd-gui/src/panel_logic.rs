@@ -5097,14 +5097,6 @@ pub fn parse_models_catalog_readback(
     })
 }
 
-/// Backward-compatible picker helper for callers that deliberately want an
-/// empty list on malformed output.
-pub fn parse_models_catalog(json: &str, provider_kind: &str) -> Vec<String> {
-    parse_models_catalog_readback(json, provider_kind)
-        .map(|readback| readback.model_ids)
-        .unwrap_or_default()
-}
-
 // ── Cost & usage (C7) ────────────────────────────────────────────────────────
 
 /// One top-session cost row for the overview card.
@@ -14911,7 +14903,7 @@ mod tests {
             .expect("unknown selected provider retains merged fallback");
         assert!(all.model_ids.contains(&"other-model".to_string()));
         assert!(!all.model_ids.contains(&"old-model".to_string()));
-        assert!(parse_models_catalog("junk", "x").is_empty());
+        assert!(parse_models_catalog_readback("junk", "x").is_err());
     }
 
     #[test]

@@ -14,7 +14,7 @@ use slint::{ComponentHandle as _, Model as _, ModelRc, VecModel};
 use std::{
     cell::Cell,
     ffi::OsString,
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
     time::Duration,
 };

@@ -1,0 +1,53 @@
+{
+  "schema": "neoth-gold-wave2265-gui-runner-recovery/v1",
+  "base": "fdca016e13447667c329ce870f9908e09a365f94",
+  "status": "reviewed narrow warning repair; fresh full hosted qualification pending",
+  "priorRun": {
+    "id": 37114076755,
+    "producer": "fdca016e13447667c329ce870f9908e09a365f94",
+    "conclusion": "failure",
+    "productionGuiCompilerArtifactEmitted": true,
+    "guiTestsExecuted": 0,
+    "artifactCount": 0,
+    "failure": "runner shutdown, exit 143; initiating cause unknown",
+    "jobElapsedSeconds": 1782,
+    "jobTimeoutSeconds": 5400,
+    "workflowDeadlineReached": false,
+    "proof": "work/gold-20260906/wave2265-gui-runner-recovery/diagnosis/W2265_GUI173_RUNNER_RECOVERY_DIAGNOSIS.json",
+    "proofSha256": "C090EAE2CBFF58209DAACA05F73B1C60767F1DF8F24320D6B3E31C40AB97312D"
+  },
+  "changes": [
+    "Remove unused PathBuf test import",
+    "Remove unused model catalog compatibility wrapper; existing malformed-wire assertion uses typed Result directly"
+  ],
+  "validation": {
+    "review": "independent exact-candidate static review approved",
+    "hosted": "pending",
+    "localExecutableValidationRan": false,
+    "nextLane": ".github/workflows/ci.yml",
+    "rationale": "Existing required full CI builds real CLI and GUI helpers, executes the two Buddy callbacks on Linux and macOS and the pure model catalog tests; it supplies broader required qualification without repeating the same focused GUI compilation lane.",
+    "workflowChanged": false,
+    "timeoutChanged": false
+  },
+  "counts": {
+    "portableNative": 2657,
+    "universalGui": 138,
+    "linuxSpecificGui": 35,
+    "linuxSelectedGui": 173,
+    "macosSpecificGui": 31,
+    "macosNativeHarnessCallbacks": 35
+  },
+  "importedSources": [
+    {
+      "after": "99C4DB9E9FB3B2ECC36BE67055733B4DFDA883580964DC15AA7B4C586593C693",
+      "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "before": "46497C27FA3CF4F058B19DEA18DE4C874FC738F31D274998399B0B7D0440FF9D"
+    },
+    {
+      "after": "3312BFDE139E6048E996D1F2EF5CA932A1A4BEB732EA1E4FF78B6FBBEDC9AEFD",
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "before": "4ADA4B115A2CFEF8B8CC0EC657585A06584D169CBBFCFBE1927AAB81F4F32064"
+    }
+  ],
+  "releaseReady": false
+}

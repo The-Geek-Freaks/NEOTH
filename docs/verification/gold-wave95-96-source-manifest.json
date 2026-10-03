@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T09:40:18.4384253Z",
-  "validationStatus": "W2264 exact hosted format applied; GUI173 and full CI pending",
+  "capturedUtc": "2026-10-03T10:23:34.5756845Z",
+  "validationStatus": "W2265 static warning repair; full hosted qualification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3202,6 +3202,11 @@
       "sha256": "D6A9E1D4812318ECDD01F5DF9C76398B2B97374406880091C9C3E8DE8684301E"
     },
     {
+      "path": "docs/verification/gold-wave2265-gui-runner-recovery.json",
+      "bytes": 2235,
+      "sha256": "7FC03A3BAF944CCD226149476FCF050A2EDC997DE1BA146459739F065BA0DF5C"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4343,8 +4348,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2334966,
-      "sha256": "2781FD12321230D7F4C655C0B61D5EF30DEA35F10C8F6293D12A7A31092BBA29"
+      "bytes": 2336334,
+      "sha256": "4A0B83D075D4E3EDA6BDB574C08E66511A4787C2A0EBB5A60A5BB063EBD1B656"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4538,8 +4543,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
-      "bytes": 17287,
-      "sha256": "46497C27FA3CF4F058B19DEA18DE4C874FC738F31D274998399B0B7D0440FF9D"
+      "bytes": 17276,
+      "sha256": "99C4DB9E9FB3B2ECC36BE67055733B4DFDA883580964DC15AA7B4C586593C693"
     },
     {
       "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
@@ -4633,8 +4638,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 610829,
-      "sha256": "4ADA4B115A2CFEF8B8CC0EC657585A06584D169CBBFCFBE1927AAB81F4F32064"
+      "bytes": 610515,
+      "sha256": "3312BFDE139E6048E996D1F2EF5CA932A1A4BEB732EA1E4FF78B6FBBEDC9AEFD"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
