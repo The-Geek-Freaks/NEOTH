@@ -17993,3 +17993,8 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Final12-source candidate and two-file W2299 rebase independently statically reviewed. No local runtime; new-producer formatting, compile, focused500, native transport/audio and release acceptance remain pending. Origin-stream delivery remains outside this batch.
 
 - W2296/W2299 format follow-up: exact hosted rustfmt receipt from Preflight37150784807@4ab88bfc verified against original artifact11283942351, ZIP/API SHA0161A75C..., internal digests, producer and all6Git postimages. Imported formatting only, including the strengthened PCM assertion. No local formatter; new-producer hosted compile/reference and focused500 still pending.
+
+## W2301 - Cluster deadline compile wiring (2026-10-03)
+
+- Hosted CLI-reference37151172564@916f5886 failed core-test type checking before CLI build or reference export. Four diagnostics resolve to two missing bindings: the cluster-gated RPC facade did not reexport its new client method, and two executor test providers lacked Completion in scope. The CLI map_err inference error is a cascade from the missing export.
+- Add only the existing RPC reexport and a cfg(test) Completion import. No behavior or test identities changed; no local execution. Repeat hosted type checking/reference generation before focused500; native and release acceptance remain open.

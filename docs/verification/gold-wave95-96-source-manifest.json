@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-03T20:15:56.2765937Z",
-  "validationStatus": "Exact hosted W2296/W2299 formatting imported; compile and focused500 pending",
+  "capturedUtc": "2026-10-03T20:30:52.4600868Z",
+  "validationStatus": "W2301 missing export and test import repaired; hosted verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3297,6 +3297,11 @@
       "sha256": "11F53C94D6151CF3FD65432AE6AD9C83EB3E39518ADB643FC89C07520A2E3206"
     },
     {
+      "path": "docs/verification/gold-wave2301-cluster-compile.json",
+      "bytes": 1077,
+      "sha256": "43F00FCEA98C5ED9E52A65E97A2C8DE2DA7DB32774F2B593DE597D24E8700651"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4438,8 +4443,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2354681,
-      "sha256": "7DDC2653EA097254814C3C02679213E0C906A842F506E867DBEC6AEC2625E249"
+      "bytes": 2355343,
+      "sha256": "92E91753E969A63C35FC8C9D64EA8EDFE242CF5644E0ED4525D9213894C373D3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5843,8 +5848,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 92389,
-      "sha256": "EDCBF91B499EE4428BC1A6817630DC1A853B53EF6974A7B69FF815763A1153D2"
+      "bytes": 92427,
+      "sha256": "6F57B9970D0CDEDC8EE82B3850723390FFDD2862B079B1AD71C5B8A30522845B"
     },
     {
       "path": "SRC/neothd/src/cluster/gossip_wire.rs",
@@ -6248,8 +6253,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 20450,
-      "sha256": "F3188D8CDB66AE0879D6451D9750630E7BA3A185D80B4FEF19C2E1E71A8F5F5A"
+      "bytes": 20497,
+      "sha256": "7DCC83BF7C714DB8E562B89942EC1441ECEA63DAE70710CAD63BE0126B3FAA81"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",

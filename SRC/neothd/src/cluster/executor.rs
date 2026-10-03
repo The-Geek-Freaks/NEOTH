@@ -927,6 +927,7 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::Completion;
 
     fn execution_context(
         home: &std::path::Path,

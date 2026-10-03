@@ -1,0 +1,29 @@
+{
+  "schema": "neoth-gold-wave2301-cluster-compile/v1",
+  "base": "916f5886cc01ea9beaa4f3c64226acfddf17ffcb",
+  "failedRun": 37151172564,
+  "failedLogSha256": "EB8C7D3DAD95F2D19375315415FD818A1BE491D7C0266592C0A72483FA3FC49E",
+  "diagnostics": [
+    "E0425 missing RPC reexport",
+    "E0282 cascade from unresolved RPC",
+    "two E0412 missing test Completion type"
+  ],
+  "repairs": [
+    {
+      "base": "F3188D8CDB66AE0879D6451D9750630E7BA3A185D80B4FEF19C2E1E71A8F5F5A",
+      "candidate": "7DCC83BF7C714DB8E562B89942EC1441ECEA63DAE70710CAD63BE0126B3FAA81",
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs"
+    },
+    {
+      "base": "EDCBF91B499EE4428BC1A6817630DC1A853B53EF6974A7B69FF815763A1153D2",
+      "candidate": "6F57B9970D0CDEDC8EE82B3850723390FFDD2862B079B1AD71C5B8A30522845B",
+      "path": "SRC/neothd/src/cluster/executor.rs"
+    }
+  ],
+  "actualCliBuild": "skipped on previous run",
+  "referenceExport": "skipped on previous run",
+  "localExecutableValidationRan": false,
+  "hosted": "pending fresh producer",
+  "newTests": 0,
+  "releaseReady": false
+}
