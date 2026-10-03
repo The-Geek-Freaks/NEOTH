@@ -147,10 +147,10 @@ pub fn parse_buddy_provider_readback(raw: &str) -> Result<BuddyProviderReadback,
                     BuddyPanelError::InvalidInstance,
                 )?),
             };
-            if let Some(id) = &provider_instance_id {
-                if !known_ids.contains(id) {
-                    return Err(BuddyPanelError::FallbackNotNamed);
-                }
+            if let Some(id) = &provider_instance_id
+                && !known_ids.contains(id)
+            {
+                return Err(BuddyPanelError::FallbackNotNamed);
             }
             if (matches!(binding_source, BuddyBindingSource::NamedInstance)
                 && provider_instance_id.is_none())
@@ -226,10 +226,10 @@ pub fn parse_buddy_provider_readback(raw: &str) -> Result<BuddyProviderReadback,
             {
                 return Err(BuddyPanelError::MalformedReadback);
             }
-            if let Some(id) = &id {
-                if !selected_ids.insert(id.clone()) {
-                    return Err(BuddyPanelError::DuplicateFallback);
-                }
+            if let Some(id) = &id
+                && !selected_ids.insert(id.clone())
+            {
+                return Err(BuddyPanelError::DuplicateFallback);
             }
             Ok(BuddyFallbackEntry {
                 position: index,

@@ -4,8 +4,6 @@
 //! test executable.  No shell replacement or canned JSON is installed: the
 //! Slint callbacks spawn the actual core CLI against an owned `NEOTH_HOME`.
 
-#![cfg(test)]
-
 #[cfg(not(windows))]
 use super::*;
 #[cfg(not(windows))]
@@ -96,12 +94,12 @@ fn pump(window: &MainWindow, purpose: &str) {
         slint::TimerMode::Repeated,
         Duration::from_millis(10),
         move || {
-            if let Some(window) = weak.upgrade() {
-                if !window.get_bc_provider_config_busy() {
-                    observed.set(true);
-                    let _ = slint::quit_event_loop();
-                    return;
-                }
+            if let Some(window) = weak.upgrade()
+                && !window.get_bc_provider_config_busy()
+            {
+                observed.set(true);
+                let _ = slint::quit_event_loop();
+                return;
             }
             let next = observed_ticks.get().saturating_add(1);
             observed_ticks.set(next);
@@ -176,21 +174,43 @@ fn install_real_cli_path() -> PathGuard {
 }
 
 #[cfg(not(windows))]
-fn assert_accepted(window: &MainWindow, receipt_fragment: &str) {
-    assert!(
-        window.get_bc_provider_config_status_valid(),
-        "callback must publish only verified fresh readback"
+fn buddy_provider_error_category(error: &str) -> &'static str {
+    match error {
+        "" => "none",
+        "Buddy provider command could not be verified; the prior configuration remains displayed." => {
+            "command_or_fresh_readback_unverified"
+        }
+        "Provider tests are unavailable on this platform because NEOTH cannot yet contain provider process trees here. Configuration remains available." => {
+            "macos_provider_test_unavailable"
+        }
+        "Buddy provider worker could not start." => "worker_start_failed",
+        _ => "other_safe_ui_error",
+    }
+}
+
+#[cfg(not(windows))]
+fn assert_accepted(window: &MainWindow, phase: &str, receipt_fragment: &str) {
+    let status_valid = window.get_bc_provider_config_status_valid();
+    let error = window.get_bc_provider_config_error().to_string();
+    let receipt_matches_expected = window
+        .get_bc_provider_config_receipt()
+        .to_string()
+        .contains(receipt_fragment);
+    let error_category = buddy_provider_error_category(&error);
+    let context = format!(
+        "phase={phase}; expected_receipt_fragment={receipt_fragment:?}; status_valid={status_valid}; receipt_matches_expected={receipt_matches_expected}; error_category={error_category}"
     );
     assert!(
-        window.get_bc_provider_config_error().is_empty(),
-        "accepted callback must clear stale error"
+        status_valid,
+        "callback must publish only verified fresh readback: {context}"
     );
     assert!(
-        window
-            .get_bc_provider_config_receipt()
-            .to_string()
-            .contains(receipt_fragment),
-        "callback must project its typed receipt"
+        error.is_empty(),
+        "accepted callback must clear stale error: {context}"
+    );
+    assert!(
+        receipt_matches_expected,
+        "callback must project its typed receipt: {context}"
     );
 }
 
@@ -240,14 +260,22 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
         );
         window.invoke_bc_buddy_provider_show();
         pump(&window, "macOS supported provider show after rejected test");
-        assert_accepted(&window, "configuration verified");
+        assert_accepted(
+            &window,
+            "macos_show_after_rejected_test",
+            "configuration verified",
+        );
     } else {
-        assert_accepted(&window, "construction test completed");
+        assert_accepted(&window, "construction_test", "construction test completed");
     }
 
     window.invoke_bc_buddy_provider_set("left".into(), "openai_api".into(), "gpt-4o-mini".into());
     pump(&window, "real provider set plus fresh show");
-    assert_accepted(&window, "role update was accepted");
+    assert_accepted(
+        &window,
+        "set_left_openai_api",
+        "role update was accepted",
+    );
     let left = window
         .get_bc_provider_config_roles()
         .row_data(0)
@@ -257,7 +285,7 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     assert_eq!(left.model.to_string(), "gpt-4o-mini");
     window.invoke_bc_buddy_provider_select("right".into(), "route_b".into());
     pump(&window, "real named selection plus fresh show");
-    assert_accepted(&window, "Named provider selection");
+    assert_accepted(&window, "select_right_route_b", "Named provider selection");
     let right = window
         .get_bc_provider_config_roles()
         .row_data(1)
@@ -266,7 +294,11 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     let order = ModelRc::new(VecModel::from(vec!["route_b".into(), "route_a".into()]));
     window.invoke_bc_buddy_fallback_replace(order);
     pump(&window, "real fallback replacement plus fresh show");
-    assert_accepted(&window, "Fallback order was accepted");
+    assert_accepted(
+        &window,
+        "fallback_replace_route_b_route_a",
+        "Fallback order was accepted",
+    );
     assert_eq!(
         window
             .get_bc_provider_config_current_fallback_selectors()
@@ -294,7 +326,7 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     assert_eq!(window.get_bc_provider_config_fallback_max_hops(), 2);
     window.invoke_bc_buddy_fallback_clear();
     pump(&window, "real fallback clear plus fresh show");
-    assert_accepted(&window, "Fallback order was cleared");
+    assert_accepted(&window, "fallback_clear", "Fallback order was cleared");
     assert_eq!(
         window
             .get_bc_provider_config_current_fallback_selectors()
@@ -303,7 +335,7 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     );
     window.invoke_bc_buddy_provider_mode("local_qwen".into(), "".into());
     pump(&window, "real provider mode plus fresh show");
-    assert_accepted(&window, "mode update was accepted");
+    assert_accepted(&window, "mode_local_qwen", "mode update was accepted");
     assert_eq!(
         window.get_bc_provider_config_mode().to_string(),
         "single",
@@ -311,7 +343,7 @@ pub(crate) fn w2263_buddy_provider_callbacks_execute_canonical_receipts_then_ref
     );
     window.invoke_bc_buddy_provider_preset("single".into(), "".into(), "".into());
     pump(&window, "real provider preset plus fresh show");
-    assert_accepted(&window, "preset was accepted");
+    assert_accepted(&window, "preset_single", "preset was accepted");
     assert_eq!(
         window.get_bc_provider_config_mode().to_string(),
         "single",

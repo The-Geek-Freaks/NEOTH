@@ -22854,12 +22854,12 @@ fn start_buddy_provider_command(
             }
         });
     });
-    if worker.is_err() {
-        if let Some(window) = weak.upgrade() {
-            window.set_bc_provider_config_busy(false);
-            window.set_bc_provider_config_status_valid(false);
-            window.set_bc_provider_config_error("Buddy provider worker could not start.".into());
-        }
+    if worker.is_err()
+        && let Some(window) = weak.upgrade()
+    {
+        window.set_bc_provider_config_busy(false);
+        window.set_bc_provider_config_status_valid(false);
+        window.set_bc_provider_config_error("Buddy provider worker could not start.".into());
     }
 }
 
@@ -30718,13 +30718,12 @@ fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
                 .arg("json")
                 .output()
                 && o.status.success()
-            {
-                if let Ok(readback) = panel_logic::parse_model_recommend_readback(
+                && let Ok(readback) = panel_logic::parse_model_recommend_readback(
                     &String::from_utf8_lossy(&o.stdout),
                     class,
-                ) {
-                    out.extend(readback.pull_refs);
-                }
+                )
+            {
+                out.extend(readback.pull_refs);
             }
         }
     } else if let Ok(o) = spawn_neothd_plain(&bin)

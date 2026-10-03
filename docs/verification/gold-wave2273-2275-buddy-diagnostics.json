@@ -1,0 +1,99 @@
+{
+  "schema": "neoth-gold-wave2273-2275-buddy-diagnostics/v1",
+  "base": "04f40a987febc86f32a17fde22e1ee3fd7010313",
+  "status": "reviewed source integrated; new-producer hosted validation pending; macOS failure unresolved",
+  "behavior": [
+    "Remove redundant inner test cfg; enclosing test-only module remains",
+    "Collapse five nested conditionals preserving evaluation and side-effect order",
+    "No lint suppressions or test weakening; no new Slint edit",
+    "Label eight existing Buddy callback acceptance phases with fixed safe failure categories; all assertion predicates and production error projection preserved"
+  ],
+  "diagnostic": {
+    "run": 37117382802,
+    "job": 111186701776,
+    "failedStep": "cargo clippy workspace",
+    "errors": 6,
+    "logSha256": "F2232724AF51EFC220260319A8C222039CE21F502EE14886EFEC9FFEF52752AD"
+  },
+  "sourceImports": [
+    {
+      "after": "7B6B921C635AD6B9E2EB85EA33322B67E93CCD328FA19C4893D25FB4035B3E97",
+      "path": "SRC/neothd-gui/src/buddy_provider_gui_tests.rs",
+      "before": "A7F30C9F719A112BBD30A6F357C30FC2C2DA4CA7F4DD24C46FC3D7D708D2EE0F"
+    },
+    {
+      "after": "1DD801175FD6B3DC11C20E693F04F11B7D3F2FE1D1A9A05EC595BD3360CA5497",
+      "path": "SRC/neothd-gui/src/buddy_provider_panel.rs",
+      "before": "E7320BACDF13664C8A9CD62EB5C09AAD4C16FA37B2E3E5E18272EC196A671142"
+    },
+    {
+      "after": "AA6D50A3BBE327F3201ADF2DEF8975FB7D4E60E18935022592C4C50BCB24D1A5",
+      "path": "SRC/neothd-gui/src/main.rs",
+      "before": "F2010CCEDB618248885885B288DAD1BDE01F26F41DDA0785C2807CA79D386BA5"
+    }
+  ],
+  "review": {
+    "path": "work/gold-20260906/wave2273-buddy-clippy-repair/report/STATIC_REVIEW.md",
+    "sha256": "D6B7E35410B6DA68CD70082E0D37ACC40C1AAD2861951C12171F055375D7037F",
+    "status": "static approved"
+  },
+  "priorProducerProofs": [
+    {
+      "path": "work/gold-20260906/wave2272-focused437-model-picker-validation/ROOT_CHECKS.json",
+      "sha256": "B6E3E37A4D34EEC31BFE21E08F9CBD1CF492CDFC5C13D9C4CCDEC8EA9F48006A"
+    },
+    {
+      "path": "work/gold-20260906/wave2268-full-model-picker-validation/native-admission/ROOT_NATIVE_WINDOWS.json",
+      "sha256": "09AC070571AD08F11A370C9D5BD44C5ABA5574294958131BBB9E3FBEBC27B167"
+    },
+    {
+      "path": "work/gold-20260906/wave2268-full-model-picker-validation/audio-admission/ROOT_LIVE_AUDIO.json",
+      "sha256": "A33F7183DF8C2D0817BBBE2C5913E83AA4A926FDEDFD61CBE3A9A39C3DB8C77E"
+    }
+  ],
+  "priorMacosStatus": "failure: 19177 run, 19176 passed, 1 native Buddy callback failed, 29 skipped; original archive and log admitted as failure evidence",
+  "priorFullCiStatus": "completed failure: 17 successful jobs, Linux Clippy 6 errors, macOS 1 test failure, Gold prerequisite failure",
+  "focusedEvidenceCarry": {
+    "cases": 437,
+    "rawBindings": 195,
+    "guiSourceOverlap": 0,
+    "status": "195 raw snapshots and base blobs reverified; three-file GUI overlay has no overlap; final commit binding pending",
+    "limits": "Prior channel/product evidence; not a model-picker or fresh GUI runtime proof"
+  },
+  "counts": {
+    "portableNative": 2657,
+    "guiUniversal": 143,
+    "guiLinuxSpecific": 35,
+    "guiSelectedLinux": 178,
+    "guiMacSpecific": 31,
+    "macosNativeHarnessCallbacks": 35,
+    "newTests": 0
+  },
+  "verification": {
+    "localExecutableValidationRan": false,
+    "localBsodHold": "active",
+    "newSlintEdits": false,
+    "hostedFormat": "pending",
+    "hostedClippy": "pending",
+    "fullCi": "pending resulting producer"
+  },
+  "releaseReady": false,
+  "macosFailureEvidence": {
+    "path": "work/gold-20260906/wave2268-full-model-picker-validation/native-admission/ROOT_NATIVE_MACOS.json",
+    "sha256": "F673F2BAD6E726144740996E259F1505E17F07ED0D2B7AD46DFC0DC33C62F014",
+    "test": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+    "known": "status_valid false at shared assert_accepted helper; exact failing operation absent from log",
+    "rejectedHypothesis": "Slint pump reentrance between busy=false and guard drop unsupported by sequential event-loop source",
+    "repairStatus": "test-only diagnosis admitted; no macOS behavior repair or runtime pass claimed"
+  },
+  "diagnosticReview": {
+    "candidateSha256": "7B6B921C635AD6B9E2EB85EA33322B67E93CCD328FA19C4893D25FB4035B3E97",
+    "reportSha256": "ED7A3C6004A3191A5CDC632F44D07483FE24DB22C01CD753643C42FDE96FC0C3",
+    "coreTriageSha256": "F4CE49D5E9E1B5BA2411C7DF100A0860CEF47095D2CACA79DD0FE8073ED76A7D",
+    "rootStaticReview": "same predicates and command sequence; fixed phase/receipt labels, booleans and bounded categories only; no raw CLI output/error/receipt/secret/path logging"
+  },
+  "fullTerminalEvidence": {
+    "path": "work/gold-20260906/wave2268-full-model-picker-validation/ROOT_FULL_TERMINAL.json",
+    "sha256": "84FF44FB8439D37F2BA8942948E7ADFB1CEA79E105091FC2A30105F1FCF517C0"
+  }
+}
