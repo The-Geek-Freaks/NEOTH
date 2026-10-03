@@ -17967,3 +17967,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Focused37145759915@1ad5519f failed CLI compilation with E0382 before regressions: after body fields entered the authorized job, the final Full/Closed queue rejection paths still borrowed body. Both now borrow the pre-existing rejection_body snapshot, preserving the exact durable rejection context without a new clone or changed effect order.
 - Two-reference source repair only; existing test identities retained. No local executable validation. New-producer hosted checks and focused494 execution remain pending.
+
+- W2297 correction: initial42a5400a matched the earlier try_reserve branches rather than the final try_send branches. Revision2 restores both pre-transfer body borrows and changes only the two post-transfer rejections. Root checked declaration/move/send anchors and confirmed no late body borrow. The intermediate fast checks passed but were not compile evidence; no executable run was dispatched on that intermediate revision. Fresh final-producer validation remains required.

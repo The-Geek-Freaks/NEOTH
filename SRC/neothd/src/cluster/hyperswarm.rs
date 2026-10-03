@@ -2140,7 +2140,7 @@ async fn handle_task_delegate_inner(
                         remote_pk_hex,
                         own_peer_id,
                         membership_grant,
-                        &rejection_body,
+                        &body,
                         "busy",
                     );
                     emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
@@ -2155,7 +2155,7 @@ async fn handle_task_delegate_inner(
                         remote_pk_hex,
                         own_peer_id,
                         membership_grant,
-                        &rejection_body,
+                        &body,
                         "executor_dead",
                     );
                     emit_task_rejected_wal(
@@ -2338,7 +2338,7 @@ async fn handle_task_delegate_inner(
                         remote_pk_hex,
                         own_peer_id,
                         membership_grant,
-                        &body,
+                        &rejection_body,
                         "busy",
                     );
                     emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
@@ -2353,7 +2353,7 @@ async fn handle_task_delegate_inner(
                         remote_pk_hex,
                         own_peer_id,
                         membership_grant,
-                        &body,
+                        &rejection_body,
                         "executor_dead",
                     );
                     emit_task_rejected_wal(

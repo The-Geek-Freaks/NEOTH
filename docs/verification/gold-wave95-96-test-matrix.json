@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2297 two-reference ownership repair; focused494 acceptance pending",
+  "status": "W2297 corrected post-transfer borrow scope; focused494 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 373116,
-    "sha256": "104AE77E7C3E43348ACFDEC43A1654244B903B92FDD14E6DB6034C4983C9650E"
+    "bytes": 373111,
+    "sha256": "BE787EC016D021EC438DCAD010C734C6BE50721E552FF0129DAA7A8EDCE28ADB"
   },
   "sourceInputs": 2041,
   "requiredNativeTests": [
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+      "sourceSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
       "junitClass": "neoth"
     },
     {
@@ -72600,6 +72600,32 @@
       }
     ],
     "note": "Hosted E0382 repaired using retained pre-move context; no tests run locally",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2297CorrectedScope": {
+    "base": "42a5400a6c5b5b008f4c958e055ec01960b35372",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2297-cluster-partial-move.json",
+        "bytes": 981,
+        "sha256": "C51B6D94A5BB79E9595946E33B8C169721E85D89980011E78172832424CDF4CF",
+        "blob": "2aa20ed0361c6dd11406c8c40ab337bbdb43c0ca"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2350773,
+        "sha256": "4880FC07B7A563E309D3F01C3B4C38ED24BEF10089206A667B35EB54EF69AD2E",
+        "blob": "f80b836c9da1216f4f337a0d5fc8a091bc14a9fa"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 162649,
+        "sha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
+        "blob": "faffdeb7d681eb3b97d7214ddca39db8155fdb85"
+      }
+    ],
+    "note": "Restored pre-transfer references, corrected only post-transfer send arms; ordered text anchors verified, no local executable validation",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

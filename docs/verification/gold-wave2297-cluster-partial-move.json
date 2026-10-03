@@ -6,8 +6,9 @@
   "error": "E0382: borrowed body after moving its scope into authorized job",
   "repair": "Both Full and Closed enqueue rejection paths use the existing pre-transfer rejection_body clone",
   "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-  "sourceCandidateSha256": "0D19474BFC1D660B6654CF0B6991553966959F2AF5FAAA3DF35F28001698A4E1",
+  "sourceCandidateSha256": "075768B454A63E01FEFD24E8C3A542C604A760B8D2662C59FFF2666BAAFF23A9",
   "newTests": 0,
   "localExecutableValidationRan": false,
-  "hosted": "Pending new producer; prior run failed before regression execution"
+  "hosted": "Pending new producer; prior run failed before regression execution",
+  "correction": "Initial42a5400a mistakenly replaced pre-transfer try_reserve branches. Revision2 restores those and changes only post-transfer try_send branches; Root independently checked ordered scope anchors. No executable CI dispatched on intermediate42a5400a."
 }
