@@ -147,43 +147,90 @@ fn worker_result_outbox_reopens_exact_duplicates_and_rejects_foreign_or_conflict
     let home = tempfile::tempdir().expect("create worker authority home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
     let peer_key = active_peer(&store, "worker-outbox");
-    let grant = store.admit(
-        CarrierKind::Peeroxide,
-        &TransportIdentity::parse(peer_key.clone()).expect("parse authenticated peer"),
-        NOW,
-    ).expect("admit authenticated requester");
+    let grant = store
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key.clone()).expect("parse authenticated peer"),
+            NOW,
+        )
+        .expect("admit authenticated requester");
     let body = completed_result("worker-outbox-task", "retained exact result");
     let context = "a".repeat(64);
     assert_eq!(
-        store.reserve_worker_task_execution(&grant, &body.task_id, &context, NOW).expect("reserve before provider"),
+        store
+            .reserve_worker_task_execution(&grant, &body.task_id, &context, NOW)
+            .expect("reserve before provider"),
         super::membership::WorkerTaskExecutionReservation::Reserved
     );
     assert_eq!(
-        store.reserve_worker_task_execution(&grant, &body.task_id, &context, NOW).expect("concurrent duplicate remains non-executable"),
+        store
+            .reserve_worker_task_execution(&grant, &body.task_id, &context, NOW)
+            .expect("concurrent duplicate remains non-executable"),
         super::membership::WorkerTaskExecutionReservation::Existing
     );
-    assert!(store.reserve_worker_task_execution(&grant, &body.task_id, &"c".repeat(64), NOW).is_err(), "same id with changed authenticated request context must fail closed");
+    assert!(
+        store
+            .reserve_worker_task_execution(&grant, &body.task_id, &"c".repeat(64), NOW)
+            .is_err(),
+        "same id with changed authenticated request context must fail closed"
+    );
     assert_eq!(
-        store.persist_worker_task_result_outbox(&grant, &context, &body, NOW + 1).expect("persist before send"),
+        store
+            .persist_worker_task_result_outbox(&grant, &context, &body, NOW + 1)
+            .expect("persist before send"),
         super::membership::WorkerTaskResultOutboxReceipt::Stored
     );
     assert_eq!(
-        store.persist_worker_task_result_outbox(&grant, &context, &body, NOW + 2).expect("exact duplicate retained"),
+        store
+            .persist_worker_task_result_outbox(&grant, &context, &body, NOW + 2)
+            .expect("exact duplicate retained"),
         super::membership::WorkerTaskResultOutboxReceipt::Duplicate
     );
-    let pending = store.pending_worker_task_result_outbox(&grant, NOW + 3).expect("read pending after first send loss");
+    let pending = store
+        .pending_worker_task_result_outbox(&grant, NOW + 3)
+        .expect("read pending after first send loss");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body, body);
     let digest = super::heartbeat::task_result_digest(&body).expect("bounded digest");
-    let wrong = super::heartbeat::TaskResultAckBody { task_id: body.task_id.clone(), result_digest: "b".repeat(64) };
-    assert!(!store.acknowledge_worker_task_result_outbox(&grant, &wrong, NOW + 4).expect("wrong digest is non-settling"));
-    let exact = super::heartbeat::TaskResultAckBody { task_id: body.task_id.clone(), result_digest: digest };
-    assert!(store.acknowledge_worker_task_result_outbox(&grant, &exact, NOW + 5).expect("exact ack settles"));
-    assert!(store.worker_task_result_outbox_for_task(&grant, &body.task_id, NOW + 6).expect("tombstone retained").is_some());
+    let wrong = super::heartbeat::TaskResultAckBody {
+        task_id: body.task_id.clone(),
+        result_digest: "b".repeat(64),
+    };
+    assert!(
+        !store
+            .acknowledge_worker_task_result_outbox(&grant, &wrong, NOW + 4)
+            .expect("wrong digest is non-settling")
+    );
+    let exact = super::heartbeat::TaskResultAckBody {
+        task_id: body.task_id.clone(),
+        result_digest: digest,
+    };
+    assert!(
+        store
+            .acknowledge_worker_task_result_outbox(&grant, &exact, NOW + 5)
+            .expect("exact ack settles")
+    );
+    assert!(
+        store
+            .worker_task_result_outbox_for_task(&grant, &body.task_id, NOW + 6)
+            .expect("tombstone retained")
+            .is_some()
+    );
     drop(store);
     let reopened = MembershipStore::open(home.path()).expect("reopen durable outbox");
-    let reopened_grant = reopened.admit(CarrierKind::Peeroxide, &TransportIdentity::parse(peer_key).expect("parse peer"), NOW + 7).expect("re-admit");
-    assert!(reopened.worker_task_result_outbox_for_task(&reopened_grant, &body.task_id, NOW + 7).expect("reopened tombstone").is_some());
+    let reopened_grant = reopened
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key).expect("parse peer"),
+            NOW + 7,
+        )
+        .expect("re-admit");
+    assert!(
+        reopened
+            .worker_task_result_outbox_for_task(&reopened_grant, &body.task_id, NOW + 7)
+            .expect("reopened tombstone")
+            .is_some()
+    );
 }
 
 #[test]
@@ -191,31 +238,92 @@ fn worker_result_outbox_failed_offer_replays_on_registered_session_and_ack_keeps
     let home = tempfile::tempdir().expect("create worker outbox home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
     let peer_key = active_peer(&store, "worker-live-offer");
-    let grant = store.admit(CarrierKind::Peeroxide, &TransportIdentity::parse(peer_key.clone()).expect("parse peer"), NOW).expect("admit peer");
+    let grant = store
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key.clone()).expect("parse peer"),
+            NOW,
+        )
+        .expect("admit peer");
     let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
-    let outbox = super::result_outbox::WorkerResultOutbox::new(home.path(), Arc::clone(&streams), "local-worker".into()).expect("open production outbox");
+    let outbox = super::result_outbox::WorkerResultOutbox::new(
+        home.path(),
+        Arc::clone(&streams),
+        "local-worker".into(),
+    )
+    .expect("open production outbox");
     let body = completed_result("worker-live-offer-task", "stored before session exists");
     let context = "d".repeat(64);
-    outbox.persist_and_offer(&grant, &context, &body).expect("failed initial offer still persists");
-    let (_generation, mut receiver, _cancel) = streams.register_authorized_session(&peer_key, &grant);
-    assert_eq!(outbox.replay_for_session(&grant).expect("registered replay"), 1);
-    let queued = receiver.try_recv().expect("same-session replay queues retained body");
+    outbox
+        .persist_and_offer(&grant, &context, &body)
+        .expect("failed initial offer still persists");
+    let (_generation, mut receiver, _cancel) =
+        streams.register_authorized_session(&peer_key, &grant);
+    assert_eq!(
+        outbox
+            .replay_for_session(&grant)
+            .expect("registered replay"),
+        1
+    );
+    let queued = receiver
+        .try_recv()
+        .expect("same-session replay queues retained body");
     match &*queued {
-        super::heartbeat::WireFrame { body: super::heartbeat::FrameBody::TaskResult(actual), .. } => assert_eq!(actual, &body),
+        super::heartbeat::WireFrame {
+            body: super::heartbeat::FrameBody::TaskResult(actual),
+            ..
+        } => assert_eq!(actual, &body),
         other => panic!("expected retained TaskResult, got {other:?}"),
     }
     // Simulate a healthy master whose durable result commit failed: it emits
     // no ACK, but the worker reopens the stale offered row on the existing
     // session cadence and offers the exact retained bytes again.
-    store.reopen_stale_offered_worker_task_results(&grant, i64::MAX, crate::time::now_unix_i64()).expect("reopen lost-ack offer");
-    assert_eq!(outbox.flush_session(&grant).expect("same-session lost-ack retry"), 1);
-    assert!(receiver.try_recv().is_ok(), "lost ACK reoffers without reconnect or provider");
+    store
+        .reopen_stale_offered_worker_task_results(&grant, i64::MAX, crate::time::now_unix_i64())
+        .expect("reopen lost-ack offer");
+    assert_eq!(
+        outbox
+            .flush_session(&grant)
+            .expect("same-session lost-ack retry"),
+        1
+    );
+    assert!(
+        receiver.try_recv().is_ok(),
+        "lost ACK reoffers without reconnect or provider"
+    );
     let digest = super::heartbeat::task_result_digest(&body).expect("digest");
-    let wrong = super::heartbeat::TaskResultAckBody { task_id: body.task_id.clone(), result_digest: "e".repeat(64) };
-    assert!(!outbox.acknowledge(&grant, &wrong).expect("wrong digest leaves pending"));
-    let exact = super::heartbeat::TaskResultAckBody { task_id: body.task_id.clone(), result_digest: digest };
-    assert!(outbox.acknowledge(&grant, &exact).expect("exact ack settles"));
-    assert!(outbox.replay_duplicate_task(&grant, &super::heartbeat::TaskDelegateBody { task_id: body.task_id.clone(), prompt: "different prompt is rejected by binding before provider".into(), model_hint: None, max_output_tokens: None, scope: None }).is_err());
+    let wrong = super::heartbeat::TaskResultAckBody {
+        task_id: body.task_id.clone(),
+        result_digest: "e".repeat(64),
+    };
+    assert!(
+        !outbox
+            .acknowledge(&grant, &wrong)
+            .expect("wrong digest leaves pending")
+    );
+    let exact = super::heartbeat::TaskResultAckBody {
+        task_id: body.task_id.clone(),
+        result_digest: digest,
+    };
+    assert!(
+        outbox
+            .acknowledge(&grant, &exact)
+            .expect("exact ack settles")
+    );
+    assert!(
+        outbox
+            .replay_duplicate_task(
+                &grant,
+                &super::heartbeat::TaskDelegateBody {
+                    task_id: body.task_id.clone(),
+                    prompt: "different prompt is rejected by binding before provider".into(),
+                    model_hint: None,
+                    max_output_tokens: None,
+                    scope: None
+                }
+            )
+            .is_err()
+    );
 }
 
 #[test]
@@ -223,21 +331,57 @@ fn worker_result_outbox_flushes_tail_after_current_session_queue_drains() {
     let home = tempfile::tempdir().expect("create queue-drain home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
     let peer_key = active_peer(&store, "worker-backlog");
-    let grant = store.admit(CarrierKind::Peeroxide, &TransportIdentity::parse(peer_key.clone()).expect("parse peer"), NOW).expect("admit peer");
+    let grant = store
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key.clone()).expect("parse peer"),
+            NOW,
+        )
+        .expect("admit peer");
     let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
-    let outbox = super::result_outbox::WorkerResultOutbox::new(home.path(), Arc::clone(&streams), "local-worker".into()).expect("open production outbox");
+    let outbox = super::result_outbox::WorkerResultOutbox::new(
+        home.path(),
+        Arc::clone(&streams),
+        "local-worker".into(),
+    )
+    .expect("open production outbox");
     let count = super::peer_streams::OUTBOUND_QUEUE_DEPTH + 1;
     for index in 0..count {
         let body = completed_result(&format!("worker-backlog-{index}"), "bounded retained body");
-        store.persist_worker_task_result_outbox(&grant, &format!("{index:064x}"), &body, NOW + index as i64).expect("persist backlog row");
+        store
+            .persist_worker_task_result_outbox(
+                &grant,
+                &format!("{index:064x}"),
+                &body,
+                NOW + index as i64,
+            )
+            .expect("persist backlog row");
     }
-    let (_generation, mut receiver, _cancel) = streams.register_authorized_session(&peer_key, &grant);
-    assert_eq!(outbox.replay_for_session(&grant).expect("initial bounded offer"), super::peer_streams::OUTBOUND_QUEUE_DEPTH);
-    let _first = receiver.try_recv().expect("session owner drains one offered row");
-    assert_eq!(outbox.flush_session(&grant).expect("same session tail flush"), 1);
+    let (_generation, mut receiver, _cancel) =
+        streams.register_authorized_session(&peer_key, &grant);
+    assert_eq!(
+        outbox
+            .replay_for_session(&grant)
+            .expect("initial bounded offer"),
+        super::peer_streams::OUTBOUND_QUEUE_DEPTH
+    );
+    let _first = receiver
+        .try_recv()
+        .expect("session owner drains one offered row");
+    assert_eq!(
+        outbox
+            .flush_session(&grant)
+            .expect("same session tail flush"),
+        1
+    );
     let mut received = 1usize;
-    while receiver.try_recv().is_ok() { received += 1; }
-    assert_eq!(received, count, "tail is offered after same-session queue drain without reconnect");
+    while receiver.try_recv().is_ok() {
+        received += 1;
+    }
+    assert_eq!(
+        received, count,
+        "tail is offered after same-session queue drain without reconnect"
+    );
 }
 
 #[test]

@@ -1,0 +1,21 @@
+{
+  "run": 37145387695,
+  "producer": "bd52bbaa5f8402e8637a3c25f539bf9e8b24918c",
+  "artifactId": 11281993126,
+  "originalZipSha256": "83367B85AD2A0C5056ED3E9D2A88FC55AF95C8C08BEF7B5AB72A251F6B48A2E2",
+  "patchSha256": "E32FA009C18BCCA94A8C35D965DB6FFB6C820598472FC154A16D2C9A8F9F4BB8",
+  "entryCount": 3,
+  "paths": [
+    "SRC/neothd/src/cluster/executor.rs",
+    "SRC/neothd/src/cluster/heartbeat.rs",
+    "SRC/neothd/src/cluster/hyperswarm.rs",
+    "SRC/neothd/src/cluster/membership.rs",
+    "SRC/neothd/src/cluster/outbound_tests.rs",
+    "SRC/neothd/src/cluster/result_outbox.rs"
+  ],
+  "localFormatterRan": false,
+  "localExecutableValidationRan": false,
+  "schema": "neoth-gold-wave2294-hosted-format/v1",
+  "additionalSourceRepair": "Collapse one nested pending/offer condition with identical short-circuit order; static Clippy scout only, not an observed hosted lint failure",
+  "hostedAcceptance": "Pending on new producer"
+}

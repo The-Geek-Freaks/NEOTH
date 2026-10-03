@@ -323,11 +323,9 @@ pub fn spawn_cluster_executor(
                 );
                 continue;
             }
-            if let Err(error) = task_outbox.persist_and_offer(
-                &membership_grant,
-                &result_context,
-                &execution.body,
-            ) {
+            if let Err(error) =
+                task_outbox.persist_and_offer(&membership_grant, &result_context, &execution.body)
+            {
                 // A terminal provider outcome without durable custody is never
                 // retried.  The failure is surfaced locally, while the master
                 // sees no fabricated completion and must classify its own
@@ -368,7 +366,16 @@ fn task_result_context_digest(job: &ClusterTaskJob) -> String {
     let ceiling = job.max_output_tokens.unwrap_or_default().to_be_bytes();
     let cap_present = [u8::from(job.max_output_tokens.is_some())];
     let hint_present = [u8::from(job.model_hint.is_some())];
-    for value in [job.reply_peer_pk.as_bytes(), job.task_id.as_bytes(), job.prompt.as_bytes(), model_hint.as_bytes(), scope.as_slice(), &ceiling, &cap_present, &hint_present] {
+    for value in [
+        job.reply_peer_pk.as_bytes(),
+        job.task_id.as_bytes(),
+        job.prompt.as_bytes(),
+        model_hint.as_bytes(),
+        scope.as_slice(),
+        &ceiling,
+        &cap_present,
+        &hint_present,
+    ] {
         digest.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
         digest.update(value);
     }
@@ -1014,8 +1021,16 @@ mod tests {
             )
             .unwrap();
         (
-            ClusterTaskJob::authorized("t-1".into(), prompt.into(), None, None, "aa".into(), None, grant)
-                .unwrap(),
+            ClusterTaskJob::authorized(
+                "t-1".into(),
+                prompt.into(),
+                None,
+                None,
+                "aa".into(),
+                None,
+                grant,
+            )
+            .unwrap(),
             controller,
         )
     }

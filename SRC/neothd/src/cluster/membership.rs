@@ -3722,13 +3722,16 @@ impl MembershipStore {
         if let Some((existing_context, existing_digest, existing_body)) = existing {
             let encoded = serde_json::to_string(body)?;
             anyhow::ensure!(
-                existing_context == context_digest && existing_digest == result_digest && existing_body == encoded,
+                existing_context == context_digest
+                    && existing_digest == result_digest
+                    && existing_body == encoded,
                 "worker task result outbox collision for authenticated peer/task"
             );
             tx.commit()?;
             return Ok(WorkerTaskResultOutboxReceipt::Duplicate);
         }
-        let body_json = serde_json::to_string(body).context("serialize bounded worker task result")?;
+        let body_json =
+            serde_json::to_string(body).context("serialize bounded worker task result")?;
         tx.execute(
             "INSERT INTO task_delegate_result_outbox (operation_id,task_id,transport_identity,context_digest,result_digest,body,state,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'pending',?7,?7)",
             params![body.task_id, body.task_id, grant.transport_identity().as_str(), context_digest, result_digest, body_json, now_unix],
@@ -3758,7 +3761,10 @@ impl MembershipStore {
             |row| row.get::<_, String>(0),
         ).optional()?;
         if let Some(existing) = existing {
-            anyhow::ensure!(existing == context_digest, "worker task reservation conflicts with existing authenticated task id");
+            anyhow::ensure!(
+                existing == context_digest,
+                "worker task reservation conflicts with existing authenticated task id"
+            );
             tx.commit()?;
             return Ok(WorkerTaskExecutionReservation::Existing);
         }
@@ -3783,14 +3789,36 @@ impl MembershipStore {
         let mut statement = conn.prepare(
             "SELECT operation_id,task_id,transport_identity,context_digest,result_digest,body FROM task_delegate_result_outbox WHERE transport_identity=?1 AND state='pending' ORDER BY created_at ASC",
         )?;
-        statement.query_map([grant.transport_identity().as_str()], |row| {
-            let body_json: String = row.get(5)?;
-            let body = serde_json::from_str(&body_json).map_err(|error| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error)))?;
-            Ok(WorkerTaskResultOutboxEntry { operation_id: row.get(0)?, task_id: row.get(1)?, peer_key: row.get(2)?, context_digest: row.get(3)?, result_digest: row.get(4)?, body })
-        })?.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        statement
+            .query_map([grant.transport_identity().as_str()], |row| {
+                let body_json: String = row.get(5)?;
+                let body = serde_json::from_str(&body_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        5,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+                Ok(WorkerTaskResultOutboxEntry {
+                    operation_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    peer_key: row.get(2)?,
+                    context_digest: row.get(3)?,
+                    result_digest: row.get(4)?,
+                    body,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
-    pub fn mark_worker_task_result_offered(&self, grant: &MembershipGrant, task_id: &str, result_digest: &str, now_unix: i64) -> Result<bool> {
+    pub fn mark_worker_task_result_offered(
+        &self,
+        grant: &MembershipGrant,
+        task_id: &str,
+        result_digest: &str,
+        now_unix: i64,
+    ) -> Result<bool> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         revalidate_grant_on(&tx, grant, now_unix)?;
@@ -3799,7 +3827,11 @@ impl MembershipStore {
         Ok(changed == 1)
     }
 
-    pub fn reset_offered_worker_task_results(&self, grant: &MembershipGrant, now_unix: i64) -> Result<usize> {
+    pub fn reset_offered_worker_task_results(
+        &self,
+        grant: &MembershipGrant,
+        now_unix: i64,
+    ) -> Result<usize> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         revalidate_grant_on(&tx, grant, now_unix)?;
@@ -3811,7 +3843,12 @@ impl MembershipStore {
     /// A retained offered result has no remote delivery proof.  Reopen only
     /// rows older than the caller's bounded retry interval; fresh offers stay
     /// in flight and cannot be churned by every heartbeat.
-    pub fn reopen_stale_offered_worker_task_results(&self, grant: &MembershipGrant, older_than_unix: i64, now_unix: i64) -> Result<usize> {
+    pub fn reopen_stale_offered_worker_task_results(
+        &self,
+        grant: &MembershipGrant,
+        older_than_unix: i64,
+        now_unix: i64,
+    ) -> Result<usize> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         revalidate_grant_on(&tx, grant, now_unix)?;
@@ -5998,7 +6035,9 @@ fn validate_task_delegate_operation_id(value: &str) -> Result<()> {
 fn validate_lower_sha256(value: &str, label: &str) -> Result<()> {
     anyhow::ensure!(
         value.len() == 64
-            && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
         "{label} must be lowercase sha256 hex"
     );
     Ok(())

@@ -478,7 +478,10 @@ pub fn validate_task_result_ack(ack: &TaskResultAckBody) -> Result<()> {
     validate_task_delegate(&task)?;
     anyhow::ensure!(
         ack.result_digest.len() == 64
-            && ack.result_digest.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+            && ack
+                .result_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
         "task_result_ack: result_digest must be lowercase sha256 hex"
     );
     Ok(())
