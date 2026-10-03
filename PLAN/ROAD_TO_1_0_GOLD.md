@@ -17931,3 +17931,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Source-only correction. Hosted formatter, compile and runtime evidence remain pending; no local runtime ran under the BSOD hold. The incomplete formatter artifact was not admitted.
 
 - W2288 follow-up: Preflight37138228348 exposed an invalid async-block return annotation after the delimiter repair. Removed only the annotation; the existing JoinSet<Result<()>> still fixes the result type and propagates settlement failures. Hosted syntax/format and executable validation remain pending.
+
+- W2288 hosted formatting: original artifact11279822135 from Preflight37138780099@9678c04a verified by API/ZIP SHA256, all three entries and internal sums, exact producer, and 30-path Rust scope. Applied only that patch and rebound the 52-case live-audio catalog plus source/test inventories. No local formatter or runtime ran; new-producer fast checks and executable acceptance remain pending.

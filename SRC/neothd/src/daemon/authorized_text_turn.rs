@@ -5,17 +5,17 @@
 //! sealed preflight/decision/start/cancel capability; this adapter sees only
 //! visible deltas and a typed terminal state.
 
+use super::conversation_session::{ConversationCleanupFuture, ConversationTaskRegistry};
 use super::gui_chat_bridge::{
-    GuiChatBridge, GuiChatBridgeDecisionOutcome, GuiChatBridgeDecisionReceipt,
-    GuiChatBridgeError, GuiChatBridgeEvent, GuiChatBridgeEventSink, GuiChatBridgePreflight,
+    GuiChatBridge, GuiChatBridgeDecisionOutcome, GuiChatBridgeDecisionReceipt, GuiChatBridgeError,
+    GuiChatBridgeEvent, GuiChatBridgeEventSink, GuiChatBridgePreflight,
     GuiChatBridgePreflightInput, GuiChatBridgePreflightReceipt, GuiChatBridgeResult,
     GuiChatBridgeSubscription, GuiChatBridgeTurn, GuiChatConsentDecision, GuiChatConsentPrompt,
     GuiChatSurface, GuiChatTerminalState, GuiChatTurnId,
 };
-use super::conversation_session::{ConversationCleanupFuture, ConversationTaskRegistry};
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
-use sha2::{Digest, Sha256};
 
 /// A confirmation the owning surface must present verbatim.  The sealed
 /// receipt cannot be converted into a provider or microphone capability.
@@ -68,16 +68,24 @@ struct AuthorizedTextTurnOwner {
 
 impl AuthorizedTextTurnOwner {
     fn admit_single_turn(&self) -> GuiChatBridgeResult<()> {
-        let mut active = self.active.lock().expect("authorized text turn active mutex");
+        let mut active = self
+            .active
+            .lock()
+            .expect("authorized text turn active mutex");
         if *active {
-            return Err(GuiChatBridgeError::invalid("authorized_text_turn_already_active"));
+            return Err(GuiChatBridgeError::invalid(
+                "authorized_text_turn_already_active",
+            ));
         }
         *active = true;
         Ok(())
     }
 
     fn release_after_observed_terminal(&self) {
-        *self.active.lock().expect("authorized text turn active mutex") = false;
+        *self
+            .active
+            .lock()
+            .expect("authorized text turn active mutex") = false;
     }
 }
 
@@ -110,9 +118,8 @@ impl AuthorizedTextTurnSupervisor {
                         detached,
                         completion,
                     } => {
-                        let _ = completion.send(
-                            settle_detached_turn(&worker_owner, detached).await,
-                        );
+                        let _ =
+                            completion.send(settle_detached_turn(&worker_owner, detached).await);
                     }
                     CleanupCommand::Shutdown { completion } => {
                         let _ = completion.send(());
@@ -121,12 +128,13 @@ impl AuthorizedTextTurnSupervisor {
                 }
             }
         });
-        task_registry.spawn_cleanup(cleanup_task).await.map_err(|_| {
-            GuiChatBridgeError::invalid("authorized_text_turn_cleanup_registration_failed")
-        })?;
-        Ok(Self {
-            owner,
-        })
+        task_registry
+            .spawn_cleanup(cleanup_task)
+            .await
+            .map_err(|_| {
+                GuiChatBridgeError::invalid("authorized_text_turn_cleanup_registration_failed")
+            })?;
+        Ok(Self { owner })
     }
 
     pub(crate) async fn start(
@@ -147,28 +155,43 @@ impl AuthorizedTextTurnSupervisor {
     /// Await the terminal settlement scheduled by a dropped consumer handle.
     /// A closed result channel or failed drop delivery is never a cancellation
     /// success and must remain visible to the owning conversation session.
-    pub(crate) async fn wait_for_dropped_turn(&self) -> GuiChatBridgeResult<SettledAuthorizedTextTurn> {
-        let completion = self.owner.pending.lock()
+    pub(crate) async fn wait_for_dropped_turn(
+        &self,
+    ) -> GuiChatBridgeResult<SettledAuthorizedTextTurn> {
+        let completion = self
+            .owner
+            .pending
+            .lock()
             .expect("authorized text turn pending mutex")
             .take()
-            .ok_or_else(|| GuiChatBridgeError::invalid("authorized_text_turn_cleanup_not_pending"))?;
-        completion.await.map_err(|_| {
-            GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed")
-        })?
+            .ok_or_else(|| {
+                GuiChatBridgeError::invalid("authorized_text_turn_cleanup_not_pending")
+            })?;
+        completion
+            .await
+            .map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed"))?
     }
 
     /// Consume a dropped-turn completion when one exists.  This is for a
     /// session teardown which cannot know whether a stage returned normally
     /// after its own settlement or dropped its consumer on an error path.
     /// It retains the strict API above for callers that require a completion.
-    pub(crate) async fn wait_for_dropped_turn_if_pending(&self) -> GuiChatBridgeResult<Option<SettledAuthorizedTextTurn>> {
-        let completion = self.owner.pending.lock()
+    pub(crate) async fn wait_for_dropped_turn_if_pending(
+        &self,
+    ) -> GuiChatBridgeResult<Option<SettledAuthorizedTextTurn>> {
+        let completion = self
+            .owner
+            .pending
+            .lock()
             .expect("authorized text turn pending mutex")
             .take();
-        let Some(completion) = completion else { return Ok(None); };
-        completion.await.map_err(|_| {
-            GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed")
-        })?.map(Some)
+        let Some(completion) = completion else {
+            return Ok(None);
+        };
+        completion
+            .await
+            .map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed"))?
+            .map(Some)
     }
 
     /// The daemon/session root calls this only after every turn is terminal or
@@ -182,16 +205,30 @@ impl AuthorizedTextTurnSupervisor {
                 "authorized_text_turn_shutdown_with_live_consumer",
             ));
         }
-        if self.owner.pending.lock().expect("authorized text turn pending mutex").is_some() {
+        if self
+            .owner
+            .pending
+            .lock()
+            .expect("authorized text turn pending mutex")
+            .is_some()
+        {
             return Err(GuiChatBridgeError::invalid(
                 "authorized_text_turn_shutdown_with_unobserved_settlement",
             ));
         }
         let (completion_tx, completion_rx) = oneshot::channel();
-        self.owner.cleanup_tx.send(CleanupCommand::Shutdown { completion: completion_tx })
+        self.owner
+            .cleanup_tx
+            .send(CleanupCommand::Shutdown {
+                completion: completion_tx,
+            })
             .await
-            .map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed"))?;
-        completion_rx.await.map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed"))?;
+            .map_err(|_| {
+                GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed")
+            })?;
+        completion_rx.await.map_err(|_| {
+            GuiChatBridgeError::invalid("authorized_text_turn_cleanup_owner_closed")
+        })?;
         Ok(())
     }
 }
@@ -274,15 +311,14 @@ fn from_settled_bridge_terminal(
     hasher.update(turn_id.as_uuid().as_bytes());
     let turn_id_sha256 = hex::encode(hasher.finalize());
     let terminal_kind = terminal.into();
-    let cancel_proof = if cancelled_by_this_owner
-        && matches!(terminal, GuiChatTerminalState::Cancelled)
-    {
-        Some(CancelProof {
-            turn_id_sha256: turn_id_sha256.clone(),
-        })
-    } else {
-        None
-    };
+    let cancel_proof =
+        if cancelled_by_this_owner && matches!(terminal, GuiChatTerminalState::Cancelled) {
+            Some(CancelProof {
+                turn_id_sha256: turn_id_sha256.clone(),
+            })
+        } else {
+            None
+        };
     SettledAuthorizedTextTurn {
         turn_id_sha256,
         terminal_kind,
@@ -319,11 +355,7 @@ pub(crate) async fn start_authorized_text_turn(
     let surface = input.origin_surface;
     match supervisor.owner.bridge.preflight(input).await? {
         GuiChatBridgePreflight::Ready { decision } => {
-            open_authorized_text_turn(
-                Arc::clone(&supervisor.owner),
-                decision,
-                surface,
-            )
+            open_authorized_text_turn(Arc::clone(&supervisor.owner), decision, surface)
                 .await
                 .map(AuthorizedTextTurnStart::Ready)
         }
@@ -344,17 +376,20 @@ pub(crate) async fn decide_authorized_text_turn(
     confirmation: AuthorizedTextTurnConfirmation,
     decision: GuiChatConsentDecision,
 ) -> GuiChatBridgeResult<AuthorizedTextTurnStart> {
-    match supervisor.owner.bridge.decide(confirmation.receipt, decision).await? {
+    match supervisor
+        .owner
+        .bridge
+        .decide(confirmation.receipt, decision)
+        .await?
+    {
         GuiChatBridgeDecisionOutcome::Denied => Ok(AuthorizedTextTurnStart::Denied),
-        GuiChatBridgeDecisionOutcome::Approved(decision) => {
-            open_authorized_text_turn(
-                Arc::clone(&supervisor.owner),
-                decision,
-                confirmation.surface,
-            )
-                .await
-                .map(AuthorizedTextTurnStart::Ready)
-        }
+        GuiChatBridgeDecisionOutcome::Approved(decision) => open_authorized_text_turn(
+            Arc::clone(&supervisor.owner),
+            decision,
+            confirmation.surface,
+        )
+        .await
+        .map(AuthorizedTextTurnStart::Ready),
     }
 }
 
@@ -377,7 +412,11 @@ async fn open_authorized_text_turn(
     // an attachment upper bound and can already be ahead of visible deltas;
     // using it here would skip speech that the owner has never received.
     let start_cursor = turn.metadata.latest_sequence;
-    let subscription = match owner.bridge.exchange_same_session_attach(&turn, surface).await {
+    let subscription = match owner
+        .bridge
+        .exchange_same_session_attach(&turn, surface)
+        .await
+    {
         Ok(subscription) => subscription,
         Err(exchange_error) => {
             return settle_started_turn_after_exchange_failure(
@@ -413,19 +452,22 @@ async fn settle_started_turn_after_exchange_failure(
     start_cursor: u64,
     _exchange_error: GuiChatBridgeError,
 ) -> GuiChatBridgeResult<AuthorizedTextTurn> {
-    owner.bridge
-        .cancel(&turn)
-        .await
-        .map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_cancel_failed"))?;
-    let subscription = owner.bridge
+    owner.bridge.cancel(&turn).await.map_err(|_| {
+        GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_cancel_failed")
+    })?;
+    let subscription = owner
+        .bridge
         .exchange_same_session_attach(&turn, surface)
         .await
-        .map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_unsettled"))?;
+        .map_err(|_| {
+            GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_unsettled")
+        })?;
     let mut settlement = SettlementForwarder {
         latest_sequence: start_cursor,
         terminal: None,
     };
-    let attach_result = owner.bridge
+    let attach_result = owner
+        .bridge
         .attach(subscription, start_cursor, &mut settlement)
         .await;
     // A terminal delivered before a later transport/sink error is authoritative
@@ -437,7 +479,9 @@ async fn settle_started_turn_after_exchange_failure(
             "authorized_text_turn_exchange_failed_after_settlement",
         ));
     }
-    attach_result.map_err(|_| GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_unsettled"))?;
+    attach_result.map_err(|_| {
+        GuiChatBridgeError::invalid("authorized_text_turn_exchange_cleanup_unsettled")
+    })?;
     Err(GuiChatBridgeError::invalid(
         "authorized_text_turn_exchange_cleanup_unsettled",
     ))
@@ -458,8 +502,14 @@ impl AuthorizedTextTurn {
             latest_sequence: self.next_sequence,
             terminal: None,
         };
-        let attach_result = self.owner.bridge
-            .attach(self.subscription.clone(), self.next_sequence, &mut forwarder)
+        let attach_result = self
+            .owner
+            .bridge
+            .attach(
+                self.subscription.clone(),
+                self.next_sequence,
+                &mut forwarder,
+            )
             .await;
         // Bridge delivery is allowed to fail after forwarding frames.  Commit
         // both cursor and terminal before propagating that error, otherwise a
@@ -477,17 +527,29 @@ impl AuthorizedTextTurn {
     /// Request bridge cancellation and consume the same subscription until an
     /// explicit terminal arrives.  No visible output is forwarded during
     /// settlement, preventing stale text from reaching sentence batching.
-    pub(crate) async fn cancel_and_settle(&mut self) -> GuiChatBridgeResult<SettledAuthorizedTextTurn> {
+    pub(crate) async fn cancel_and_settle(
+        &mut self,
+    ) -> GuiChatBridgeResult<SettledAuthorizedTextTurn> {
         if let Some(terminal) = self.terminal {
-            return Ok(from_settled_bridge_terminal(self.turn.metadata.turn_id, terminal, false));
+            return Ok(from_settled_bridge_terminal(
+                self.turn.metadata.turn_id,
+                terminal,
+                false,
+            ));
         }
         self.owner.bridge.cancel(&self.turn).await?;
         let mut settlement = SettlementForwarder {
             latest_sequence: self.next_sequence,
             terminal: None,
         };
-        let attach_result = self.owner.bridge
-            .attach(self.subscription.clone(), self.next_sequence, &mut settlement)
+        let attach_result = self
+            .owner
+            .bridge
+            .attach(
+                self.subscription.clone(),
+                self.next_sequence,
+                &mut settlement,
+            )
             .await;
         self.next_sequence = settlement.latest_sequence;
         if self.terminal.is_none() {
@@ -497,13 +559,21 @@ impl AuthorizedTextTurn {
         // is stronger evidence than the later transport failure.
         if let Some(terminal) = self.terminal {
             self.owner.release_after_observed_terminal();
-            return Ok(from_settled_bridge_terminal(self.turn.metadata.turn_id, terminal, true));
+            return Ok(from_settled_bridge_terminal(
+                self.turn.metadata.turn_id,
+                terminal,
+                true,
+            ));
         }
         attach_result?;
-        let terminal = self.terminal.ok_or_else(|| {
-            GuiChatBridgeError::invalid("authorized_text_turn_cancel_unsettled")
-        })?;
-        Ok(from_settled_bridge_terminal(self.turn.metadata.turn_id, terminal, true))
+        let terminal = self
+            .terminal
+            .ok_or_else(|| GuiChatBridgeError::invalid("authorized_text_turn_cancel_unsettled"))?;
+        Ok(from_settled_bridge_terminal(
+            self.turn.metadata.turn_id,
+            terminal,
+            true,
+        ))
     }
 }
 
@@ -519,7 +589,10 @@ impl Drop for AuthorizedTextTurn {
         };
         let (completion_tx, completion_rx) = oneshot::channel();
         let already_pending = {
-            let mut pending = self.owner.pending.lock()
+            let mut pending = self
+                .owner
+                .pending
+                .lock()
                 .expect("authorized text turn pending mutex");
             if pending.is_some() {
                 true
@@ -560,7 +633,8 @@ async fn settle_detached_turn(
         latest_sequence: detached.next_sequence,
         terminal: None,
     };
-    let attach_result = owner.bridge
+    let attach_result = owner
+        .bridge
         .attach(
             detached.subscription,
             detached.next_sequence,
@@ -707,9 +781,14 @@ mod tests {
 
     fn input() -> GuiChatBridgePreflightInput {
         GuiChatBridgePreflightInput {
-            request_id: GuiChatRequestId::new(), session_id: "test-session".into(),
-            origin_surface: GuiChatSurface::Main, message: "test".into(),
-            model: None, skill_id: None, incognito: false, reasoning_display: false,
+            request_id: GuiChatRequestId::new(),
+            session_id: "test-session".into(),
+            origin_surface: GuiChatSurface::Main,
+            message: "test".into(),
+            model: None,
+            skill_id: None,
+            incognito: false,
+            reasoning_display: false,
             attachment_paths: Vec::new(),
         }
     }
@@ -724,7 +803,11 @@ mod tests {
 
     async fn open_for_test(
         bridge: Arc<ScriptedBridge>,
-    ) -> GuiChatBridgeResult<(ConversationTaskRegistry, AuthorizedTextTurnSupervisor, AuthorizedTextTurn)> {
+    ) -> GuiChatBridgeResult<(
+        ConversationTaskRegistry,
+        AuthorizedTextTurnSupervisor,
+        AuthorizedTextTurn,
+    )> {
         let registry = task_registry();
         let supervisor = AuthorizedTextTurnSupervisor::new(bridge, registry.clone()).await?;
         let turn = open_authorized_text_turn(
@@ -787,7 +870,9 @@ mod tests {
                 attached_after: Mutex::new(Vec::new()),
                 cancel_calls: Mutex::new(0),
                 start_calls: Mutex::new(0),
-                decisions: Mutex::new(vec![GuiChatBridgeDecisionOutcome::Approved(decision())].into()),
+                decisions: Mutex::new(
+                    vec![GuiChatBridgeDecisionOutcome::Approved(decision())].into(),
+                ),
             }
         }
     }
@@ -798,7 +883,9 @@ mod tests {
             &self,
             _input: GuiChatBridgePreflightInput,
         ) -> GuiChatBridgeResult<GuiChatBridgePreflight> {
-            Ok(GuiChatBridgePreflight::Ready { decision: decision() })
+            Ok(GuiChatBridgePreflight::Ready {
+                decision: decision(),
+            })
         }
 
         async fn decide(
@@ -806,7 +893,10 @@ mod tests {
             _preflight: GuiChatBridgePreflightReceipt,
             _decision: GuiChatConsentDecision,
         ) -> GuiChatBridgeResult<GuiChatBridgeDecisionOutcome> {
-            self.decisions.lock().expect("test decision mutex").pop_front()
+            self.decisions
+                .lock()
+                .expect("test decision mutex")
+                .pop_front()
                 .ok_or_else(|| GuiChatBridgeError::invalid("missing scripted decision"))
         }
 
@@ -927,7 +1017,10 @@ mod tests {
             1,
             vec![Ok(attached(9))],
             vec![AttachScript {
-                events: vec![delta(2, "must not be skipped"), terminal(3, GuiChatTerminalState::Complete)],
+                events: vec![
+                    delta(2, "must not be skipped"),
+                    terminal(3, GuiChatTerminalState::Complete),
+                ],
                 result: Ok(()),
             }],
         ));
@@ -955,7 +1048,9 @@ mod tests {
             }],
         ));
         let registry = task_registry();
-        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone()).await.unwrap();
+        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
+            .await
+            .unwrap();
         let result = open_authorized_text_turn(
             Arc::clone(&supervisor.owner),
             decision(),
@@ -984,7 +1079,8 @@ mod tests {
                 },
             ],
         ));
-        let (_registry, _supervisor, mut text_turn) = open_for_test(Arc::clone(&bridge)).await.unwrap();
+        let (_registry, _supervisor, mut text_turn) =
+            open_for_test(Arc::clone(&bridge)).await.unwrap();
         let mut sink = RecordingSink::default();
         assert!(text_turn.attach_visible(&mut sink).await.is_err());
         text_turn.attach_visible(&mut sink).await.unwrap();
@@ -1000,12 +1096,18 @@ mod tests {
             vec![Ok(attached(1))],
             vec![AttachScript {
                 events: vec![terminal(2, GuiChatTerminalState::Cancelled)],
-                result: Err(GuiChatBridgeError::invalid("after_terminal_transport_failure")),
+                result: Err(GuiChatBridgeError::invalid(
+                    "after_terminal_transport_failure",
+                )),
             }],
         ));
-        let (_registry, _supervisor, mut text_turn) = open_for_test(Arc::clone(&bridge)).await.unwrap();
+        let (_registry, _supervisor, mut text_turn) =
+            open_for_test(Arc::clone(&bridge)).await.unwrap();
         let settled = text_turn.cancel_and_settle().await.unwrap();
-        assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+        assert_eq!(
+            settled.terminal_kind(),
+            AuthorizedTextTurnTerminal::Cancelled
+        );
         assert!(settled.cancel_proof().is_some());
         assert_eq!(*bridge.cancel_calls.lock().unwrap(), 1);
         assert_eq!(*bridge.attached_after.lock().unwrap(), vec![1]);
@@ -1021,9 +1123,13 @@ mod tests {
                 result: Ok(()),
             }],
         ));
-        let (_registry, _supervisor, mut text_turn) = open_for_test(Arc::clone(&bridge)).await.unwrap();
+        let (_registry, _supervisor, mut text_turn) =
+            open_for_test(Arc::clone(&bridge)).await.unwrap();
         let settled = text_turn.cancel_and_settle().await.unwrap();
-        assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Complete);
+        assert_eq!(
+            settled.terminal_kind(),
+            AuthorizedTextTurnTerminal::Complete
+        );
         assert!(settled.cancel_proof().is_none());
     }
 
@@ -1037,11 +1143,15 @@ mod tests {
                 result: Ok(()),
             }],
         ));
-        let (_registry, _supervisor, mut text_turn) = open_for_test(Arc::clone(&bridge)).await.unwrap();
+        let (_registry, _supervisor, mut text_turn) =
+            open_for_test(Arc::clone(&bridge)).await.unwrap();
         let mut sink = RecordingSink::default();
         text_turn.attach_visible(&mut sink).await.unwrap();
         let settled = text_turn.cancel_and_settle().await.unwrap();
-        assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+        assert_eq!(
+            settled.terminal_kind(),
+            AuthorizedTextTurnTerminal::Cancelled
+        );
         assert!(settled.cancel_proof().is_none());
         assert_eq!(*bridge.cancel_calls.lock().unwrap(), 0);
     }
@@ -1057,7 +1167,9 @@ mod tests {
             }],
         ));
         let registry = task_registry();
-        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone()).await.unwrap();
+        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
+            .await
+            .unwrap();
         let turn = open_authorized_text_turn(
             Arc::clone(&supervisor.owner),
             decision(),
@@ -1067,7 +1179,10 @@ mod tests {
         .unwrap();
         drop(turn);
         let settled = supervisor.wait_for_dropped_turn().await.unwrap();
-        assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+        assert_eq!(
+            settled.terminal_kind(),
+            AuthorizedTextTurnTerminal::Cancelled
+        );
         assert!(settled.cancel_proof().is_some());
         assert_eq!(*bridge.cancel_calls.lock().unwrap(), 1);
         assert_eq!(*bridge.attached_after.lock().unwrap(), vec![1]);
@@ -1086,20 +1201,35 @@ mod tests {
             }],
         ));
         let registry = task_registry();
-        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone()).await.unwrap();
+        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
+            .await
+            .unwrap();
         let first = open_authorized_text_turn(
             Arc::clone(&supervisor.owner),
             decision(),
             GuiChatSurface::Main,
-        ).await.unwrap();
-        assert!(open_authorized_text_turn(
-            Arc::clone(&supervisor.owner),
-            decision(),
-            GuiChatSurface::Main,
-        ).await.is_err());
+        )
+        .await
+        .unwrap();
+        assert!(
+            open_authorized_text_turn(
+                Arc::clone(&supervisor.owner),
+                decision(),
+                GuiChatSurface::Main,
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(*bridge.start_calls.lock().unwrap(), 1);
         drop(first);
-        assert_eq!(supervisor.wait_for_dropped_turn().await.unwrap().terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+        assert_eq!(
+            supervisor
+                .wait_for_dropped_turn()
+                .await
+                .unwrap()
+                .terminal_kind(),
+            AuthorizedTextTurnTerminal::Cancelled
+        );
         supervisor.shutdown_and_join().await.unwrap();
         drain_registry(&registry).await;
     }
@@ -1108,32 +1238,60 @@ mod tests {
     async fn idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry() {
         let bridge = Arc::new(ScriptedBridge::new(1, vec![], vec![]));
         let registry = task_registry();
-        let supervisor = AuthorizedTextTurnSupervisor::new(bridge, registry.clone()).await.unwrap();
-        assert!(supervisor.wait_for_dropped_turn_if_pending().await.unwrap().is_none());
+        let supervisor = AuthorizedTextTurnSupervisor::new(bridge, registry.clone())
+            .await
+            .unwrap();
+        assert!(
+            supervisor
+                .wait_for_dropped_turn_if_pending()
+                .await
+                .unwrap()
+                .is_none()
+        );
         supervisor.shutdown_and_join().await.unwrap();
         drain_registry(&registry).await;
     }
 
     #[tokio::test]
     async fn actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible() {
-        let bridge = Arc::new(ScriptedBridge::new(1, vec![Ok(attached(1))], vec![AttachScript {
-            events: vec![terminal(2, GuiChatTerminalState::Cancelled)], result: Ok(()),
-        }]));
+        let bridge = Arc::new(ScriptedBridge::new(
+            1,
+            vec![Ok(attached(1))],
+            vec![AttachScript {
+                events: vec![terminal(2, GuiChatTerminalState::Cancelled)],
+                result: Ok(()),
+            }],
+        ));
         {
             let mut decisions = bridge.decisions.lock().unwrap();
             decisions.clear();
             decisions.push_back(GuiChatBridgeDecisionOutcome::Denied);
         }
         let registry = task_registry();
-        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone()).await.unwrap();
+        let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
+            .await
+            .unwrap();
         let confirmation = AuthorizedTextTurnConfirmation {
             receipt: GuiChatBridgePreflightReceipt::from_live(vec![7]),
-            prompt: GuiChatConsentPrompt { request_id: GuiChatRequestId::new(), routes: Vec::new(), expires_at_unix_ms: 1 },
+            prompt: GuiChatConsentPrompt {
+                request_id: GuiChatRequestId::new(),
+                routes: Vec::new(),
+                expires_at_unix_ms: 1,
+            },
             surface: GuiChatSurface::Main,
         };
-        assert!(matches!(supervisor.decide(confirmation, GuiChatConsentDecision::AllowOnce).await.unwrap(), AuthorizedTextTurnStart::Denied));
+        assert!(matches!(
+            supervisor
+                .decide(confirmation, GuiChatConsentDecision::AllowOnce)
+                .await
+                .unwrap(),
+            AuthorizedTextTurnStart::Denied
+        ));
         assert_eq!(*bridge.start_calls.lock().unwrap(), 0);
-        let turn = match supervisor.start(input()).await.unwrap() { AuthorizedTextTurnStart::Ready(turn) => turn, _ => panic!("later admitted start must create one turn") };
+        let turn = match supervisor.start(input()).await.unwrap() {
+            AuthorizedTextTurnStart::Ready(turn) => turn,
+            _ => panic!("later admitted start must create one turn"),
+        };
         assert_eq!(*bridge.start_calls.lock().unwrap(), 1);
         drop(turn);
         supervisor.wait_for_dropped_turn().await.unwrap();

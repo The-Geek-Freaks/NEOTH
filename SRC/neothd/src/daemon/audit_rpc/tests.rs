@@ -32,31 +32,186 @@ impl Drop for StartCancellation<'_> {
 
 #[async_trait::async_trait]
 impl crate::daemon::conversation_registry::ConversationRuntime for ConversationSettlementFixture {
-    async fn availability(&self, _: crate::daemon::conversation_protocol::ConversationAvailabilityRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationAvailabilityResponse> { unreachable!() }
-    async fn preflight(&self, _: crate::daemon::conversation_protocol::ConversationPreflightRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
-    async fn decide_microphone(&self, _: crate::daemon::conversation_protocol::ConversationMicrophoneDecisionRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
-    async fn decide_provider(&self, _: crate::daemon::conversation_protocol::ConversationProviderDecisionRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
-    async fn start(&self, request: crate::daemon::conversation_protocol::ConversationStartRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { let _cancelled = StartCancellation(&self.cancelled); self.entered.notify_waiters(); self.release.notified().await; self.joined.store(true, std::sync::atomic::Ordering::SeqCst); Ok(conversation_progress(&request)) }
-    async fn abort_start(&self, request: crate::daemon::conversation_protocol::ConversationAbortStartRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { self.aborted.store(true, std::sync::atomic::Ordering::SeqCst); if self.abort_fails { return Err(crate::daemon::conversation_protocol::ConversationError::new(crate::daemon::conversation_protocol::ConversationErrorCode::StreamSettlementIndeterminate, false, "fixture_abort_failed")); } self.release.notify_waiters(); Ok(crate::daemon::conversation_protocol::ConversationProgressResponse { schema_version: 1, expected_boot_id: request.expected_boot_id, request_id: request.request_id, subscription_id: Some(request.subscription_id), generation: request.expected_generation, latest_sequence: 1, event: crate::daemon::conversation_protocol::ConversationEvent::State { state: crate::daemon::conversation_protocol::ConversationState::Stopped } }) }
-    async fn control(&self, _: crate::daemon::conversation_protocol::ConversationControlRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
-    async fn revoke_microphone(&self, _: crate::daemon::conversation_protocol::ConversationRevokeMicrophoneRequest) -> crate::daemon::conversation_protocol::ConversationResult<crate::daemon::conversation_protocol::ConversationProgressResponse> { unreachable!() }
-    async fn replay(&self, _: crate::daemon::conversation_protocol::ConversationAttachRequest) -> crate::daemon::conversation_protocol::ConversationResult<Vec<crate::daemon::conversation_protocol::ConversationStreamFrame>> { unreachable!() }
-    async fn attach(&self, _: crate::daemon::conversation_protocol::ConversationAttachRequest, _: &mut dyn crate::daemon::conversation_protocol::ConversationProjectionSink) -> crate::daemon::conversation_protocol::ConversationResult<()> { self.attach_entered.notify_waiters(); self.release.notified().await; Ok(()) }
-    async fn close_and_drain(&self) -> crate::daemon::conversation_protocol::ConversationResult<()> { Ok(()) }
+    async fn availability(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationAvailabilityRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationAvailabilityResponse,
+    > {
+        unreachable!()
+    }
+    async fn preflight(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationPreflightRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        unreachable!()
+    }
+    async fn decide_microphone(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationMicrophoneDecisionRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        unreachable!()
+    }
+    async fn decide_provider(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationProviderDecisionRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        unreachable!()
+    }
+    async fn start(
+        &self,
+        request: crate::daemon::conversation_protocol::ConversationStartRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        let _cancelled = StartCancellation(&self.cancelled);
+        self.entered.notify_waiters();
+        self.release.notified().await;
+        self.joined.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(conversation_progress(&request))
+    }
+    async fn abort_start(
+        &self,
+        request: crate::daemon::conversation_protocol::ConversationAbortStartRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        self.aborted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if self.abort_fails {
+            return Err(crate::daemon::conversation_protocol::ConversationError::new(crate::daemon::conversation_protocol::ConversationErrorCode::StreamSettlementIndeterminate, false, "fixture_abort_failed"));
+        }
+        self.release.notify_waiters();
+        Ok(
+            crate::daemon::conversation_protocol::ConversationProgressResponse {
+                schema_version: 1,
+                expected_boot_id: request.expected_boot_id,
+                request_id: request.request_id,
+                subscription_id: Some(request.subscription_id),
+                generation: request.expected_generation,
+                latest_sequence: 1,
+                event: crate::daemon::conversation_protocol::ConversationEvent::State {
+                    state: crate::daemon::conversation_protocol::ConversationState::Stopped,
+                },
+            },
+        )
+    }
+    async fn control(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationControlRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        unreachable!()
+    }
+    async fn revoke_microphone(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationRevokeMicrophoneRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        crate::daemon::conversation_protocol::ConversationProgressResponse,
+    > {
+        unreachable!()
+    }
+    async fn replay(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationAttachRequest,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<
+        Vec<crate::daemon::conversation_protocol::ConversationStreamFrame>,
+    > {
+        unreachable!()
+    }
+    async fn attach(
+        &self,
+        _: crate::daemon::conversation_protocol::ConversationAttachRequest,
+        _: &mut dyn crate::daemon::conversation_protocol::ConversationProjectionSink,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<()> {
+        self.attach_entered.notify_waiters();
+        self.release.notified().await;
+        Ok(())
+    }
+    async fn close_and_drain(
+        &self,
+    ) -> crate::daemon::conversation_protocol::ConversationResult<()> {
+        Ok(())
+    }
 }
 
-fn conversation_start_request() -> crate::daemon::conversation_protocol::ConversationStartRequest { crate::daemon::conversation_protocol::ConversationStartRequest { schema_version: 1, expected_boot_id: "boot".into(), request_id: crate::daemon::conversation_protocol::ConversationRequestId(uuid::Uuid::now_v7()), subscription_id: crate::daemon::conversation_protocol::ConversationSubscriptionId("sub".into()), session_id: "session".into(), origin_surface: crate::daemon::conversation_protocol::ConversationSurface::Buddy, expected_generation: 1 } }
-fn conversation_progress(request: &crate::daemon::conversation_protocol::ConversationStartRequest) -> crate::daemon::conversation_protocol::ConversationProgressResponse { crate::daemon::conversation_protocol::ConversationProgressResponse { schema_version: 1, expected_boot_id: request.expected_boot_id.clone(), request_id: request.request_id, subscription_id: Some(request.subscription_id.clone()), generation: request.expected_generation, latest_sequence: 1, event: crate::daemon::conversation_protocol::ConversationEvent::State { state: crate::daemon::conversation_protocol::ConversationState::Ready } } }
-fn settlement_fixture(abort_fails: bool) -> Arc<ConversationSettlementFixture> { Arc::new(ConversationSettlementFixture { entered: tokio::sync::Notify::new(), attach_entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new(), aborted: std::sync::atomic::AtomicBool::new(false), joined: std::sync::atomic::AtomicBool::new(false), cancelled: std::sync::atomic::AtomicBool::new(false), abort_fails }) }
-fn conversation_attach_request() -> crate::daemon::conversation_protocol::ConversationAttachRequest { let start = conversation_start_request(); crate::daemon::conversation_protocol::ConversationAttachRequest { schema_version: start.schema_version, expected_boot_id: start.expected_boot_id, request_id: start.request_id, subscription_id: start.subscription_id, session_id: start.session_id, origin_surface: start.origin_surface, expected_generation: start.expected_generation, after_sequence: 0 } }
+fn conversation_start_request() -> crate::daemon::conversation_protocol::ConversationStartRequest {
+    crate::daemon::conversation_protocol::ConversationStartRequest {
+        schema_version: 1,
+        expected_boot_id: "boot".into(),
+        request_id: crate::daemon::conversation_protocol::ConversationRequestId(
+            uuid::Uuid::now_v7(),
+        ),
+        subscription_id: crate::daemon::conversation_protocol::ConversationSubscriptionId(
+            "sub".into(),
+        ),
+        session_id: "session".into(),
+        origin_surface: crate::daemon::conversation_protocol::ConversationSurface::Buddy,
+        expected_generation: 1,
+    }
+}
+fn conversation_progress(
+    request: &crate::daemon::conversation_protocol::ConversationStartRequest,
+) -> crate::daemon::conversation_protocol::ConversationProgressResponse {
+    crate::daemon::conversation_protocol::ConversationProgressResponse {
+        schema_version: 1,
+        expected_boot_id: request.expected_boot_id.clone(),
+        request_id: request.request_id,
+        subscription_id: Some(request.subscription_id.clone()),
+        generation: request.expected_generation,
+        latest_sequence: 1,
+        event: crate::daemon::conversation_protocol::ConversationEvent::State {
+            state: crate::daemon::conversation_protocol::ConversationState::Ready,
+        },
+    }
+}
+fn settlement_fixture(abort_fails: bool) -> Arc<ConversationSettlementFixture> {
+    Arc::new(ConversationSettlementFixture {
+        entered: tokio::sync::Notify::new(),
+        attach_entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        aborted: std::sync::atomic::AtomicBool::new(false),
+        joined: std::sync::atomic::AtomicBool::new(false),
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+        abort_fails,
+    })
+}
+fn conversation_attach_request() -> crate::daemon::conversation_protocol::ConversationAttachRequest
+{
+    let start = conversation_start_request();
+    crate::daemon::conversation_protocol::ConversationAttachRequest {
+        schema_version: start.schema_version,
+        expected_boot_id: start.expected_boot_id,
+        request_id: start.request_id,
+        subscription_id: start.subscription_id,
+        session_id: start.session_id,
+        origin_surface: start.origin_surface,
+        expected_generation: start.expected_generation,
+        after_sequence: 0,
+    }
+}
 
 #[tokio::test]
 async fn conversation_start_peer_eof_aborts_and_joins_before_handler_returns() {
     let fixture = settlement_fixture(false);
     let (server, client) = tokio::io::duplex(64);
-    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
-    fixture.entered.notified().await; drop(client); task.await.unwrap().unwrap();
-    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst)); assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
+    let task = tokio::spawn(super::server::serve_conversation_start(
+        Box::new(server),
+        fixture.clone(),
+        conversation_start_request(),
+    ));
+    fixture.entered.notified().await;
+    drop(client);
+    task.await.unwrap().unwrap();
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[tokio::test]
@@ -65,16 +220,29 @@ async fn conversation_start_broken_reply_write_aborts_before_handler_returns() {
     // One byte prevents the HTTP acknowledgement from completing until this
     // peer is dropped, exercising the real response-write failure branch.
     let (server, client) = tokio::io::duplex(1);
-    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
-    fixture.entered.notified().await; fixture.release.notify_waiters(); tokio::task::yield_now().await; drop(client); task.await.unwrap().unwrap();
-    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst)); assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
+    let task = tokio::spawn(super::server::serve_conversation_start(
+        Box::new(server),
+        fixture.clone(),
+        conversation_start_request(),
+    ));
+    fixture.entered.notified().await;
+    fixture.release.notify_waiters();
+    tokio::task::yield_now().await;
+    drop(client);
+    task.await.unwrap().unwrap();
+    assert!(fixture.aborted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(fixture.joined.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[tokio::test]
 async fn conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_returns_error() {
     let fixture = settlement_fixture(true);
     let (server, client) = tokio::io::duplex(64);
-    let task = tokio::spawn(super::server::serve_conversation_start(Box::new(server), fixture.clone(), conversation_start_request()));
+    let task = tokio::spawn(super::server::serve_conversation_start(
+        Box::new(server),
+        fixture.clone(),
+        conversation_start_request(),
+    ));
     fixture.entered.notified().await;
     drop(client);
     assert!(task.await.unwrap().is_err());
@@ -87,7 +255,11 @@ async fn conversation_start_failed_abort_cancels_and_joins_pending_wrapper_but_r
 async fn conversation_attach_failed_abort_after_peer_close_returns_error_from_production_helper() {
     let fixture = settlement_fixture(true);
     let (server, mut client) = tokio::io::duplex(256);
-    let task = tokio::spawn(super::server::serve_conversation_attach(Box::new(server), fixture.clone(), conversation_attach_request()));
+    let task = tokio::spawn(super::server::serve_conversation_attach(
+        Box::new(server),
+        fixture.clone(),
+        conversation_attach_request(),
+    ));
     let mut header = [0u8; 96];
     let _ = client.read(&mut header).await.unwrap();
     fixture.attach_entered.notified().await;

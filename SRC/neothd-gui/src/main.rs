@@ -22631,13 +22631,12 @@ fn run_buddy_provider_command(
             BuddyProviderFailureStage::Exit,
         )
     })?;
-    String::from_utf8(output.stdout)
-        .map_err(|_| {
-            buddy_provider_stage_error(
-                "Buddy provider command returned an unreadable receipt.".to_string(),
-                BuddyProviderFailureStage::Utf8,
-            )
-        })
+    String::from_utf8(output.stdout).map_err(|_| {
+        buddy_provider_stage_error(
+            "Buddy provider command returned an unreadable receipt.".to_string(),
+            BuddyProviderFailureStage::Utf8,
+        )
+    })
 }
 
 fn fetch_buddy_provider_readback()
@@ -22646,13 +22645,12 @@ fn fetch_buddy_provider_readback()
         .map_err(|error| {
             buddy_provider_stage_error(error, BuddyProviderFailureStage::FreshShowCommand)
         })?;
-    buddy_provider_panel::parse_buddy_provider_readback(&raw)
-        .map_err(|error| {
-            buddy_provider_stage_error(
-                buddy_provider_panel_error(error).to_string(),
-                BuddyProviderFailureStage::FreshShowParse,
-            )
-        })
+    buddy_provider_panel::parse_buddy_provider_readback(&raw).map_err(|error| {
+        buddy_provider_stage_error(
+            buddy_provider_panel_error(error).to_string(),
+            BuddyProviderFailureStage::FreshShowParse,
+        )
+    })
 }
 
 fn apply_buddy_provider_readback(

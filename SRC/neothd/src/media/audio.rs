@@ -366,7 +366,9 @@ pub(crate) fn decode_wav_bytes_to_pcm_s16le(
         .map_err(|error| anyhow::anyhow!("decode TTS WAV response: {error}"))?;
     let audio_bytes = normalized_samples_to_s16le(decoded.samples)?;
     if audio_bytes.is_empty() {
-        return Err(anyhow::anyhow!("decoded TTS WAV response contains no PCM frames"));
+        return Err(anyhow::anyhow!(
+            "decoded TTS WAV response contains no PCM frames"
+        ));
     }
     Ok(DecodedPcmS16le {
         audio_bytes,
@@ -378,7 +380,9 @@ pub(crate) fn decode_wav_bytes_to_pcm_s16le(
 /// Convert the bounded, normalized decoder output to owned s16le frames.
 fn normalized_samples_to_s16le(samples: Vec<f32>) -> anyhow::Result<Vec<u8>> {
     if samples.is_empty() {
-        return Err(anyhow::anyhow!("decoded TTS WAV response contains no PCM frames"));
+        return Err(anyhow::anyhow!(
+            "decoded TTS WAV response contains no PCM frames"
+        ));
     }
     let byte_len = samples
         .len()
@@ -390,7 +394,9 @@ fn normalized_samples_to_s16le(samples: Vec<f32>) -> anyhow::Result<Vec<u8>> {
         .map_err(|error| anyhow::anyhow!("reserve decoded TTS WAV PCM: {error}"))?;
     for sample in samples {
         if !sample.is_finite() {
-            return Err(anyhow::anyhow!("decoded TTS WAV PCM contains a non-finite sample"));
+            return Err(anyhow::anyhow!(
+                "decoded TTS WAV PCM contains a non-finite sample"
+            ));
         }
         let pcm = (sample.clamp(-1.0, 1.0) * 32_767.0).round() as i16;
         audio_bytes.extend_from_slice(&pcm.to_le_bytes());
@@ -424,7 +430,8 @@ fn validate_pcm_s16le_wav_container(bytes: &[u8]) -> Result<(), String> {
             .filter(|end| *end <= bytes.len())
             .ok_or_else(|| "truncated WAV chunk header".to_string())?;
         let chunk_id = &bytes[cursor..cursor + 4];
-        let chunk_len = u32::from_le_bytes(bytes[cursor + 4..chunk_header_end].try_into().unwrap()) as usize;
+        let chunk_len =
+            u32::from_le_bytes(bytes[cursor + 4..chunk_header_end].try_into().unwrap()) as usize;
         let data_start = chunk_header_end;
         let data_end = data_start
             .checked_add(chunk_len)
@@ -435,11 +442,16 @@ fn validate_pcm_s16le_wav_container(bytes: &[u8]) -> Result<(), String> {
                 return Err("invalid WAV fmt chunk".to_string());
             }
             let format = u16::from_le_bytes(bytes[data_start..data_start + 2].try_into().unwrap());
-            let channels = u16::from_le_bytes(bytes[data_start + 2..data_start + 4].try_into().unwrap());
-            let sample_rate = u32::from_le_bytes(bytes[data_start + 4..data_start + 8].try_into().unwrap());
-            let byte_rate = u32::from_le_bytes(bytes[data_start + 8..data_start + 12].try_into().unwrap());
-            let block_align = u16::from_le_bytes(bytes[data_start + 12..data_start + 14].try_into().unwrap());
-            let bits_per_sample = u16::from_le_bytes(bytes[data_start + 14..data_start + 16].try_into().unwrap());
+            let channels =
+                u16::from_le_bytes(bytes[data_start + 2..data_start + 4].try_into().unwrap());
+            let sample_rate =
+                u32::from_le_bytes(bytes[data_start + 4..data_start + 8].try_into().unwrap());
+            let byte_rate =
+                u32::from_le_bytes(bytes[data_start + 8..data_start + 12].try_into().unwrap());
+            let block_align =
+                u16::from_le_bytes(bytes[data_start + 12..data_start + 14].try_into().unwrap());
+            let bits_per_sample =
+                u16::from_le_bytes(bytes[data_start + 14..data_start + 16].try_into().unwrap());
             let expected_align = channels
                 .checked_mul(2)
                 .ok_or_else(|| "WAV channel block alignment overflow".to_string())?;
@@ -1042,8 +1054,8 @@ mod tests {
     #[tokio::test]
     async fn in_memory_tts_wav_decoder_returns_bounded_pcm_and_rejects_bad_inputs() {
         let permit = acquire_audio_work_permit().await.expect("audio permit");
-        let decoded = decode_wav_bytes_to_pcm_s16le(synth_wav_tone(), &permit)
-            .expect("decode valid TTS WAV");
+        let decoded =
+            decode_wav_bytes_to_pcm_s16le(synth_wav_tone(), &permit).expect("decode valid TTS WAV");
         assert_eq!(decoded.sample_rate_hz, TARGET_SAMPLE_RATE);
         assert_eq!(decoded.channels, 1);
         assert!(!decoded.audio_bytes.is_empty());

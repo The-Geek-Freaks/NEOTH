@@ -16,9 +16,9 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
-use crate::daemon::gui_chat_protocol as gui;
 use crate::daemon::conversation_protocol as conversation;
 use crate::daemon::conversation_registry::ConversationRuntime;
+use crate::daemon::gui_chat_protocol as gui;
 use crate::n8n_api::auth::AuthCooldown;
 use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
 use crate::wal::events::{
@@ -733,22 +733,47 @@ async fn run_accept_loop(
                     .await
                     {
                         Ok(Ok(ConnectionOutcome::Complete)) => {}
-                        Ok(Ok(ConnectionOutcome::ConversationStartAdmitted { mut stream, request })) => {
+                        Ok(Ok(ConnectionOutcome::ConversationStartAdmitted {
+                            mut stream,
+                            request,
+                        })) => {
                             let Some(runtime) = state.conversation_runtime.as_ref().cloned() else {
-                                let _ = stream.write_all(http_response(503, "conversation runtime unavailable").as_bytes()).await;
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "conversation runtime unavailable")
+                                            .as_bytes(),
+                                    )
+                                    .await;
                                 let _ = stream.shutdown().await;
                                 return Ok(());
                             };
                             serve_conversation_start(stream, runtime, request).await?;
                         }
-                        Ok(Ok(ConnectionOutcome::ConversationAttachAdmitted { mut stream, request })) => {
+                        Ok(Ok(ConnectionOutcome::ConversationAttachAdmitted {
+                            mut stream,
+                            request,
+                        })) => {
                             drop(permit);
                             let Ok(_attach_permit) = attach_sem.try_acquire_owned() else {
-                                let _ = stream.write_all(http_response(503, "conversation attach capacity reached").as_bytes()).await;
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "conversation attach capacity reached")
+                                            .as_bytes(),
+                                    )
+                                    .await;
                                 let _ = stream.shutdown().await;
                                 return Ok(());
                             };
-                            let Some(runtime) = state.conversation_runtime.as_ref().cloned() else { let _ = stream.write_all(http_response(503, "conversation runtime unavailable").as_bytes()).await; let _ = stream.shutdown().await; return Ok(()); };
+                            let Some(runtime) = state.conversation_runtime.as_ref().cloned() else {
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "conversation runtime unavailable")
+                                            .as_bytes(),
+                                    )
+                                    .await;
+                                let _ = stream.shutdown().await;
+                                return Ok(());
+                            };
                             serve_conversation_attach(stream, runtime, request).await?;
                         }
                         Ok(Ok(ConnectionOutcome::GuiChatAttachAdmitted {
@@ -842,13 +867,19 @@ async fn settle_conversation_owner(
 ) -> Result<()> {
     match tokio::time::timeout(CONVERSATION_SETTLEMENT_TIMEOUT, runtime.abort_start(abort)).await {
         Ok(Ok(_)) => Ok(()),
-        Ok(Err(error)) => Err(anyhow::anyhow!("{reason}: conversation owner abort was not settled: {error}")),
-        Err(_) => Err(anyhow::anyhow!("{reason}: conversation owner abort timed out; owner settlement is indeterminate")),
+        Ok(Err(error)) => Err(anyhow::anyhow!(
+            "{reason}: conversation owner abort was not settled: {error}"
+        )),
+        Err(_) => Err(anyhow::anyhow!(
+            "{reason}: conversation owner abort timed out; owner settlement is indeterminate"
+        )),
     }
 }
 
 async fn abort_and_join_start_task(
-    start_tasks: &mut tokio::task::JoinSet<conversation::ConversationResult<conversation::ConversationProgressResponse>>,
+    start_tasks: &mut tokio::task::JoinSet<
+        conversation::ConversationResult<conversation::ConversationProgressResponse>,
+    >,
 ) {
     // JoinSet aborts children on Drop.  Keeping the admitted start wrapper in
     // it means listener shutdown cannot detach a nested task from the registry.
@@ -865,7 +896,10 @@ pub(super) async fn serve_conversation_start(
 ) -> Result<()> {
     let abort = conversation_abort_request(&request);
     let mut start_tasks = tokio::task::JoinSet::new();
-    start_tasks.spawn({ let runtime = Arc::clone(&runtime); async move { runtime.start(request).await } });
+    start_tasks.spawn({
+        let runtime = Arc::clone(&runtime);
+        async move { runtime.start(request).await }
+    });
     let mut probe = [0u8; 1];
     let start_result = tokio::select! {
         joined = start_tasks.join_next() => joined.ok_or(()).and_then(|value| value.map_err(|_| ())).and_then(|value| value.map_err(|_| ())),
@@ -890,10 +924,26 @@ pub(super) async fn serve_conversation_start(
     };
     match start_result {
         Ok(reply) => match serde_json::to_string(&reply) {
-            Ok(body) if stream.write_all(http_response_json(200, &body).as_bytes()).await.is_ok() => { let _ = stream.shutdown().await; }
-            _ => { settle_conversation_owner(&runtime, abort, "conversation start response-write").await?; let _ = stream.shutdown().await; }
+            Ok(body)
+                if stream
+                    .write_all(http_response_json(200, &body).as_bytes())
+                    .await
+                    .is_ok() =>
+            {
+                let _ = stream.shutdown().await;
+            }
+            _ => {
+                settle_conversation_owner(&runtime, abort, "conversation start response-write")
+                    .await?;
+                let _ = stream.shutdown().await;
+            }
         },
-        Err(_) => { let _ = stream.write_all(http_response(503, "conversation_start_refused").as_bytes()).await; let _ = stream.shutdown().await; }
+        Err(_) => {
+            let _ = stream
+                .write_all(http_response(503, "conversation_start_refused").as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+        }
     }
     Ok(())
 }
@@ -903,13 +953,34 @@ pub(super) async fn serve_conversation_attach(
     runtime: Arc<dyn ConversationRuntime>,
     request: conversation::ConversationAttachRequest,
 ) -> Result<()> {
-    struct WireSink<'a, W: tokio::io::AsyncWrite + Unpin> { stream: &'a mut W }
+    struct WireSink<'a, W: tokio::io::AsyncWrite + Unpin> {
+        stream: &'a mut W,
+    }
     #[async_trait::async_trait]
-    impl<W: tokio::io::AsyncWrite + Unpin + Send> crate::daemon::conversation_protocol::ConversationProjectionSink for WireSink<'_, W> {
-        async fn on_frame(&mut self, frame: conversation::ConversationStreamFrame) -> conversation::ConversationResult<()> {
-            let line = serde_json::to_string(&frame).map_err(|_| conversation::ConversationError::invalid("conversation_frame_encode"))?;
-            self.stream.write_all(line.as_bytes()).await.map_err(|_| conversation::ConversationError::new(conversation::ConversationErrorCode::StreamSettlementIndeterminate, false, "conversation_attach_write"))?;
-            self.stream.write_all(b"\n").await.map_err(|_| conversation::ConversationError::new(conversation::ConversationErrorCode::StreamSettlementIndeterminate, false, "conversation_attach_write"))?;
+    impl<W: tokio::io::AsyncWrite + Unpin + Send>
+        crate::daemon::conversation_protocol::ConversationProjectionSink for WireSink<'_, W>
+    {
+        async fn on_frame(
+            &mut self,
+            frame: conversation::ConversationStreamFrame,
+        ) -> conversation::ConversationResult<()> {
+            let line = serde_json::to_string(&frame).map_err(|_| {
+                conversation::ConversationError::invalid("conversation_frame_encode")
+            })?;
+            self.stream.write_all(line.as_bytes()).await.map_err(|_| {
+                conversation::ConversationError::new(
+                    conversation::ConversationErrorCode::StreamSettlementIndeterminate,
+                    false,
+                    "conversation_attach_write",
+                )
+            })?;
+            self.stream.write_all(b"\n").await.map_err(|_| {
+                conversation::ConversationError::new(
+                    conversation::ConversationErrorCode::StreamSettlementIndeterminate,
+                    false,
+                    "conversation_attach_write",
+                )
+            })?;
             Ok(())
         }
     }
@@ -924,13 +995,22 @@ pub(super) async fn serve_conversation_attach(
         expected_generation: request.expected_generation,
     };
     let (mut reader, mut writer) = tokio::io::split(stream);
-    if writer.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n").await.is_err() {
-        let settlement = settle_conversation_owner(&runtime, abort, "conversation attach header-write").await;
+    if writer
+        .write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .is_err()
+    {
+        let settlement =
+            settle_conversation_owner(&runtime, abort, "conversation attach header-write").await;
         let _ = writer.shutdown().await;
         return settlement;
     }
     let attach_result = {
-        let mut sink = WireSink { stream: &mut writer };
+        let mut sink = WireSink {
+            stream: &mut writer,
+        };
         let attach = runtime.attach(request, &mut sink);
         tokio::pin!(attach);
         let mut probe = [0u8; 1];
@@ -943,7 +1023,10 @@ pub(super) async fn serve_conversation_attach(
         }
     };
     if let Err(error) = attach_result {
-        tracing::warn!(?error, "conversation attach ended before a terminal frame; settling owner");
+        tracing::warn!(
+            ?error,
+            "conversation attach ended before a terminal frame; settling owner"
+        );
         let settlement = settle_conversation_owner(&runtime, abort, "conversation attach").await;
         let _ = writer.shutdown().await;
         return settlement;
@@ -966,8 +1049,14 @@ struct Parsed {
 /// stream directly to the daemon runtime.
 enum ConnectionOutcome {
     Complete,
-    ConversationStartAdmitted { stream: super::transport::AuditStream, request: conversation::ConversationStartRequest },
-    ConversationAttachAdmitted { stream: super::transport::AuditStream, request: conversation::ConversationAttachRequest },
+    ConversationStartAdmitted {
+        stream: super::transport::AuditStream,
+        request: conversation::ConversationStartRequest,
+    },
+    ConversationAttachAdmitted {
+        stream: super::transport::AuditStream,
+        request: conversation::ConversationAttachRequest,
+    },
     GuiChatAttachAdmitted {
         stream: super::transport::AuditStream,
         request: gui::GuiChatAttachRequest,
@@ -1097,12 +1186,18 @@ async fn handle_one_pre_admission(
             | gui::GUI_CHAT_V1_STATUS_PATH
             | gui::GUI_CHAT_V1_ACTIVE_PATH
     );
-    let conversation_route = matches!(req.path.as_str(),
-        conversation::CONVERSATION_V1_AVAILABILITY_PATH | conversation::CONVERSATION_V1_PREFLIGHT_PATH |
-        conversation::CONVERSATION_V1_MICROPHONE_DECIDE_PATH | conversation::CONVERSATION_V1_PROVIDER_DECIDE_PATH |
-        conversation::CONVERSATION_V1_START_PATH | conversation::CONVERSATION_V1_ABORT_START_PATH |
-        conversation::CONVERSATION_V1_CONTROL_PATH | conversation::CONVERSATION_V1_REVOKE_MICROPHONE_PATH |
-        conversation::CONVERSATION_V1_ATTACH_PATH);
+    let conversation_route = matches!(
+        req.path.as_str(),
+        conversation::CONVERSATION_V1_AVAILABILITY_PATH
+            | conversation::CONVERSATION_V1_PREFLIGHT_PATH
+            | conversation::CONVERSATION_V1_MICROPHONE_DECIDE_PATH
+            | conversation::CONVERSATION_V1_PROVIDER_DECIDE_PATH
+            | conversation::CONVERSATION_V1_START_PATH
+            | conversation::CONVERSATION_V1_ABORT_START_PATH
+            | conversation::CONVERSATION_V1_CONTROL_PATH
+            | conversation::CONVERSATION_V1_REVOKE_MICROPHONE_PATH
+            | conversation::CONVERSATION_V1_ATTACH_PATH
+    );
     #[cfg(feature = "cluster")]
     let membership_route = matches!(
         req_path.as_str(),
@@ -1144,7 +1239,8 @@ async fn handle_one_pre_admission(
     if req.method != "POST"
         || !(membership_route
             || internal_route
-            || state.audit_routes_enabled && (audit_route || chat_route || gui_chat_route || conversation_route))
+            || state.audit_routes_enabled
+                && (audit_route || chat_route || gui_chat_route || conversation_route))
     {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
@@ -1915,24 +2011,134 @@ async fn handle_gui_chat_route(
         }
     }
 }
-async fn handle_conversation_route(mut stream: super::transport::AuditStream, state: &AuditRpcState, path: &str, body: &[u8]) -> Result<ConnectionOutcome> {
-    let Some(runtime) = state.conversation_runtime.as_ref().cloned() else { let _ = stream.write_all(http_response(503, "conversation_runtime_unavailable").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); };
-    macro_rules! post { ($kind:ty, $call:ident, $reply:ty) => {{
-        let request = match serde_json::from_slice::<$kind>(body) { Ok(value) => value, Err(_) => { let _ = stream.write_all(http_response(422, "invalid_conversation_request").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); } };
-        match runtime.$call(request).await { Ok(reply) => { let valid = reply.schema_version == conversation::CONVERSATION_V1_SCHEMA_VERSION && reply.expected_boot_id.len() <= conversation::CONVERSATION_BOOT_ID_MAX_BYTES; if !valid { let _ = stream.write_all(http_response(500, "invalid_conversation_response").as_bytes()).await; } else { let encoded = serde_json::to_string(&reply).context("encode conversation response")?; let _ = stream.write_all(http_response_json(200, &encoded).as_bytes()).await; } let _ = stream.shutdown().await; Ok(ConnectionOutcome::Complete) }, Err(_) => { let _ = stream.write_all(http_response(422, "conversation_request_refused").as_bytes()).await; let _ = stream.shutdown().await; Ok(ConnectionOutcome::Complete) } }
-    }};
+async fn handle_conversation_route(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+    path: &str,
+    body: &[u8],
+) -> Result<ConnectionOutcome> {
+    let Some(runtime) = state.conversation_runtime.as_ref().cloned() else {
+        let _ = stream
+            .write_all(http_response(503, "conversation_runtime_unavailable").as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    };
+    macro_rules! post {
+        ($kind:ty, $call:ident, $reply:ty) => {{
+            let request = match serde_json::from_slice::<$kind>(body) {
+                Ok(value) => value,
+                Err(_) => {
+                    let _ = stream
+                        .write_all(http_response(422, "invalid_conversation_request").as_bytes())
+                        .await;
+                    let _ = stream.shutdown().await;
+                    return Ok(ConnectionOutcome::Complete);
+                }
+            };
+            match runtime.$call(request).await {
+                Ok(reply) => {
+                    let valid = reply.schema_version
+                        == conversation::CONVERSATION_V1_SCHEMA_VERSION
+                        && reply.expected_boot_id.len()
+                            <= conversation::CONVERSATION_BOOT_ID_MAX_BYTES;
+                    if !valid {
+                        let _ = stream
+                            .write_all(
+                                http_response(500, "invalid_conversation_response").as_bytes(),
+                            )
+                            .await;
+                    } else {
+                        let encoded = serde_json::to_string(&reply)
+                            .context("encode conversation response")?;
+                        let _ = stream
+                            .write_all(http_response_json(200, &encoded).as_bytes())
+                            .await;
+                    }
+                    let _ = stream.shutdown().await;
+                    Ok(ConnectionOutcome::Complete)
+                }
+                Err(_) => {
+                    let _ = stream
+                        .write_all(http_response(422, "conversation_request_refused").as_bytes())
+                        .await;
+                    let _ = stream.shutdown().await;
+                    Ok(ConnectionOutcome::Complete)
+                }
+            }
+        }};
     }
     match path {
-        conversation::CONVERSATION_V1_AVAILABILITY_PATH => post!(conversation::ConversationAvailabilityRequest, availability, conversation::ConversationAvailabilityResponse),
-        conversation::CONVERSATION_V1_PREFLIGHT_PATH => post!(conversation::ConversationPreflightRequest, preflight, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_MICROPHONE_DECIDE_PATH => post!(conversation::ConversationMicrophoneDecisionRequest, decide_microphone, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_PROVIDER_DECIDE_PATH => post!(conversation::ConversationProviderDecisionRequest, decide_provider, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_ABORT_START_PATH => post!(conversation::ConversationAbortStartRequest, abort_start, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_CONTROL_PATH => post!(conversation::ConversationControlRequest, control, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_REVOKE_MICROPHONE_PATH => post!(conversation::ConversationRevokeMicrophoneRequest, revoke_microphone, conversation::ConversationProgressResponse),
-        conversation::CONVERSATION_V1_START_PATH => { let request = match serde_json::from_slice::<conversation::ConversationStartRequest>(body) { Ok(value) => value, Err(_) => { let _ = stream.write_all(http_response(422, "invalid_conversation_start").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); } }; Ok(ConnectionOutcome::ConversationStartAdmitted { stream, request }) },
-        conversation::CONVERSATION_V1_ATTACH_PATH => { let request = match serde_json::from_slice::<conversation::ConversationAttachRequest>(body) { Ok(value) => value, Err(_) => { let _ = stream.write_all(http_response(422, "invalid_conversation_attach").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); } }; Ok(ConnectionOutcome::ConversationAttachAdmitted { stream, request }) },
-        _ => { let _ = stream.write_all(http_response(404, "not found").as_bytes()).await; let _ = stream.shutdown().await; Ok(ConnectionOutcome::Complete) }
+        conversation::CONVERSATION_V1_AVAILABILITY_PATH => post!(
+            conversation::ConversationAvailabilityRequest,
+            availability,
+            conversation::ConversationAvailabilityResponse
+        ),
+        conversation::CONVERSATION_V1_PREFLIGHT_PATH => post!(
+            conversation::ConversationPreflightRequest,
+            preflight,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_MICROPHONE_DECIDE_PATH => post!(
+            conversation::ConversationMicrophoneDecisionRequest,
+            decide_microphone,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_PROVIDER_DECIDE_PATH => post!(
+            conversation::ConversationProviderDecisionRequest,
+            decide_provider,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_ABORT_START_PATH => post!(
+            conversation::ConversationAbortStartRequest,
+            abort_start,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_CONTROL_PATH => post!(
+            conversation::ConversationControlRequest,
+            control,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_REVOKE_MICROPHONE_PATH => post!(
+            conversation::ConversationRevokeMicrophoneRequest,
+            revoke_microphone,
+            conversation::ConversationProgressResponse
+        ),
+        conversation::CONVERSATION_V1_START_PATH => {
+            let request =
+                match serde_json::from_slice::<conversation::ConversationStartRequest>(body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let _ = stream
+                            .write_all(http_response(422, "invalid_conversation_start").as_bytes())
+                            .await;
+                        let _ = stream.shutdown().await;
+                        return Ok(ConnectionOutcome::Complete);
+                    }
+                };
+            Ok(ConnectionOutcome::ConversationStartAdmitted { stream, request })
+        }
+        conversation::CONVERSATION_V1_ATTACH_PATH => {
+            let request =
+                match serde_json::from_slice::<conversation::ConversationAttachRequest>(body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let _ = stream
+                            .write_all(http_response(422, "invalid_conversation_attach").as_bytes())
+                            .await;
+                        let _ = stream.shutdown().await;
+                        return Ok(ConnectionOutcome::Complete);
+                    }
+                };
+            Ok(ConnectionOutcome::ConversationAttachAdmitted { stream, request })
+        }
+        _ => {
+            let _ = stream
+                .write_all(http_response(404, "not found").as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            Ok(ConnectionOutcome::Complete)
+        }
     }
 }
 

@@ -219,11 +219,9 @@ impl OutboundTaskDelegateController {
         peer_key: &str,
         body: &crate::cluster::heartbeat::TaskResultBody,
     ) -> Result<crate::cluster::membership::OutboundTaskDelegateResultReceipt> {
-        self.membership.store().receive_task_delegate_outbound_result(
-            peer_key,
-            body,
-            crate::time::now_unix_i64(),
-        )
+        self.membership
+            .store()
+            .receive_task_delegate_outbound_result(peer_key, body, crate::time::now_unix_i64())
     }
 }
 

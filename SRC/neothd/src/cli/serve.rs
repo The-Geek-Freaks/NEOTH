@@ -607,40 +607,72 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // credential, home and WAL generation as this daemon; no GUI value selects
     // a provider, home, device, credential or writer.
     #[cfg(feature = "live-audio")]
-    let conversation_runtime: Arc<dyn crate::daemon::conversation_registry::ConversationRuntime> =
-        {
-            let config_bytes = std::fs::read(&config_path).context("read accepted A2 config generation")?;
-            let config_digest = format!("{:x}", Sha256::digest(config_bytes));
-            let conversation_tasks = crate::daemon::conversation_session::ConversationTaskRegistry::default();
-            let bridge: Arc<dyn crate::daemon::gui_chat_bridge::GuiChatBridge> = Arc::new(
-                crate::daemon::conversation_gui_bridge::DirectConversationGuiChatBridge::new(
-                    Arc::clone(&gui_chat_runtime), neoth_home.clone(), gui_chat_boot_id.0.clone(),
-                )
-            );
-            let owner = Arc::new(crate::daemon::conversation_owner::LiveConversationOwner::new(
+    let conversation_runtime: Arc<
+        dyn crate::daemon::conversation_registry::ConversationRuntime,
+    > = {
+        let config_bytes =
+            std::fs::read(&config_path).context("read accepted A2 config generation")?;
+        let config_digest = format!("{:x}", Sha256::digest(config_bytes));
+        let conversation_tasks =
+            crate::daemon::conversation_session::ConversationTaskRegistry::default();
+        let bridge: Arc<dyn crate::daemon::gui_chat_bridge::GuiChatBridge> = Arc::new(
+            crate::daemon::conversation_gui_bridge::DirectConversationGuiChatBridge::new(
+                Arc::clone(&gui_chat_runtime),
+                neoth_home.clone(),
+                gui_chat_boot_id.0.clone(),
+            ),
+        );
+        let owner = Arc::new(
+            crate::daemon::conversation_owner::LiveConversationOwner::new(
                 crate::daemon::conversation_owner::LiveConversationOwnerInputs {
                     dependencies: crate::media::conversation_loop::ConversationDependencies {
-                        home: neoth_home.clone(), config_digest, media: config.media.clone(), updater: config.updater.clone(),
-                        freedom: config.clone(), credentials: creds.clone(), wal: writer.clone(),
+                        home: neoth_home.clone(),
+                        config_digest,
+                        media: config.media.clone(),
+                        updater: config.updater.clone(),
+                        freedom: config.clone(),
+                        credentials: creds.clone(),
+                        wal: writer.clone(),
                         playback: crate::media::playback::CpalPlaybackConfig::default(),
                         preflight: crate::daemon::gui_chat_bridge::GuiChatBridgePreflightInput {
-                            request_id: crate::daemon::gui_chat_bridge::GuiChatRequestId::new(), session_id: "a2-retained".into(),
-                            origin_surface: crate::daemon::gui_chat_bridge::GuiChatSurface::Buddy, message: String::new(), model: None,
-                            skill_id: None, incognito: false, reasoning_display: false, attachment_paths: Vec::new(),
-                        }, min_fragment_ms: crate::media::conversation_loop::DEFAULT_MIN_FRAGMENT_MS,
+                            request_id: crate::daemon::gui_chat_bridge::GuiChatRequestId::new(),
+                            session_id: "a2-retained".into(),
+                            origin_surface: crate::daemon::gui_chat_bridge::GuiChatSurface::Buddy,
+                            message: String::new(),
+                            model: None,
+                            skill_id: None,
+                            incognito: false,
+                            reasoning_display: false,
+                            attachment_paths: Vec::new(),
+                        },
+                        min_fragment_ms: crate::media::conversation_loop::DEFAULT_MIN_FRAGMENT_MS,
                         task_registry: conversation_tasks.clone(),
-                    }, capture: crate::media::live_capture::CpalCaptureConfig::default(),
-                    microphone: crate::permissions::microphone::MicConsentStore::open(&neoth_home).context("open retained microphone authority")?, bridge,
-                }
-            ));
-            Arc::new(crate::daemon::conversation_registry::ConversationRegistry::new(
-                gui_chat_boot_id.0.clone(), owner,
+                    },
+                    capture: crate::media::live_capture::CpalCaptureConfig::default(),
+                    microphone: crate::permissions::microphone::MicConsentStore::open(&neoth_home)
+                        .context("open retained microphone authority")?,
+                    bridge,
+                },
+            ),
+        );
+        Arc::new(
+            crate::daemon::conversation_registry::ConversationRegistry::new(
+                gui_chat_boot_id.0.clone(),
+                owner,
                 conversation_tasks,
-            ).await.context("register retained conversation event relay")?)
-        };
+            )
+            .await
+            .context("register retained conversation event relay")?,
+        )
+    };
     #[cfg(not(feature = "live-audio"))]
-    let conversation_runtime: Arc<dyn crate::daemon::conversation_registry::ConversationRuntime> =
-        Arc::new(crate::daemon::conversation_registry::ConversationRegistry::unavailable(gui_chat_boot_id.0.clone()));
+    let conversation_runtime: Arc<
+        dyn crate::daemon::conversation_registry::ConversationRuntime,
+    > = Arc::new(
+        crate::daemon::conversation_registry::ConversationRegistry::unavailable(
+            gui_chat_boot_id.0.clone(),
+        ),
+    );
     let webchat_state = Arc::new(crate::daemon::webchat::WebChatState::new(
         config.companion.port,
         neoth_home.clone(),
@@ -2923,7 +2955,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     if let Err(error) = crate::daemon::conversation_registry::ConversationRuntime::close_and_drain(
         conversation_runtime.as_ref(),
     )
-    .await {
+    .await
+    {
         warn!(error = %error, "conversation runtime drain was indeterminate before WAL teardown");
     }
     // The conversation supervisor still needs the direct GUI runtime to settle its active turn.

@@ -19,7 +19,9 @@ use tokio::task::JoinSet;
 // Only the live-media facade itself is feature-gated by Root's daemon module
 // registration, avoiding a default-build dependency on conversation_loop.
 #[cfg(feature = "live-audio")]
-pub(crate) use crate::media::conversation_loop::{ConversationEvent, ConversationSession, ConversationStart};
+pub(crate) use crate::media::conversation_loop::{
+    ConversationEvent, ConversationSession, ConversationStart,
+};
 
 #[cfg(any(test, feature = "live-audio"))]
 pub(crate) type ConversationCleanupFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -79,7 +81,9 @@ impl ConversationTaskRegistry {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) if first_error.is_none() => first_error = Some(error),
                 Ok(Err(_)) => {}
-                Err(_) if first_error.is_none() => first_error = Some("conversation_stage_worker_panicked"),
+                Err(_) if first_error.is_none() => {
+                    first_error = Some("conversation_stage_worker_panicked")
+                }
                 Err(_) => {}
             }
         }
@@ -95,7 +99,9 @@ impl ConversationTaskRegistry {
         while let Some(next) = tasks.join_next().await {
             match next {
                 Ok(()) => {}
-                Err(_) if first_error.is_none() => first_error = Some("authorized_text_turn_cleanup_task_failed"),
+                Err(_) if first_error.is_none() => {
+                    first_error = Some("authorized_text_turn_cleanup_task_failed")
+                }
                 Err(_) => {}
             }
         }
@@ -116,7 +122,10 @@ mod tests {
     #[tokio::test]
     async fn retained_stage_failure_reaches_the_session_owner() {
         let registry = ConversationTaskRegistry::default();
-        registry.spawn_stage(async { Err("stt_stage_failed") }).await.unwrap();
+        registry
+            .spawn_stage(async { Err("stt_stage_failed") })
+            .await
+            .unwrap();
         assert_eq!(registry.settle_one_stage().await, Err("stt_stage_failed"));
     }
 
@@ -125,21 +134,31 @@ mod tests {
         let registry = ConversationTaskRegistry::default();
         let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
         drop(rx);
-        registry.spawn_stage(async move {
-            tx.send(()).await.map_err(|_| "a2_stage_queue_closed")
-        }).await.unwrap();
-        assert_eq!(registry.settle_one_stage().await, Err("a2_stage_queue_closed"));
+        registry
+            .spawn_stage(async move { tx.send(()).await.map_err(|_| "a2_stage_queue_closed") })
+            .await
+            .unwrap();
+        assert_eq!(
+            registry.settle_one_stage().await,
+            Err("a2_stage_queue_closed")
+        );
     }
 
     #[tokio::test]
     async fn drain_stages_joins_a_later_blocked_worker_after_the_first_failure() {
         let registry = ConversationTaskRegistry::default();
         let (release, hold) = tokio::sync::oneshot::channel::<()>();
-        registry.spawn_stage(async { Err("first_stage_failed") }).await.unwrap();
-        registry.spawn_stage(async move {
-            hold.await.map_err(|_| "blocked_stage_release_lost")?;
-            Ok(())
-        }).await.unwrap();
+        registry
+            .spawn_stage(async { Err("first_stage_failed") })
+            .await
+            .unwrap();
+        registry
+            .spawn_stage(async move {
+                hold.await.map_err(|_| "blocked_stage_release_lost")?;
+                Ok(())
+            })
+            .await
+            .unwrap();
         let joining = {
             let registry = registry.clone();
             tokio::spawn(async move { registry.drain_stages().await })

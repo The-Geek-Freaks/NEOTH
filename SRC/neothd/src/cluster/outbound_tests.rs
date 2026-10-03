@@ -308,20 +308,24 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
         )
         .expect("persist selected prepared operation");
     assert_eq!(prepared.peer_key, selected_peer);
-    assert!(store
-        .receive_task_delegate_outbound_result(
-            &wrong_peer,
-            &completed_result("task-result", "foreign"),
-            NOW + 1,
-        )
-        .is_err());
-    assert!(store
-        .receive_task_delegate_outbound_result(
-            &selected_peer,
-            &completed_result("different-task", "foreign"),
-            NOW + 1,
-        )
-        .is_err());
+    assert!(
+        store
+            .receive_task_delegate_outbound_result(
+                &wrong_peer,
+                &completed_result("task-result", "foreign"),
+                NOW + 1,
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .receive_task_delegate_outbound_result(
+                &selected_peer,
+                &completed_result("different-task", "foreign"),
+                NOW + 1,
+            )
+            .is_err()
+    );
     assert_eq!(
         store
             .accept_task_delegate_outbound_operation("op-result", NOW + 2)
@@ -383,7 +387,13 @@ fn outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_pa
     let peer_key = active_peer(&store, "result-reopen");
     assign(&store, peer_key.clone(), &exact, true, 1, 0);
     store
-        .prepare_task_delegate_outbound_operation("op-reopen", "task-reopen", &peer_key, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-reopen",
+            "task-reopen",
+            &peer_key,
+            &exact,
+            NOW,
+        )
         .expect("prepare outbound task");
     let body = completed_result("task-reopen", "full retained completion");
     assert_eq!(
@@ -394,9 +404,11 @@ fn outbound_result_custody_reopens_full_payload_and_rejects_conflicts_without_pa
     );
     let mut conflict = body.clone();
     conflict.result = Some("different payload".into());
-    assert!(store
-        .receive_task_delegate_outbound_result(&peer_key, &conflict, NOW + 2)
-        .is_err());
+    assert!(
+        store
+            .receive_task_delegate_outbound_result(&peer_key, &conflict, NOW + 2)
+            .is_err()
+    );
     drop(store);
     let reopened = MembershipStore::open(home.path()).expect("reopen authority DB");
     let retained = reopened
@@ -450,51 +462,71 @@ fn prepared_result_race_and_revoked_or_indeterminate_operations_fail_closed_with
 
     controller
         .store()
-        .prepare_task_delegate_outbound_operation("op-indeterminate", "task-indeterminate", &peer_key, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-indeterminate",
+            "task-indeterminate",
+            &peer_key,
+            &exact,
+            NOW,
+        )
         .expect("prepare indeterminate operation");
     controller
         .store()
         .recover_prepared_task_delegate_outbound_operations(NOW + 3)
         .expect("mark only remaining prepared operation indeterminate");
-    assert!(controller
-        .store()
-        .receive_task_delegate_outbound_result(
-            &peer_key,
-            &completed_result("task-indeterminate", "late result"),
-            NOW + 4,
-        )
-        .is_err());
+    assert!(
+        controller
+            .store()
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result("task-indeterminate", "late result"),
+                NOW + 4,
+            )
+            .is_err()
+    );
 
     controller
         .store()
-        .prepare_task_delegate_outbound_operation("op-revoked", "task-revoked", &peer_key, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-revoked",
+            "task-revoked",
+            &peer_key,
+            &exact,
+            NOW,
+        )
         .expect("prepare revocable operation");
     controller
         .revoke("outbound-result-race", "test revoke", NOW + 5)
         .expect("revoke active peer")
         .expect("revoke receipt");
-    assert!(controller
-        .store()
-        .receive_task_delegate_outbound_result(
-            &peer_key,
-            &completed_result("task-race", "arrived before local accept"),
-            NOW + 6,
-        )
-        .is_err(), "revocation rejects even an otherwise exact duplicate");
-    assert!(controller
-        .store()
-        .receive_task_delegate_outbound_result(
-            &peer_key,
-            &completed_result("task-revoked", "must not settle after revoke"),
-            NOW + 7,
-        )
-        .is_err());
-    assert!(controller
-        .store()
-        .task_delegate_outbound_result("op-revoked")
-        .expect("read rejected result slot")
-        .is_none());
-
+    assert!(
+        controller
+            .store()
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result("task-race", "arrived before local accept"),
+                NOW + 6,
+            )
+            .is_err(),
+        "revocation rejects even an otherwise exact duplicate"
+    );
+    assert!(
+        controller
+            .store()
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result("task-revoked", "must not settle after revoke"),
+                NOW + 7,
+            )
+            .is_err()
+    );
+    assert!(
+        controller
+            .store()
+            .task_delegate_outbound_result("op-revoked")
+            .expect("read rejected result slot")
+            .is_none()
+    );
 }
 
 #[test]
@@ -505,7 +537,13 @@ fn result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal
     let peer_key = active_peer(&store, "result-storage-trigger");
     assign(&store, peer_key.clone(), &exact, true, 1, 0);
     store
-        .prepare_task_delegate_outbound_operation("op-storage", "task-storage", &peer_key, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-storage",
+            "task-storage",
+            &peer_key,
+            &exact,
+            NOW,
+        )
         .expect("prepare operation before terminal-state storage failure");
     let raw = rusqlite::Connection::open(store.path())
         .expect("open isolated authority DB for storage-failure fixture");
@@ -517,17 +555,24 @@ fn result_state_update_trigger_abort_rolls_back_prior_result_insert_and_terminal
     )
     .expect("install isolated post-insert terminal-state abort trigger");
     drop(raw);
-    assert!(store
-        .receive_task_delegate_outbound_result(
-            &peer_key,
-            &completed_result("task-storage", "insert must roll back with later state failure"),
-            NOW + 1,
-        )
-        .is_err());
-    assert!(store
-        .task_delegate_outbound_result("op-storage")
-        .expect("read result after aborted terminal-state update")
-        .is_none());
+    assert!(
+        store
+            .receive_task_delegate_outbound_result(
+                &peer_key,
+                &completed_result(
+                    "task-storage",
+                    "insert must roll back with later state failure"
+                ),
+                NOW + 1,
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .task_delegate_outbound_result("op-storage")
+            .expect("read result after aborted terminal-state update")
+            .is_none()
+    );
     assert_eq!(
         store
             .accept_task_delegate_outbound_operation("op-storage", NOW + 2)

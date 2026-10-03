@@ -327,8 +327,14 @@ pub(crate) enum LiveUtteranceEvent {
     /// Cumulative actual Silero-positive samples after the first 512-sample
     /// speech block.  This preserves ordered qualification for consumers that
     /// receive several VAD blocks from one capture frame.
-    SpeechProgress { voiced_samples: usize },
-    UtteranceReady { sequence: u64, pcm: Vec<f32>, voiced_samples: usize },
+    SpeechProgress {
+        voiced_samples: usize,
+    },
+    UtteranceReady {
+        sequence: u64,
+        pcm: Vec<f32>,
+        voiced_samples: usize,
+    },
 }
 
 /// Pure utterance-boundary state, separate from the model so probability
@@ -398,7 +404,9 @@ impl LiveUtteranceState {
             return Ok(Some(if started {
                 LiveUtteranceEvent::SpeechStarted
             } else {
-                LiveUtteranceEvent::SpeechProgress { voiced_samples: self.voiced_samples }
+                LiveUtteranceEvent::SpeechProgress {
+                    voiced_samples: self.voiced_samples,
+                }
             }));
         }
         self.trailing_silence_frames = self.trailing_silence_frames.saturating_add(1);
@@ -411,7 +419,11 @@ impl LiveUtteranceState {
         self.trailing_silence_frames = 0;
         let sequence = self.next_sequence;
         self.next_sequence = self.next_sequence.saturating_add(1);
-        Ok(Some(LiveUtteranceEvent::UtteranceReady { sequence, pcm, voiced_samples }))
+        Ok(Some(LiveUtteranceEvent::UtteranceReady {
+            sequence,
+            pcm,
+            voiced_samples,
+        }))
     }
 
     fn reset(&mut self) {
@@ -732,17 +744,27 @@ mod tests {
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
         let ready = state.observe_probability(0.1, vad_block()).unwrap();
         assert!(
-        matches!(ready, Some(LiveUtteranceEvent::UtteranceReady { sequence: 1, ref pcm, voiced_samples }) if pcm.len() == LIVE_VAD_FRAME_SAMPLES * 3 && voiced_samples == LIVE_VAD_FRAME_SAMPLES)
+            matches!(ready, Some(LiveUtteranceEvent::UtteranceReady { sequence: 1, ref pcm, voiced_samples }) if pcm.len() == LIVE_VAD_FRAME_SAMPLES * 3 && voiced_samples == LIVE_VAD_FRAME_SAMPLES)
         );
     }
 
     #[test]
     fn live_utterance_state_reports_ordered_progress_after_the_first_speech_block() {
         let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 8);
-        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
-        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechProgress { voiced_samples }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2));
-        assert!(matches!(state.observe_probability(0.1, vad_block()).unwrap(), None));
-        assert!(matches!(state.observe_probability(0.1, vad_block()).unwrap(), Some(LiveUtteranceEvent::UtteranceReady { voiced_samples, .. }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2));
+        assert!(matches!(
+            state.observe_probability(0.9, vad_block()).unwrap(),
+            Some(LiveUtteranceEvent::SpeechStarted)
+        ));
+        assert!(
+            matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechProgress { voiced_samples }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2)
+        );
+        assert!(matches!(
+            state.observe_probability(0.1, vad_block()).unwrap(),
+            None
+        ));
+        assert!(
+            matches!(state.observe_probability(0.1, vad_block()).unwrap(), Some(LiveUtteranceEvent::UtteranceReady { voiced_samples, .. }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2)
+        );
     }
 
     #[test]
@@ -750,9 +772,14 @@ mod tests {
         let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 8);
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
-        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
+        assert!(matches!(
+            state.observe_probability(0.9, vad_block()).unwrap(),
+            Some(LiveUtteranceEvent::SpeechStarted)
+        ));
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
-        assert!(matches!(state.observe_probability(0.1, vad_block()).unwrap(), Some(LiveUtteranceEvent::UtteranceReady { voiced_samples, .. }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES));
+        assert!(
+            matches!(state.observe_probability(0.1, vad_block()).unwrap(), Some(LiveUtteranceEvent::UtteranceReady { voiced_samples, .. }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES)
+        );
     }
 
     #[test]

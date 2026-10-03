@@ -98,13 +98,22 @@ mod tests {
     #[test]
     fn speculative_pause_reopens_once_but_committed_turn_never_replays() {
         let mut turns = TurnTracker::default();
-        assert!(matches!(turns.begin_speech(), TurnDisposition::Reopened { turn_id: 1 }));
+        assert!(matches!(
+            turns.begin_speech(),
+            TurnDisposition::Reopened { turn_id: 1 }
+        ));
         turns.add_speech(Duration::from_millis(60));
         turns.soft_end();
-        assert!(matches!(turns.begin_speech(), TurnDisposition::Reopened { turn_id: 1 }));
+        assert!(matches!(
+            turns.begin_speech(),
+            TurnDisposition::Reopened { turn_id: 1 }
+        ));
         turns.add_speech(Duration::from_millis(60));
         assert_eq!(turns.ready(100), TurnDisposition::Commit { turn_id: 1 });
-        assert_eq!(turns.ready(100), TurnDisposition::AlreadyCommitted { turn_id: 1 });
+        assert_eq!(
+            turns.ready(100),
+            TurnDisposition::AlreadyCommitted { turn_id: 1 }
+        );
     }
 
     #[test]

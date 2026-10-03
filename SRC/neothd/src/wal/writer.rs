@@ -1675,7 +1675,12 @@ impl WalWriterHandle {
         &self,
         admission: crate::wal::microphone_receipts::MicOpenIntentAdmission,
     ) -> Result<crate::wal::microphone_receipts::MicOpenTerminalAuthority, WalError> {
-        let (header, payload, terminal) = admission.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "microphone intent encoding refused")))?;
+        let (header, payload, terminal) = admission.into_frame().map_err(|_| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "microphone intent encoding refused",
+            ))
+        })?;
         self.append_closed_microphone_frame(header, payload).await?;
         Ok(terminal)
     }
@@ -1686,7 +1691,12 @@ impl WalWriterHandle {
         &self,
         result: crate::wal::microphone_receipts::MicOpenResultAdmission,
     ) -> Result<u64, WalError> {
-        let (header, payload) = result.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "microphone result encoding refused")))?;
+        let (header, payload) = result.into_frame().map_err(|_| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "microphone result encoding refused",
+            ))
+        })?;
         self.append_closed_microphone_frame(header, payload).await
     }
 
@@ -1696,20 +1706,28 @@ impl WalWriterHandle {
         &self,
         cancel: crate::wal::microphone_receipts::TurnCancelAdmission,
     ) -> Result<u64, WalError> {
-        let (header, payload) = cancel.into_frame().map_err(|_| WalError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "turn cancel encoding refused")))?;
+        let (header, payload) = cancel.into_frame().map_err(|_| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "turn cancel encoding refused",
+            ))
+        })?;
         self.append_closed_microphone_frame(header, payload).await
     }
 
     #[cfg(any(test, feature = "live-audio"))]
     async fn append_closed_microphone_frame(
-        &self, header: EventHeaderV2, payload: Vec<u8>,
+        &self,
+        header: EventHeaderV2,
+        payload: Vec<u8>,
     ) -> Result<u64, WalError> {
         if !self.authentication_markers_enabled {
             return Err(compaction_recovery_error(
                 "microphone realtime receipts require an HMAC-marker-enabled WAL writer",
             ));
         }
-        self.append_with_marker_policy_inner(header, payload, true, true).await
+        self.append_with_marker_policy_inner(header, payload, true, true)
+            .await
     }
 
     async fn append_with_marker_policy_inner(
@@ -11004,12 +11022,10 @@ mod tests {
             crate::wal::events::ExtendedSubtype::RealtimeTurnCancel,
         ] {
             let payload = b"generic-microphone-receipt".to_vec();
-            let header = crate::wal::HeaderBuilder::new(
-                crate::wal::events::EVENT_TYPE_EXTENDED,
-                &payload,
-            )
-            .event_subtype(subtype as u8)
-            .build();
+            let header =
+                crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(subtype as u8)
+                    .build();
             let error = refuse_generic_microphone_realtime_receipt(&header)
                 .expect_err("A2 protected subtype must refuse generic append");
             assert!(error.to_string().contains("closed append API"));
@@ -11034,24 +11050,35 @@ mod tests {
             home.path(),
             policy,
             CompressionPolicy::None,
-        ).expect("HMAC-marker-enabled test writer");
+        )
+        .expect("HMAC-marker-enabled test writer");
         let mut store = MicConsentStore::open(home.path()).expect("consent store");
-        let MicPreflight::ConfirmationRequired { challenge } = store
-            .preflight(DIGEST, 10)
-            .expect("preflight") else { panic!("fresh microphone store requires confirmation") };
-        let capability = store.decide(challenge, MicDecision::AllowOnce, 11)
+        let MicPreflight::ConfirmationRequired { challenge } =
+            store.preflight(DIGEST, 10).expect("preflight")
+        else {
+            panic!("fresh microphone store requires confirmation")
+        };
+        let capability = store
+            .decide(challenge, MicDecision::AllowOnce, 11)
             .expect("allow once")
             .expect("capability");
-        let admission = store.consume_for_open(capability, DIGEST, 12)
+        let admission = store
+            .consume_for_open(capability, DIGEST, 12)
             .expect("consume capability");
 
-        let terminal = writer.append_microphone_open_intent(
-            MicOpenIntentAdmission::from_consumed(admission),
-        ).await.expect("durable authenticated intent returns terminal authority");
-        terminal.revalidate_device_open(&store).expect("same-home pre-open check");
-        let result = terminal.complete(MicOpenOutcome::Opened, None, 13)
+        let terminal = writer
+            .append_microphone_open_intent(MicOpenIntentAdmission::from_consumed(admission))
+            .await
+            .expect("durable authenticated intent returns terminal authority");
+        terminal
+            .revalidate_device_open(&store)
+            .expect("same-home pre-open check");
+        let result = terminal
+            .complete(MicOpenOutcome::Opened, None, 13)
             .expect("actual Ready produces terminal result");
-        writer.append_microphone_open_result(result).await
+        writer
+            .append_microphone_open_result(result)
+            .await
             .expect("durable authenticated terminal");
         drop(writer);
         join.await.expect("writer task join");
@@ -11064,9 +11091,16 @@ mod tests {
                 protected_subtypes.push(frame.header.event_subtype);
             }
             Ok(())
-        }).expect("scan persisted WAL frames");
-        assert!(protected_subtypes.contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenIntent as u8)));
-        assert!(protected_subtypes.contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenResult as u8)));
+        })
+        .expect("scan persisted WAL frames");
+        assert!(
+            protected_subtypes
+                .contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenIntent as u8))
+        );
+        assert!(
+            protected_subtypes
+                .contains(&(crate::wal::events::ExtendedSubtype::MicrophoneOpenResult as u8))
+        );
     }
 
     fn counterparty_consent_input_descriptor(

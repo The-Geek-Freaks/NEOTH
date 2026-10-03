@@ -25,13 +25,13 @@
 //! Every backend remains its own typed `Asset` consumer + producer.
 
 pub mod audio;
+/// W2274 retained A2 session owner.
+#[cfg(feature = "live-audio")]
+pub(crate) mod conversation_loop;
 /// ADOPT31-A1 — shared, generation-based cancellation primitive for the future
 /// realtime conversation loop. It is deliberately only a primitive here; A2
 /// owns wiring its tokens into the LLM stream and TTS synthesis loop.
 pub mod conversation_scope;
-/// W2274 retained A2 session owner.
-#[cfg(feature = "live-audio")]
-pub(crate) mod conversation_loop;
 /// GOLD-ADOPT-25 — Dictation input mode: caller-supplied PCM → VAD → configured STT.
 /// Scope: dictation-surface-only (reuses existing candle WhisperEngine; no
 /// second GGML engine). Dictation is runtime-gated by `media.dictation_enabled`;

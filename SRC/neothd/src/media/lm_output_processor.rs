@@ -66,7 +66,9 @@ impl LmOutputProcessor {
     pub(crate) fn next_batch(&mut self) -> Option<String> {
         let mut batch = String::new();
         for _ in 0..MAX_SENTENCES_PER_BATCH {
-            let Some(sentence) = self.complete.pop_front() else { break; };
+            let Some(sentence) = self.complete.pop_front() else {
+                break;
+            };
             let sentence_chars = sentence.chars().count();
             self.complete_chars -= sentence_chars;
             if batch.is_empty() && sentence_chars > self.max_chars {
@@ -79,12 +81,18 @@ impl LmOutputProcessor {
             }
             let batch_chars = batch.chars().count();
             let separator = usize::from(!batch.is_empty());
-            if batch_chars.saturating_add(separator).saturating_add(sentence_chars) > self.max_chars {
+            if batch_chars
+                .saturating_add(separator)
+                .saturating_add(sentence_chars)
+                > self.max_chars
+            {
                 self.complete.push_front(sentence);
                 self.complete_chars += sentence_chars;
                 break;
             }
-            if !batch.is_empty() { batch.push(' '); }
+            if !batch.is_empty() {
+                batch.push(' ');
+            }
             batch.push_str(&sentence);
         }
         (!batch.is_empty()).then_some(batch)
@@ -187,7 +195,10 @@ mod tests {
         out.flush_terminal().unwrap();
         assert_eq!(out.next_batch().as_deref(), Some("First. Last"));
         assert_eq!(out.next_batch(), None);
-        assert_eq!(out.push_visible_delta("ignored"), Err("visible_delta_after_terminal_flush"));
+        assert_eq!(
+            out.push_visible_delta("ignored"),
+            Err("visible_delta_after_terminal_flush")
+        );
     }
 
     #[test]
@@ -202,7 +213,10 @@ mod tests {
     fn completed_queue_rejects_before_sixty_fifth_sentence_grows_it() {
         let mut out = LmOutputProcessor::new(1_000).unwrap();
         let delta = "a. ".repeat(MAX_QUEUED_SENTENCES + 1);
-        assert_eq!(out.push_visible_delta(&delta), Err("completed_tts_sentence_queue_full"));
+        assert_eq!(
+            out.push_visible_delta(&delta),
+            Err("completed_tts_sentence_queue_full")
+        );
         assert_eq!(out.next_batch().as_deref(), Some("a. a. a."));
     }
 }

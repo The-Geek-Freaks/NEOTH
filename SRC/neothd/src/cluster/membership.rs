@@ -3621,7 +3621,10 @@ impl MembershipStore {
             [peer_key],
             |row| row.get(0),
         )?;
-        anyhow::ensure!(active == 1, "outbound task result peer authority is no longer active");
+        anyhow::ensure!(
+            active == 1,
+            "outbound task result peer authority is no longer active"
+        );
         let existing = Self::read_task_delegate_outbound_result_on(&tx, &operation_id)?;
         if let Some(existing) = existing {
             anyhow::ensure!(
@@ -3639,7 +3642,8 @@ impl MembershipStore {
             matches!(state.as_str(), "prepared" | "accepted"),
             "outbound task result cannot settle a {state} operation"
         );
-        let body_json = serde_json::to_string(body).context("serialize bounded outbound task result")?;
+        let body_json =
+            serde_json::to_string(body).context("serialize bounded outbound task result")?;
         tx.execute(
             "INSERT INTO task_delegate_outbound_results (operation_id,task_id,transport_identity,body,received_at) VALUES (?1,?2,?3,?4,?5)",
             params![operation_id, body.task_id, peer_key, body_json, now_unix],
@@ -5760,7 +5764,8 @@ fn validate_task_delegate_operation_id(value: &str) -> Result<()> {
             && value.len() <= 64
             && value
                 .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')),
+                .all(|character| character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.' | ':')),
         "outbound task delegation operation id is invalid"
     );
     Ok(())

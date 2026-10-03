@@ -673,7 +673,12 @@ impl ConfiguredTtsResponse {
                     self.response.audio_bytes,
                     permit,
                 )
-                .map_err(|error| format!("decode configured {} WAV response: {error}", self.provider.as_str()))?;
+                .map_err(|error| {
+                    format!(
+                        "decode configured {} WAV response: {error}",
+                        self.provider.as_str()
+                    )
+                })?;
                 Ok(VerifiedPcmS16leResponse {
                     audio_bytes: decoded.audio_bytes,
                     sample_rate_hz: decoded.sample_rate_hz,
@@ -878,16 +883,9 @@ pub async fn synthesize_to_file_at(
     out_path: &std::path::Path,
     overrides: TtsRunOverrides,
 ) -> Result<TtsFileResult, String> {
-    synthesize_configured_response(
-        neoth_home,
-        config,
-        credentials,
-        text,
-        format,
-        overrides,
-    )
-    .await?
-    .commit_to_file(out_path)
+    synthesize_configured_response(neoth_home, config, credentials, text, format, overrides)
+        .await?
+        .commit_to_file(out_path)
 }
 
 /// Commit a complete, validated audio response with a same-directory atomic
@@ -1823,8 +1821,14 @@ mod tests {
                 channels: 1,
             })
         );
-        assert_eq!(verified_pcm_s16le_format(TtsProviderKind::ViitorVoice, &pcm), None);
-        assert_eq!(verified_pcm_s16le_format(TtsProviderKind::Piper, &pcm), None);
+        assert_eq!(
+            verified_pcm_s16le_format(TtsProviderKind::ViitorVoice, &pcm),
+            None
+        );
+        assert_eq!(
+            verified_pcm_s16le_format(TtsProviderKind::Piper, &pcm),
+            None
+        );
         assert_eq!(
             verified_pcm_s16le_format(
                 TtsProviderKind::AzureTts,

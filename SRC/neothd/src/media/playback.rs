@@ -287,7 +287,10 @@ impl CpalPlaybackSession {
         if self.completion_requested.load(Ordering::Acquire) {
             return Err(PlaybackError::OwnerStopped);
         }
-        if self.output_format.is_some_and(|expected| !block.matches_output_rate(expected)) {
+        if self
+            .output_format
+            .is_some_and(|expected| !block.matches_output_rate(expected))
+        {
             return Err(PlaybackError::SampleRateMismatch);
         }
         match self.commands.try_send(PlaybackCommand::Block(block)) {
@@ -527,7 +530,8 @@ fn run_playback_owner(
         sample_rate_hz: stream_config.sample_rate,
         channels: stream_config.channels,
     };
-    if let Err(error) = validate_pcm_metadata(output_format.sample_rate_hz, output_format.channels) {
+    if let Err(error) = validate_pcm_metadata(output_format.sample_rate_hz, output_format.channels)
+    {
         let _ = terminal_events.try_send(PlaybackEvent::Error(error));
         return;
     }
@@ -536,22 +540,47 @@ fn run_playback_owner(
     let terminal = Arc::new(AtomicBool::new(false));
     let stream = match supported.sample_format() {
         cpal::SampleFormat::F32 => build_output_stream::<f32>(
-            &device, stream_config, commands, callback_events, terminal_events.clone(),
-            terminal.clone(), scope.clone(), token.clone(), output_format, 0.0, |sample| {
-                sample as f32 / 32_768.0
-            },
+            &device,
+            stream_config,
+            commands,
+            callback_events,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            output_format,
+            0.0,
+            |sample| sample as f32 / 32_768.0,
         ),
         cpal::SampleFormat::I16 => build_output_stream::<i16>(
-            &device, stream_config, commands, callback_events, terminal_events.clone(),
-            terminal.clone(), scope.clone(), token.clone(), output_format, 0, |sample| sample,
+            &device,
+            stream_config,
+            commands,
+            callback_events,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            output_format,
+            0,
+            |sample| sample,
         ),
         cpal::SampleFormat::U16 => build_output_stream::<u16>(
-            &device, stream_config, commands, callback_events, terminal_events.clone(),
-            terminal.clone(), scope.clone(), token.clone(), output_format, 32_768, |sample| {
-                (sample as i32 + 32_768) as u16
-            },
+            &device,
+            stream_config,
+            commands,
+            callback_events,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            output_format,
+            32_768,
+            |sample| (sample as i32 + 32_768) as u16,
         ),
-        format => Err(PlaybackError::UnsupportedSampleFormat(format!("{format:?}"))),
+        format => Err(PlaybackError::UnsupportedSampleFormat(format!(
+            "{format:?}"
+        ))),
     };
     let stream = match stream {
         Ok(stream) => stream,
@@ -566,7 +595,10 @@ fn run_playback_owner(
         )));
         return;
     }
-    if events.try_send(PlaybackEvent::Ready(output_format)).is_err() {
+    if events
+        .try_send(PlaybackEvent::Ready(output_format))
+        .is_err()
+    {
         raise_terminal(
             &terminal_events,
             &terminal,
@@ -600,7 +632,9 @@ fn choose_output_device(
     requested_name: Option<&str>,
 ) -> Result<cpal::Device, PlaybackError> {
     match requested_name {
-        None => host.default_output_device().ok_or(PlaybackError::NoOutputDevice),
+        None => host
+            .default_output_device()
+            .ok_or(PlaybackError::NoOutputDevice),
         Some(requested_name) => host
             .output_devices()
             .map_err(|error| PlaybackError::DeviceEnumeration(error.to_string()))?
@@ -803,7 +837,9 @@ mod tests {
         );
         assert!(matches!(
             rx.try_recv(),
-            Ok(super::PlaybackEvent::Error(super::PlaybackError::DeviceLost(_)))
+            Ok(super::PlaybackEvent::Error(
+                super::PlaybackError::DeviceLost(_)
+            ))
         ));
         assert!(rx.try_recv().is_err());
     }

@@ -6,26 +6,34 @@
 //! [`AudioWorkPermit`].  A later authorized GUI surface supplies microphone and
 //! provider decisions; this module never chooses either on an operator's behalf.
 
-use super::audio::{acquire_audio_work_permit, AudioWorkPermit};
+use super::audio::{AudioWorkPermit, acquire_audio_work_permit};
 use super::conversation_scope::{CancelScope, GenerationToken};
-use super::dictation::{transcribe_live_utterance_with_audio_permit, LiveUtteranceAssembler, LiveUtteranceEvent};
+use super::dictation::{
+    LiveUtteranceAssembler, LiveUtteranceEvent, transcribe_live_utterance_with_audio_permit,
+};
 use super::live_capture::{CpalCaptureConfig, CpalCaptureSession, LiveCaptureEvent};
 use super::lm_output_processor::LmOutputProcessor;
-use super::playback::{CpalPlaybackConfig, CpalPlaybackSession, PlaybackEvent, PcmS16leBlock};
-use super::tts_cloud::{synthesize_configured_response, TtsRunOverrides};
+use super::playback::{CpalPlaybackConfig, CpalPlaybackSession, PcmS16leBlock, PlaybackEvent};
+use super::tts_cloud::{TtsRunOverrides, synthesize_configured_response};
 use super::tts_dispatch::TtsFormat;
 use super::turn_tracker::{TurnDisposition, TurnTracker};
 use crate::daemon::authorized_text_turn::{
     AuthorizedTextTurn, AuthorizedTextTurnConfirmation, AuthorizedTextTurnSink,
     AuthorizedTextTurnStart, AuthorizedTextTurnSupervisor, AuthorizedTextTurnTerminal,
 };
-use crate::daemon::gui_chat_bridge::{GuiChatBridgePreflightInput, GuiChatConsentDecision, GuiChatConsentPrompt, GuiChatRequestId};
 use crate::daemon::conversation_session::ConversationTaskRegistry;
-use crate::permissions::microphone::{MicConsentStore, MicDecision, MicPreflight, MicStartCapability};
-use crate::wal::microphone_receipts::{MicOpenIntentAdmission, MicOpenOutcome, TurnCancelAdmission, TurnCancelCause};
+use crate::daemon::gui_chat_bridge::{
+    GuiChatBridgePreflightInput, GuiChatConsentDecision, GuiChatConsentPrompt, GuiChatRequestId,
+};
+use crate::permissions::microphone::{
+    MicConsentStore, MicDecision, MicPreflight, MicStartCapability,
+};
+use crate::wal::microphone_receipts::{
+    MicOpenIntentAdmission, MicOpenOutcome, TurnCancelAdmission, TurnCancelCause,
+};
 use crate::wal::writer::WalWriterHandle;
-use std::path::PathBuf;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// This value is intentionally conservative: fragments below it do not cross
@@ -77,14 +85,20 @@ pub(crate) enum ConversationEvent {
     MicrophoneConfirmationRequired,
     Listening,
     ProviderConfirmationRequired(GuiChatConsentPrompt),
-    TranscriptAccepted { turn_id: u64 },
-    SpeechCompleted { terminal: AuthorizedTextTurnTerminal },
+    TranscriptAccepted {
+        turn_id: u64,
+    },
+    SpeechCompleted {
+        terminal: AuthorizedTextTurnTerminal,
+    },
     Cancelled,
     Failed(&'static str),
 }
 
 pub(crate) enum ConversationStart {
-    ConfirmationRequired { challenge: crate::permissions::microphone::MicChallenge },
+    ConfirmationRequired {
+        challenge: crate::permissions::microphone::MicChallenge,
+    },
     Capability(MicStartCapability),
 }
 
@@ -113,9 +127,14 @@ impl ConversationSession {
         microphone: &mut MicConsentStore,
         config_digest: &str,
     ) -> Result<ConversationStart, &'static str> {
-        match microphone.preflight(config_digest, now_unix()).map_err(|_| "microphone_preflight_failed")? {
+        match microphone
+            .preflight(config_digest, now_unix())
+            .map_err(|_| "microphone_preflight_failed")?
+        {
             MicPreflight::Granted { capability } => Ok(ConversationStart::Capability(capability)),
-            MicPreflight::ConfirmationRequired { challenge } => Ok(ConversationStart::ConfirmationRequired { challenge }),
+            MicPreflight::ConfirmationRequired { challenge } => {
+                Ok(ConversationStart::ConfirmationRequired { challenge })
+            }
         }
     }
 
@@ -124,7 +143,9 @@ impl ConversationSession {
         challenge: crate::permissions::microphone::MicChallenge,
         decision: MicDecision,
     ) -> Result<Option<MicStartCapability>, &'static str> {
-        microphone.decide(challenge, decision, now_unix()).map_err(|_| "microphone_decision_failed")
+        microphone
+            .decide(challenge, decision, now_unix())
+            .map_err(|_| "microphone_decision_failed")
     }
 
     /// Open capture in the required durable order.  Failure after intent is
@@ -138,25 +159,50 @@ impl ConversationSession {
         opening_scope: CancelScope,
         opening_token: GenerationToken,
     ) -> Result<Self, (&'static str, AuthorizedTextTurnSupervisor)> {
-        macro_rules! fail { ($reason:expr) => { return Err(($reason, supervisor)); }; }
+        macro_rules! fail {
+            ($reason:expr) => {
+                return Err(($reason, supervisor));
+            };
+        }
         if dependencies.min_fragment_ms < DEFAULT_MIN_FRAGMENT_MS
             || voiced_samples_for_fragment_ms(dependencies.min_fragment_ms).is_err()
-            || dependencies.config_digest.len() != 64 {
+            || dependencies.config_digest.len() != 64
+        {
             fail!("invalid_conversation_capture_configuration");
         }
-        let admission = match microphone.consume_for_open(capability, &dependencies.config_digest, now_unix()) {
-            Ok(admission) => admission, Err(_) => fail!("microphone_capability_rejected"),
+        let admission = match microphone.consume_for_open(
+            capability,
+            &dependencies.config_digest,
+            now_unix(),
+        ) {
+            Ok(admission) => admission,
+            Err(_) => fail!("microphone_capability_rejected"),
         };
         let intent = MicOpenIntentAdmission::from_consumed(admission);
         let terminal = match dependencies.wal.append_microphone_open_intent(intent).await {
-            Ok(terminal) => terminal, Err(_) => fail!("microphone_open_intent_not_durable"),
+            Ok(terminal) => terminal,
+            Err(_) => fail!("microphone_open_intent_not_durable"),
         };
 
         let permit = match acquire_audio_work_permit().await {
             Ok(permit) => permit,
             Err(_) => {
-                let result = match terminal.complete(MicOpenOutcome::Failed, Some("audio_permit_unavailable"), now_unix()) { Ok(result) => result, Err(_) => fail!("microphone_open_terminal_invalid"), };
-                if dependencies.wal.append_microphone_open_result(result).await.is_err() { fail!("microphone_open_result_not_durable"); }
+                let result = match terminal.complete(
+                    MicOpenOutcome::Failed,
+                    Some("audio_permit_unavailable"),
+                    now_unix(),
+                ) {
+                    Ok(result) => result,
+                    Err(_) => fail!("microphone_open_terminal_invalid"),
+                };
+                if dependencies
+                    .wal
+                    .append_microphone_open_result(result)
+                    .await
+                    .is_err()
+                {
+                    fail!("microphone_open_result_not_durable");
+                }
                 fail!("audio_permit_unavailable");
             }
         };
@@ -164,8 +210,22 @@ impl ConversationSession {
         // cancellation during that wait must settle the already durable intent
         // without constructing CPAL capture.
         if opening_cancelled(&opening_scope, &opening_token) {
-            let result = match terminal.complete(MicOpenOutcome::Failed, Some("opening_cancelled_before_capture"), now_unix()) { Ok(result) => result, Err(_) => fail!("microphone_open_terminal_invalid"), };
-            if dependencies.wal.append_microphone_open_result(result).await.is_err() { fail!("microphone_open_result_not_durable"); }
+            let result = match terminal.complete(
+                MicOpenOutcome::Failed,
+                Some("opening_cancelled_before_capture"),
+                now_unix(),
+            ) {
+                Ok(result) => result,
+                Err(_) => fail!("microphone_open_terminal_invalid"),
+            };
+            if dependencies
+                .wal
+                .append_microphone_open_result(result)
+                .await
+                .is_err()
+            {
+                fail!("microphone_open_result_not_durable");
+            }
             fail!("opening_cancelled_before_capture");
         }
         // The one-slot permit may have waited for up to 120 seconds.  Authority
@@ -173,28 +233,77 @@ impl ConversationSession {
         // revocation during that wait must produce the durable failed terminal.
         let pre_open = terminal.revalidate_device_open(&microphone);
         if pre_open.is_err() || opening_cancelled(&opening_scope, &opening_token) {
-            let error = if opening_cancelled(&opening_scope, &opening_token) { "opening_cancelled_before_capture" } else { "microphone_authority_drift" };
-            let result = match terminal.complete(MicOpenOutcome::Failed, Some(error), now_unix()) { Ok(result) => result, Err(_) => fail!("microphone_open_terminal_invalid"), };
-            if dependencies.wal.append_microphone_open_result(result).await.is_err() { fail!("microphone_open_result_not_durable"); }
+            let error = if opening_cancelled(&opening_scope, &opening_token) {
+                "opening_cancelled_before_capture"
+            } else {
+                "microphone_authority_drift"
+            };
+            let result = match terminal.complete(MicOpenOutcome::Failed, Some(error), now_unix()) {
+                Ok(result) => result,
+                Err(_) => fail!("microphone_open_terminal_invalid"),
+            };
+            if dependencies
+                .wal
+                .append_microphone_open_result(result)
+                .await
+                .is_err()
+            {
+                fail!("microphone_open_result_not_durable");
+            }
             fail!(error);
         }
         // Keep the owner-visible opening scope as the capture lifetime scope:
         // an abort issued while the native device opens reaches this owner too.
         let capture_scope = opening_scope;
-        let mut capture = match CpalCaptureSession::start(capture_config, capture_scope.clone(), permit.clone()) {
+        let mut capture = match CpalCaptureSession::start(
+            capture_config,
+            capture_scope.clone(),
+            permit.clone(),
+        ) {
             Ok(capture) => capture,
             Err(_) => {
-                let result = match terminal.complete(MicOpenOutcome::Failed, Some("capture_start_failed"), now_unix()) { Ok(result) => result, Err(_) => fail!("microphone_open_terminal_invalid"), };
-                if dependencies.wal.append_microphone_open_result(result).await.is_err() { fail!("microphone_open_result_not_durable"); }
+                let result = match terminal.complete(
+                    MicOpenOutcome::Failed,
+                    Some("capture_start_failed"),
+                    now_unix(),
+                ) {
+                    Ok(result) => result,
+                    Err(_) => fail!("microphone_open_terminal_invalid"),
+                };
+                if dependencies
+                    .wal
+                    .append_microphone_open_result(result)
+                    .await
+                    .is_err()
+                {
+                    fail!("microphone_open_result_not_durable");
+                }
                 fail!("capture_start_failed");
             }
         };
         // CPAL construction alone is not listening.  Require its owner to
         // publish Ready before the durable opened result and UI event.
-        if !matches!(capture.next_event(Duration::from_secs(5)), Ok(Some(LiveCaptureEvent::Ready { .. }))) {
+        if !matches!(
+            capture.next_event(Duration::from_secs(5)),
+            Ok(Some(LiveCaptureEvent::Ready { .. }))
+        ) {
             capture.cancel_and_join();
-            let result = match terminal.complete(MicOpenOutcome::Failed, Some("capture_ready_not_observed"), now_unix()) { Ok(result) => result, Err(_) => fail!("microphone_open_terminal_invalid"), };
-            if dependencies.wal.append_microphone_open_result(result).await.is_err() { fail!("microphone_open_result_not_durable"); }
+            let result = match terminal.complete(
+                MicOpenOutcome::Failed,
+                Some("capture_ready_not_observed"),
+                now_unix(),
+            ) {
+                Ok(result) => result,
+                Err(_) => fail!("microphone_open_terminal_invalid"),
+            };
+            if dependencies
+                .wal
+                .append_microphone_open_result(result)
+                .await
+                .is_err()
+            {
+                fail!("microphone_open_result_not_durable");
+            }
             fail!("capture_ready_not_observed");
         }
         let result = match terminal.complete(MicOpenOutcome::Opened, None, now_unix()) {
@@ -204,7 +313,12 @@ impl ConversationSession {
                 fail!("microphone_open_terminal_invalid");
             }
         };
-        if dependencies.wal.append_microphone_open_result(result).await.is_err() {
+        if dependencies
+            .wal
+            .append_microphone_open_result(result)
+            .await
+            .is_err()
+        {
             capture.cancel_and_join();
             fail!("microphone_open_result_not_durable");
         }
@@ -223,8 +337,14 @@ impl ConversationSession {
             }
         };
         Ok(Self {
-            microphone, dependencies, capture_scope, response_scope: CancelScope::new(), permit,
-            capture, assembler, supervisor,
+            microphone,
+            dependencies,
+            capture_scope,
+            response_scope: CancelScope::new(),
+            permit,
+            capture,
+            assembler,
+            supervisor,
         })
     }
 
@@ -238,7 +358,16 @@ impl ConversationSession {
         control_rx: tokio::sync::mpsc::Receiver<A2Control>,
         event_tx: tokio::sync::mpsc::Sender<ConversationEvent>,
     ) -> Result<(), &'static str> {
-        let Self { dependencies, capture_scope, response_scope, permit, capture, assembler, supervisor, .. } = self;
+        let Self {
+            dependencies,
+            capture_scope,
+            response_scope,
+            permit,
+            capture,
+            assembler,
+            supervisor,
+            ..
+        } = self;
         let registry = dependencies.task_registry.clone();
         run_a2_session(
             capture,
@@ -261,15 +390,23 @@ impl ConversationSession {
                 assembler,
                 min_fragment_ms: dependencies.min_fragment_ms,
             },
-        ).await
+        )
+        .await
     }
 }
 
-fn wait_for_playback_ready(playback: &mut CpalPlaybackSession) -> Result<super::playback::PlaybackOutputFormat, ()> {
+fn wait_for_playback_ready(
+    playback: &mut CpalPlaybackSession,
+) -> Result<super::playback::PlaybackOutputFormat, ()> {
     for _ in 0..50 {
-        match playback.next_event(Duration::from_millis(100)).map_err(|_| ())? {
+        match playback
+            .next_event(Duration::from_millis(100))
+            .map_err(|_| ())?
+        {
             Some(PlaybackEvent::Ready(format)) => return Ok(format),
-            Some(PlaybackEvent::Cancelled | PlaybackEvent::Completed | PlaybackEvent::Error(_)) => return Err(()),
+            Some(PlaybackEvent::Cancelled | PlaybackEvent::Completed | PlaybackEvent::Error(_)) => {
+                return Err(());
+            }
             Some(_) | None => {}
         }
     }
@@ -277,7 +414,11 @@ fn wait_for_playback_ready(playback: &mut CpalPlaybackSession) -> Result<super::
 }
 
 fn now_unix() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().min(i64::MAX as u64) as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .min(i64::MAX as u64) as i64
 }
 
 // The retained daemon task owns this select-loop.  It is deliberately a
@@ -288,14 +429,31 @@ fn now_unix() -> i64 {
 #[cfg(feature = "live-audio")]
 pub(crate) enum A2MailboxEvent {
     Capture(LiveCaptureEvent),
-    VisibleDelta { generation: GenerationToken, text: String },
-    VisibleTerminal { generation: GenerationToken },
+    VisibleDelta {
+        generation: GenerationToken,
+        text: String,
+    },
+    VisibleTerminal {
+        generation: GenerationToken,
+    },
     /// A terminal observed by the authorized bridge, including cancellation
     /// settlement.  This is the only fact that releases the prior turn gate.
-    VisibleSettled { generation: GenerationToken, terminal: AuthorizedTextTurnTerminal },
-    SttComplete { generation: GenerationToken, transcript: Result<String, &'static str> },
-    TtsComplete { generation: GenerationToken, pcm: Result<super::tts_cloud::VerifiedPcmS16leResponse, &'static str> },
-    PlaybackComplete { generation: GenerationToken, result: Result<(), &'static str> },
+    VisibleSettled {
+        generation: GenerationToken,
+        terminal: AuthorizedTextTurnTerminal,
+    },
+    SttComplete {
+        generation: GenerationToken,
+        transcript: Result<String, &'static str>,
+    },
+    TtsComplete {
+        generation: GenerationToken,
+        pcm: Result<super::tts_cloud::VerifiedPcmS16leResponse, &'static str>,
+    },
+    PlaybackComplete {
+        generation: GenerationToken,
+        result: Result<(), &'static str>,
+    },
 }
 
 #[cfg(feature = "live-audio")]
@@ -345,26 +503,46 @@ pub(crate) async fn run_a2_session(
     let (stage_tx, mut stage_rx) = tokio::sync::mpsc::channel(8);
     let relay_scope = capture_scope.clone();
     let mut outstanding_stages = 1usize;
-    registry.spawn_stage(async move {
-        tokio::task::spawn_blocking(move || -> Result<(), &'static str> {
-            let token = relay_scope.snapshot().map_err(|_| "capture_scope_exhausted")?;
-            loop {
-                if relay_scope.is_stale(&token) { capture.cancel_and_join(); return Ok(()); }
-                match capture.next_event(Duration::from_millis(50)).map_err(|_| "capture_event_failed")? {
-                    Some(event @ LiveCaptureEvent::Frame(_)) | Some(event @ LiveCaptureEvent::Ready { .. }) => {
-                        if capture_tx.blocking_send(event).is_err() {
-                            capture.cancel_and_join();
-                            return if relay_scope.is_stale(&token) { Ok(()) } else { Err("capture_queue_closed") };
+    registry
+        .spawn_stage(async move {
+            tokio::task::spawn_blocking(move || -> Result<(), &'static str> {
+                let token = relay_scope
+                    .snapshot()
+                    .map_err(|_| "capture_scope_exhausted")?;
+                loop {
+                    if relay_scope.is_stale(&token) {
+                        capture.cancel_and_join();
+                        return Ok(());
+                    }
+                    match capture
+                        .next_event(Duration::from_millis(50))
+                        .map_err(|_| "capture_event_failed")?
+                    {
+                        Some(event @ LiveCaptureEvent::Frame(_))
+                        | Some(event @ LiveCaptureEvent::Ready { .. }) => {
+                            if capture_tx.blocking_send(event).is_err() {
+                                capture.cancel_and_join();
+                                return if relay_scope.is_stale(&token) {
+                                    Ok(())
+                                } else {
+                                    Err("capture_queue_closed")
+                                };
+                            }
                         }
+                        Some(event @ LiveCaptureEvent::Error(_))
+                        | Some(event @ LiveCaptureEvent::Cancelled) => {
+                            return capture_tx
+                                .blocking_send(event)
+                                .map_err(|_| "capture_terminal_queue_closed");
+                        }
+                        None => {}
                     }
-                    Some(event @ LiveCaptureEvent::Error(_)) | Some(event @ LiveCaptureEvent::Cancelled) => {
-                        return capture_tx.blocking_send(event).map_err(|_| "capture_terminal_queue_closed");
-                    }
-                    None => {}
                 }
-            }
-        }).await.map_err(|_| "capture_relay_panicked")?
-    }).await?;
+            })
+            .await
+            .map_err(|_| "capture_relay_panicked")?
+        })
+        .await?;
 
     let mut turns = TurnTracker::default();
     let barge_in_voiced_samples = voiced_samples_for_fragment_ms(dependencies.min_fragment_ms)?;
@@ -575,7 +753,9 @@ pub(crate) async fn run_a2_session(
     }.await;
     let _ = capture_scope.invalidate();
     let _ = response_scope.invalidate();
-    if let Some(cancel) = active_cancel.take() { let _ = cancel.send(()); }
+    if let Some(cancel) = active_cancel.take() {
+        let _ = cancel.send(());
+    }
     // Receivers are released before the retained workers are joined.  A relay
     // blocked on a bounded send now sees scope cancellation and exits; visible,
     // TTS and playback workers likewise settle their owned turn before joining.
@@ -588,12 +768,23 @@ pub(crate) async fn run_a2_session(
     // A retained stage normally owns and settles its turn directly.  When an
     // error dropped that consumer, consume its actual supervisor completion;
     // the optional API distinguishes that case from an observed terminal.
-    let dropped = dependencies.supervisor.wait_for_dropped_turn_if_pending().await
-        .map(|_| ()).map_err(|_| "authorized_dropped_turn_unsettled");
-    let shutdown = dependencies.supervisor.shutdown_and_join().await
+    let dropped = dependencies
+        .supervisor
+        .wait_for_dropped_turn_if_pending()
+        .await
+        .map(|_| ())
+        .map_err(|_| "authorized_dropped_turn_unsettled");
+    let shutdown = dependencies
+        .supervisor
+        .shutdown_and_join()
+        .await
         .map_err(|_| "authorized_turn_supervisor_unsettled");
     let cleanup = registry.drain_cleanup().await;
-    loop_result.and(stages).and(dropped).and(shutdown).and(cleanup)
+    loop_result
+        .and(stages)
+        .and(dropped)
+        .and(shutdown)
+        .and(cleanup)
 }
 
 #[cfg(feature = "live-audio")]
@@ -606,7 +797,8 @@ async fn start_visible_stage(
     wal: WalWriterHandle,
     active_cancel: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<(), &'static str> {
-    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel(); *active_cancel = Some(cancel_tx);
+    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+    *active_cancel = Some(cancel_tx);
     registry.spawn_stage(async move {
         let mut sink = StageVisibleSink { tx: tx.clone(), generation: generation.clone(), terminal: None };
         tokio::select! {
@@ -631,25 +823,72 @@ async fn start_visible_stage(
             return if response_scope.is_stale(&generation) { Ok(()) } else { Err("a2_stage_queue_closed") };
         }
         Ok(())
-    }).await?; Ok(())
+    }).await?;
+    Ok(())
 }
 
 #[cfg(feature = "live-audio")]
-struct StageVisibleSink { tx: tokio::sync::mpsc::Sender<A2MailboxEvent>, generation: GenerationToken, terminal: Option<AuthorizedTextTurnTerminal> }
+struct StageVisibleSink {
+    tx: tokio::sync::mpsc::Sender<A2MailboxEvent>,
+    generation: GenerationToken,
+    terminal: Option<AuthorizedTextTurnTerminal>,
+}
 #[cfg(feature = "live-audio")]
 impl AuthorizedTextTurnSink for StageVisibleSink {
-    fn visible_delta(&mut self, text: &str) -> Result<(), &'static str> { self.tx.try_send(A2MailboxEvent::VisibleDelta { generation: self.generation.clone(), text: text.to_owned() }).map_err(|_| "a2_visible_queue_full") }
-    fn terminal(&mut self, terminal: AuthorizedTextTurnTerminal) -> Result<(), &'static str> { self.terminal = Some(terminal); Ok(()) }
+    fn visible_delta(&mut self, text: &str) -> Result<(), &'static str> {
+        self.tx
+            .try_send(A2MailboxEvent::VisibleDelta {
+                generation: self.generation.clone(),
+                text: text.to_owned(),
+            })
+            .map_err(|_| "a2_visible_queue_full")
+    }
+    fn terminal(&mut self, terminal: AuthorizedTextTurnTerminal) -> Result<(), &'static str> {
+        self.terminal = Some(terminal);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "live-audio")]
-async fn spawn_tts_stage(registry: &crate::daemon::conversation_session::ConversationTaskRegistry, tx: tokio::sync::mpsc::Sender<A2MailboxEvent>, deps: &A2SessionDependencies, text: String, generation: GenerationToken) -> Result<(), &'static str> {
-    let home = deps.home.clone(); let freedom = deps.freedom.clone(); let credentials = deps.credentials.clone(); let permit = deps.permit.clone();
-    let format = super::tts_cloud::configured_playback_request_format(freedom.media.tts.primary, freedom.media.tts.fallback).map_err(|_| "configured_tts_playback_format_unavailable")?;
-    registry.spawn_stage(async move {
-        let pcm = synthesize_configured_response(&home, &freedom, &credentials, text, format, TtsRunOverrides::default()).await.map_err(|_| "configured_tts_failed").and_then(|response| response.into_verified_pcm_s16le(&permit).map_err(|_| "tts_pcm_not_verified"));
-        tx.send(A2MailboxEvent::TtsComplete { generation, pcm }).await.map_err(|_| "a2_stage_queue_closed")
-    }).await?; Ok(())
+async fn spawn_tts_stage(
+    registry: &crate::daemon::conversation_session::ConversationTaskRegistry,
+    tx: tokio::sync::mpsc::Sender<A2MailboxEvent>,
+    deps: &A2SessionDependencies,
+    text: String,
+    generation: GenerationToken,
+) -> Result<(), &'static str> {
+    let home = deps.home.clone();
+    let freedom = deps.freedom.clone();
+    let credentials = deps.credentials.clone();
+    let permit = deps.permit.clone();
+    let format = super::tts_cloud::configured_playback_request_format(
+        freedom.media.tts.primary,
+        freedom.media.tts.fallback,
+    )
+    .map_err(|_| "configured_tts_playback_format_unavailable")?;
+    registry
+        .spawn_stage(async move {
+            let pcm = synthesize_configured_response(
+                &home,
+                &freedom,
+                &credentials,
+                text,
+                format,
+                TtsRunOverrides::default(),
+            )
+            .await
+            .map_err(|_| "configured_tts_failed")
+            .and_then(|response| {
+                response
+                    .into_verified_pcm_s16le(&permit)
+                    .map_err(|_| "tts_pcm_not_verified")
+            });
+            tx.send(A2MailboxEvent::TtsComplete { generation, pcm })
+                .await
+                .map_err(|_| "a2_stage_queue_closed")
+        })
+        .await?;
+    Ok(())
 }
 
 #[cfg(feature = "live-audio")]
@@ -661,9 +900,13 @@ async fn start_next_audio_stage(
     pending_audio: &mut VecDeque<(GenerationToken, String)>,
     audio_owner: &mut Option<GenerationToken>,
 ) -> Result<bool, &'static str> {
-    if audio_owner.is_some() { return Ok(false); }
+    if audio_owner.is_some() {
+        return Ok(false);
+    }
     while let Some((generation, batch)) = pending_audio.pop_front() {
-        if response_scope.is_stale(&generation) { continue; }
+        if response_scope.is_stale(&generation) {
+            continue;
+        }
         spawn_tts_stage(registry, tx.clone(), deps, batch, generation.clone()).await?;
         *audio_owner = Some(generation);
         return Ok(true);
@@ -678,17 +921,64 @@ fn may_start_authorized_turn(awaiting_turn_settlement: &Option<GenerationToken>)
 
 #[cfg(feature = "live-audio")]
 fn release_audio_owner(audio_owner: &mut Option<GenerationToken>, generation: &GenerationToken) {
-    if audio_owner.as_ref().is_some_and(|owner| owner.same_generation(generation)) {
+    if audio_owner
+        .as_ref()
+        .is_some_and(|owner| owner.same_generation(generation))
+    {
         *audio_owner = None;
     }
 }
 
 #[cfg(feature = "live-audio")]
-async fn spawn_playback_stage(registry: &crate::daemon::conversation_session::ConversationTaskRegistry, tx: tokio::sync::mpsc::Sender<A2MailboxEvent>, config: CpalPlaybackConfig, scope: CancelScope, permit: AudioWorkPermit, generation: GenerationToken, pcm: super::tts_cloud::VerifiedPcmS16leResponse) -> Result<(), &'static str> {
-    registry.spawn_stage(async move {
-        let result = tokio::task::spawn_blocking(move || { let mut playback = CpalPlaybackSession::start(config, scope, permit).map_err(|_| "playback_start_failed")?; let output = wait_for_playback_ready(&mut playback).map_err(|_| "playback_not_ready")?; let source = PcmS16leBlock::from_le_bytes(pcm.sample_rate_hz, pcm.channels, pcm.audio_bytes).map_err(|_| "tts_pcm_invalid")?; playback.enqueue(source.resample_mono_to(output.sample_rate_hz).map_err(|_| "playback_resample_refused")?).map_err(|_| "playback_queue_failed")?; playback.complete().map_err(|_| "playback_completion_failed")?; loop { match playback.next_event(Duration::from_millis(50)).map_err(|_| "playback_terminal_failed")? { Some(PlaybackEvent::Completed) => return Ok(()), Some(PlaybackEvent::Cancelled) => return Err("playback_cancelled"), Some(PlaybackEvent::Error(_)) => return Err("playback_device_error"), _ => {} } } }).await.map_err(|_| "playback_owner_panicked")?;
-        tx.send(A2MailboxEvent::PlaybackComplete { generation, result }).await.map_err(|_| "a2_stage_queue_closed")
-    }).await?; Ok(())
+async fn spawn_playback_stage(
+    registry: &crate::daemon::conversation_session::ConversationTaskRegistry,
+    tx: tokio::sync::mpsc::Sender<A2MailboxEvent>,
+    config: CpalPlaybackConfig,
+    scope: CancelScope,
+    permit: AudioWorkPermit,
+    generation: GenerationToken,
+    pcm: super::tts_cloud::VerifiedPcmS16leResponse,
+) -> Result<(), &'static str> {
+    registry
+        .spawn_stage(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let mut playback = CpalPlaybackSession::start(config, scope, permit)
+                    .map_err(|_| "playback_start_failed")?;
+                let output =
+                    wait_for_playback_ready(&mut playback).map_err(|_| "playback_not_ready")?;
+                let source =
+                    PcmS16leBlock::from_le_bytes(pcm.sample_rate_hz, pcm.channels, pcm.audio_bytes)
+                        .map_err(|_| "tts_pcm_invalid")?;
+                playback
+                    .enqueue(
+                        source
+                            .resample_mono_to(output.sample_rate_hz)
+                            .map_err(|_| "playback_resample_refused")?,
+                    )
+                    .map_err(|_| "playback_queue_failed")?;
+                playback
+                    .complete()
+                    .map_err(|_| "playback_completion_failed")?;
+                loop {
+                    match playback
+                        .next_event(Duration::from_millis(50))
+                        .map_err(|_| "playback_terminal_failed")?
+                    {
+                        Some(PlaybackEvent::Completed) => return Ok(()),
+                        Some(PlaybackEvent::Cancelled) => return Err("playback_cancelled"),
+                        Some(PlaybackEvent::Error(_)) => return Err("playback_device_error"),
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .map_err(|_| "playback_owner_panicked")?;
+            tx.send(A2MailboxEvent::PlaybackComplete { generation, result })
+                .await
+                .map_err(|_| "a2_stage_queue_closed")
+        })
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -718,9 +1008,13 @@ mod tests {
         let mut turns = TurnTracker::default();
         turns.begin_speech();
         assert_eq!(turns.ready(100), TurnDisposition::CancelShortFragment);
-        turns.begin_speech(); turns.add_speech(Duration::from_millis(100));
+        turns.begin_speech();
+        turns.add_speech(Duration::from_millis(100));
         assert!(matches!(turns.ready(100), TurnDisposition::Commit { .. }));
-        assert!(matches!(turns.ready(100), TurnDisposition::AlreadyCommitted { .. }));
+        assert!(matches!(
+            turns.ready(100),
+            TurnDisposition::AlreadyCommitted { .. }
+        ));
     }
 
     #[test]
@@ -754,7 +1048,11 @@ mod tests {
         let new = scope.snapshot().unwrap();
         let mut owner = Some(old.clone());
         release_audio_owner(&mut owner, &new);
-        assert!(owner.as_ref().is_some_and(|current| current.same_generation(&old)));
+        assert!(
+            owner
+                .as_ref()
+                .is_some_and(|current| current.same_generation(&old))
+        );
         release_audio_owner(&mut owner, &old);
         assert!(owner.is_none());
     }
@@ -782,10 +1080,15 @@ mod tests {
     #[test]
     fn transcript_preflight_gets_a_fresh_correlation_id_but_keeps_bound_route() {
         let template = GuiChatBridgePreflightInput {
-            request_id: GuiChatRequestId::new(), session_id: "bound-session".into(),
+            request_id: GuiChatRequestId::new(),
+            session_id: "bound-session".into(),
             origin_surface: crate::daemon::gui_chat_bridge::GuiChatSurface::Main,
-            message: "old".into(), model: Some("bound-model".into()), skill_id: Some("bound-skill".into()),
-            incognito: true, reasoning_display: true, attachment_paths: vec![PathBuf::from("bound-path")],
+            message: "old".into(),
+            model: Some("bound-model".into()),
+            skill_id: Some("bound-skill".into()),
+            incognito: true,
+            reasoning_display: true,
+            attachment_paths: vec![PathBuf::from("bound-path")],
         };
         let first = preflight_for_transcript(&template, "first".into());
         let second = preflight_for_transcript(&template, "second".into());

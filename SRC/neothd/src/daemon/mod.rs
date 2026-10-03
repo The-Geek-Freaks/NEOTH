@@ -18,6 +18,9 @@ pub mod arxiv_skill_scan_cron;
 /// event-type allowlist). The internal Skill-mutation route is mandatory;
 /// `freedom.yaml::audit_rpc.enabled` gates only optional audit/token routes.
 pub mod audit_rpc;
+/// W2274 retained stream owner; always built for daemon-owned settlement.
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) mod authorized_text_turn;
 /// Reload-supervisor pass executors for CLI apply and verified self-stage.
 /// The sole recurring owner lives in `updater_cron`; production admission is
 /// currently hard-denied before inventory, process, network or mutation work.
@@ -76,6 +79,20 @@ pub mod companion;
 /// default (`consolidation_sweep.enabled = false`).
 pub mod consolidation_sweep_cron;
 pub mod contradiction_resolve_cron;
+/// W2277 safe public DTO-only bridge for the separate GUI crate.
+pub mod conversation_bridge;
+/// W2277 direct daemon-to-GUI runtime sealed adapter.
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) mod conversation_gui_bridge;
+#[cfg(any(test, feature = "live-audio"))]
+pub(crate) mod conversation_owner;
+/// W2277 closed daemon protocol, retained registry, and owner boundary.
+pub(crate) mod conversation_protocol;
+pub(crate) mod conversation_registry;
+/// W2274 task registry; its media re-export is internally live-audio-gated.
+pub(crate) mod conversation_session;
+#[cfg(test)]
+mod conversation_transport_regressions;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;
 /// ADOPT31-B8 — local, default-off document discovery with no provider,
@@ -98,27 +115,10 @@ pub mod export;
 pub mod g02_surfacing_cron;
 /// W41 public Main/Buddy facade; the implementation reuses the authenticated audit-RPC listener.
 pub mod gui_chat_bridge;
-/// W2277 safe public DTO-only bridge for the separate GUI crate.
-pub mod conversation_bridge;
-#[cfg(test)]
-mod conversation_transport_regressions;
 /// W41 sealed wire/runtime contract. Never import this from `neothd-gui`.
 pub(crate) mod gui_chat_protocol;
 /// W41 daemon-owned GUI v1 state/consent/attachment runtime (implemented by runtime owner).
 pub(crate) mod gui_chat_runtime;
-/// W2274 retained stream owner; always built for daemon-owned settlement.
-#[cfg(any(test, feature = "live-audio"))]
-pub(crate) mod authorized_text_turn;
-/// W2277 closed daemon protocol, retained registry, and owner boundary.
-pub(crate) mod conversation_protocol;
-pub(crate) mod conversation_registry;
-/// W2277 direct daemon-to-GUI runtime sealed adapter.
-#[cfg(any(test, feature = "live-audio"))]
-pub(crate) mod conversation_gui_bridge;
-#[cfg(any(test, feature = "live-audio"))]
-pub(crate) mod conversation_owner;
-/// W2274 task registry; its media re-export is internally live-audio-gated.
-pub(crate) mod conversation_session;
 pub mod hardware;
 pub mod installer_audit_sidecar;
 /// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events (task events,

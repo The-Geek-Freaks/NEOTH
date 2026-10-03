@@ -79,16 +79,16 @@ pub use client::{
     try_post_audit_frame_with_subtype,
 };
 pub(crate) use client::{
+    ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
+    conversation_post_cancellable,
+};
+pub(crate) use client::{
     DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,
     instance_commitment_for_nonce,
 };
 pub(crate) use client::{
     GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
     webchat_handoff_mint, webchat_resume_handoff_mint, webchat_runtime_status,
-};
-pub(crate) use client::{
-    ConversationClientError, attested_conversation_boot_id, conversation_attach,
-    conversation_post, conversation_post_cancellable,
 };
 #[cfg(feature = "cluster")]
 pub use client::{
