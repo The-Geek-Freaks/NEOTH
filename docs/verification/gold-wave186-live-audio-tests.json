@@ -61,12 +61,12 @@
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "9DFFBD37969CEC104CEC368D34C51A00A98076EE287D78039DD129F052E18645"
+      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "9DFFBD37969CEC104CEC368D34C51A00A98076EE287D78039DD129F052E18645"
+      "sourceSha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
     },
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",

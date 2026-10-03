@@ -397,9 +397,10 @@ impl LiveUtteranceState {
                 self.max_utterance_samples / LIVE_VAD_SAMPLE_RATE_HZ as usize
             )));
         }
+        let block_samples = block.len();
         self.utterance.extend(block);
         if speech {
-            self.voiced_samples = self.voiced_samples.saturating_add(block.len());
+            self.voiced_samples = self.voiced_samples.saturating_add(block_samples);
             self.trailing_silence_frames = 0;
             return Ok(Some(if started {
                 LiveUtteranceEvent::SpeechStarted

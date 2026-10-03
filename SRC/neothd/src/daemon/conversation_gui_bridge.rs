@@ -188,7 +188,7 @@ impl GuiChatBridge for DirectConversationGuiChatBridge {
             preflight_id: sealed.response.preflight_id,
             preflight_descriptor_digest: sealed.response.preflight_descriptor_digest,
             consent_challenge: sealed.response.consent_challenge,
-            decision: decision(decision),
+            decision: self::decision(decision),
             consent_proof: proof,
         };
         protocol::validate_decide_request(&request)

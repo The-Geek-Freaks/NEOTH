@@ -349,7 +349,7 @@ impl MicConsentStore {
                         return Err(MicError::Persistence);
                     }
                 }
-                let (mut file, binding) = crate::skills::store::open_bound_regular_file(
+                let (file, binding) = crate::skills::store::open_bound_regular_file(
                     &bound.dir,
                     name,
                     &self.home.join(STATE_FILE),

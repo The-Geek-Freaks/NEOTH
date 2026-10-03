@@ -724,7 +724,7 @@ fn event_sequence(event: &GuiChatBridgeEvent) -> u64 {
 mod tests {
     use super::*;
     use crate::daemon::gui_chat_bridge::{
-        GuiChatSubscriptionMetadata, GuiChatTurnId, GuiChatTurnMetadata,
+        GuiChatRequestId, GuiChatSubscriptionMetadata, GuiChatTurnId, GuiChatTurnMetadata,
     };
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -975,8 +975,9 @@ mod tests {
                 delta: crate::providers::ReasoningText::new("private chain".into()),
             })
             .expect("reasoning bridge event is intentionally ignored");
+        let latest_sequence = forwarder.latest_sequence;
         assert!(sink.text.is_empty());
-        assert_eq!(forwarder.latest_sequence, 7);
+        assert_eq!(latest_sequence, 7);
     }
 
     #[test]
@@ -1005,10 +1006,12 @@ mod tests {
                 response_feedback_unavailable: true,
             })
             .unwrap();
+        let terminal = forwarder.terminal;
+        let latest_sequence = forwarder.latest_sequence;
         assert_eq!(sink.text, vec!["spoken text".to_owned()]);
         assert_eq!(sink.terminal, [AuthorizedTextTurnTerminal::Complete]);
-        assert_eq!(forwarder.terminal, Some(GuiChatTerminalState::Complete));
-        assert_eq!(forwarder.latest_sequence, 4);
+        assert_eq!(terminal, Some(GuiChatTerminalState::Complete));
+        assert_eq!(latest_sequence, 4);
     }
 
     #[tokio::test]

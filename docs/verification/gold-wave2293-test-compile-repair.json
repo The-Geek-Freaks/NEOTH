@@ -1,0 +1,50 @@
+{
+  "schema": "neoth-gold-wave2293-test-compile-repair/v1",
+  "base": "a9eaa074f8998753da9af3c63709f0d8dd0d1f71",
+  "run": "37140133809",
+  "evidence": "Actual public CLI build succeeded; lib-test compilation failed with seven errors before exact tests",
+  "repairs": [
+    "Missing bridge request-id test import",
+    "Capture last Copy forwarder facts before sink assertions, no explicit non-Drop destruction",
+    "Qualify existing decision conversion helper instead of shadowed parameter",
+    "Capture PCM block length before exactly one ownership transfer",
+    "Remove unused mutable file binding"
+  ],
+  "sources": [
+    {
+      "location": "work/gold-20260906/wave2293-test-compile-repair/candidate/SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "candidate": "29522FC76DDA62D508B5C901F3167E26185C2BF695D4B8731F59B75A99B0BA79",
+      "base": "951AB8EFBCF308FF2D23BA08018B52ACFAABE21733F5C1DE7F5874A6E2A2040F"
+    },
+    {
+      "location": "work/gold-20260906/wave2293-test-compile-repair/candidate/SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "candidate": "A31CD12B8F11667E58553EE39EC9142580B2E413BC199EB2565E0EAAFD37087F",
+      "base": "4CCA712619289CAD722871CF1E177F0BE23C4750963525542B347FFAAC174B29"
+    },
+    {
+      "location": "work/gold-20260906/wave2293-test-compile-repair/dictation-candidate/SRC/neothd/src/media/dictation.rs",
+      "path": "SRC/neothd/src/media/dictation.rs",
+      "candidate": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19",
+      "base": "9DFFBD37969CEC104CEC368D34C51A00A98076EE287D78039DD129F052E18645"
+    },
+    {
+      "location": "root narrow unused_mut repair",
+      "path": "SRC/neothd/src/permissions/microphone.rs",
+      "candidate": "1C806327C5D31ECC71D039C2FF65B1B44A1A5B1CA0E978112CE58B4D3C8D0218",
+      "base": "32416FF4313B3F1879F24C98DBDEF300CB3F48557B86096A11D0D5B1B475FD50"
+    }
+  ],
+  "audioBindingsRefreshed": 2,
+  "newTests": 0,
+  "localExecutableValidationRan": false,
+  "hosted": "New producer pending",
+  "cliReference": {
+    "run": "37140133809",
+    "artifact": 11280290996,
+    "originalZipSha256": "826E2E49938C694BE50ACF64A267275570638BE41A92FDDB667A48973C4D6ADF",
+    "matchesProducerDocs": true,
+    "generatedSha256": "BA169F7A998F94C6B6F7B2DF38B9C2239E544714D7FE9DB58FB392B37C8FC9A7"
+  }
+}

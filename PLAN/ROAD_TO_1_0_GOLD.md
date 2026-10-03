@@ -17945,3 +17945,9 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 
 - Focused37139447181@3d5930ca stopped during real CLI compilation with two errors, before test execution: moved boot commitment and mismatched attestation error mapper. Preserve this as failed evidence, not a regression pass.
 - Clone the shared fresh boot commitment at its first consumer; map the pre-request attestation error into the existing unavailable category; feature-gate live-audio-only SHA imports. No local executable check. New producer hosted compilation and focused491 acceptance remain pending.
+
+
+## W2293 - Test compilation integration repair (2026-10-03)
+
+- Focused37140133809@a9eaa074 built the real CLI successfully, but lib-test compilation failed with7 errors: missing test import, shadowed decision helper, mutable-borrow assertions and PCM block length after move. Minimal source fixes retain the assertions, decision mapping and single PCM transfer; unused_mut was removed. Audio2bindings refreshed within52cases. Hosted executable regression acceptance remains pending.
+- Independently admitted generated CLI reference artifact11280290996: originalZIP/API and internalSHA/head checked, generated reference matches the exact producer documentation byte-for-byte (BA169F7A...). This closes the pending W2285 generated-reference comparison for that producer only, not the failed overall regression run.
