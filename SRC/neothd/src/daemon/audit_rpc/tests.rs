@@ -527,6 +527,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: Some(Arc::clone(&webchat)),
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -560,6 +561,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (absent_endpoint, absent_listener) =
@@ -648,6 +650,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -734,6 +737,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -820,6 +824,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -1250,6 +1255,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -1297,6 +1303,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -1361,6 +1368,7 @@ async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
@@ -1484,6 +1492,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2042,6 +2051,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2107,6 +2117,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let unavailable_nonce = test_endpoint_nonce();
@@ -2155,6 +2166,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2228,6 +2240,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2301,6 +2314,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2401,6 +2415,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -2821,6 +2836,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2867,6 +2883,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2906,6 +2923,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
@@ -2948,6 +2966,7 @@ async fn client_round_trips_against_a_live_listener() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -3000,6 +3019,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -3064,6 +3084,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -3102,6 +3123,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -3179,6 +3201,7 @@ async fn listener_serves_more_than_one_connection() {
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
@@ -3227,6 +3250,7 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         chat_runtime: None,
         gui_chat_runtime: None,
         conversation_runtime: None,
+        companion_runtime: None,
         webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();

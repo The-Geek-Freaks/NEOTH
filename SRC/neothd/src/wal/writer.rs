@@ -11610,7 +11610,7 @@ mod tests {
         )
         .expect("writer");
         let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
-        let caller_writer = writer.with_test_ack_gate(gate.clone());
+        let caller_writer = writer.clone().with_test_ack_gate(gate.clone());
         let caller_home = home.path().to_path_buf();
         let caller_descriptor = descriptor.clone();
         let caller = tokio::spawn(async move {

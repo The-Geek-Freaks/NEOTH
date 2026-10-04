@@ -99,5 +99,48 @@
     ],
     "imported": true,
     "gitPostimage": "d6e7cb4098fd1b833b514434f5ca95648d37afc4"
+  },
+  "revision2TypecheckRepair": {
+    "base": "9b5ec1664cac08f2cfe405a65709fbd5d72a8d60",
+    "failureRun": 37202090503,
+    "rawFailureLogSha256": "B10F8BC569BBEAE5EF47EDA5E9EA0B03AFC41D41F26AEDA19A8EFAFF819AABB7",
+    "failureSummarySha256": "5AEE7129A59996E82D1FD141630ECA1BA20DA3569A9ECDDAC1B9CF97FE18F79A",
+    "demonstratedLocations": {
+      "audit_rpc_state_missing_companion_runtime": 24,
+      "wait_for_lease_drain_not_send": 2,
+      "writer_moved_after_with_test_ack_gate": 1
+    },
+    "sources": [
+      {
+        "path": "SRC/neothd/src/daemon/companion_authority.rs",
+        "base_sha256": "8B561BC1DA0F1CECFE9E5E97F3EF2E0BA834CA6CD4A4C38DE4573021B6538E8F",
+        "candidate_sha256": "A14B5F91BFBB8B685DE22EFDF7DCF79BCCF44F61ED0F004A1FB737878E00E838"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+        "base_sha256": "83225ABAA572530ACE46FFE07FF0236B2D262D85B58FB59847D79A475381278F",
+        "candidate_sha256": "A94DB4F02A31F84111F536096690D9E5B485AD8A7D06EE375BFF78F482E55F10"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "base_sha256": "2B48C6DE2E6CD69783CDE1E8351EC304E8EAD230B1B24434D272C36463671D94",
+        "candidate_sha256": "7B77DC3160F2F8576F9130AE790A0FB429EDAE861E1C980B8679E45D5F4A9B6E"
+      }
+    ],
+    "changes": [
+      "End std MutexGuard in lexical block before async lease-drain await; notified-before-state-check and notify_waiters behavior retained",
+      "Add absent companion runtime to all 24 existing unrelated RPC test states",
+      "Clone gated WAL test caller handle, retaining original shutdown owner"
+    ],
+    "rootStaticReview": "Exact three-file diff and all current AuditRpcState construction sites checked; existing lifecycle assertions retained",
+    "staticChecks": {
+      "audit_rpc_state_initializers": 24,
+      "audit_rpc_none_companion_runtime_fields": 24,
+      "notified_before_mutex_check_preserved": true,
+      "mutex_guard_lexically_ends_before_await": true,
+      "writer_shutdown_owner_retained": true
+    },
+    "hostedValidation": "pending",
+    "localExecutableValidationRan": false
   }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T12:21:46.7628016Z",
-  "validationStatus": "mobile_compile_repair_formatted_hosted_compile_pending",
+  "capturedUtc": "2026-10-04T12:37:08.4709564Z",
+  "validationStatus": "mobile_mutex_and_fixture_typecheck_repair_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3513,8 +3513,8 @@
     },
     {
       "path": "docs/verification/gold-wave2325-mobile-compile-repair.json",
-      "bytes": 4401,
-      "sha256": "79C000F9CBC5AD3E7A1675FF373D0859279F329B380314BE68A960927F95B0AB"
+      "bytes": 6531,
+      "sha256": "8147B402F25C8A731159EDF7936934C705DAA27A1BAEB6214E1F7CA07FD05C1C"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4658,8 +4658,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2368845,
-      "sha256": "DF32ED5A2739BF116C7DE32949FC79C124D6124B10138CA592D7C60524FDADD4"
+      "bytes": 2369603,
+      "sha256": "7ED6599B96ECC2D0C7C6CA13B820138CF1E8DF0A7BFCCEB3864F62DF255BF96E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6478,8 +6478,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 141590,
-      "sha256": "D1B7AB39070D94C89FACC04FF1D08F757D05FCEA58AB05586CC5595310E5BF02"
+      "bytes": 142382,
+      "sha256": "2699DE900904962D6E8EFEA53768BF98BDCA54018D998E991AC28F8421A744E1"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",
@@ -6548,8 +6548,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_authority.rs",
-      "bytes": 30327,
-      "sha256": "8B561BC1DA0F1CECFE9E5E97F3EF2E0BA834CA6CD4A4C38DE4573021B6538E8F"
+      "bytes": 30393,
+      "sha256": "A14B5F91BFBB8B685DE22EFDF7DCF79BCCF44F61ED0F004A1FB737878E00E838"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
@@ -8353,8 +8353,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 479647,
-      "sha256": "2B48C6DE2E6CD69783CDE1E8351EC304E8EAD230B1B24434D272C36463671D94"
+      "bytes": 479655,
+      "sha256": "7B77DC3160F2F8576F9130AE790A0FB429EDAE861E1C980B8679E45D5F4A9B6E"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

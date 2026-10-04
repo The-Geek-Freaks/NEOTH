@@ -572,17 +572,19 @@ fn active<'a>(s: &'a State, id: &CompanionDeviceId) -> Result<&'a DeviceGrant> {
 async fn wait_for_lease_drain(shared: &Arc<Shared>, id: Uuid) -> Result<()> {
     loop {
         let notified = shared.drained.notified();
-        let c = shared
-            .core
-            .lock()
-            .map_err(|_| anyhow::anyhow!("authority mutex poisoned"))?;
-        if c.reload_required {
-            anyhow::bail!("reload required")
-        }
-        if c.leases.get(&id).copied().unwrap_or(0) == 0 {
+        let drained = {
+            let c = shared
+                .core
+                .lock()
+                .map_err(|_| anyhow::anyhow!("authority mutex poisoned"))?;
+            if c.reload_required {
+                anyhow::bail!("reload required")
+            }
+            c.leases.get(&id).copied().unwrap_or(0) == 0
+        };
+        if drained {
             return Ok(());
         }
-        drop(c);
         notified.await
     }
 }
