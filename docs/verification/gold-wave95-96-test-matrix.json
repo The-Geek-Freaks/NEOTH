@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "w2369-reviewed-source-hosted-pending",
+  "status": "w2369-hosted-format-imported-validation-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 387284,
-    "sha256": "9A9CB4B205FA5A3EFC0F32A76FA5FA07BE4C78E01F2A43B0DAB48C9C9E4BBC41"
+    "bytes": 387295,
+    "sha256": "26D584F1AE7401F29551A375F6A01021FB68A5268E1E54CED048180DA8F1D5DD"
   },
   "sourceInputs": 2118,
   "requiredNativeTests": [
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+      "sourceSha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
       "junitClass": "neoth"
     },
     {
@@ -74928,6 +74928,20 @@
       }
     ],
     "note": "Typed two-announcement publication, secret-free real connect stage markers, no-cluster API parity and scoped hidden artifact upload repair; 2754 portable+2vendor+1no-cluster dedicated tests; whole mobile artifact admission remains open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2369HostedFormatting": {
+    "base": "8ec956e5a4d4dc1038280e479ebc8bc61cd86ea2",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 168186,
+        "sha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E",
+        "blob": "563ec47cd6ba23aed7dfda036b41c608ca11c71b"
+      }
+    ],
+    "note": "Original Preflight37242861220 artifact11317633398 bound to8ec956e5; API ZIP digest and entry receipts verified; one-path exact rustfmt line-layout/trailing-comma adjustment reviewed, no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

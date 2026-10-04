@@ -283,16 +283,10 @@ impl PublicRendezvous {
             .peer_handle
             .as_ref()
             .context("public rendezvous lost its peeroxide handle before discovery readiness")?;
-        match wait_for_bootstrap_or_stop(
-            handle.server_publication(self.topic),
-            shutdown,
-            deadline,
-        )
-        .await
+        match wait_for_bootstrap_or_stop(handle.server_publication(self.topic), shutdown, deadline)
+            .await
         {
-            BootstrapWait::Ready(Ok(publication))
-                if publication.both_announcements_succeeded() =>
-            {
+            BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => {
                 Ok(())
             }
             BootstrapWait::Ready(Ok(_)) => {

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T23:08:52.7731154Z",
-  "validationStatus": "w2369-reviewed-source-hosted-pending",
+  "capturedUtc": "2026-10-04T23:11:49.7014024Z",
+  "validationStatus": "w2369-hosted-format-imported-validation-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6173,8 +6173,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 168257,
-      "sha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF"
+      "bytes": 168186,
+      "sha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
