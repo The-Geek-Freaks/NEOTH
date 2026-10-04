@@ -55,7 +55,7 @@ class Loopback:
 def write_config(home: pathlib.Path, provider_url: str, health_port: int, companion_port: int) -> pathlib.Path:
     config = home / "freedom.yaml"
     config.write_text(
-      f"operator_id: w2328-hosted\nsecrets_backend: file\nprovider_kind: openai_compat\n"
+      f"operator_id: w2328-hosted\nonboarding_complete: true\nsecrets_backend: file\nprovider_kind: openai_compat\n"
       f"provider_endpoint: {provider_url}\nprovider_model: w2328-loopback-model\n"
       f"observability_listen: 127.0.0.1:{health_port}\ncompanion:\n  enabled: true\n"
       f"  port: {companion_port}\n  p2p_enabled: true\n", encoding="utf-8")
@@ -171,6 +171,10 @@ def main() -> int:
         config=write_config(home,provider.url,health_port,companion_port)
         receipt["isolated_config_sha256"]=sha(config)
         env={**os.environ,"NEOTH_HOME":str(home)}
+        # Bind consent to this isolated loopback route through the public CLI.
+        # The running daemon still rechecks that durable grant before dispatch.
+        invoke([str(binary),"--output","json","consent","grant","openai_compat"],env,budget(work_deadline,20.0))
+        receipt["steps"]["loopback_consent_granted"]={"granted":True}
         # Do not PIPE an unconsumed daemon stream: it can deadlock, and daemon
         # output may contain configuration diagnostics. Receipt carries only rc.
         serve=subprocess.Popen([str(binary),"serve","--config",str(config)],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -181,6 +185,7 @@ def main() -> int:
                 time.sleep(min(.25,budget(work_deadline,.25)))
             else:
                 if time.monotonic() >= work_deadline: raise WorkDeadline("serve readiness budget exhausted")
+                receipt["serve_startup_state"] = "exited_before_ready" if serve.poll() is not None else "readiness_timeout"
                 raise RuntimeError(f"serve readiness failed rc={serve.poll()}")
             bridge=Bridge(library)
             try:

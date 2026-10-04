@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2347_bridge_api_repair_hosted_retry_pending",
+  "status": "wave2350_fixture_startup_repair_hosted_retry_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 384670,
-    "sha256": "E8D0F5013730EF8BFD2E62981FAA08ED4EFCD0CC3CA900CA74EE9CAA42528C6C"
+    "bytes": 384869,
+    "sha256": "DC821715DD3907D9A14DE2C9F76BD102052CEAE10481AA84F07C1EA40D1E7864"
   },
-  "sourceInputs": 2104,
+  "sourceInputs": 2105,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -74446,6 +74446,32 @@
       }
     ],
     "note": "Prior producer20985549 focused528 fully admitted; actual mobile interop failed E0639 before scenarios. Repair three client-only JoinOpts constructions, align mobile README, add reviewed optional exact macOS diagnostic. New hosted interop/native/mobile gates pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2350InteropStartup": {
+    "base": "8aa592d834ffff8a3170bc701c14711a114399a1",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 17847,
+        "sha256": "6140BB8CBBA2B620DA2CC27B1503E2B7B9520451E53FBAD9608A570FA1EB9B1C",
+        "blob": "bd3b5c8235c91be67662b08f57a3942c488a38b0"
+      },
+      {
+        "path": "docs/verification/gold-wave2350-mobile-interop-startup.json",
+        "bytes": 1626,
+        "sha256": "DD035F85A2327A77F82FED64D538903EB825619FFA427BF2FF546E16BDEF6BFD",
+        "blob": "46aaaee7b72af6c9f1d3964c9fee2fb159acb380"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2383336,
+        "sha256": "5F4D2D7678E7CDEFF6D4FB02470650C2C6611101BC095E7FAC1B0F0075A75E3F",
+        "blob": "04e4be21d29e020fbf057a7c0c9bca4753d414a1"
+      }
+    ],
+    "note": "W2347 real bridge and CLI build passed, runtime stopped before pairing. Fix only isolated onboarding/consent prerequisites and retain mechanical startup category; production checks, time budgets and protocol assertions preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

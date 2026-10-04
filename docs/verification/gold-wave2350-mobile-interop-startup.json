@@ -1,0 +1,27 @@
+{
+  "schema": "neoth.wave2350.mobile-interop-startup.v1",
+  "base": "8aa592d834ffff8a3170bc701c14711a114399a1",
+  "status": "source_bound_fixture_prerequisites_repaired_hosted_retry_pending",
+  "failedRun": 37225744804,
+  "originalZipSha256": "3B599520F688FDE14141C3FA3E32F7CB70E0FC5FA15D31D0AAC33AE967212741",
+  "partialChecksSha256": "FC8EFC6179D7AC2981547E1B64853050E0789810C0A7DE30EB76841170DE9101",
+  "verifiedBoundary": "Host bridge and public CLI compile; eight exports verified; daemon exits1 before any pairing step. No stderr was retained, so the exact emitted error is not known.",
+  "sourceDiagnosis": [
+    "No-channel fixture omitted onboarding_complete; ordinary serve requires flag or accepted channel before WAL/listeners.",
+    "Configured OpenAI-compatible loopback route requires a durable consent grant during runtime priming and dispatch."
+  ],
+  "repair": [
+    "Set onboarding_complete=true only in the isolated fixture.",
+    "Call the real public consent grant openai_compat CLI under the isolated NEOTH_HOME before serve; no consent bypass.",
+    "Retain only a mechanical early-exit or readiness-timeout category, never raw daemon output."
+  ],
+  "source": ".github/scripts/mobile/hosted-mobile-interop.py",
+  "sourceSha256": "6140BB8CBBA2B620DA2CC27B1503E2B7B9520451E53FBAD9608A570FA1EB9B1C",
+  "candidateManifestSha256": "4A13ECF352DE38EF43D6ECFAB47EB8CE03E500BE2CE4C5EFBCB384EE00C3C9E6",
+  "productionSourceChanged": false,
+  "budgetsAndProtocolAssertionsPreserved": true,
+  "localExecutableValidationRan": false,
+  "interopAccepted": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}
