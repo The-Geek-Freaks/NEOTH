@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_interop_staged_hosted_format_imported_executable_validation_pending",
+  "status": "mobile_core_compilation_and_reference_verified_behavior_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 383934,
-    "sha256": "9B10B95248F3A609BB1D88E50A684432C2DF4D5BF81D4753BAFEF6B986FD5844"
+    "bytes": 383923,
+    "sha256": "9557A7EC5740BC54CBBC1AB9A2BEDC7E7E0B48C6F33CC4C189DC230C4E5EDDF8"
   },
   "sourceInputs": 2100,
   "requiredNativeTests": [
@@ -74274,6 +74274,32 @@
       }
     ],
     "note": "Reviewed real native bridge/daemon hosted lane; Root trims trailing blank lines only; exact hosted Rust formatting imported; executable acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2329CompiledReference": {
+    "base": "a508e8f52753ddab0f6f186749799dc61c42e935",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 267699,
+        "sha256": "255986A3CB207A8689FE911320B05F635892C1AAED7AA21BAA7D883950E3745F",
+        "blob": "7611d7d120bc157dda05cdf6a85c33a1087dd3a9"
+      },
+      {
+        "path": "docs/verification/gold-wave2329-mobile-syntax.json",
+        "bytes": 3782,
+        "sha256": "3BD40A5F39A4E1880AA791532DABF694FBC5DCFEC39B14B568CADD7EC4E8E7E9",
+        "blob": "2f4f8c9fa343cc3b790d1bef0a6a7d12daa46505"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2375428,
+        "sha256": "5F6E4D6F3A04CC358ECCCE3A9D73F813D74388343855A6FD6CF7920751979D27",
+        "blob": "eef79a44997518320bfddc369007a4961e32d88a"
+      }
+    ],
+    "note": "Hosted37207856207 passes typecheck+actualCLI build; digest-bound reference imported. No behavior acceptance yet.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

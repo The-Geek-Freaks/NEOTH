@@ -1283,6 +1283,8 @@ Read or revoke v3 durable device grants through the same-user daemon owner.  No 
 
 Mint a v3 phone QR through the RUNNING daemon.  The daemon, rather than this CLI process, owns the persistent Noise responder key encoded in `server_pk` and all later listener/recovery work
 
+- `--scope <SCOPE>` — Explicit durable authority for this newly paired phone. Existing devices retain their stored scope and never receive an upgrade
+
 ### `neoth companion pair-phone`
 
 Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet. The server-side HyperDHT / authenticated Noise-IK transport accepts only the topic-and-PSK-HKDF-derived client static key before allocation, then verifies the encrypted application PSK as defense in depth. The invite is single-use, short-lived, and requires the `cluster` feature

@@ -1,7 +1,7 @@
 {
   "schema": "neoth.wave2329.mobile-syntax.v1",
   "base": "b103bfbeb8cb7771680c0744c24f7f5bae0252e6",
-  "status": "minimal_source_repair_hosted_validation_pending",
+  "status": "hosted_syntax_format_compile_and_reference_verified_behavior_pending",
   "failureRun": 37207018594,
   "diagnostic": "companion_runtime.rs:877 missing match before nested terminal fallback result arms",
   "source": "SRC/neothd/src/daemon/companion_runtime.rs",
@@ -10,7 +10,7 @@
   "delta": "Insert one match keyword; preserve all terminal and checked-drain branches",
   "failedLogSha256": "8FCE301D725E00BF4C057AD4F31F4E0C0DFDF6009EBBBD7AFD7721C39873F99C",
   "localExecutableValidationRan": false,
-  "acceptance": "Hosted syntax/format, compile and behavior proofs pending",
+  "acceptance": "Core test targets type-check; actual CLI build and reference export passed. No focused, native or mobile behavior acceptance is claimed.",
   "hostedFormatImport": {
     "run": 37207445888,
     "producer": "473f1b60a215b5001dd0abb2a3622f5d73d16d49",
@@ -60,5 +60,33 @@
       }
     ],
     "localFormatterRan": false
+  },
+  "hostedCompiledReference": {
+    "run": 37207856207,
+    "producer": "a508e8f52753ddab0f6f186749799dc61c42e935",
+    "artifactId": 11304973253,
+    "archiveSha256": "A228F6AC4D5F6E759BB3F071C4ED5B6D8F59F06A0FC5EFF358BF7780E74D3F1A",
+    "entries": [
+      {
+        "path": "SHA256SUMS",
+        "sha256": "AE128FF056F8FE85C8CA717E47823AF2C2CAAC67BB37BAAE4FCD9C1F07D144D9",
+        "bytes": 82
+      },
+      {
+        "path": "cli-commands.md",
+        "sha256": "255986A3CB207A8689FE911320B05F635892C1AAED7AA21BAA7D883950E3745F",
+        "bytes": 267699
+      },
+      {
+        "path": "source-head.txt",
+        "sha256": "AEE488054CD1B5B62392154488F515085F6E2748C94F2241FFF935307D68536A",
+        "bytes": 41
+      }
+    ],
+    "coreTestTypecheck": "success",
+    "actualCliBuild": "success",
+    "referenceExport": "success",
+    "testsExecuted": false,
+    "localExecutableValidationRan": false
   }
 }
