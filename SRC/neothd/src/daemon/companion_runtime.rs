@@ -378,24 +378,6 @@ impl CompanionRuntime {
         Ok(())
     }
 
-    /// Only called by the authenticated daemon IPC handler.  It creates a
-    /// fresh one-time v3 topic/PSK, but it never starts a transient responder:
-    /// the daemon's persistent key has already been loaded above.
-    pub(crate) async fn mint_pair_invite(
-        self: &Arc<Self>,
-        requested_scope: CompanionScope,
-    ) -> Result<CompanionV3Invite> {
-        let (_cancel_tx, mut cancellation) = watch::channel(false);
-        let prepared = self
-            .prepare_pair_invite(
-                requested_scope,
-                Duration::from_secs(INVITE_TTL_SECS),
-                &mut cancellation,
-            )
-            .await?;
-        Ok(self.publish_prepared_pair_invite(prepared))
-    }
-
     pub(crate) async fn prepare_pair_invite(
         self: &Arc<Self>,
         requested_scope: CompanionScope,

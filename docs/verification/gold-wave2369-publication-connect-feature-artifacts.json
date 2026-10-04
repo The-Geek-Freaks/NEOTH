@@ -1,0 +1,73 @@
+{
+  "schema": "neoth.wave2369.publication-connect-feature-artifacts.v1",
+  "base": "9cd3290c070ae6508701d466019a7e811a1f9ef6",
+  "status": "reviewed_source_hosted_pending",
+  "interop": {
+    "run": 37240216459,
+    "conclusion": "failure",
+    "exactRegressionsPassed": 9,
+    "bridgeProgress": [
+      "lookup_peers",
+      "connect_attempt_started",
+      "connect_attempt_timed_out"
+    ],
+    "connectTimeoutSeconds": 30,
+    "pairDeadlineSeconds": 140,
+    "daemonExit": 0,
+    "walDrained": true,
+    "partialChecksSha256": "64A5647966A29CEA720AC8B2B104E36262A563F0D2BD21232C8EF0D1CB4EE806",
+    "cause": "Unresolved between publication outcomes and connection routing/reachability; no key mismatch, NAT or firewall cause established."
+  },
+  "native": {
+    "run": 37241439701,
+    "conclusion": "success",
+    "bridgeTestsEachHost": 14,
+    "flutterAnalysis": "No issues found",
+    "flutterTestsPassed": 24,
+    "androidApkBuildLogTerminals": 3,
+    "iosRunnerBuildLogTerminal": true,
+    "kotlinCodeqlStep": "success",
+    "originalArchives": 4,
+    "artifactAdmission": false,
+    "missingUpload": "The hidden .mobile-companion-build tree was excluded by include-hidden-files:false; hosted archive contains only three native manifests and seven logs.",
+    "hostedArchiveSha256": "8F95728548924C8C0C774053D07A0A521B8B18F6C2B529ACA98067E876EFD8BA",
+    "strictFailure": "Expected exactly one hosted-evidence.json; no ROOT_MOBILE_ADMISSION created."
+  },
+  "repairs": [
+    "Require both initial topic and self-key announcement success through a typed receipt; preserve generic flush behavior and existing deadlines.",
+    "Add fixed opt-in bounded route/handshake/Noise/UDX markers; actual Swarm responder is distinct from generic DHT dispatch.",
+    "Restore no-cluster prepared-invite API parity with private data and refusal before effects; remove the unused legacy mint wrapper.",
+    "Include explicitly listed hidden mobile outputs in upload and retain exact materialized MainActivity.kt for byte proof."
+  ],
+  "reviewSha256": [
+    "E4B953F39E9A11AF97451FF47365821E08E25E24E422DE9528A77C2448197030",
+    "914698AB1ED29CABA707D37AB7D2E2587AE428626A7B8C7E208B59F1C19FF7E0"
+  ],
+  "dedicatedRegressions": [
+    {
+      "crate": "peeroxide",
+      "features": "workspace locked dependency graph",
+      "identity": "swarm::tests::server_publication_requires_both_announcement_successes",
+      "sourcePath": "SRC/vendor/peeroxide/src/swarm.rs"
+    },
+    {
+      "crate": "peeroxide",
+      "features": "workspace locked dependency graph",
+      "identity": "swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation",
+      "sourcePath": "SRC/vendor/peeroxide/src/swarm.rs"
+    },
+    {
+      "crate": "neoth",
+      "features": "--no-default-features",
+      "identity": "daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs"
+    }
+  ],
+  "portableRegistrations": 2754,
+  "focusedCases": 528,
+  "interopExpectedExactTests": 12,
+  "hostedPackageSelection": "Unverified until next package-selected locked run; missing selections cannot pass.",
+  "localExecutableValidationRan": false,
+  "physicalDeviceAccepted": false,
+  "signedReleaseAccepted": false
+}

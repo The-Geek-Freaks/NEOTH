@@ -188,6 +188,7 @@ jobs:
         if: always()
         with:
           name: mobile-companion-hosted-evidence
+          include-hidden-files: true
           path: |
             ${{ runner.temp }}/native/native-artifact-manifest.json
             ${{ runner.temp }}/native/android-native-manifest.json
@@ -195,6 +196,7 @@ jobs:
             ${{ github.workspace }}/.mobile-companion-build/hosted-evidence.json
             ${{ github.workspace }}/.mobile-companion-build/ios-ffi-symbols.json
             ${{ github.workspace }}/.mobile-companion-build/codeql-kotlin-input.json
+            ${{ github.workspace }}/.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt
             ${{ github.workspace }}/.mobile-companion-build/pubspec.lock
             ${{ github.workspace }}/.mobile-companion-build/build/app/outputs/flutter-apk
             ${{ github.workspace }}/.mobile-companion-build/build/ios/iphoneos/Runner.app

@@ -4,7 +4,7 @@
 //! same daemon/RPC/CLI type surface in no-cluster builds but refuses every
 //! v3 operation before it can create a listener, key, writer, or authority.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,22 @@ pub(crate) struct CompanionV3DeviceView {
     pub(crate) grant_state: String,
 }
 
+/// Private no-cluster placeholder for the RPC-owned prepared invite.
+///
+/// `prepare_pair_invite` always fails before generating a key, listener, or
+/// authority. Its private field has no no-cluster constructor, so shared RPC
+/// cleanup paths remain type-checkable without providing a success path.
+#[derive(Debug)]
+pub(crate) struct PreparedCompanionV3Invite {
+    invite: CompanionV3Invite,
+}
+
+impl PreparedCompanionV3Invite {
+    pub(crate) fn invite(&self) -> &CompanionV3Invite {
+        &self.invite
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct CompanionRuntime;
 
@@ -57,11 +73,27 @@ impl CompanionRuntime {
         bail!("companion v3 requires the cluster feature")
     }
 
-    pub(crate) async fn mint_pair_invite(
+    pub(crate) async fn prepare_pair_invite(
         self: &Arc<Self>,
         _requested_scope: CompanionScope,
-    ) -> Result<CompanionV3Invite> {
+        _readiness_budget: Duration,
+        _cancellation: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<PreparedCompanionV3Invite> {
         bail!("companion v3 requires the cluster feature")
+    }
+
+    pub(crate) async fn cancel_prepared_pair_invite(
+        &self,
+        _prepared: PreparedCompanionV3Invite,
+    ) -> Result<()> {
+        bail!("companion v3 requires the cluster feature")
+    }
+
+    pub(crate) fn publish_prepared_pair_invite(
+        &self,
+        prepared: PreparedCompanionV3Invite,
+    ) -> CompanionV3Invite {
+        prepared.invite
     }
 
     pub(crate) fn list_devices(&self) -> Result<Vec<CompanionV3DeviceView>> {
@@ -70,5 +102,27 @@ impl CompanionRuntime {
 
     pub(crate) async fn revoke_device(&self, _device_id: CompanionDeviceId) -> Result<bool> {
         bail!("companion v3 requires the cluster feature")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn no_cluster_prepare_pair_invite_refuses_before_any_invite_exists() {
+        let runtime = Arc::new(CompanionRuntime);
+        let (_cancel_tx, mut cancellation) = tokio::sync::watch::channel(false);
+
+        let error = runtime
+            .prepare_pair_invite(
+                CompanionScope::StatusRead,
+                Duration::from_secs(1),
+                &mut cancellation,
+            )
+            .await
+            .expect_err("no-cluster pairing must fail before any prepared invite exists");
+
+        assert!(error.to_string().contains("requires the cluster feature"));
     }
 }

@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,34 @@ use crate::socket_pool::SocketPool;
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
+
+const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
+static COMPANION_CONNECT_DIAGNOSTICS: AtomicU16 = AtomicU16::new(0);
+
+/// Emits each fixed, secret-free HyperDHT connection phase once per process
+/// when the explicit companion diagnostic mode is enabled. No peer key,
+/// endpoint, payload, count, or error text is included.
+fn companion_connect_phase(phase: &str) {
+    let bit = match phase {
+        "route_lookup_started" => 1 << 0,
+        "route_lookup_completed" => 1 << 1,
+        "route_lookup_empty" => 1 << 2,
+        "handshake_request_started" => 1 << 3,
+        "handshake_reply_received" => 1 << 4,
+        "noise_completed" => 1 << 5,
+        "udx_establishment_started" => 1 << 6,
+        "udx_establishment_completed" => 1 << 7,
+        "path_direct" => 1 << 8,
+        "path_relay" => 1 << 9,
+        "handshake_dispatch_received" => 1 << 10,
+        _ => return,
+    };
+    if std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1")
+        && COMPANION_CONNECT_DIAGNOSTICS.fetch_or(bit, Ordering::Relaxed) & bit == 0
+    {
+        eprintln!("NEOTH_COMPANION_CONNECT_PHASE={phase}");
+    }
+}
 
 /// Maximum number of remote handshake/holepunch events awaiting the local
 /// server. This is intentionally small: unauthenticated UDP input must never
@@ -1084,11 +1112,16 @@ impl HyperDhtHandle {
             table_size,
             "connect_with_nodes: routing table size before FIND_NODE"
         );
+        companion_connect_phase("route_lookup_started");
         let node_replies = self
             .dht
             .find_node(target)
             .await
             .map_err(HyperDhtError::Dht)?;
+        companion_connect_phase("route_lookup_completed");
+        if node_replies.is_empty() {
+            companion_connect_phase("route_lookup_empty");
+        }
         tracing::debug!(
             reply_count = node_replies.len(),
             "connect_with_nodes: FIND_NODE completed"
@@ -1237,6 +1270,7 @@ impl HyperDhtHandle {
         let noise_bytes = nw.send(&local_payload)?;
         let handshake_value = Router::encode_client_handshake(noise_bytes, None, None)?;
 
+        companion_connect_phase("handshake_request_started");
         let resp = self
             .dht
             .request(
@@ -1250,6 +1284,7 @@ impl HyperDhtHandle {
                 relay.port,
             )
             .await?;
+        companion_connect_phase("handshake_reply_received");
 
         if resp.error != 0 {
             return Err(HyperDhtError::HandshakeFailed(format!(
@@ -1272,6 +1307,7 @@ impl HyperDhtHandle {
 
         let remote_payload = nw.recv(&hs_result.noise)?;
         let nw_result = nw.finalize()?;
+        companion_connect_phase("noise_completed");
 
         if remote_payload.error != 0 {
             return Err(HyperDhtError::FirewallRejected);
@@ -1338,7 +1374,9 @@ impl HyperDhtHandle {
                 remote_udx: remote_payload.udx.clone(),
             };
             let shared = self.server_socket().await?;
-            return establish_stream_with_socket(&direct, runtime, shared).await;
+            let connection = establish_stream_with_socket(&direct, runtime, shared).await?;
+            companion_connect_phase("path_direct");
+            return Ok(connection);
         }
 
         // Phase 2: Holepunch rounds via PEER_HOLEPUNCH relay
@@ -1355,7 +1393,9 @@ impl HyperDhtHandle {
             )
             .await?;
         let shared = self.server_socket().await?;
-        establish_stream_with_socket(&hp_result, runtime, shared).await
+        let connection = establish_stream_with_socket(&hp_result, runtime, shared).await?;
+        companion_connect_phase("path_direct");
+        Ok(connection)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1596,6 +1636,7 @@ impl HyperDhtHandle {
 
         // 4. Connect data UDX stream through the relay, reusing the control
         //    channel's socket so the relay sees traffic from the same source address.
+        companion_connect_phase("udx_establishment_started");
         let data_stream = runtime.create_stream(data_stream_id).await?;
         data_stream
             .connect(&relay_conn.socket, remote_id, relay_addr)
@@ -1614,13 +1655,16 @@ impl HyperDhtHandle {
         )
         .await?;
 
-        Ok(PeerConnection {
+        let connection = PeerConnection {
             stream: ss,
             remote_public_key: noise_result.remote_public_key,
             remote_addr: Some(relay_addr),
             socket: relay_conn.socket,
             _relay_task: Some(mux_task),
-        })
+        };
+        companion_connect_phase("udx_establishment_completed");
+        companion_connect_phase("path_relay");
+        Ok(connection)
     }
 }
 
@@ -1669,6 +1713,7 @@ pub async fn establish_stream_with_socket(
     );
 
     tracing::debug!(local_id = result.local_stream_id, remote_id, %addr, "establishing UDX stream");
+    companion_connect_phase("udx_establishment_started");
     let socket = if let Some(s) = shared_socket {
         s
     } else {
@@ -1691,13 +1736,15 @@ pub async fn establish_stream_with_socket(
     .await?;
     tracing::debug!("SecretStream established");
 
-    Ok(PeerConnection {
+    let connection = PeerConnection {
         remote_public_key: result.remote_public_key,
         stream: ss,
         remote_addr: Some(addr),
         socket,
         _relay_task: None,
-    })
+    };
+    companion_connect_phase("udx_establishment_completed");
+    Ok(connection)
 }
 
 // ── Server-side event handler ─────────────────────────────────────────────────
@@ -2398,6 +2445,7 @@ async fn run_request_handler(
         }
         match req.command {
             PEER_HANDSHAKE => {
+                companion_connect_phase("handshake_dispatch_received");
                 tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "request: PEER_HANDSHAKE");
                 handle_peer_handshake(req, &dht, &router, &server_tx);
                 continue;

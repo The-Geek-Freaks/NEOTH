@@ -27,4 +27,12 @@ pub enum SwarmError {
     /// The bounded local-server routing table cannot admit another target.
     #[error("DHT server routing capacity exhausted")]
     ServerRoutingCapacity,
+
+    /// The selected topic is not a server topic with a publication receipt.
+    #[error("server publication receipt unavailable")]
+    ServerPublicationUnavailable,
+
+    /// The bounded initial-publication waiter set is full.
+    #[error("server publication waiter capacity exhausted")]
+    ServerPublicationWaiterCapacity,
 }

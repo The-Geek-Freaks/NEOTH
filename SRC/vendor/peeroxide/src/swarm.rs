@@ -50,6 +50,7 @@ impl CompanionDiscoveryDiagnostics {
     const CONNECT_ATTEMPT_SUCCEEDED: u8 = 1 << 1;
     const CONNECT_ATTEMPT_FAILED: u8 = 1 << 2;
     const CONNECT_ATTEMPT_TIMED_OUT: u8 = 1 << 3;
+    const RESPONDER_NOISE_STARTED: u8 = 1 << 4;
 
     fn from_environment() -> Self {
         Self {
@@ -66,6 +67,7 @@ impl CompanionDiscoveryDiagnostics {
             "connect_attempt_succeeded" => Self::CONNECT_ATTEMPT_SUCCEEDED,
             "connect_attempt_failed" => Self::CONNECT_ATTEMPT_FAILED,
             "connect_attempt_timed_out" => Self::CONNECT_ATTEMPT_TIMED_OUT,
+            "responder_noise_started" => Self::RESPONDER_NOISE_STARTED,
             _ => return,
         };
         if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
@@ -91,6 +93,30 @@ const MAX_TOPICS_PER_PEER: usize = 16;
 const PEER_RECORD_TTL: Duration = Duration::from_secs(15 * 60);
 const PEER_GC_INTERVAL: Duration = Duration::from_secs(60);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_SERVER_PUBLICATION_WAITERS: usize = 16;
+
+/// Secret-free terminal receipt for one server topic's initial publication.
+///
+/// A successful topic announce alone is insufficient to route a
+/// `PEER_HANDSHAKE`: the companion listener also requires the self-announce
+/// under `hash(server_public_key)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServerPublication {
+    /// The topic whose initial server publication completed.
+    pub topic: [u8; 32],
+    /// Whether publication under the public topic completed successfully.
+    pub topic_announce_succeeded: bool,
+    /// Whether publication under `hash(server_public_key)` completed.
+    pub key_announce_succeeded: bool,
+}
+
+impl ServerPublication {
+    /// True only when discovery and routed peer handshakes both have their
+    /// required terminal publication result.
+    pub fn both_announcements_succeeded(self) -> bool {
+        self.topic_announce_succeeded && self.key_announce_succeeded
+    }
+}
 
 // ── Retry backoff tiers (matching Node.js lib/retry-timer.js) ────────────────
 // Each tier: [base_ms, jitter1, jitter2, jitter3]
@@ -502,6 +528,23 @@ impl SwarmHandle {
         reply_rx.await.map_err(|_| SwarmError::ChannelClosed)?
     }
 
+    /// Wait for the initial publication receipt of one server topic.
+    ///
+    /// Unlike [`Self::flush`], this preserves the two announce outcomes needed
+    /// by a caller that must not publish an inbound rendezvous before its
+    /// `PEER_HANDSHAKE` route is present.
+    pub async fn server_publication(
+        &self,
+        topic: [u8; 32],
+    ) -> Result<ServerPublication, SwarmError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SwarmCommand::ServerPublication { topic, reply_tx })
+            .await
+            .map_err(|_| SwarmError::Destroyed)?;
+        reply_rx.await.map_err(|_| SwarmError::ChannelClosed)?
+    }
+
     /// Destroy the swarm, cancelling all discovery and closing connections.
     pub async fn destroy(&self) -> Result<(), SwarmError> {
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -527,6 +570,10 @@ enum SwarmCommand {
     Flush {
         reply_tx: oneshot::Sender<Result<(), SwarmError>>,
     },
+    ServerPublication {
+        topic: [u8; 32],
+        reply_tx: oneshot::Sender<Result<ServerPublication, SwarmError>>,
+    },
     Destroy {
         reply_tx: oneshot::Sender<Result<(), SwarmError>>,
     },
@@ -538,6 +585,9 @@ struct TopicState {
     is_client: bool,
     cancel_tx: Option<oneshot::Sender<()>>,
     refreshed: bool,
+    initial_server_publication: Option<ServerPublication>,
+    server_publication_waiters:
+        Vec<oneshot::Sender<Result<ServerPublication, SwarmError>>>,
 }
 
 struct ActorConfig {
@@ -992,6 +1042,24 @@ impl SwarmActor {
                 }
                 false
             }
+            SwarmCommand::ServerPublication { topic, reply_tx } => {
+                let Some(state) = self.topics.get_mut(&topic) else {
+                    let _ = reply_tx.send(Err(SwarmError::ServerPublicationUnavailable));
+                    return false;
+                };
+                if !state.is_server {
+                    let _ = reply_tx.send(Err(SwarmError::ServerPublicationUnavailable));
+                } else if let Some(publication) = state.initial_server_publication {
+                    let _ = reply_tx.send(Ok(publication));
+                } else if state.server_publication_waiters.len()
+                    >= MAX_SERVER_PUBLICATION_WAITERS
+                {
+                    let _ = reply_tx.send(Err(SwarmError::ServerPublicationWaiterCapacity));
+                } else {
+                    state.server_publication_waiters.push(reply_tx);
+                }
+                false
+            }
             SwarmCommand::Destroy { reply_tx } => {
                 self.close_server_admission();
                 let _ = reply_tx.send(Ok(()));
@@ -1040,6 +1108,8 @@ impl SwarmActor {
                 is_client: client,
                 cancel_tx: Some(cancel_tx),
                 refreshed: false,
+                initial_server_publication: None,
+                server_publication_waiters: Vec::new(),
             },
         );
         Ok(())
@@ -1205,6 +1275,41 @@ impl SwarmActor {
                 }
                 self.check_flush_waiters();
             }
+            DiscoveryEvent::ServerPublicationComplete {
+                topic,
+                topic_announce_succeeded,
+                key_announce_succeeded,
+            } => {
+                let Some(state) = self.topics.get_mut(&topic) else {
+                    return;
+                };
+                Self::record_initial_server_publication(
+                    state,
+                    topic,
+                    topic_announce_succeeded,
+                    key_announce_succeeded,
+                );
+            }
+        }
+    }
+
+    fn record_initial_server_publication(
+        state: &mut TopicState,
+        topic: [u8; 32],
+        topic_announce_succeeded: bool,
+        key_announce_succeeded: bool,
+    ) {
+        if !state.is_server || state.initial_server_publication.is_some() {
+            return;
+        }
+        let publication = ServerPublication {
+            topic,
+            topic_announce_succeeded,
+            key_announce_succeeded,
+        };
+        state.initial_server_publication = Some(publication);
+        for waiter in state.server_publication_waiters.drain(..) {
+            let _ = waiter.send(Ok(publication));
         }
     }
 
@@ -1403,6 +1508,7 @@ impl SwarmActor {
         from: Ipv4Peer,
         reply_tx: ServerReply,
     ) {
+        self.discovery_diagnostics.phase("responder_noise_started");
         let noise_kp = NoiseKeypair {
             public_key: self.key_pair.public_key,
             secret_key: self.key_pair.secret_key,
@@ -1774,6 +1880,60 @@ async fn create_server_relay_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_publication_requires_both_announcement_successes() {
+        let topic = [0x31; 32];
+        assert!(ServerPublication {
+            topic,
+            topic_announce_succeeded: true,
+            key_announce_succeeded: true,
+        }
+        .both_announcements_succeeded());
+
+        assert!(!ServerPublication {
+            topic,
+            topic_announce_succeeded: true,
+            key_announce_succeeded: false,
+        }
+        .both_announcements_succeeded());
+
+        assert!(!ServerPublication {
+            topic,
+            topic_announce_succeeded: false,
+            key_announce_succeeded: true,
+        }
+        .both_announcements_succeeded());
+    }
+
+    #[tokio::test]
+    async fn initial_server_publication_keeps_split_outcome_after_waiter_cancellation() {
+        let topic = [0x41; 32];
+        let (cancelled_tx, cancelled_rx) = oneshot::channel();
+        drop(cancelled_rx);
+        let (receipt_tx, receipt_rx) = oneshot::channel();
+        let mut state = TopicState {
+            is_server: true,
+            is_client: false,
+            cancel_tx: None,
+            refreshed: false,
+            initial_server_publication: None,
+            server_publication_waiters: vec![cancelled_tx, receipt_tx],
+        };
+
+        SwarmActor::record_initial_server_publication(&mut state, topic, true, false);
+
+        let receipt = receipt_rx
+            .await
+            .expect("live server-publication waiter receives the terminal receipt")
+            .expect("publication receipt itself is typed, not a generic refresh error");
+        assert_eq!(receipt.topic, topic);
+        assert!(receipt.topic_announce_succeeded);
+        assert!(!receipt.key_announce_succeeded);
+        assert!(!receipt.both_announcements_succeeded());
+        assert_eq!(state.initial_server_publication, Some(receipt));
+        assert!(state.server_publication_waiters.is_empty());
+    }
 
     #[test]
     fn retry_delay_first_attempt_unproven() {

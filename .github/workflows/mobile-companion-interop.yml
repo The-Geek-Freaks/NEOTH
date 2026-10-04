@@ -41,6 +41,36 @@ jobs:
       - name: Build exact host debug CLI and cdylib
         timeout-minutes: 25
         run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
+      - name: Run exact locked server publication regressions
+        timeout-minutes: 10
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/companion-publication-regressions"
+          mkdir -p "$proof_dir"
+          ordinal=0
+          for identity in \
+            swarm::tests::server_publication_requires_both_announcement_successes \
+            swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation
+          do
+            ordinal=$((ordinal + 1))
+            cargo test -p peeroxide --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
+          done
+          test "$ordinal" -eq 2
+      - name: Run exact no-cluster companion refusal regression
+        timeout-minutes: 15
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p neoth --no-default-features --lib --locked daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-no-cluster-regression.log"
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-no-cluster-regression.log"
       - name: Run exact companion RPC and shutdown regressions
         timeout-minutes: 15
         working-directory: SRC

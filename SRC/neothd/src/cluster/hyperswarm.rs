@@ -267,12 +267,13 @@ impl PublicRendezvous {
         self.connections.recv().await
     }
 
-    /// Wait for the joined topic's initial discovery refresh to terminate.
+    /// Wait for the joined server topic's initial route publication receipt.
     ///
-    /// This proves only that Peeroxide completed its first announce/lookup
-    /// operation. It does not claim successful public advertisement or that a
-    /// later client will observe the record. The caller retains this rendezvous
-    /// and must use `shutdown_checked` on every non-ready terminal path.
+    /// Pairing requires both the topic announcement and the separate
+    /// `hash(server_public_key)` announcement used to route `PEER_HANDSHAKE`.
+    /// It does not claim a later client will observe either record. The caller
+    /// retains this rendezvous and must use `shutdown_checked` on every
+    /// non-ready terminal path.
     pub(crate) async fn wait_for_initial_discovery(
         &self,
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
@@ -282,13 +283,28 @@ impl PublicRendezvous {
             .peer_handle
             .as_ref()
             .context("public rendezvous lost its peeroxide handle before discovery readiness")?;
-        match wait_for_bootstrap_or_stop(handle.flush(), shutdown, deadline).await {
-            BootstrapWait::Ready(Ok(())) => Ok(()),
+        match wait_for_bootstrap_or_stop(
+            handle.server_publication(self.topic),
+            shutdown,
+            deadline,
+        )
+        .await
+        {
+            BootstrapWait::Ready(Ok(publication))
+                if publication.both_announcements_succeeded() =>
+            {
+                Ok(())
+            }
+            BootstrapWait::Ready(Ok(_)) => {
+                anyhow::bail!(
+                    "public rendezvous initial publication did not establish both required routes"
+                )
+            }
             BootstrapWait::Ready(Err(error)) => {
-                Err(error).context("public rendezvous initial discovery refresh")
+                Err(error).context("public rendezvous initial publication receipt")
             }
             BootstrapWait::CancelledOrExpired => {
-                anyhow::bail!("public rendezvous cancelled or expired during initial discovery")
+                anyhow::bail!("public rendezvous cancelled or expired during initial publication")
             }
         }
     }

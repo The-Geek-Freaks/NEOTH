@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "w2367-hosted-format-imported-validation-pending",
+  "status": "w2369-reviewed-source-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 386575,
-    "sha256": "9EDC7FA2819250D9FAF184CE2D7E66C2498D01CDD5D5411A68D4BA313E1C5664"
+    "bytes": 387284,
+    "sha256": "9A9CB4B205FA5A3EFC0F32A76FA5FA07BE4C78E01F2A43B0DAB48C9C9E4BBC41"
   },
-  "sourceInputs": 2114,
+  "sourceInputs": 2118,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598",
+      "sourceSha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
       "junitClass": "neoth"
     },
     {
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
@@ -16525,31 +16525,31 @@
     {
       "test": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127",
+      "sourceSha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
       "junitClass": "neoth"
     }
   ],
@@ -74822,6 +74822,112 @@
       }
     ],
     "note": "Original artifact11316604983 from Preflight37239906893 at35d1fee82e5c6381b7edb93cd8365d1391826dd1 API ZIP digest and entry digests verified. Root read full three-path patch: whitespace, trailing argument comma and equivalent match-arm braces only. No local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2369RequiredFeatureAndVendorTests": [
+    {
+      "crate": "peeroxide",
+      "features": "workspace locked dependency graph",
+      "identity": "swarm::tests::server_publication_requires_both_announcement_successes",
+      "sourcePath": "SRC/vendor/peeroxide/src/swarm.rs"
+    },
+    {
+      "crate": "peeroxide",
+      "features": "workspace locked dependency graph",
+      "identity": "swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation",
+      "sourcePath": "SRC/vendor/peeroxide/src/swarm.rs"
+    },
+    {
+      "crate": "neoth",
+      "features": "--no-default-features",
+      "identity": "daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs"
+    }
+  ],
+  "wave2369PublicationFeatureArtifacts": {
+    "base": "9cd3290c070ae6508701d466019a7e811a1f9ef6",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 27407,
+        "sha256": "C7F8F0DD9DD966FC8FD2D27B85E0FA57D0E9D560F0250339118693868F0D777B",
+        "blob": "6ca8468ade8925b335242353678d3d0a683cd65f"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 6257,
+        "sha256": "5537132B632E05E883FC4AEAF95AF2CE2102D4F262D738D5A234FFF14AE1A4ED",
+        "blob": "2f65f738d672f6063bd8539675eefa1c14d06275"
+      },
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "bytes": 12847,
+        "sha256": "9EF9C0CF1A254DE3B36EDEDEBD3E090F9DCEA849DB0AE7EE5838890D022EE5D0",
+        "blob": "4b4199eee043908ddd23ae0a21b4a6304b416cce"
+      },
+      {
+        "path": "docs/verification/gold-wave2369-publication-connect-feature-artifacts.json",
+        "bytes": 3322,
+        "sha256": "64778C872706AFDC77728E486D31D67DD8434736A31A9D8F7E2ED227C6E1D3DE",
+        "blob": "c649a292f656b83992755c9b2894cc2a1ba7d071"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2396942,
+        "sha256": "0A3130D1213BED6D0866F686E26A0598FB554A6E85541EE3CBF391015A41B6A1",
+        "blob": "bb7aab0bef1159e0eff492d05fbfd9187198ef2e"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 168257,
+        "sha256": "EA1DBB6B0423AE70E541379F1CF99DDD4AD5A596302CF01CA3BF82AF929710DF",
+        "blob": "8525ca06665cf250142a15621844aaa0600ad4cb"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+        "bytes": 3941,
+        "sha256": "A51ADCBCBC8E99C7D24E3E19AB3DE7B592DEE1EB807393C4023C008579F8EB76",
+        "blob": "314cd194973d3e71799eb38ab745691e0e20c3c4"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 74381,
+        "sha256": "CA67C206C0D26B4314AA78CC17B8C88E9AD84621D71864315622A46101AB1C1C",
+        "blob": "dc2c0b190b6e1923aef5f3d5354615ab2fda774b"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 127413,
+        "sha256": "75E73E8EF2B98BA77E670667065AF03DD2A6E5367D83D8EE7E356AA3F31D0280",
+        "blob": "03ce949b673888c54a9d670ca42418ce3672f2a0"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/error.rs",
+        "bytes": 1202,
+        "sha256": "9DB35E36EF543E5B6989957BEE8A98DB9B9A182430C762251DE731D40F7A792E",
+        "blob": "ed67fee4e20b1dd718c04b6181707ac5dd7b8120"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/lib.rs",
+        "bytes": 3313,
+        "sha256": "A397626CE2AAFF929D64BEAD676313B131A20EFC7853461D925AF93D094E9CE0",
+        "blob": "80bd4d4448af6785123f56eed4aa5de1f7cd6204"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
+        "bytes": 8498,
+        "sha256": "B5E6089654D9122CBF17120525120325F6D5F1F39895E2183E4AC7D025623B05",
+        "blob": "fcc7d6e1148100248de01526693c0db755f3281c"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 84189,
+        "sha256": "A3D213B4B2CE02E78E1EEDF7E5632DE47860C403DBB586924DCC0217CE8D869D",
+        "blob": "e8c68732c8aa238bd8313d9136539b8b93e231a1"
+      }
+    ],
+    "note": "Typed two-announcement publication, secret-free real connect stage markers, no-cluster API parity and scoped hidden artifact upload repair; 2754 portable+2vendor+1no-cluster dedicated tests; whole mobile artifact admission remains open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

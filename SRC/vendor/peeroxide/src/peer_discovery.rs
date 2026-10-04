@@ -49,6 +49,13 @@ pub(crate) enum DiscoveryEvent {
     RefreshComplete {
         topic: [u8; 32],
     },
+    /// Terminal outcomes of the two server publications required to accept a
+    /// routed peer handshake. This carries no key, address, or DHT error.
+    ServerPublicationComplete {
+        topic: [u8; 32],
+        topic_announce_succeeded: bool,
+        key_announce_succeeded: bool,
+    },
 }
 
 pub(crate) struct PeerDiscoveryConfig {
@@ -117,11 +124,34 @@ async fn do_refresh(
             }
         };
 
+        companion_discovery_phase(if topic_announce {
+            "server_topic_announce_succeeded"
+        } else {
+            "server_topic_announce_failed"
+        });
+        companion_discovery_phase(if key_announce {
+            "server_key_announce_succeeded"
+        } else {
+            "server_key_announce_failed"
+        });
+
         companion_discovery_phase(if topic_announce && key_announce {
             "announce_success"
         } else {
             "announce_failure"
         });
+
+        // Keep generic refresh completion separate from publication truth:
+        // callers that need an inbound PEER_HANDSHAKE route must observe both
+        // terminal outcomes, while ordinary flush users keep their established
+        // "first refresh completed" semantics below.
+        let _ = event_tx
+            .send(DiscoveryEvent::ServerPublicationComplete {
+                topic: config.topic,
+                topic_announce_succeeded: topic_announce,
+                key_announce_succeeded: key_announce,
+            })
+            .await;
     }
 
     if config.is_client {
