@@ -2,6 +2,15 @@ Pod::Spec.new do |spec|
   spec.name = 'NEOTHCompanionBridge'
   spec.version = '0.1.0'
   spec.summary = 'Reviewed native NEOTH companion bridge.'
+  spec.homepage = 'https://github.com/The-Geek-Freaks/NEOTH'
+  spec.authors = { 'The Geek Freaks' => 'admin@thegeekfreaks.de' }
+  spec.license = { :type => 'MIT OR Apache-2.0' }
+  # This pod is consumed locally with `:path => Frameworks`; the exact
+  # repository commit is provenance metadata, not an archive download or tag.
+  spec.source = {
+    :git => 'https://github.com/The-Geek-Freaks/NEOTH.git',
+    :commit => '97f7c17d01be3376d341fe3d862b65d7e528f707',
+  }
   spec.platform = :ios, '13.0'
   spec.vendored_frameworks = 'NEOTHCompanionBridge.xcframework'
   # dart:ffi resolves these static Rust exports with DynamicLibrary.process().

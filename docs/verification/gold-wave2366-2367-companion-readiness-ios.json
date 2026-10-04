@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2366-2367.companion-readiness-ios.v1",
+  "base": "97f7c17d01be3376d341fe3d862b65d7e528f707",
+  "status": "reviewed_source_hosted_pending",
+  "priorNative": {
+    "run": 37237999013,
+    "producer": "97f7c17d01be3376d341fe3d862b65d7e528f707",
+    "conclusion": "failure",
+    "bridgeTestsEachHost": 14,
+    "flutterAnalysis": "No issues found",
+    "flutterTestsPassed": 24,
+    "androidReleaseBuildLogTerminals": [
+      "app-armeabi-v7a-release.apk",
+      "app-arm64-v8a-release.apk",
+      "app-x86_64-release.apk"
+    ],
+    "apkArtifactCustody": false,
+    "failure": "CocoaPods required authors/homepage/source missing; license metadata warnings",
+    "partialChecksSha256": "752B86BFFD9D2E29E1588B1267B60D3EAD3E4EB3497CB5137BF5F10107E5F7EA"
+  },
+  "priorInterop": {
+    "run": 37236484723,
+    "producer": "bb0ee692328d5a79a4d3e83ee49fa5ef69ac6640",
+    "conclusion": "failure",
+    "exactRegressionsPassed": 5,
+    "pairDeadlineSeconds": 140,
+    "daemonAnnounceSuccess": true,
+    "bridgeLookup": "lookup_none",
+    "daemonExit": 0,
+    "walDrained": true,
+    "partialChecksSha256": "03CFBB449E9E2FB4AA4D66AE9059373279BC04D80A975379ED20E9EE2F3FBAAA",
+    "causality": "Source permits QR and reconnect descriptor publication before initial discovery completes; exact announcement/lookup chronology was not recorded."
+  },
+  "repairs": {
+    "readiness": "Wait for typed initial discovery completion before publishing pair invitation or active reconnect descriptor. Flush alone does not prove successful announcement or client observation.",
+    "ownership": "Retain exact pair listener owner before readiness; cancel and join it on readiness, cancellation, expiry and response delivery errors.",
+    "deadline": "Preserve 5s pre-admission/connect/write; authenticated mint uses a single 15s server lifecycle and 20s client exchange. Original 300s invite TTL is reduced to remaining whole seconds.",
+    "activeListener": "Bootstrap, join and initial discovery share 15s; new enrollment readiness failure follows durable revoke. Restore fails before global Ready without deleting an existing grant.",
+    "ios": "Add required podspec homepage, authors, source and license metadata; preserve local path consumption and eight FFI symbol roots.",
+    "artifactCustody": "Upload completed mobile outputs and logs even when a later stage fails; failure artifacts never satisfy whole-run admission."
+  },
+  "portableRegistrations": 2754,
+  "focusedCases": 528,
+  "interopExactCoreTests": 8,
+  "interopExactBridgeTests": 1,
+  "localExecutableValidationRan": false,
+  "hostedValidation": "pending on new producer",
+  "iosAppAccepted": false,
+  "interopAccepted": false,
+  "physicalDeviceAccepted": false,
+  "signedReleaseAccepted": false,
+  "staticReview": {
+    "revision": "R6",
+    "sha256": "99EFE8DB0C8C6A998E2CF90A0E936A483D090C9AEBBD98453F47F893610214F9",
+    "candidateManifestSha256": "6EE88CAF43C79CBCDECA8DE7F766BE549F8F612A8F1A4A2F6FBBF04E81C1CBC8",
+    "sourceFiles": [
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "base": "8F30D9AB69B588099CDA81F1CB45DB5FE661CF1F0ABB036B7586EAC8E73E7755",
+        "candidate": "BC900F1A9B4BA2EE2EAE22A8BA5CB451EF788120DAD6848EDCFE56A6694EC598"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "base": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
+        "candidate": "59C8A03F1DF15F861222325F66A982C1C7E7D37ABC2F3407E8CF2832E9FDCF02"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "base": "1D396ABCF1186E41CE1E8E0CC5CF398B88192935A4808D1C205FD4147FF647D4",
+        "candidate": "C20DAD498F7202A1F98346A8E44B71AF66ED308404C64B937BED99C99DB1E9E8"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+        "base": "24E0FC7D6028064BED1FE4575A4109A220C84ADC181CDF3031E22B90B92BD60D",
+        "candidate": "0FDF66A2730E2EF2FC63C59B6C01F2B9094B64A324B085314B81554ACE2F890D"
+      }
+    ]
+  }
+}

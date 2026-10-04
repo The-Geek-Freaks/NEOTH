@@ -267,6 +267,31 @@ impl PublicRendezvous {
         self.connections.recv().await
     }
 
+    /// Wait for the joined topic's initial discovery refresh to terminate.
+    ///
+    /// This proves only that Peeroxide completed its first announce/lookup
+    /// operation. It does not claim successful public advertisement or that a
+    /// later client will observe the record. The caller retains this rendezvous
+    /// and must use `shutdown_checked` on every non-ready terminal path.
+    pub(crate) async fn wait_for_initial_discovery(
+        &self,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        let handle = self
+            .peer_handle
+            .as_ref()
+            .context("public rendezvous lost its peeroxide handle before discovery readiness")?;
+        match wait_for_bootstrap_or_stop(handle.flush(), shutdown, deadline).await {
+            BootstrapWait::Ready(Ok(())) => Ok(()),
+            BootstrapWait::Ready(Err(error)) => {
+                Err(error).context("public rendezvous initial discovery refresh")
+            }
+            BootstrapWait::CancelledOrExpired => {
+                anyhow::bail!("public rendezvous cancelled or expired during initial discovery")
+            }
+        }
+    }
     /// Stop advertising the topic, then release the control handle while a
     /// caller consumes its authenticated Noise stream. No further dialing
     /// authority remains once the invite reaches a terminal transition.

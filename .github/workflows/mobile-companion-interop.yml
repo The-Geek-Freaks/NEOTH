@@ -56,13 +56,17 @@ jobs:
             daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body \
             daemon::audit_rpc::client::tests::rpc_response_requires_one_exact_content_length \
             daemon::audit_rpc::client::tests::rpc_response_rejects_malformed_status_and_headers \
-            daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly
+            daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly \
+            daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join \
+            daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes \
+            daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication \
+            daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 4
+          test "$ordinal" -eq 8
       - name: Run exact bridge public result regression
         timeout-minutes: 5
         env:

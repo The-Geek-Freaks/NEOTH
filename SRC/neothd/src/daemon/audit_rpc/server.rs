@@ -127,6 +127,10 @@ const MAX_BODY_BYTES: usize = super::DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES;
 /// Per-connection wall-clock budget. A client that opens a connection and then
 /// stalls (slowloris) is dropped after this — bounds resource pinning.
 const CONNECTION_TIMEOUT_SECS: u64 = 5;
+/// Pair minting is admitted only after same-user transport, bearer and request
+/// validation. Its daemon-owned initial-discovery lifecycle is bounded here;
+/// the ordinary pre-admission five-second slow-client budget stays unchanged.
+const COMPANION_MINT_READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// Cap on concurrent in-flight connections. A local process can't exhaust the
 /// daemon's FD table / task pool by holding connections open — excess
 /// connections are dropped immediately (the one-shot falls back to its
@@ -829,6 +833,14 @@ async fn run_accept_loop(
                                 tracing::warn!(%error, "audit-RPC daemon chat operation failed");
                             }
                         }
+                        Ok(Ok(ConnectionOutcome::CompanionMintAdmitted {
+                            stream,
+                            runtime,
+                            requested_scope,
+                        })) => {
+                            let _permit = permit;
+                            serve_companion_pair_mint(stream, runtime, requested_scope).await?;
+                        }
                         Ok(Err(error)) => {
                             tracing::warn!(%error, "audit-RPC connection failed");
                         }
@@ -1068,6 +1080,11 @@ enum ConnectionOutcome {
     ChatAdmitted {
         stream: super::transport::AuditStream,
         request: super::DaemonPlainChatRequest,
+    },
+    CompanionMintAdmitted {
+        stream: super::transport::AuditStream,
+        runtime: Arc<crate::daemon::companion_runtime::CompanionRuntime>,
+        requested_scope: crate::daemon::companion_protocol::CompanionScope,
     },
 }
 
@@ -2193,6 +2210,38 @@ async fn handle_companion_v3_route(
     path: &str,
     body: &[u8],
 ) -> Result<ConnectionOutcome> {
+    if path == "/companion/v3/pair/mint" {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct MintRequest {
+            requested_scope: crate::daemon::companion_protocol::CompanionScope,
+        }
+        let request = match serde_json::from_slice::<MintRequest>(body)
+            .context("decode companion v3 pairing scope")
+        {
+            Ok(request) => request,
+            Err(error) => {
+                let _ = stream
+                    .write_all(http_response(422, "companion v3 request refused").as_bytes())
+                    .await;
+                let _ = stream.shutdown().await;
+                tracing::debug!(%error, "companion v3 RPC refused");
+                return Ok(ConnectionOutcome::Complete);
+            }
+        };
+        let Some(runtime) = state.companion_runtime.as_ref().cloned() else {
+            let _ = stream
+                .write_all(http_response(503, "companion v3 unavailable").as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(ConnectionOutcome::Complete);
+        };
+        return Ok(ConnectionOutcome::CompanionMintAdmitted {
+            stream,
+            runtime,
+            requested_scope: request.requested_scope,
+        });
+    }
     let Some(runtime) = state.companion_runtime.as_ref().cloned() else {
         let _ = stream
             .write_all(http_response(503, "companion v3 unavailable").as_bytes())
@@ -2201,22 +2250,6 @@ async fn handle_companion_v3_route(
         return Ok(ConnectionOutcome::Complete);
     };
     let response = match path {
-        "/companion/v3/pair/mint" => {
-            #[derive(serde::Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct MintRequest {
-                requested_scope: crate::daemon::companion_protocol::CompanionScope,
-            }
-            match serde_json::from_slice::<MintRequest>(body)
-                .context("decode companion v3 pairing scope")
-            {
-                Ok(request) => runtime
-                    .mint_pair_invite(request.requested_scope)
-                    .await
-                    .map(|value| serde_json::to_string(&value)),
-                Err(error) => Err(error),
-            }
-        }
         "/companion/v3/devices" if body == b"{}" => runtime
             .list_devices()
             .map(|value| serde_json::to_string(&value)),
@@ -2261,6 +2294,168 @@ async fn handle_companion_v3_route(
     }
     let _ = stream.shutdown().await;
     Ok(ConnectionOutcome::Complete)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompanionMintPeerMonitor {
+    Stopped,
+    PeerClosed,
+    UnexpectedInput,
+    ReadFailed,
+}
+
+async fn monitor_companion_mint_peer(
+    mut reader: tokio::io::ReadHalf<super::transport::AuditStream>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    cancellation: tokio::sync::watch::Sender<bool>,
+) -> CompanionMintPeerMonitor {
+    if *stop.borrow() {
+        return CompanionMintPeerMonitor::Stopped;
+    }
+    let mut probe = [0u8; 1];
+    tokio::select! {
+        _ = stop.changed() => CompanionMintPeerMonitor::Stopped,
+        read = reader.read(&mut probe) => {
+            cancellation.send_replace(true);
+            match read {
+                Ok(0) => CompanionMintPeerMonitor::PeerClosed,
+                Ok(_) => CompanionMintPeerMonitor::UnexpectedInput,
+                Err(_) => CompanionMintPeerMonitor::ReadFailed,
+            }
+        }
+    }
+}
+
+async fn serve_companion_pair_mint(
+    stream: super::transport::AuditStream,
+    runtime: Arc<crate::daemon::companion_runtime::CompanionRuntime>,
+    requested_scope: crate::daemon::companion_protocol::CompanionScope,
+) -> Result<()> {
+    let lifecycle_deadline = tokio::time::Instant::now() + COMPANION_MINT_READINESS_TIMEOUT;
+    let readiness_budget = remaining_companion_mint_budget(lifecycle_deadline)?;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let (peer_cancel_tx, mut peer_cancel_rx) = tokio::sync::watch::channel(false);
+    let (monitor_stop_tx, monitor_stop_rx) = tokio::sync::watch::channel(false);
+    let monitor = tokio::spawn(monitor_companion_mint_peer(
+        reader,
+        monitor_stop_rx,
+        peer_cancel_tx,
+    ));
+
+    let prepared = runtime
+        .prepare_pair_invite(requested_scope, readiness_budget, &mut peer_cancel_rx)
+        .await;
+
+    monitor_stop_tx.send_replace(true);
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let _ = monitor.await;
+            let _ = write_companion_mint_terminal(
+                &mut writer,
+                lifecycle_deadline,
+                http_response(503, "companion pair mint unavailable"),
+            )
+            .await;
+            return Err(error).context("companion pair mint readiness failed");
+        }
+    };
+
+    let monitor_terminal = match monitor.await {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            return Err(error).context("companion pair mint peer monitor join failed");
+        }
+    };
+    if monitor_terminal != CompanionMintPeerMonitor::Stopped {
+        runtime.cancel_prepared_pair_invite(prepared).await?;
+        let _ = close_companion_mint_writer(&mut writer, lifecycle_deadline).await;
+        return Ok(());
+    }
+
+    let body = match serde_json::to_string(prepared.invite()) {
+        Ok(body) => body,
+        Err(error) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            return Err(error).context("encode ready companion pair invitation");
+        }
+    };
+    let response = http_response_json(200, &body);
+    let write_budget = match remaining_companion_mint_budget(lifecycle_deadline) {
+        Ok(remaining) => remaining,
+        Err(error) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            return Err(error);
+        }
+    };
+    let write_result = match tokio::time::timeout(write_budget, writer.write_all(response.as_bytes())).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            anyhow::bail!("companion pair mint response write exceeded lifecycle deadline")
+        }
+    };
+    if let Err(error) = write_result {
+        runtime.cancel_prepared_pair_invite(prepared).await?;
+        return Err(error).context("write ready companion pair invitation");
+    }
+    let shutdown_budget = match remaining_companion_mint_budget(lifecycle_deadline) {
+        Ok(remaining) => remaining,
+        Err(error) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            return Err(error);
+        }
+    };
+    let shutdown_result = match tokio::time::timeout(shutdown_budget, writer.shutdown()).await {
+        Ok(result) => result,
+        Err(_) => {
+            runtime.cancel_prepared_pair_invite(prepared).await?;
+            anyhow::bail!("companion pair mint response close exceeded lifecycle deadline")
+        }
+    };
+    if let Err(error) = shutdown_result {
+        runtime.cancel_prepared_pair_invite(prepared).await?;
+        return Err(error).context("close ready companion pair invitation response");
+    }
+    let _published = runtime.publish_prepared_pair_invite(prepared);
+    Ok(())
+}
+
+fn remaining_companion_mint_budget(deadline: tokio::time::Instant) -> Result<std::time::Duration> {
+    let remaining = deadline
+        .checked_duration_since(tokio::time::Instant::now())
+        .context("companion pair mint lifecycle deadline expired")?;
+    anyhow::ensure!(
+        !remaining.is_zero(),
+        "companion pair mint lifecycle deadline expired"
+    );
+    Ok(remaining)
+}
+
+async fn write_companion_mint_terminal(
+    writer: &mut tokio::io::WriteHalf<super::transport::AuditStream>,
+    deadline: tokio::time::Instant,
+    response: String,
+) -> Result<()> {
+    let write_budget = remaining_companion_mint_budget(deadline)?;
+    match tokio::time::timeout(write_budget, writer.write_all(response.as_bytes())).await {
+        Ok(Ok(())) => close_companion_mint_writer(writer, deadline).await,
+        Ok(Err(error)) => Err(error).context("write companion pair mint terminal response"),
+        Err(_) => anyhow::bail!("companion pair mint terminal response write exceeded lifecycle deadline"),
+    }
+}
+
+async fn close_companion_mint_writer(
+    writer: &mut tokio::io::WriteHalf<super::transport::AuditStream>,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    let close_budget = remaining_companion_mint_budget(deadline)?;
+    match tokio::time::timeout(close_budget, writer.shutdown()).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error).context("close companion pair mint response"),
+        Err(_) => anyhow::bail!("companion pair mint response close exceeded lifecycle deadline"),
+    }
 }
 async fn handle_webchat_handoff_mint(
     mut stream: super::transport::AuditStream,

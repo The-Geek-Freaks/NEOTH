@@ -18,7 +18,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock, watch};
+use tokio::sync::{Mutex, RwLock, oneshot, watch};
 use uuid::Uuid;
 
 use crate::{
@@ -48,7 +48,32 @@ const SERVER_KEY_FILE: &str = "companion-v3-server-noise.json";
 const SERVER_KEY_LOCK: &str = "companion-v3-server-noise.lock";
 const INVITE_TTL_SECS: u64 = 300;
 const CONNECTION_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+const ACTIVE_LISTENER_READINESS_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_DEVICE_LISTENERS: usize = 128;
+
+type PairListenerReadiness = std::result::Result<(), String>;
+
+enum PairReadinessWait {
+    Discovery(Result<()>),
+    CallerCancelled,
+}
+
+async fn wait_for_pair_readiness_or_caller_drop(
+    readiness: impl std::future::Future<Output = Result<()>>,
+    sender: &mut oneshot::Sender<PairListenerReadiness>,
+) -> PairReadinessWait {
+    tokio::select! {
+        result = readiness => PairReadinessWait::Discovery(result),
+        _ = sender.closed() => PairReadinessWait::CallerCancelled,
+    }
+}
+
+fn report_pair_readiness(
+    sender: &mut Option<oneshot::Sender<PairListenerReadiness>>,
+    result: PairListenerReadiness,
+) -> bool {
+    sender.take().is_none_or(|sender| sender.send(result).is_ok())
+}
 
 /// A status reply is not a detached timeout future.  This owner retains the
 /// lease, connection and rendezvous actor until it can classify both the
@@ -92,6 +117,11 @@ struct StatusDelivery {
 struct DeviceListenerOwner {
     stop_tx: watch::Sender<bool>,
     task: Option<tokio::task::JoinHandle<Result<()>>>,
+}
+
+struct PairListenerOwner {
+    stop_tx: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<Result<()>>,
 }
 
 impl StatusDelivery {
@@ -216,6 +246,26 @@ pub(crate) struct CompanionV3Invite {
     pub(crate) requested_scope: CompanionScope,
 }
 
+/// A ready listener is held privately until the authenticated RPC owner has
+/// written its QR response.  Dropping this value does not detach the listener:
+/// the owner must either publish the response or call
+/// `cancel_prepared_pair_invite` and await the exact task terminal.
+pub(crate) struct PreparedCompanionV3Invite {
+    invite: CompanionV3Invite,
+    pair_task_key: String,
+}
+
+impl PreparedCompanionV3Invite {
+    pub(crate) fn invite(&self) -> &CompanionV3Invite {
+        &self.invite
+    }
+}
+
+struct ReadyPairListener {
+    remaining_ttl_secs: u64,
+    pair_task_key: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CompanionV3DeviceView {
@@ -236,7 +286,7 @@ pub(crate) struct CompanionRuntime {
     listener_generation: u64,
     readiness: Arc<RwLock<CompanionReadiness>>,
     shutdown_tx: watch::Sender<bool>,
-    pair_tasks: Arc<Mutex<BTreeMap<String, tokio::task::JoinHandle<Result<()>>>>>,
+    pair_tasks: Arc<Mutex<BTreeMap<String, PairListenerOwner>>>,
     listener_tasks: Arc<Mutex<BTreeMap<Uuid, DeviceListenerOwner>>>,
 }
 
@@ -296,8 +346,9 @@ impl CompanionRuntime {
         // the final WAL sender is released.
         let pairs = std::mem::take(&mut *self.pair_tasks.lock().await);
         let mut first_error = None;
-        for (_, task) in pairs {
-            if let Err(error) = join_companion_task(task, "pair listener").await {
+        for (_, owner) in pairs {
+            owner.stop_tx.send_replace(true);
+            if let Err(error) = join_companion_task(owner.task, "pair listener").await {
                 first_error.get_or_insert(error);
             }
         }
@@ -332,25 +383,71 @@ impl CompanionRuntime {
         self: &Arc<Self>,
         requested_scope: CompanionScope,
     ) -> Result<CompanionV3Invite> {
+        let (_cancel_tx, mut cancellation) = watch::channel(false);
+        let prepared = self
+            .prepare_pair_invite(
+                requested_scope,
+                Duration::from_secs(INVITE_TTL_SECS),
+                &mut cancellation,
+            )
+            .await?;
+        Ok(self.publish_prepared_pair_invite(prepared))
+    }
+
+    pub(crate) async fn prepare_pair_invite(
+        self: &Arc<Self>,
+        requested_scope: CompanionScope,
+        readiness_budget: Duration,
+        cancellation: &mut watch::Receiver<bool>,
+    ) -> Result<PreparedCompanionV3Invite> {
         let mut topic = [0u8; 32];
         let mut psk = [0u8; 16];
         getrandom::getrandom(&mut topic).context("mint companion v3 topic")?;
         getrandom::getrandom(&mut psk).context("mint companion v3 psk")?;
-        self.spawn_pair_listener(topic, psk, requested_scope)
+        let minted_at = tokio::time::Instant::now();
+        let invite_deadline = minted_at + Duration::from_secs(INVITE_TTL_SECS);
+        let readiness_deadline =
+            minted_at + readiness_budget.min(Duration::from_secs(INVITE_TTL_SECS));
+        let ready_listener = self
+            .spawn_pair_listener(
+                topic,
+                psk,
+                requested_scope,
+                invite_deadline,
+                readiness_deadline,
+                cancellation,
+            )
             .await?;
         let url = build_pair_url(
             topic,
             psk,
             self.daemon_key.public_key,
-            INVITE_TTL_SECS,
+            ready_listener.remaining_ttl_secs,
             requested_scope,
         );
-        Ok(CompanionV3Invite {
-            schema_version: COMPANION_V3_SCHEMA_VERSION,
-            pair_url: url,
-            expires_in_secs: INVITE_TTL_SECS,
-            requested_scope,
+        Ok(PreparedCompanionV3Invite {
+            invite: CompanionV3Invite {
+                schema_version: COMPANION_V3_SCHEMA_VERSION,
+                pair_url: url,
+                expires_in_secs: ready_listener.remaining_ttl_secs,
+                requested_scope,
+            },
+            pair_task_key: ready_listener.pair_task_key,
         })
+    }
+
+    pub(crate) async fn cancel_prepared_pair_invite(
+        &self,
+        prepared: PreparedCompanionV3Invite,
+    ) -> Result<()> {
+        self.join_failed_pair_listener(&prepared.pair_task_key).await
+    }
+
+    pub(crate) fn publish_prepared_pair_invite(
+        &self,
+        prepared: PreparedCompanionV3Invite,
+    ) -> CompanionV3Invite {
+        prepared.invite
     }
 
     async fn spawn_pair_listener(
@@ -358,24 +455,97 @@ impl CompanionRuntime {
         topic: [u8; 32],
         psk: [u8; 16],
         requested_scope: CompanionScope,
-    ) -> Result<()> {
+        invite_deadline: tokio::time::Instant,
+        readiness_deadline: tokio::time::Instant,
+        cancellation: &mut watch::Receiver<bool>,
+    ) -> Result<ReadyPairListener> {
         self.reap_finished_pair_tasks().await?;
         let key = hex::encode(topic);
-        let mut tasks = self.pair_tasks.lock().await;
-        anyhow::ensure!(
-            tasks.len() < MAX_DEVICE_LISTENERS,
-            "companion pairing listener cap reached"
-        );
-        anyhow::ensure!(
-            !tasks.contains_key(&key),
-            "duplicate companion pairing topic"
-        );
-        let runtime = Arc::clone(self);
-        let task =
-            tokio::spawn(
-                async move { runtime.run_pair_listener(topic, psk, requested_scope).await },
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let (pair_stop_tx, pair_stop_rx) = watch::channel(false);
+        {
+            let mut tasks = self.pair_tasks.lock().await;
+            anyhow::ensure!(
+                tasks.len() < MAX_DEVICE_LISTENERS,
+                "companion pairing listener cap reached"
             );
-        tasks.insert(key, task);
+            anyhow::ensure!(
+                !tasks.contains_key(&key),
+                "duplicate companion pairing topic"
+            );
+            let runtime = Arc::clone(self);
+            let task = tokio::spawn(async move {
+                runtime
+                    .run_pair_listener_until_ready(
+                        topic,
+                        psk,
+                        requested_scope,
+                        invite_deadline,
+                        Some(ready_tx),
+                        pair_stop_rx,
+                    )
+                    .await
+            });
+            tasks.insert(
+                key.clone(),
+                PairListenerOwner {
+                    stop_tx: pair_stop_tx.clone(),
+                    task,
+                },
+            );
+        }
+
+        if *cancellation.borrow() {
+            drop(ready_rx);
+            self.join_failed_pair_listener(&key).await?;
+            anyhow::bail!("companion pair mint was cancelled before readiness")
+        }
+
+        tokio::select! {
+            readiness = ready_rx => match readiness {
+            Ok(Ok(())) if !*cancellation.borrow() => {
+                match remaining_pair_invite_ttl(invite_deadline) {
+                    Ok(remaining_ttl_secs) => Ok(ReadyPairListener {
+                        remaining_ttl_secs,
+                        pair_task_key: key.clone(),
+                    }),
+                    Err(error) => {
+                        self.join_failed_pair_listener(&key).await?;
+                        Err(error)
+                    }
+                }
+            }
+            Ok(Ok(())) => {
+                self.join_failed_pair_listener(&key).await?;
+                anyhow::bail!("companion pair mint was cancelled before publication")
+            }
+            Ok(Err(message)) => {
+                self.join_failed_pair_listener(&key).await?;
+                anyhow::bail!("companion pair listener was not ready: {message}")
+            }
+            Err(_) => {
+                self.join_failed_pair_listener(&key).await?;
+                anyhow::bail!("companion pair listener ended before readiness")
+            }
+            },
+            changed = cancellation.changed() => {
+                let _ = changed;
+                self.join_failed_pair_listener(&key).await?;
+                anyhow::bail!("companion pair mint was cancelled before readiness")
+            }
+            _ = tokio::time::sleep_until(readiness_deadline) => {
+                self.join_failed_pair_listener(&key).await?;
+                anyhow::bail!("companion pair mint deadline expired before readiness")
+            }
+        }
+    }
+
+    async fn join_failed_pair_listener(&self, key: &str) -> Result<()> {
+        let owner = self.pair_tasks.lock().await.remove(key);
+        if let Some(owner) = owner {
+            owner.stop_tx.send_replace(true);
+            join_companion_task(owner.task, "unready pair listener").await?;
+        }
         Ok(())
     }
 
@@ -385,10 +555,35 @@ impl CompanionRuntime {
         psk: [u8; 16],
         requested_scope: CompanionScope,
     ) -> Result<()> {
-        let expected_client_noise = invite_client_noise_key(&topic, &psk);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(INVITE_TTL_SECS);
+        let (_pair_stop_tx, pair_stop_rx) = watch::channel(false);
+        self.run_pair_listener_until_ready(
+            topic,
+            psk,
+            requested_scope,
+            deadline,
+            None,
+            pair_stop_rx,
+        )
+            .await
+    }
+
+    async fn run_pair_listener_until_ready(
+        self: &Arc<Self>,
+        topic: [u8; 32],
+        psk: [u8; 16],
+        requested_scope: CompanionScope,
+        deadline: tokio::time::Instant,
+        mut readiness_tx: Option<oneshot::Sender<PairListenerReadiness>>,
+        mut pair_stop: watch::Receiver<bool>,
+    ) -> Result<()> {
+        let expected_client_noise = invite_client_noise_key(&topic, &psk);
         let mut shutdown = self.shutdown_tx.subscribe();
-        if *shutdown.borrow() {
+        if *shutdown.borrow() || *pair_stop.borrow() {
+            report_pair_readiness(
+                &mut readiness_tx,
+                Err("companion runtime is already shutting down".to_owned()),
+            );
             return Ok(());
         }
         let mut diagnostics = CompanionPairDiagnostics::from_environment();
@@ -405,11 +600,45 @@ impl CompanionRuntime {
             Ok(value) => value,
             Err(error) => {
                 diagnostics.failed("bootstrap_started");
+                report_pair_readiness(&mut readiness_tx, Err(error.to_string()));
                 return Err(error);
             }
         };
-        // The rendezvous constructor returns only after both its bootstrap and
-        // server-only topic join succeeded; emit both completed fixed phases.
+
+        let readiness = if let Some(sender) = readiness_tx.as_mut() {
+            wait_for_pair_readiness_or_caller_drop(
+                rendezvous.wait_for_initial_discovery(&mut shutdown, deadline),
+                sender,
+            )
+            .await
+        } else {
+            tokio::select! {
+                discovery = rendezvous.wait_for_initial_discovery(&mut shutdown, deadline) => {
+                    PairReadinessWait::Discovery(discovery)
+                }
+                _ = pair_stop.changed() => PairReadinessWait::CallerCancelled,
+            }
+        };
+        match readiness {
+            PairReadinessWait::Discovery(Ok(())) => {
+                if !report_pair_readiness(&mut readiness_tx, Ok(())) {
+                    return rendezvous.shutdown_checked().await;
+                }
+            }
+            PairReadinessWait::Discovery(Err(error)) => {
+                let message = error.to_string();
+                let teardown = rendezvous.shutdown_checked().await;
+                report_pair_readiness(&mut readiness_tx, Err(message));
+                teardown.context("unready companion pair listener teardown")?;
+                return Err(error);
+            }
+            PairReadinessWait::CallerCancelled => {
+                return rendezvous.shutdown_checked().await;
+            }
+        }
+
+        // Initial discovery has terminated before QR publication. This is not
+        // a claim that announcement succeeded or a client will observe it.
         diagnostics.phase("bootstrap_ready");
         diagnostics.phase("topic_joined");
         let mut terminal_phase = "topic_joined";
@@ -419,6 +648,7 @@ impl CompanionRuntime {
                 let next = tokio::select! {
                     biased;
                     _ = shutdown.changed() => None,
+                    _ = pair_stop.changed() => None,
                     _ = tokio::time::sleep_until(deadline) => None,
                     next = rendezvous.recv() => next,
                 };
@@ -581,6 +811,7 @@ impl CompanionRuntime {
         }
         let device_id = grant.device_id.0;
         let (stop_tx, stop_rx) = watch::channel(false);
+        let (ready_tx, ready_rx) = oneshot::channel::<PairListenerReadiness>();
         {
             let mut tasks = self.listener_tasks.lock().await;
             if tasks.contains_key(&device_id) {
@@ -599,7 +830,11 @@ impl CompanionRuntime {
             );
         }
         let runtime = Arc::clone(self);
-        let task = tokio::spawn(async move { runtime.run_device_listener(grant, stop_rx).await });
+        let task = tokio::spawn(async move {
+            runtime
+                .run_device_listener(grant, stop_rx, Some(ready_tx))
+                .await
+        });
         let mut task = Some(task);
         if let Some(owner) = self.listener_tasks.lock().await.get_mut(&device_id) {
             owner.task = task.take();
@@ -610,7 +845,15 @@ impl CompanionRuntime {
             // it here rather than silently detaching a live carrier task.
             join_companion_task(task, "early-exited device listener").await?;
         }
-        Ok(())
+        match ready_rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(message)) => anyhow::bail!(
+                "companion active listener was not ready before descriptor publication: {message}"
+            ),
+            Err(_) => anyhow::bail!(
+                "companion active listener ended before descriptor publication readiness"
+            ),
+        }
     }
 
     async fn reap_finished_pair_tasks(&self) -> Result<()> {
@@ -618,14 +861,15 @@ impl CompanionRuntime {
             let mut tasks = self.pair_tasks.lock().await;
             let keys = tasks
                 .iter()
-                .filter_map(|(key, task)| task.is_finished().then(|| key.clone()))
+                .filter_map(|(key, owner)| owner.task.is_finished().then(|| key.clone()))
                 .collect::<Vec<_>>();
             keys.into_iter()
                 .filter_map(|key| tasks.remove(&key))
                 .collect::<Vec<_>>()
         };
-        for task in finished {
-            if let Err(error) = join_companion_task(task, "completed pair listener").await {
+        for owner in finished {
+            owner.stop_tx.send_replace(true);
+            if let Err(error) = join_companion_task(owner.task, "completed pair listener").await {
                 self.mark_degraded().await;
                 return Err(error);
             }
@@ -641,26 +885,49 @@ impl CompanionRuntime {
         self: Arc<Self>,
         grant: DeviceGrant,
         mut device_stop: watch::Receiver<bool>,
+        mut readiness_tx: Option<oneshot::Sender<PairListenerReadiness>>,
     ) -> Result<()> {
         let topic = grant.reconnect.rendezvous_topic;
         let mut shutdown = self.shutdown_tx.subscribe();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(24 * 60 * 60);
         loop {
             if listener_stop_requested(&shutdown, &device_stop) {
                 break;
             }
-            let mut rendezvous = crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
+            let readiness_deadline =
+                tokio::time::Instant::now() + ACTIVE_LISTENER_READINESS_TIMEOUT;
+            let mut rendezvous = match crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
                 topic,
                 grant.client_noise_key,
                 self.daemon_key.clone(),
-                deadline,
+                readiness_deadline,
                 shutdown.clone(),
             )
-            .await?;
+            .await
+            {
+                Ok(rendezvous) => rendezvous,
+                Err(error) => {
+                    report_pair_readiness(&mut readiness_tx, Err(error.to_string()));
+                    return Err(error);
+                }
+            };
+            let discovery = tokio::select! {
+                result = rendezvous.wait_for_initial_discovery(&mut shutdown, readiness_deadline) => result,
+                _ = device_stop.changed() => Err(anyhow::anyhow!("companion device listener stopped before discovery readiness")),
+            };
+            if let Err(error) = discovery {
+                let message = error.to_string();
+                let teardown = rendezvous.shutdown_checked().await;
+                report_pair_readiness(&mut readiness_tx, Err(message));
+                teardown.context("active companion listener readiness teardown")?;
+                return Err(error);
+            }
+            report_pair_readiness(&mut readiness_tx, Ok(()));
+            let serving_deadline = tokio::time::Instant::now() + Duration::from_secs(24 * 60 * 60);
             let connection = tokio::select! {
                 biased;
                 _ = shutdown.changed() => None,
                 _ = device_stop.changed() => None,
+                _ = tokio::time::sleep_until(serving_deadline) => None,
                 value = rendezvous.recv() => value,
             };
             let Some(mut connection) = connection else {
@@ -1091,7 +1358,19 @@ impl CompanionRuntime {
         )?;
         self.complete_pending_audit(pending.clone()).await?;
         let grant = self.authority.device(&pending.device_id)?;
-        self.spawn_active_listener(grant).await?;
+        if let Err(readiness_error) = self.spawn_active_listener(grant).await {
+            // The enrollment receipt is already durable, so an unready active
+            // descriptor must be withdrawn through the existing durable revoke
+            // path before this caller can observe an accepted pairing result.
+            if let Err(revoke_error) = self.revoke_device(pending.device_id).await {
+                self.mark_degraded().await;
+                return Err(revoke_error).context(format!(
+                    "companion active listener readiness failed and durable rollback was not proven: {readiness_error:#}"
+                ));
+            }
+            return Err(readiness_error)
+                .context("companion active listener was not ready before enrollment acceptance");
+        }
         Ok(EnrollmentAccepted {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             device_id: pending.device_id,
@@ -1278,6 +1557,24 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
         == 0
 }
 
+fn remaining_pair_invite_ttl(deadline: tokio::time::Instant) -> Result<u64> {
+    remaining_pair_invite_ttl_at(deadline, tokio::time::Instant::now())
+}
+
+fn remaining_pair_invite_ttl_at(
+    deadline: tokio::time::Instant,
+    now: tokio::time::Instant,
+) -> Result<u64> {
+    let remaining = deadline
+        .checked_duration_since(now)
+        .context("companion invite expired before readiness")?;
+    let whole_seconds = remaining.as_secs();
+    anyhow::ensure!(
+        (1..=INVITE_TTL_SECS).contains(&whole_seconds),
+        "companion invite has no publishable remaining TTL after readiness"
+    );
+    Ok(whole_seconds)
+}
 fn request_runtime_shutdown(shutdown_tx: &watch::Sender<bool>) {
     // `send()` without a live receiver does not persist a value for a later
     // subscription. Pair tasks subscribe inside their spawned future, so use
@@ -1485,6 +1782,81 @@ mod tests {
         assert!(signal_listener_stop(&orphan, "test drain").is_err());
     }
 
+    #[tokio::test]
+    async fn pair_listener_owner_cancellation_signals_before_join() {
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let owner = PairListenerOwner {
+            stop_tx,
+            task: tokio::spawn(async move {
+                stop_rx.changed().await.expect("pair owner stop sender remains live");
+                assert!(*stop_rx.borrow());
+                Ok(())
+            }),
+        };
+        owner.stop_tx.send_replace(true);
+        assert!(
+            join_companion_task(owner.task, "pair listener owner cancellation")
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_readiness_defers_publication_until_initial_discovery_completes() {
+        let (mut ready_tx, _ready_rx) = oneshot::channel::<PairListenerReadiness>();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let mut waiter = tokio::spawn(async move {
+            wait_for_pair_readiness_or_caller_drop(
+                async move {
+                    release_rx.await.expect("release initial discovery barrier");
+                    Ok(())
+                },
+                &mut ready_tx,
+            )
+            .await
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), &mut waiter)
+                .await
+                .is_err(),
+            "pair publication readiness must remain pending before initial discovery completes"
+        );
+        release_tx.send(()).expect("release test discovery barrier");
+        assert!(matches!(
+            waiter.await.expect("join readiness waiter"),
+            PairReadinessWait::Discovery(Ok(()))
+        ));
+    }
+
+    #[tokio::test]
+    async fn pair_readiness_caller_cancellation_is_observed_before_publication() {
+        let (mut ready_tx, ready_rx) = oneshot::channel::<PairListenerReadiness>();
+        drop(ready_rx);
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_pair_readiness_or_caller_drop(std::future::pending(), &mut ready_tx),
+        )
+        .await
+        .expect("closed caller is observed without waiting for discovery");
+        assert!(matches!(result, PairReadinessWait::CallerCancelled));
+    }
+
+    #[test]
+    fn pair_invite_ttl_is_remaining_and_never_reset_after_readiness() {
+        let now = tokio::time::Instant::now();
+        assert_eq!(
+            remaining_pair_invite_ttl_at(now + Duration::from_millis(1_500), now).unwrap(),
+            1
+        );
+        assert_eq!(
+            remaining_pair_invite_ttl_at(now + Duration::from_secs(INVITE_TTL_SECS), now)
+                .unwrap(),
+            INVITE_TTL_SECS
+        );
+        assert!(remaining_pair_invite_ttl_at(now + Duration::from_millis(500), now).is_err());
+        assert!(remaining_pair_invite_ttl_at(now, now).is_err());
+    }
     // Cross-module delivery/revocation regression belongs with the R4
     // authority fixture: it must prove PendingRevoke is visible before it
     // waits, the in-flight owner retains its lease through shutdown_checked(),
