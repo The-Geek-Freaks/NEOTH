@@ -336,6 +336,35 @@ daemon runs, credential/keychain changes are fingerprinted per channel and only
 the affected adapter is stop-then-started. Corrupt credential state stops the
 fleet fail-closed instead of retaining stale secrets.
 
+## Mobile companion chat
+
+A running same-user `neoth serve` daemon is required.
+
+```bash
+neoth companion pair-mobile
+neoth companion pair-mobile --scope chat-send
+neoth companion devices list
+neoth companion devices status <device-id>
+neoth companion devices revoke <device-id>
+```
+
+`pair-mobile` defaults to the read-only `status-read` scope. Use
+`--scope chat-send` only when the newly paired phone is meant to submit chat
+requests. A status-only grant is never upgraded implicitly: create a new
+chat-scoped pairing and pair the phone again.
+
+Mobile chat requests are one-shot ordinary UTF-8 text: they must be nonempty
+and at most 640 bytes. They must not start with a slash command, including
+after leading whitespace; ordinary URLs and path slashes remain valid. If a
+result is `indeterminate`, do not retry it automatically; it may already have
+reached the provider.
+
+Revoking a device denies new chat starts first, then cancels and drains work
+owned by that device before finalization. Use `devices list` or `devices status`
+to inspect the grant before or after an operator action.
+
+Native, mobile, device, and release validation remains pending.
+
 ## Coding buddy
 
 ```bash

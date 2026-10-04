@@ -114,6 +114,7 @@ try {
             'neoth_companion_bridge_free',
             'neoth_companion_pair_start',
             'neoth_companion_reconnect_start',
+            'neoth_companion_chat_start',
             'neoth_companion_operation_poll',
             'neoth_companion_operation_cancel',
             'neoth_companion_operation_free'

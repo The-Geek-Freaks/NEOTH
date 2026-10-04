@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{daemon::companion_protocol::CompanionDeviceId, wal::writer::WalWriterHandle};
+use crate::{daemon::{chat_runtime::DaemonChatRuntime, companion_protocol::{CompanionDeviceId, CompanionScope}}, wal::writer::WalWriterHandle};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +17,7 @@ pub(crate) struct CompanionV3Invite {
     pub(crate) schema_version: u8,
     pub(crate) pair_url: String,
     pub(crate) expires_in_secs: u64,
+    pub(crate) requested_scope: CompanionScope,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -35,6 +36,7 @@ impl CompanionRuntime {
     pub(crate) fn load(
         _home: PathBuf,
         _writer: WalWriterHandle,
+        _chat_runtime: Arc<DaemonChatRuntime>,
         _daemon_boot_id: String,
         _listener_generation: u64,
     ) -> Result<Arc<Self>> {
@@ -49,7 +51,7 @@ impl CompanionRuntime {
         bail!("companion v3 requires the cluster feature")
     }
 
-    pub(crate) async fn mint_pair_invite(self: &Arc<Self>) -> Result<CompanionV3Invite> {
+    pub(crate) async fn mint_pair_invite(self: &Arc<Self>, _requested_scope: CompanionScope) -> Result<CompanionV3Invite> {
         bail!("companion v3 requires the cluster feature")
     }
 

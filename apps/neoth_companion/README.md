@@ -1,22 +1,36 @@
 # NEOTH Companion
 
-NEOTH Companion is the phone client for a narrowly scoped NEOTH v3 device
-grant. It pairs once with an invite issued by a running daemon, retains a
-device identity locally, and shows the redacted status for that device. It is
-not a chat client, a prompt client, a file client, or a general remote-control
-surface.
+NEOTH Companion is the phone client for narrowly scoped NEOTH v3 device
+grants. It pairs once with an invite issued by a running daemon, retains a
+device identity locally, and either shows redacted status or sends one
+ordinary text turn when the invite explicitly grants chat. It is not a prompt
+client, a file client, or a general remote-control surface.
 
 ## Pairing and device management
 
 Run the daemon with `companion.enabled` and `companion.p2p_enabled` set to true, then mint a one-time mobile invite:
 
 ```text
-neoth companion pair-mobile
+neoth companion pair-mobile --scope status-read
+neoth companion pair-mobile --scope chat-send
 ```
 
 Open the displayed QR/deep link on the phone or paste the invite into the app.
-An invite is short-lived and single-use. The app never silently retries an
-ambiguous pairing and never silently pairs again after a denial or revocation.
+An invite is short-lived and single-use. `status-read` grants only status;
+`chat-send` is an explicit new permission and requires a new pairing. Existing
+status devices are never upgraded by a pasted link. The app never silently
+retries an ambiguous pairing and never silently pairs again after a denial or
+revocation.
+
+## One-shot chat
+
+A chat-scoped device can send one ordinary message of at most 640 UTF-8 bytes.
+It receives one typed terminal outcome: accepted, denied, busy, unavailable,
+timeout, or indeterminate. Slash actions, streaming, stop/cancel controls,
+attachments, files, notification delivery, history sync, and offline queueing
+are unavailable. An indeterminate result means terminal delivery was not
+confirmed; the app does not repeat the message or claim that a remote turn was
+aborted.
 
 The daemon keeps authority for device records. These commands talk to the
 running daemon through its same-user control path:

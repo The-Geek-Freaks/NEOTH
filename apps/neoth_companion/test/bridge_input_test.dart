@@ -21,9 +21,28 @@ void main() {
       expect(isBoundedReconnectInput('{}', _deviceId), isTrue);
       expect(isBoundedReconnectInput('{}', '${_deviceId}é'), isFalse);
     });
+
+    test('accepts the 640-byte ordinary chat limit and rejects a multibyte overflow', () {
+      expect(() => validateOrdinaryChatMessage(_repeat('a', 640)), returnsNormally);
+      expect(() => validateOrdinaryChatMessage(_repeat('é', 321)), throwsFormatException);
+    });
+
+    test('rejects a slash action after leading whitespace before bridge start', () {
+      expect(() => validateOrdinaryChatMessage('  /status'), throwsFormatException);
+      expect(() => validateOrdinaryChatMessage('  ordinary text'), returnsNormally);
+    });
+
+    test('accepts only absent status-default or one explicit allowlisted v3 scope', () {
+      expect(() => validateInvite(_inviteWithScope), returnsNormally);
+      expect(() => validateInvite(_inviteWithoutScope), returnsNormally);
+      expect(() => validateInvite('$_inviteWithoutScope&scope=companion.chat.send&scope=companion.chat.send'), throwsFormatException);
+      expect(() => validateInvite('$_inviteWithoutScope&scope=companion.files.read'), throwsFormatException);
+    });
   });
 }
 
 const _deviceId = '7fb8ae0f-9e36-4a64-83e2-972dff9af880';
+const _inviteWithoutScope = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60';
+const _inviteWithScope = '$_inviteWithoutScope&scope=companion.chat.send';
 
 String _repeat(String value, int count) => List<String>.filled(count, value).join();

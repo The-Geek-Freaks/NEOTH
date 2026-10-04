@@ -9,7 +9,10 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -25,10 +28,13 @@ use crate::{
             StatusLease,
         },
         companion_protocol::{
-            COMPANION_V3_SCHEMA_VERSION, CompanionDenied, CompanionDeniedCode, CompanionDeviceId,
-            CompanionReadiness, CompanionStatusSnapshot, EnrollmentAccepted, EnrollmentProof,
-            ReconnectDescriptor, ServerFrame, StatusProof,
+            COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatOutcome, CompanionChatRecord,
+            CompanionChatRecordKind, CompanionChatRequest, CompanionChatTerminal, CompanionDenied,
+            CompanionDeniedCode, CompanionDeviceId, CompanionReadiness, CompanionScope,
+            CompanionStatusSnapshot, EnrollmentAccepted, EnrollmentProof, ReconnectDescriptor,
+            ServerFrame, StatusProof,
         },
+        chat_runtime::{CompanionChatTurnError, DaemonChatRuntime},
     },
     wal::{
         companion_mutation_receipts::{
@@ -207,6 +213,7 @@ pub(crate) struct CompanionV3Invite {
     pub(crate) schema_version: u8,
     pub(crate) pair_url: String,
     pub(crate) expires_in_secs: u64,
+    pub(crate) requested_scope: CompanionScope,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -222,6 +229,7 @@ pub(crate) struct CompanionV3DeviceView {
 pub(crate) struct CompanionRuntime {
     home: PathBuf,
     authority: Arc<DeviceAuthority>,
+    chat_runtime: Arc<DaemonChatRuntime>,
     writer: WalWriterHandle,
     daemon_key: peeroxide::KeyPair,
     daemon_boot_id: String,
@@ -239,6 +247,7 @@ impl CompanionRuntime {
     pub(crate) fn load(
         home: PathBuf,
         writer: WalWriterHandle,
+        chat_runtime: Arc<DaemonChatRuntime>,
         daemon_boot_id: String,
         listener_generation: u64,
     ) -> Result<Arc<Self>> {
@@ -252,6 +261,7 @@ impl CompanionRuntime {
         Ok(Arc::new(Self {
             home,
             authority,
+            chat_runtime,
             writer,
             daemon_key,
             daemon_boot_id,
@@ -321,21 +331,22 @@ impl CompanionRuntime {
     /// Only called by the authenticated daemon IPC handler.  It creates a
     /// fresh one-time v3 topic/PSK, but it never starts a transient responder:
     /// the daemon's persistent key has already been loaded above.
-    pub(crate) async fn mint_pair_invite(self: &Arc<Self>) -> Result<CompanionV3Invite> {
+    pub(crate) async fn mint_pair_invite(self: &Arc<Self>, requested_scope: CompanionScope) -> Result<CompanionV3Invite> {
         let mut topic = [0u8; 32];
         let mut psk = [0u8; 16];
         getrandom::getrandom(&mut topic).context("mint companion v3 topic")?;
         getrandom::getrandom(&mut psk).context("mint companion v3 psk")?;
-        self.spawn_pair_listener(topic, psk).await?;
-        let url = build_pair_url(topic, psk, self.daemon_key.public_key, INVITE_TTL_SECS);
+        self.spawn_pair_listener(topic, psk, requested_scope).await?;
+        let url = build_pair_url(topic, psk, self.daemon_key.public_key, INVITE_TTL_SECS, requested_scope);
         Ok(CompanionV3Invite {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             pair_url: url,
             expires_in_secs: INVITE_TTL_SECS,
+            requested_scope,
         })
     }
 
-    async fn spawn_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16]) -> Result<()> {
+    async fn spawn_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16], requested_scope: CompanionScope) -> Result<()> {
         self.reap_finished_pair_tasks().await?;
         let key = hex::encode(topic);
         let mut tasks = self.pair_tasks.lock().await;
@@ -348,12 +359,12 @@ impl CompanionRuntime {
             "duplicate companion pairing topic"
         );
         let runtime = Arc::clone(self);
-        let task = tokio::spawn(async move { runtime.run_pair_listener(topic, psk).await });
+        let task = tokio::spawn(async move { runtime.run_pair_listener(topic, psk, requested_scope).await });
         tasks.insert(key, task);
         Ok(())
     }
 
-    async fn run_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16]) -> Result<()> {
+    async fn run_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16], requested_scope: CompanionScope) -> Result<()> {
         let expected_client_noise = invite_client_noise_key(&topic, &psk);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(INVITE_TTL_SECS);
         let mut shutdown = self.shutdown_tx.subscribe();
@@ -380,7 +391,7 @@ impl CompanionRuntime {
                     .context("v3 pair psk read timeout")??.context("v3 pair closed before psk")?;
                 if !constant_time_eq(&raw_psk, &psk) { continue; }
                 let proof: EnrollmentProof = read_frame(&mut connection).await?;
-                let accepted = match self.enroll_after_verified_pairing(proof, observed_noise, topic).await {
+                let accepted = match self.enroll_after_verified_pairing(proof, observed_noise, topic, requested_scope).await {
                     Ok(value) => value,
                     Err(error) => {
                         let denied = ServerFrame::Denied(CompanionDenied::new(CompanionDeniedCode::DeviceDenied)?);
@@ -411,14 +422,21 @@ impl CompanionRuntime {
     }
 
     pub(crate) async fn revoke_device(&self, device_id: CompanionDeviceId) -> Result<bool> {
-        // Refuse obvious invalid phase transitions before stopping the owned
-        // listener. Once cancellation is signalled, the following async
-        // authority call durably publishes PendingRevoke before it waits for a
-        // live status lease to finish its owned carrier drain.
+        // Refuse obvious invalid phase transitions before publishing a new
+        // mutation. The deny must be durable before the owned listener sees a
+        // stop signal: otherwise an accepted chat can start between cancel and
+        // PendingRevoke.
         let grant = self.authority.device(&device_id)?;
         if grant.phase_name() != "active" {
             return Ok(false);
         }
+        let Some(pending) = self
+            .authority
+            .begin_revoke_pending_after_effect_boundary(&device_id)
+            .await?
+        else {
+            return Ok(false);
+        };
         let stop_result = {
             let tasks = self.listener_tasks.lock().await;
             match tasks.get(&device_id.0) {
@@ -430,12 +448,6 @@ impl CompanionRuntime {
             self.mark_degraded().await;
             return Err(error);
         }
-        // R6 persists PendingRevoke before waiting for an in-flight status
-        // lease.  Keep the owner registered until then so a concurrent daemon
-        // shutdown can still prove its terminal carrier state.
-        let Some(pending) = self.authority.begin_revoke_async(&device_id).await? else {
-            return Ok(false);
-        };
         let owner = self.listener_tasks.lock().await.remove(&device_id.0);
         if let Some(owner) = owner {
             if let Some(task) = owner.task {
@@ -452,6 +464,14 @@ impl CompanionRuntime {
         } else {
             self.mark_degraded().await;
             anyhow::bail!("companion revoke lost its owned listener before drain proof");
+        }
+        // The joined owner has completed (or conclusively failed) every
+        // connection it accepted. Keep PendingRevoke if its lease counter
+        // cannot reach zero; that failure is never converted into a WAL
+        // finalization.
+        if let Err(error) = self.authority.wait_for_revoke_drain(&device_id).await {
+            self.mark_degraded().await;
+            return Err(error.context("revoked device lease drain was not proven"));
         }
         // Do not finalize the durable revoke audit before the owned listener
         // has proved its terminal state; a failed join leaves PendingRevoke.
@@ -602,6 +622,17 @@ impl CompanionRuntime {
                 rendezvous.shutdown_checked().await?;
                 continue;
             }
+            if grant.scope == CompanionScope::ChatSend {
+                self.run_chat_connection(
+                    &grant,
+                    connection,
+                    rendezvous,
+                    shutdown.clone(),
+                    device_stop.clone(),
+                )
+                .await?;
+                continue;
+            }
             let remote_key = *connection.remote_public_key();
             let nonce = match random_32() {
                 Ok(value) => value,
@@ -709,6 +740,208 @@ impl CompanionRuntime {
         Ok(())
     }
 
+    async fn run_chat_connection(
+        &self,
+        grant: &DeviceGrant,
+        mut connection: peeroxide::SwarmConnection,
+        rendezvous: crate::cluster::hyperswarm::PublicRendezvous,
+        shutdown: watch::Receiver<bool>,
+        device_stop: watch::Receiver<bool>,
+    ) -> Result<()> {
+        // Every pre-lease error still owns an accepted carrier. Finish its
+        // checked teardown before classifying an unauthenticated disconnect or
+        // denial as routine; a failed teardown remains an observable runtime
+        // error and leaves the listener owner non-terminal.
+        let challenge = match random_32().and_then(|nonce| {
+            self.authority.begin_chat_reconnect_for_observed_noise(
+                *connection.remote_public_key(),
+                self.listener_generation,
+                self.daemon_boot_id.clone(),
+                nonce,
+                companion_now_unix_i64()?,
+            )
+        }) {
+            Ok(value) if value.device_id == grant.device_id => value,
+            Ok(_) => return self.close_unaccepted_chat_connection(
+                connection, rendezvous, anyhow::anyhow!("chat listener/grant mapping drift"),
+            ).await,
+            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+        };
+        if let Err(error) = write_frame(&mut connection, &ServerFrame::ChatChallenge(challenge)).await {
+            return self.close_unaccepted_chat_connection(connection, rendezvous, error).await;
+        }
+        let request: CompanionChatRequest = match read_frame(&mut connection).await {
+            Ok(value) => value,
+            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+        };
+        let request_id = request.request_id;
+        let now = match companion_now_unix_i64() {
+            Ok(value) => value,
+            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+        };
+        let lease = match self.authority.authorize_chat(&request, now) {
+            Ok(value) => value,
+            Err(error) => {
+                // This denial is best-effort public feedback only. A peer
+                // disconnect while receiving it is expected, but its local
+                // carrier still must finish a checked teardown.
+                let denial_result = match CompanionDenied::new(CompanionDeniedCode::DeviceDenied) {
+                    Ok(denied) => write_frame(&mut connection, &ServerFrame::Denied(denied)).await,
+                    Err(frame_error) => Err(frame_error.into()),
+                };
+                let reason = match denial_result {
+                    Ok(()) => error,
+                    Err(denial_error) => {
+                        error.context(format!("chat denial write failed: {denial_error}"))
+                    }
+                };
+                return self.close_unaccepted_chat_connection(connection, rendezvous, reason).await;
+            }
+        };
+        let effect_gate = lease.chat_effect_gate();
+        let daemon_request = crate::daemon::audit_rpc::DaemonPlainChatRequest {
+            schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
+            message: request.message,
+        };
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let cancelled_by_owner = Arc::new(AtomicBool::new(false));
+        let cancelled_by_owner_task = Arc::clone(&cancelled_by_owner);
+        let owner_cancel = tokio::spawn(cancel_chat_on_owner_stop(
+            cancellation.clone(),
+            shutdown.clone(),
+            device_stop,
+            cancelled_by_owner_task,
+        ));
+        let result = self
+            .chat_runtime
+            .execute_companion_chat_turn(daemon_request, cancellation.clone(), effect_gate)
+            .await;
+        cancellation.close();
+        if let Err(error) = owner_cancel
+            .await
+            .context("companion chat cancellation owner panicked")
+        {
+            drop(connection);
+            let teardown = rendezvous.shutdown_checked().await;
+            self.mark_degraded().await;
+            return match teardown {
+                Ok(()) => Err(error.context("chat cancellation owner was not terminal")),
+                Err(teardown_error) => Err(error.context(format!(
+                    "chat cancellation owner and carrier teardown were unproven: {teardown_error}"
+                ))),
+            };
+        }
+        let terminal = if cancelled_by_owner.load(Ordering::Acquire) {
+            // The provider may have crossed a concrete effect boundary before
+            // its cancellation was observed. Do not label that response as
+            // accepted or claim a remote abort.
+            CompanionChatTerminal {
+                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                outcome: CompanionChatOutcome::Indeterminate,
+                records: Vec::new(), provider: None, model: None,
+            }
+        } else { match result {
+            Ok(response) => CompanionChatTerminal {
+                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                outcome: CompanionChatOutcome::Accepted,
+                records: response.records.into_iter().map(|record| CompanionChatRecord {
+                    kind: match record.kind {
+                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stdout => CompanionChatRecordKind::Stdout,
+                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stderr => CompanionChatRecordKind::Stderr,
+                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Notice => CompanionChatRecordKind::Notice,
+                    }, text: record.text,
+                }).collect(),
+                provider: Some(response.terminal.provider), model: Some(response.terminal.model),
+            },
+            Err(error) => CompanionChatTerminal {
+                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                outcome: match error {
+                    CompanionChatTurnError::Denied => CompanionChatOutcome::Denied,
+                    CompanionChatTurnError::Busy => CompanionChatOutcome::Busy,
+                    CompanionChatTurnError::Unavailable => CompanionChatOutcome::Unavailable,
+                    CompanionChatTurnError::Timeout => CompanionChatOutcome::Timeout,
+                    CompanionChatTurnError::Indeterminate => CompanionChatOutcome::Indeterminate,
+                }, records: Vec::new(), provider: None, model: None,
+            },
+        }};
+        let bytes = match lease.chat_terminal_frame(terminal) {
+            Ok(bytes) => bytes,
+            // A bounded daemon response can still exceed the mobile carrier's
+            // terminal cap after envelope overhead. Do not truncate or call it
+            // accepted: replace it before any write with a fresh public
+            // indeterminate terminal for this exact request id.
+            Err(_) => lease.chat_terminal_frame(CompanionChatTerminal {
+                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                outcome: CompanionChatOutcome::Indeterminate,
+                records: Vec::new(), provider: None, model: None,
+            }) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    // No carrier write began. A checked drain permits the
+                    // marker to close; an unproven drain deliberately leaves
+                    // it behind for reload recovery.
+                    drop(connection);
+                    match rendezvous.shutdown_checked().await {
+                        Ok(()) => {
+                            lease.complete_confirmed().context(
+                                "close no-write companion chat marker after terminal serialization failure",
+                            )?;
+                            return Err(error.into());
+                        }
+                        Err(teardown_error) => {
+                            self.mark_degraded().await;
+                            return Err(anyhow::anyhow!(
+                                "companion chat terminal serialization and carrier drain failed: {error}; {teardown_error}"
+                            ));
+                        }
+                    }
+                }
+            },
+        };
+        let write = connection.write(&bytes).await;
+        drop(connection);
+        let drained = rendezvous.shutdown_checked().await;
+        match (write, drained) {
+            (Ok(()), Ok(())) => {
+                lease.complete_confirmed()?;
+                Ok(())
+            }
+            (Err(write_error), Ok(())) => {
+                // The write completed with a local failure and the actor has
+                // drained. This proves no later local terminal write exists;
+                // it does not claim a remote retract or observation.
+                lease.complete_confirmed()?;
+                tracing::debug!(%write_error, "companion chat terminal write failed after local carrier terminal");
+                Ok(())
+            }
+            (_, Err(teardown_error)) => {
+                self.mark_degraded().await;
+                anyhow::bail!("companion chat terminal carrier drain is indeterminate: {teardown_error}")
+            }
+        }
+    }
+
+    async fn close_unaccepted_chat_connection(
+        &self,
+        connection: peeroxide::SwarmConnection,
+        rendezvous: crate::cluster::hyperswarm::PublicRendezvous,
+        reason: anyhow::Error,
+    ) -> Result<()> {
+        drop(connection);
+        match rendezvous.shutdown_checked().await {
+            Ok(()) => {
+                tracing::debug!(%reason, "companion chat connection ended before a lease");
+                Ok(())
+            }
+            Err(teardown) => {
+                self.mark_degraded().await;
+                Err(reason.context(format!(
+                    "unaccepted companion chat connection could not prove carrier teardown: {teardown}"
+                )))
+            }
+        }
+    }
+
     async fn redacted_snapshot(
         &self,
         device_id: CompanionDeviceId,
@@ -732,7 +965,9 @@ impl CompanionRuntime {
         proof: EnrollmentProof,
         observed_invite_noise: [u8; 32],
         topic: [u8; 32],
+        requested_scope: CompanionScope,
     ) -> Result<EnrollmentAccepted> {
+        anyhow::ensure!(proof.requested_scope == requested_scope, "pairing scope differs from daemon invite");
         let reconnect = ReconnectDescriptor {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             carrier: "peeroxide-hyperswarm-v3".into(),
@@ -753,7 +988,7 @@ impl CompanionRuntime {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             device_id: pending.device_id,
             revision: pending.revision,
-            granted_scope: crate::daemon::companion_protocol::CompanionScope::StatusRead,
+            granted_scope: requested_scope,
             reconnect,
         })
     }
@@ -843,6 +1078,34 @@ fn listener_stop_requested(
 ) -> bool {
     *daemon_shutdown.borrow() || *device_stop.borrow()
 }
+
+/// This future owns no provider work. It only converts a daemon or per-device
+/// listener stop into the existing turn cancellation, and the caller always
+/// joins it before selecting a public terminal.
+async fn cancel_chat_on_owner_stop(
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    mut daemon_stop: watch::Receiver<bool>,
+    mut device_stop: watch::Receiver<bool>,
+    stopped_by_owner: Arc<AtomicBool>,
+) {
+    if *daemon_stop.borrow() || *device_stop.borrow() {
+        stopped_by_owner.store(true, Ordering::Release);
+        cancellation.close();
+        return;
+    }
+    tokio::select! {
+        changed = daemon_stop.changed() => {
+            let _ = changed;
+            stopped_by_owner.store(true, Ordering::Release);
+        }
+        changed = device_stop.changed() => {
+            let _ = changed;
+            stopped_by_owner.store(true, Ordering::Release);
+        }
+        _ = cancellation.cancelled() => {}
+    }
+    cancellation.close();
+}
 fn invite_client_noise_key(topic: &[u8; 32], psk: &[u8; 16]) -> [u8; 32] {
     // The invite bootstrap remains exactly v2: topic is HKDF salt, one-time
     // PSK is IKM, and this derives only the ephemeral pre-auth transport key.
@@ -863,13 +1126,14 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
         .fold(0u8, |diff, (a, b)| diff | (a ^ b))
         == 0
 }
-fn build_pair_url(topic: [u8; 32], psk: [u8; 16], server_pk: [u8; 32], ttl: u64) -> String {
+fn build_pair_url(topic: [u8; 32], psk: [u8; 16], server_pk: [u8; 32], ttl: u64, scope: CompanionScope) -> String {
     format!(
-        "neoth://companion/pair?v=3&topic={}&psk={}&server_pk={}&ttl={}",
+        "neoth://companion/pair?v=3&topic={}&psk={}&server_pk={}&ttl={}&scope={}",
         hex::encode(topic),
         hex::encode(psk),
         hex::encode(server_pk),
         ttl,
+        scope.as_str(),
     )
 }
 async fn write_frame(
@@ -900,15 +1164,16 @@ mod tests {
     fn v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication() {
         let home = tempfile::tempdir().unwrap();
         let key = load_or_create_server_key(home.path()).unwrap();
-        let url = build_pair_url([1; 32], [2; 16], key.public_key, INVITE_TTL_SECS);
+        let url = build_pair_url([1; 32], [2; 16], key.public_key, INVITE_TTL_SECS, CompanionScope::StatusRead);
         assert_eq!(
             url,
             format!(
-                "neoth://companion/pair?v=3&topic={}&psk={}&server_pk={}&ttl={}",
+                "neoth://companion/pair?v=3&topic={}&psk={}&server_pk={}&ttl={}&scope={}",
                 "01".repeat(32),
                 "02".repeat(16),
                 hex::encode(key.public_key),
                 INVITE_TTL_SECS,
+                CompanionScope::StatusRead.as_str(),
             )
         );
         assert!(
@@ -935,6 +1200,24 @@ mod tests {
         assert!(!listener_stop_requested(&daemon_rx, &device_rx));
         device_tx.send(true).unwrap();
         assert!(listener_stop_requested(&daemon_rx, &device_rx));
+    }
+
+    #[tokio::test]
+    async fn accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection() {
+        let (_daemon_tx, daemon_rx) = watch::channel(false);
+        let (device_tx, device_rx) = watch::channel(false);
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let owner_stop = Arc::new(AtomicBool::new(false));
+        let waiter = tokio::spawn(cancel_chat_on_owner_stop(
+            cancellation.clone(),
+            daemon_rx,
+            device_rx,
+            Arc::clone(&owner_stop),
+        ));
+        device_tx.send(true).unwrap();
+        waiter.await.unwrap();
+        assert!(owner_stop.load(Ordering::Acquire));
+        assert!(cancellation.is_closed());
     }
 
     #[test]

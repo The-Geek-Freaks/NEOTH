@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import 'bridge_input.dart';
 import 'models.dart';
 import 'native_bridge.dart';
 import 'secure_store.dart';
@@ -22,6 +23,9 @@ class CompanionController extends ChangeNotifier {
   NativeBridge? _bridge;
   EnrollmentAccepted? _enrollment;
   CompanionStatus? status;
+  CompanionChatTerminal? chatTerminal;
+  String? chatLocalMessage;
+  bool chatPending = false;
   CompanionViewState state = CompanionViewState.unpaired;
   bool _disposed = false;
 
@@ -85,11 +89,58 @@ class CompanionController extends ChangeNotifier {
     }
   }
 
+  bool get canSendChat => _enrollment?.grantedScope == companionChatSendScope;
+  bool get canRefreshStatus => _enrollment?.grantedScope == companionStatusReadScope;
+  String? get grantedScope => _enrollment?.grantedScope;
+
+  /// Starts exactly one ordinary text turn. A local validation error is known
+  /// before the bridge worker starts; every remote terminal is rendered from
+  /// its typed public outcome and is never retried here.
+  Future<void> sendChat(String message) async {
+    if (_disposed || chatPending) return;
+    final enrollment = _enrollment;
+    if (enrollment == null || !canSendChat) {
+      chatLocalMessage = 'This phone does not have chat permission. Pair again with a chat invite.';
+      _notify();
+      return;
+    }
+    try {
+      validateOrdinaryChatMessage(message);
+    } on FormatException {
+      chatLocalMessage = 'Enter one ordinary message of at most 640 UTF-8 bytes. Slash actions are unavailable.';
+      _notify();
+      return;
+    }
+    chatPending = true;
+    chatTerminal = null;
+    chatLocalMessage = null;
+    _notify();
+    try {
+      final result = await _ensureBridge().chat(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message);
+      if (result.publicJson != null) {
+        chatTerminal = CompanionChatTerminal.fromBridgeJson(result.publicJson!);
+      } else if (result.kind == NativeOperationResult.cancelled) {
+        chatLocalMessage = 'The phone disconnected before a terminal chat response was confirmed.';
+      } else {
+        chatLocalMessage = 'Chat could not be started. No message is retried automatically.';
+      }
+    } on FormatException {
+      chatLocalMessage = 'The chat response could not be verified.';
+    } on StateError {
+      chatLocalMessage = 'NEOTH is unavailable. No message is retried automatically.';
+    } finally {
+      chatPending = false;
+      _notify();
+    }
+  }
+
   Future<void> forgetLocalEnrollment() async {
     if (_disposed) return;
     await _store.clearEnrollment();
     _enrollment = null;
     status = null;
+    chatTerminal = null;
+    chatLocalMessage = null;
     _set(CompanionViewState.unpaired);
   }
 
@@ -106,9 +157,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   void _setForResult(NativeBridgeResult result) {
-    final code = result.publicJson?['body'] is Map<String, Object?>
-        ? (result.publicJson!['body']! as Map<String, Object?>)['code']
-        : null;
+    final code = result.publicJson?['code'];
     if (result.kind == NativeOperationResult.denied) {
       _set(code == 'revoked' ? CompanionViewState.revoked : CompanionViewState.denied);
     } else if (result.kind == NativeOperationResult.cancelled) {
@@ -122,6 +171,10 @@ class CompanionController extends ChangeNotifier {
     if (_disposed) return;
     state = next;
     notifyListeners();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
   }
 
   @override

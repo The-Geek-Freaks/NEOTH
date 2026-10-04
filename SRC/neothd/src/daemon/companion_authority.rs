@@ -1,9 +1,9 @@
 //! W2306 R5: recovery-safe v3 companion authority candidate.
 //! A persisted delivery marker is written before the daemon may begin status I/O.
 use super::companion_protocol::{
-    COMPANION_V3_SCHEMA_VERSION, CompanionDeviceId, CompanionScope, CompanionStatusSnapshot,
+    COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatRequest, CompanionDeviceId, CompanionScope, CompanionStatusSnapshot,
     EnrollmentProof, ProtocolError, ReconnectDescriptor, ServerFrame, StatusChallenge, StatusProof,
-    device_key_fingerprint, encode_server_frame,
+    device_key_fingerprint, encode_chat_terminal, encode_server_frame,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -121,11 +121,14 @@ impl Default for State {
 struct Challenge {
     value: StatusChallenge,
 }
+#[derive(Clone, Debug)]
+struct ChatChallengeState { value: ChatChallenge }
 #[derive(Debug)]
 struct Core {
     state: State,
     reload_required: bool,
     challenges: HashMap<Uuid, Challenge>,
+    chat_challenges: HashMap<Uuid, ChatChallengeState>,
     leases: HashMap<Uuid, usize>,
     owned_deliveries: BTreeSet<Uuid>,
 }
@@ -133,6 +136,12 @@ struct Core {
 struct Shared {
     core: Mutex<Core>,
     drained: tokio::sync::Notify,
+    /// One companion device's revoke transition and its concrete provider
+    /// start use this same owned admission boundary. A revoke that obtains it
+    /// first durably publishes PendingRevoke before any later provider leaf
+    /// can begin; a provider leaf that obtains it first has already entered
+    /// the existing concrete adapter handshake before revocation continues.
+    effect_admission: Arc<tokio::sync::Mutex<()>>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuditObservation {
@@ -158,6 +167,14 @@ impl StatusLease {
         snapshot.validate().map_err(pe)?;
         encode_server_frame(&ServerFrame::StatusSnapshot(snapshot)).map_err(pe)
     }
+    /// The same non-copy lease holds the durable delivery marker until the
+    /// companion runtime has written or conclusively drained this terminal.
+    pub fn chat_terminal_frame(
+        &self,
+        terminal: super::companion_protocol::CompanionChatTerminal,
+    ) -> Result<Vec<u8>> {
+        encode_chat_terminal(&ServerFrame::ChatTerminal(terminal)).map_err(pe)
+    }
     /// Only the owned delivery task calls this after write completion and checked carrier drain.
     pub fn complete_confirmed(&self) -> Result<()> {
         let mut c = self
@@ -178,6 +195,169 @@ impl StatusLease {
         }
     }
 }
+pub type CompanionChatLease = StatusLease;
+
+impl StatusLease {
+    /// Bind every concrete chat-provider leaf to the exact live device/revision
+    /// represented by this non-copy delivery lease. The caller passes this
+    /// opaque gate through the existing daemon chat pipeline; it has no
+    /// provider construction, retry, or transport authority of its own.
+    pub(crate) fn chat_effect_gate(&self) -> Arc<dyn crate::providers::ChatTurnEffectGate> {
+        Arc::new(CompanionChatEffectGate {
+            shared: Arc::clone(&self.shared),
+            device_id: self.id,
+            delivery_id: self.delivery_id,
+            revision: self.revision,
+        })
+    }
+}
+
+struct CompanionChatEffectGate {
+    shared: Arc<Shared>,
+    device_id: Uuid,
+    delivery_id: Uuid,
+    revision: u64,
+}
+
+struct CompanionChatPreparingEffect {
+    shared: Arc<Shared>,
+    device_id: Uuid,
+    delivery_id: Uuid,
+    revision: u64,
+}
+
+struct CompanionChatEffectLease {
+    /// Retain the owned mutex until the existing concrete adapter proves a
+    /// response head, a known pre-start abort, or an indeterminate outcome.
+    /// This is the exact provider-start linearization boundary; it is not a
+    /// second provider runtime or an unbounded revoke wait.
+    admission: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+fn check_chat_effect_authority(
+    shared: &Shared,
+    device_id: Uuid,
+    delivery_id: Uuid,
+    revision: u64,
+) -> Result<()> {
+    let c = shared
+        .core
+        .lock()
+        .map_err(|_| anyhow::anyhow!("authority mutex poisoned"))?;
+    anyhow::ensure!(!c.reload_required, "reload/recovery required");
+    let grant = c.state.devices.get(&device_id).context("unknown device")?;
+    anyhow::ensure!(
+        grant.phase == Phase::Active
+            && grant.scope == CompanionScope::ChatSend
+            && grant.revision == revision,
+        "companion chat provider start denied"
+    );
+    anyhow::ensure!(
+        c.owned_deliveries.contains(&delivery_id)
+            && c.state.delivery_markers.get(&delivery_id).is_some_and(|marker| {
+                marker.device_id.0 == device_id && marker.revision == revision
+            }),
+        "companion chat delivery lease is no longer live"
+    );
+    Ok(())
+}
+
+#[async_trait::async_trait]
+impl crate::providers::ChatTurnEffectGate for CompanionChatEffectGate {
+    async fn intent(
+        &self,
+        _kind: crate::providers::ChatTurnEffectKind,
+        _request_binding_sha256: &str,
+    ) -> Result<crate::providers::PreparingEffect> {
+        let admission = Arc::clone(&self.shared.effect_admission).lock_owned().await;
+        check_chat_effect_authority(
+            &self.shared,
+            self.device_id,
+            self.delivery_id,
+            self.revision,
+        )?;
+        drop(admission);
+        Ok(crate::providers::PreparingEffect::new(Box::new(
+            CompanionChatPreparingEffect {
+                shared: Arc::clone(&self.shared),
+                device_id: self.device_id,
+                delivery_id: self.delivery_id,
+                revision: self.revision,
+            },
+        )))
+    }
+
+    fn register_owner(
+        &self,
+        owner: crate::providers::TurnEffectOwner,
+    ) -> crate::providers::EffectOwnerRegistration {
+        // The established pipeline retains this owner when transfer is
+        // unavailable. Companion owns only the start fence, never an adapter
+        // child, so it must not claim a foreign drain future.
+        crate::providers::EffectOwnerRegistration::Untransferred {
+            error: anyhow::anyhow!("companion chat gate does not own provider child drains"),
+            owner,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::providers::PreparingEffectLifecycle for CompanionChatPreparingEffect {
+    async fn begin_start(
+        self: Box<Self>,
+        start_authority: Option<&dyn crate::providers::EffectStartAuthority>,
+    ) -> Result<crate::providers::EffectStartLease> {
+        let admission = Arc::clone(&self.shared.effect_admission).lock_owned().await;
+        check_chat_effect_authority(
+            &self.shared,
+            self.device_id,
+            self.delivery_id,
+            self.revision,
+        )?;
+        if let Some(start_authority) = start_authority {
+            start_authority.recheck()?;
+        }
+        Ok(crate::providers::EffectStartLease::new(Box::new(
+            CompanionChatEffectLease {
+                admission: Some(admission),
+            },
+        )))
+    }
+
+    fn abandon(self: Box<Self>) {
+        // No adapter handshake began, so dropping this reservation releases
+        // no remote effect and leaves the shared admission boundary open.
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::providers::EffectStartLeaseLifecycle for CompanionChatEffectLease {
+    fn deadline(&self) -> tokio::time::Instant {
+        // The adapter's established effect deadline remains authoritative.
+        // This guard only serializes the companion device revoke/start edge.
+        tokio::time::Instant::now() + std::time::Duration::from_secs(125)
+    }
+
+    async fn settle_started(mut self: Box<Self>) -> Result<()> {
+        self.admission.take();
+        Ok(())
+    }
+
+    async fn settle_aborted_proven_pre_start(mut self: Box<Self>) -> Result<()> {
+        self.admission.take();
+        Ok(())
+    }
+
+    async fn settle_indeterminate(mut self: Box<Self>) -> Result<()> {
+        self.admission.take();
+        Ok(())
+    }
+
+    fn abandon(mut self: Box<Self>) {
+        self.admission.take();
+    }
+}
+
 impl Drop for StatusLease {
     fn drop(&mut self) {
         if let Ok(mut c) = self.shared.core.lock() {
@@ -288,10 +468,12 @@ impl DeviceAuthority {
                     state,
                     reload_required: false,
                     challenges: HashMap::new(),
+                    chat_challenges: HashMap::new(),
                     leases: HashMap::new(),
                     owned_deliveries: BTreeSet::new(),
                 }),
                 drained: tokio::sync::Notify::new(),
+                effect_admission: Arc::new(tokio::sync::Mutex::new(())),
             }),
         })
     }
@@ -364,7 +546,7 @@ impl DeviceAuthority {
             client_noise_key: p.client_noise_public_key,
             key_sha256: a.key_sha256.clone(),
             label: p.label,
-            scope: CompanionScope::StatusRead,
+            scope: p.requested_scope,
             phase: Phase::PendingEnroll,
             revision: 1,
             reconnect: r,
@@ -375,8 +557,11 @@ impl DeviceAuthority {
         self.publish(&mut c, n)?;
         Ok(a)
     }
-    /// Persists PendingRevoke first (denying leases), then awaits owned delivery drains without blocking Tokio.
-    pub async fn begin_revoke_async(&self, id: &CompanionDeviceId) -> Result<Option<PendingAudit>> {
+    /// Persist the deny transition before any runtime asks a listener to stop.
+    /// This is deliberately separate from the drain wait: a live lease needs
+    /// the just-persisted denial to stop its owned carrier path without a
+    /// revoke task deadlocking behind that same lease.
+    fn begin_revoke_pending_locked(&self, id: &CompanionDeviceId) -> Result<Option<PendingAudit>> {
         let a = {
             let mut c = self.core()?;
             let g = c.state.devices.get(&id.0).context("unknown device")?;
@@ -403,8 +588,49 @@ impl DeviceAuthority {
             self.publish(&mut c, n)?;
             a
         };
-        wait_for_lease_drain(&self.shared, id.0).await?;
         Ok(Some(a))
+    }
+
+    /// Synchronous callers cannot wait through a live provider response-head
+    /// handshake. They therefore fail closed while that exact start boundary
+    /// is owned; the daemon runtime uses the async form below.
+    pub fn begin_revoke_pending(&self, id: &CompanionDeviceId) -> Result<Option<PendingAudit>> {
+        let _admission = self
+            .shared
+            .effect_admission
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("companion provider start is resolving"))?;
+        self.begin_revoke_pending_locked(id)
+    }
+
+    /// Linearize the durable deny against every companion-owned concrete
+    /// provider start. This must run before the runtime signals its listener
+    /// stop, then waits for the resulting carrier/lease drain.
+    pub async fn begin_revoke_pending_after_effect_boundary(
+        &self,
+        id: &CompanionDeviceId,
+    ) -> Result<Option<PendingAudit>> {
+        let _admission = Arc::clone(&self.shared.effect_admission).lock_owned().await;
+        self.begin_revoke_pending_locked(id)
+    }
+
+    /// Wait only after the runtime has signalled and joined every listener it
+    /// owns. A pending revoke remains durable if this wait cannot prove a
+    /// terminal lease state.
+    pub async fn wait_for_revoke_drain(&self, id: &CompanionDeviceId) -> Result<()> {
+        wait_for_lease_drain(&self.shared, id.0).await?;
+        Ok(())
+    }
+
+    /// Compatibility wrapper for callers without a concrete carrier owner.
+    /// Runtime revocation uses the split operations above so it can cancel its
+    /// own listener between the durable deny and this wait.
+    pub async fn begin_revoke_async(&self, id: &CompanionDeviceId) -> Result<Option<PendingAudit>> {
+        let Some(audit) = self.begin_revoke_pending_after_effect_boundary(id).await? else {
+            return Ok(None);
+        };
+        self.wait_for_revoke_drain(id).await?;
+        Ok(Some(audit))
     }
     pub fn pending_audits(&self) -> Result<Vec<PendingAudit>> {
         let c = self.core()?;
@@ -547,6 +773,60 @@ impl DeviceAuthority {
             delivery_id,
             revision: p.revision,
         })
+    }
+    /// Fresh chat admission is distinct from status: the expected durable
+    /// scope is checked before a challenge exists or a provider can be seen.
+    pub fn begin_chat_reconnect_for_observed_noise(
+        &self, noise: [u8; 32], generation: u64, boot: String, nonce: [u8; 32], now: i64,
+    ) -> Result<ChatChallenge> {
+        let mut c = self.core()?;
+        anyhow::ensure!(generation > 0 && now >= 0, "invalid reconnect clock/generation");
+        let hits = c.state.devices.values().filter(|grant| {
+            grant.client_noise_key == noise && grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend
+        }).collect::<Vec<_>>();
+        anyhow::ensure!(hits.len() == 1, "unauthenticated chat reconnect");
+        let (id, revision) = (hits[0].device_id.clone(), hits[0].revision);
+        if let Some(existing) = c.chat_challenges.get(&id.0) {
+            anyhow::ensure!(now >= existing.value.issued_at_unix, "backward chat challenge clock");
+            if now - existing.value.issued_at_unix > AGE { c.chat_challenges.remove(&id.0); }
+        }
+        anyhow::ensure!(!c.chat_challenges.contains_key(&id.0), "live chat challenge already exists");
+        let value = ChatChallenge {
+            schema_version: COMPANION_V3_SCHEMA_VERSION, device_id: id.clone(), revision,
+            listener_generation: generation, daemon_boot_id: boot, challenge_nonce: nonce, issued_at_unix: now,
+        };
+        value.validate().map_err(pe)?;
+        c.chat_challenges.insert(id.0, ChatChallengeState { value: value.clone() });
+        Ok(value)
+    }
+    pub fn authorize_chat(&self, request: &CompanionChatRequest, now: i64) -> Result<CompanionChatLease> {
+        request.validate().map_err(pe)?;
+        let mut c = self.core()?;
+        anyhow::ensure!(c.state.delivery_markers.is_empty(), "companion delivery already active");
+        let grant = c.state.devices.get(&request.device_id.0).context("unknown device")?;
+        anyhow::ensure!(grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend, "device chat denied");
+        anyhow::ensure!(grant.revision == request.revision, "stale revision");
+        request.verify_with(&grant.signing_key).map_err(pe)?;
+        let challenge = c.chat_challenges.get(&request.device_id.0).context("no authenticated chat challenge")?;
+        anyhow::ensure!(
+            now >= challenge.value.issued_at_unix && now - challenge.value.issued_at_unix <= AGE
+            && challenge.value.device_id == request.device_id
+            && challenge.value.revision == request.revision
+            && challenge.value.listener_generation == request.listener_generation
+            && challenge.value.daemon_boot_id == request.daemon_boot_id
+            && challenge.value.challenge_nonce == request.challenge_nonce,
+            "chat challenge mismatch"
+        );
+        let delivery_id = Uuid::now_v7();
+        let mut next = c.state.clone();
+        next.delivery_markers.insert(delivery_id, DeliveryMarker {
+            delivery_id, device_id: request.device_id.clone(), revision: request.revision,
+        });
+        self.publish(&mut c, next)?;
+        c.owned_deliveries.insert(delivery_id);
+        c.chat_challenges.remove(&request.device_id.0);
+        *c.leases.entry(request.device_id.0).or_insert(0) += 1;
+        Ok(StatusLease { store: self.store.clone(), shared: Arc::clone(&self.shared), id: request.device_id.0, delivery_id, revision: request.revision })
     }
     pub fn device(&self, id: &CompanionDeviceId) -> Result<DeviceGrant> {
         let c = self.core()?;
@@ -698,7 +978,7 @@ mod real_store_regression {
             descriptor_generation: 1,
         };
         let enrollment =
-            EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32], "phone".into(), &signing)
+            EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32], CompanionScope::StatusRead, "phone".into(), &signing)
                 .unwrap();
         let enrolled = authority
             .begin_enrollment(enrollment, [4; 32], descriptor, 1)
@@ -751,6 +1031,67 @@ mod real_store_regression {
         ));
         let _ = fs::remove_dir_all(home);
     }
+
+    #[test]
+    fn status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use() {
+        let home = std::env::temp_dir().join(format!("neoth-chat-scope-{}", Uuid::now_v7()));
+        fs::create_dir_all(&home).unwrap();
+        let authority = DeviceAuthority::load(&home).unwrap();
+        let signing = SigningKey::from_bytes(&[11; 32]);
+        let descriptor = ReconnectDescriptor { schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(), rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1 };
+        let status = EnrollmentProof::signed([3;32], [4;32], [5;32], [6;32], CompanionScope::StatusRead, "status".into(), &signing).unwrap();
+        let pending = authority.begin_enrollment(status, [4;32], descriptor.clone(), 1).unwrap();
+        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        assert!(authority.begin_chat_reconnect_for_observed_noise([5;32], 1, "boot".into(), [7;32], 2).is_err());
+
+        let chat = EnrollmentProof::signed([8;32], [9;32], [10;32], [11;32], CompanionScope::ChatSend, "chat".into(), &signing).unwrap();
+        let pending = authority.begin_enrollment(chat, [9;32], descriptor, 2).unwrap();
+        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        let challenge = authority.begin_chat_reconnect_for_observed_noise([10;32], 1, "boot".into(), [12;32], 3).unwrap();
+        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "one turn".into(), &signing).unwrap();
+        let lease = authority.authorize_chat(&request, 4).unwrap();
+        assert!(authority.authorize_chat(&request, 4).is_err());
+        drop(lease);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn pending_revoke_denies_new_chat_before_waiting_for_its_owned_lease() {
+        let home = std::env::temp_dir().join(format!("neoth-chat-revoke-{}", Uuid::now_v7()));
+        fs::create_dir_all(&home).unwrap();
+        let authority = DeviceAuthority::load(&home).unwrap();
+        let signing = SigningKey::from_bytes(&[13; 32]);
+        let descriptor = ReconnectDescriptor {
+            schema_version: 3,
+            carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32],
+            daemon_noise_public_key: [2; 32],
+            descriptor_generation: 1,
+        };
+        let proof = EnrollmentProof::signed(
+            [3; 32], [4; 32], [5; 32], [6; 32], CompanionScope::ChatSend,
+            "chat".into(), &signing,
+        )
+        .unwrap();
+        let pending = authority.begin_enrollment(proof, [4; 32], descriptor, 1).unwrap();
+        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        let challenge = authority
+            .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], 2)
+            .unwrap();
+        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "ordinary".into(), &signing).unwrap();
+        let lease = authority.authorize_chat(&request, 3).unwrap();
+        let pending_revoke = authority.begin_revoke_pending(&challenge.device_id).unwrap().unwrap();
+        assert_eq!(pending_revoke.kind, MutationKind::Revoke);
+        assert!(authority
+            .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [8; 32], 4)
+            .is_err());
+        let mut drain = Box::pin(authority.wait_for_revoke_drain(&challenge.device_id));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(1), &mut drain).await.is_err());
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        assert!(drain.await.is_ok());
+        let _ = fs::remove_dir_all(home);
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -762,10 +1103,12 @@ mod tests {
                 state,
                 reload_required: false,
                 challenges: HashMap::new(),
+                chat_challenges: HashMap::new(),
                 leases: HashMap::from([(id, 1)]),
                 owned_deliveries: BTreeSet::new(),
             }),
             drained: tokio::sync::Notify::new(),
+            effect_admission: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
     fn lease(shared: Arc<Shared>, id: Uuid) -> StatusLease {
@@ -814,6 +1157,37 @@ mod tests {
         drop(lease);
         assert!(waiter.await.is_ok());
     }
+    #[tokio::test]
+    async fn chat_terminal_owner_blocks_revoke_drain_until_carrier_terminal() {
+        let id = Uuid::now_v7();
+        let shared = shared(State::default(), id);
+        let lease = lease(Arc::clone(&shared), id);
+        let frame = lease
+            .chat_terminal_frame(super::super::companion_protocol::CompanionChatTerminal {
+                schema_version: 3,
+                request_id: Uuid::now_v7(),
+                outcome: super::super::companion_protocol::CompanionChatOutcome::Indeterminate,
+                records: Vec::new(),
+                provider: None,
+                model: None,
+            })
+            .unwrap();
+        assert!(matches!(
+            decode_server_frame(&frame).unwrap(),
+            ServerFrame::ChatTerminal(_)
+        ));
+        let mut waiter = Box::pin(wait_for_lease_drain(&shared, id));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut waiter)
+                .await
+                .is_err()
+        );
+        // A carrier outcome is ambiguous until its owning delivery path ends.
+        // Dropping this unconfirmed lease leaves any real durable marker intact
+        // while still releasing the local revoke drain latch.
+        drop(lease);
+        assert!(waiter.await.is_ok());
+    }
     #[test]
     fn persisted_delivery_marker_refuses_serialized_same_store_reconstruction() {
         let device = Uuid::now_v7();
@@ -858,10 +1232,12 @@ mod tests {
                     state: reloaded,
                     reload_required: false,
                     challenges: HashMap::new(),
+                    chat_challenges: HashMap::new(),
                     leases: HashMap::new(),
                     owned_deliveries: BTreeSet::new(),
                 }),
                 drained: tokio::sync::Notify::new(),
+            effect_admission: Arc::new(tokio::sync::Mutex::new(())),
             }),
         };
         assert!(reconstructed.core().is_err());

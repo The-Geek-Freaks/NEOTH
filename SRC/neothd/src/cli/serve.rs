@@ -688,6 +688,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             crate::daemon::companion_runtime::CompanionRuntime::load(
                 neoth_home.clone(),
                 writer.clone(),
+                Arc::clone(&chat_runtime),
                 gui_chat_boot_id.0.clone(),
                 1,
             )

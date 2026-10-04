@@ -882,7 +882,7 @@ jobs:
           run_case 508 lib wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation --lib
           run_case 509 lib daemon::companion_protocol::tests::server_frames_use_only_stable_adjacent_tags_and_bounded_denials daemon::companion_protocol::tests::server_frames_use_only_stable_adjacent_tags_and_bounded_denials --lib
           run_case 510 lib daemon::companion_protocol::tests::validated_server_decode_rejects_bad_version_and_descriptor_in_every_body daemon::companion_protocol::tests::validated_server_decode_rejects_bad_version_and_descriptor_in_every_body --lib
-          run_case 511 lib daemon::companion_authority::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan daemon::companion_authority::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan --lib
+          run_case 511 lib daemon::companion_authority::real_store_regression::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan daemon::companion_authority::real_store_regression::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan --lib
           run_case 512 lib daemon::companion_authority::tests::decoded_status_frame_retains_prewrite_marker_until_confirmed daemon::companion_authority::tests::decoded_status_frame_retains_prewrite_marker_until_confirmed --lib
           run_case 513 lib daemon::companion_authority::tests::revoke_drain_waits_for_owned_lease_release daemon::companion_authority::tests::revoke_drain_waits_for_owned_lease_release --lib
           run_case 514 lib daemon::companion_authority::tests::persisted_delivery_marker_refuses_serialized_same_store_reconstruction daemon::companion_authority::tests::persisted_delivery_marker_refuses_serialized_same_store_reconstruction --lib
@@ -893,9 +893,16 @@ jobs:
           run_case 519 lib daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain --lib
           run_case 520 lib daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain --lib
           run_case 521 lib daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 521
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 521
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 521
+          run_case 522 lib daemon::companion_protocol::tests::chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text daemon::companion_protocol::tests::chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text --lib
+          run_case 523 lib daemon::companion_protocol::tests::chat_terminal_never_exposes_records_for_nonaccepted_outcomes daemon::companion_protocol::tests::chat_terminal_never_exposes_records_for_nonaccepted_outcomes --lib
+          run_case 524 lib daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use --lib
+          run_case 525 lib daemon::companion_authority::real_store_regression::pending_revoke_denies_new_chat_before_waiting_for_its_owned_lease daemon::companion_authority::real_store_regression::pending_revoke_denies_new_chat_before_waiting_for_its_owned_lease --lib
+          run_case 526 lib daemon::companion_authority::tests::chat_terminal_owner_blocks_revoke_drain_until_carrier_terminal daemon::companion_authority::tests::chat_terminal_owner_blocks_revoke_drain_until_carrier_terminal --lib
+          run_case 527 lib daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection --lib
+          run_case 528 lib daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 528
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 528
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 528
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

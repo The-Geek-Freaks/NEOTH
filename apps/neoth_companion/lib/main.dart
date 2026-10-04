@@ -80,6 +80,7 @@ class CompanionHome extends StatefulWidget {
 class _CompanionHomeState extends State<CompanionHome> {
   late final TextEditingController _invite = TextEditingController(text: widget.initialInvite ?? '');
   final _label = TextEditingController(text: 'My phone');
+  final _chat = TextEditingController();
 
   @override
   void didUpdateWidget(covariant CompanionHome oldWidget) {
@@ -93,6 +94,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   void dispose() {
     _invite.dispose();
     _label.dispose();
+    _chat.dispose();
     super.dispose();
   }
 
@@ -127,12 +129,50 @@ class _CompanionHomeState extends State<CompanionHome> {
                     child: const Text('Pair this phone'),
                   ),
                 ] else ...[
-                  if (widget.controller.status case final snapshot?) _StatusCard(snapshot: snapshot),
-                  FilledButton.icon(
-                    onPressed: state == CompanionViewState.pairing ? null : () => unawaited(widget.controller.refresh()),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh status'),
+                  Text(
+                    widget.controller.canSendChat
+                        ? 'This phone has the explicitly paired one-shot chat permission.'
+                        : 'This phone has the paired read-only status permission.',
                   ),
+                  const SizedBox(height: 12),
+                  if (widget.controller.canRefreshStatus) ...[
+                    if (widget.controller.status case final snapshot?) _StatusCard(snapshot: snapshot),
+                    FilledButton.icon(
+                      onPressed: state == CompanionViewState.pairing ? null : () => unawaited(widget.controller.refresh()),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh status'),
+                    ),
+                  ],
+                  if (widget.controller.canSendChat) ...[
+                    const SizedBox(height: 20),
+                    Text('One-time chat', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _chat,
+                      enabled: !widget.controller.chatPending,
+                      minLines: 2,
+                      maxLines: 5,
+                      maxLength: 640,
+                      decoration: const InputDecoration(
+                        labelText: 'Ordinary message',
+                        helperText: 'One request only. Slash actions, files and streaming are unavailable.',
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: widget.controller.chatPending
+                          ? null
+                          : () async {
+                              await widget.controller.sendChat(_chat.text);
+                              if (mounted && widget.controller.chatTerminal?.accepted == true) _chat.clear();
+                            },
+                      icon: const Icon(Icons.send),
+                      label: Text(widget.controller.chatPending ? 'Waiting for NEOTH' : 'Send once'),
+                    ),
+                    if (widget.controller.chatLocalMessage case final message?)
+                      Padding(padding: const EdgeInsets.only(top: 12), child: Text(message)),
+                    if (widget.controller.chatTerminal case final terminal?)
+                      Padding(padding: const EdgeInsets.only(top: 12), child: _ChatTerminalCard(terminal: terminal)),
+                  ],
                   const SizedBox(height: 12),
                   TextButton(
                     onPressed: () => unawaited(widget.controller.forgetLocalEnrollment()),
@@ -151,7 +191,7 @@ class _CompanionHomeState extends State<CompanionHome> {
         CompanionViewState.unpaired => 'Pair this phone',
         CompanionViewState.pairing => 'Contacting NEOTH',
         CompanionViewState.ready => 'Connected',
-        CompanionViewState.offline => 'Phone is paired, NEOTH is offline',
+        CompanionViewState.offline => 'Phone is paired, waiting for NEOTH',
         CompanionViewState.denied => 'Access denied',
         CompanionViewState.revoked => 'This phone was revoked',
         CompanionViewState.failed => 'Could not complete the request',
@@ -180,6 +220,28 @@ class _StatusCard extends StatelessWidget {
             Text('Readiness: ${snapshot.readiness}'),
             Text(snapshot.activeTurns == null ? 'Active turns: unavailable' : 'Active turns: ${snapshot.activeTurns!.length}'),
             Text('Observed: ${DateTime.fromMillisecondsSinceEpoch(snapshot.observedAtUnix * 1000, isUtc: true).toLocal()}'),
+          ]),
+        ),
+      );
+}
+
+class _ChatTerminalCard extends StatelessWidget {
+  const _ChatTerminalCard({required this.terminal});
+  final CompanionChatTerminal terminal;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Chat: ${terminal.outcome}'),
+            if (terminal.accepted) ...[
+              Text('Provider: ${terminal.provider}'),
+              Text('Model: ${terminal.model}'),
+              const SizedBox(height: 8),
+              for (final record in terminal.records) Text(record.text),
+            ] else
+              const Text('No message is retried automatically.'),
           ]),
         ),
       );

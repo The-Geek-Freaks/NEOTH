@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'bridge_input.dart';
 import 'models.dart';
 
 abstract interface class CompanionStore {
@@ -49,7 +50,8 @@ class SecureCompanionStore implements CompanionStore {
     final scope = values[_scopeKey];
     final descriptor = values[_descriptorKey];
     if (id == null && revision == null && scope == null && descriptor == null) return null;
-    if (id == null || revision == null || scope != 'status_read' || descriptor == null) {
+    if (id == null || revision == null ||
+        (scope != companionStatusReadScope && scope != companionChatSendScope) || descriptor == null) {
       await clearEnrollment();
       return null;
     }

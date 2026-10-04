@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::daemon::companion::{
@@ -70,7 +70,12 @@ pub enum CompanionCommand {
     /// Mint a v3 phone QR through the RUNNING daemon.  The daemon, rather
     /// than this CLI process, owns the persistent Noise responder key encoded
     /// in `server_pk` and all later listener/recovery work.
-    PairMobile,
+    PairMobile {
+        /// Explicit durable authority for this newly paired phone. Existing
+        /// devices retain their stored scope and never receive an upgrade.
+        #[arg(long, value_enum, default_value_t = CompanionPairScope::StatusRead)]
+        scope: CompanionPairScope,
+    },
     /// Read or revoke v3 durable device grants through the same-user daemon
     /// owner.  No subcommand opens the authority store directly.
     Devices {
@@ -86,20 +91,32 @@ pub enum CompanionDevicesCommand {
     Revoke { device_id: String },
 }
 
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum CompanionPairScope { StatusRead, ChatSend }
+
+impl From<CompanionPairScope> for crate::daemon::companion_protocol::CompanionScope {
+    fn from(value: CompanionPairScope) -> Self {
+        match value {
+            CompanionPairScope::StatusRead => Self::StatusRead,
+            CompanionPairScope::ChatSend => Self::ChatSend,
+        }
+    }
+}
+
 pub async fn run_companion(args: CompanionArgs, output: OutputFormat) -> Result<()> {
     match args.command {
         CompanionCommand::Webchat { resume } => run_webchat(resume.as_deref(), output).await,
         CompanionCommand::PairPhone {
             write_invite_for_serve,
         } => run_pair_phone(write_invite_for_serve, output).await,
-        CompanionCommand::PairMobile => run_pair_mobile_v3(output).await,
+        CompanionCommand::PairMobile { scope } => run_pair_mobile_v3(scope.into(), output).await,
         CompanionCommand::Devices { command } => run_devices_v3(command, output).await,
     }
 }
 
-async fn run_pair_mobile_v3(output: OutputFormat) -> Result<()> {
+async fn run_pair_mobile_v3(scope: crate::daemon::companion_protocol::CompanionScope, output: OutputFormat) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let invite = crate::daemon::audit_rpc::companion_v3_mint_pair(&home)
+    let invite = crate::daemon::audit_rpc::companion_v3_mint_pair(&home, scope)
         .await
         .map_err(|error| anyhow::anyhow!("mint v3 pairing invite from running daemon: {error}"))?;
     match output {
@@ -114,6 +131,7 @@ async fn run_pair_mobile_v3(output: OutputFormat) -> Result<()> {
                 "Expires in {}s. The QR pins the daemon's actual persistent Noise key.",
                 invite.expires_in_secs
             );
+            println!("Requested scope: {}.", invite.requested_scope.as_str());
         }
     }
     Ok(())

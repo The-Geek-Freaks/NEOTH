@@ -11,6 +11,10 @@ extern "C" {
 typedef struct neoth_companion_bridge neoth_companion_bridge;
 typedef struct neoth_companion_operation neoth_companion_operation;
 
+/* All opaque pointers have one owner. Calls using, cancelling, or freeing the
+ * same bridge/operation must be serialized by the caller. Do not free a bridge
+ * while its operations remain live, or alias `free` with `poll`/`cancel`. */
+
 enum neoth_companion_result {
   NEOTH_COMPANION_PENDING = 0,
   NEOTH_COMPANION_OK = 1,
@@ -28,7 +32,9 @@ neoth_companion_bridge *neoth_companion_bridge_new(
 void neoth_companion_bridge_free(neoth_companion_bridge *bridge);
 
 /* Pair URL must be a bounded v=3 invite. `label` is a bounded display label.
- * Returned operation emits only a public reconnect descriptor or error code. */
+ * Its terminal public JSON is flat `state:"paired"`, with `device_id`,
+ * `revision`, stable `granted_scope`, and a public descriptor containing
+ * hex topic/key fields; it is not a daemon `ServerFrame` envelope. */
 neoth_companion_operation *neoth_companion_pair_start(
     neoth_companion_bridge *bridge, const uint8_t *pair_url, size_t pair_url_len,
     const uint8_t *label, size_t label_len);
@@ -39,6 +45,16 @@ neoth_companion_operation *neoth_companion_pair_start(
 neoth_companion_operation *neoth_companion_reconnect_start(
     neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
     size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len);
+
+/* One fresh chat turn over a chat-scoped reconnect descriptor. `message` is
+ * UTF-8, 1..640 bytes, and must not begin with `/` after leading whitespace.
+ * There is no retry. A post-send transport ambiguity is terminal JSON outcome
+ * `indeterminate`; no secret, session, bearer, or provider request id crosses
+ * this ABI. */
+neoth_companion_operation *neoth_companion_chat_start(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *message, size_t message_len);
 
 /* Poll is non-blocking. On terminal state it writes bounded UTF-8 JSON public
  * result bytes to `out`; set `out` NULL/0 to discover required length. The

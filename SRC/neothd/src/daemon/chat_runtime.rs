@@ -98,7 +98,44 @@ enum AdmissionError {
     ProviderConfigChanged,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CompanionChatTurnError {
+    Denied,
+    Busy,
+    Unavailable,
+    Timeout,
+    /// The daemon cannot prove a public terminal after an admitted effect;
+    /// the mobile carrier must never replay this request automatically.
+    Indeterminate,
+}
+
 impl DaemonChatRuntime {
+    /// Mobile companion entrypoint. It reuses the daemon's only admission,
+    /// provider snapshot, durable-consent, WAL and close/drain path; callers
+    /// receive no bearer, AuditStream, provider constructor or retry handle.
+    pub(crate) async fn execute_companion_chat_turn(
+        &self,
+        request: DaemonPlainChatRequest,
+        cancellation: chat_turn_pipeline::ChatTurnCancellation,
+        effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate>,
+    ) -> std::result::Result<DaemonPlainChatResponse, CompanionChatTurnError> {
+        validate_request(&request).map_err(|_| CompanionChatTurnError::Denied)?;
+        let admission = self.admit_with_cancellation(cancellation.clone()).await.map_err(|error| match error {
+            AdmissionError::Busy => CompanionChatTurnError::Busy,
+            AdmissionError::Closing | AdmissionError::ProviderUnavailable | AdmissionError::ProviderConfigChanged => CompanionChatTurnError::Unavailable,
+        })?;
+        let _active = ActiveOperationGuard { runtime: self, id: admission.id };
+        let result = self.execute_turn(
+            request, Arc::clone(&admission.provider), Arc::clone(&admission.accepted), cancellation.clone(),
+            Some(effect_gate),
+        ).await;
+        cancellation.close();
+        match result {
+            Ok(response) => Ok(response),
+            Err(error) if error.downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>().is_some() => Err(CompanionChatTurnError::Timeout),
+            Err(_) => Err(CompanionChatTurnError::Indeterminate),
+        }
+    }
     pub(crate) fn new(
         selected_home: PathBuf,
         selected_config_path: PathBuf,
@@ -434,6 +471,7 @@ impl DaemonChatRuntime {
                 Arc::clone(&admission.provider),
                 Arc::clone(&admission.accepted),
                 admission.cancellation.clone(),
+                None,
             )
             .await;
         match turn_result {
@@ -520,6 +558,7 @@ impl DaemonChatRuntime {
         provider: Arc<dyn Provider>,
         accepted: Arc<AcceptedConfigSnapshot>,
         cancellation: chat_turn_pipeline::ChatTurnCancellation,
+        effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     ) -> Result<DaemonPlainChatResponse> {
         validate_request(&request)?;
         let config = accepted.config();
@@ -541,12 +580,13 @@ impl DaemonChatRuntime {
         let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepared else {
             anyhow::bail!("daemon plain chat unexpectedly completed during preparation");
         };
-        let engine_result = chat_turn_pipeline::run_prepared_chat_turn(
+        let engine_result = chat_turn_pipeline::run_prepared_chat_turn_with_effect_gate(
             &mut prepared,
             provider.as_ref(),
             &self.writer,
             &self.active_segment_path,
             &mut sink,
+            effect_gate,
         )
         .await;
         cancellation.close();
@@ -757,8 +797,13 @@ async fn write_http_json(
 mod tests {
     use super::*;
     use crate::cli::init::ProviderKind;
+    use crate::daemon::{
+        companion_authority::{AuditObservation, DeviceAuthority, MutationKind},
+        companion_protocol::{CompanionChatRequest, CompanionScope, EnrollmentProof, ReconnectDescriptor},
+    };
     use crate::providers::{Completion, CompletionIdentity, Request};
     use async_trait::async_trait;
+    use ed25519_dalek::SigningKey;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -807,6 +852,68 @@ mod tests {
                 cache_read_tokens: None,
                 usage_measurements: None,
             })
+        }
+    }
+
+    /// Test-only pause placed after the real companion gate's durable Intent
+    /// admission and before its concrete provider-start lease. It lets the
+    /// regression publish a real PendingRevoke in the only meaningful gap.
+    #[derive(Clone)]
+    struct PauseBeforeCompanionStartGate {
+        inner: Arc<dyn crate::providers::ChatTurnEffectGate>,
+        intent_seen: Arc<Notify>,
+        release_start: Arc<Notify>,
+    }
+
+    struct PausedCompanionPreparingEffect {
+        inner: Option<crate::providers::PreparingEffect>,
+        release_start: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl crate::providers::ChatTurnEffectGate for PauseBeforeCompanionStartGate {
+        async fn intent(
+            &self,
+            kind: crate::providers::ChatTurnEffectKind,
+            request_binding_sha256: &str,
+        ) -> Result<crate::providers::PreparingEffect> {
+            let inner = self.inner.intent(kind, request_binding_sha256).await?;
+            self.intent_seen.notify_waiters();
+            Ok(crate::providers::PreparingEffect::new(Box::new(
+                PausedCompanionPreparingEffect {
+                    inner: Some(inner),
+                    release_start: Arc::clone(&self.release_start),
+                },
+            )))
+        }
+
+        fn register_owner(
+            &self,
+            owner: crate::providers::TurnEffectOwner,
+        ) -> crate::providers::EffectOwnerRegistration {
+            self.inner.register_owner(owner)
+        }
+    }
+
+    #[async_trait]
+    impl crate::providers::PreparingEffectLifecycle for PausedCompanionPreparingEffect {
+        async fn begin_start(
+            mut self: Box<Self>,
+            authority: Option<&dyn crate::providers::EffectStartAuthority>,
+        ) -> Result<crate::providers::EffectStartLease> {
+            self.release_start.notified().await;
+            if let Some(authority) = authority {
+                authority.recheck()?;
+            }
+            self.inner
+                .take()
+                .context("paused companion effect was already consumed")?
+                .begin_start()
+                .await
+        }
+
+        fn abandon(mut self: Box<Self>) {
+            self.inner.take();
         }
     }
 
@@ -902,10 +1009,121 @@ mod tests {
                 admission.provider,
                 admission.accepted,
                 admission.cancellation,
+                None,
             )
             .await;
         runtime.finish_sync(admission.id);
         result
+    }
+
+    #[tokio::test]
+    async fn companion_revoke_between_effect_intent_and_provider_start_launches_nothing() {
+        let (runtime, provider, home, writer, writer_join) = test_runtime(true, 0).await;
+        let authority = Arc::new(
+            DeviceAuthority::load(home.path()).expect("load real companion authority"),
+        );
+        let signing = SigningKey::from_bytes(&[41; 32]);
+        let descriptor = ReconnectDescriptor {
+            schema_version: 3,
+            carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32],
+            daemon_noise_public_key: [2; 32],
+            descriptor_generation: 1,
+        };
+        let enrollment = EnrollmentProof::signed(
+            [3; 32],
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            CompanionScope::ChatSend,
+            "revoke-start-boundary".into(),
+            &signing,
+        )
+        .expect("sign real chat enrollment");
+        let enrolled = authority
+            .begin_enrollment(enrollment, [3; 32], descriptor, 1)
+            .expect("persist pending chat enrollment");
+        authority
+            .reconcile_audit(enrolled.mutation_id, AuditObservation::Observed)
+            .expect("activate enrolled chat device");
+        let challenge = authority
+            .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], 2)
+            .expect("mint fresh chat challenge");
+        let request = CompanionChatRequest::signed(
+            &challenge,
+            uuid::Uuid::now_v7(),
+            "ordinary mobile request".into(),
+            &signing,
+        )
+        .expect("sign fresh chat request");
+        let lease = authority
+            .authorize_chat(&request, 3)
+            .expect("lease authenticated chat request");
+
+        let intent_seen = Arc::new(Notify::new());
+        let release_start = Arc::new(Notify::new());
+        let gate: Arc<dyn crate::providers::ChatTurnEffectGate> = Arc::new(
+            PauseBeforeCompanionStartGate {
+                inner: lease.chat_effect_gate(),
+                intent_seen: Arc::clone(&intent_seen),
+                release_start: Arc::clone(&release_start),
+            },
+        );
+        let wait_for_intent = intent_seen.notified();
+        tokio::pin!(wait_for_intent);
+        wait_for_intent.as_mut().enable();
+        let running_runtime = Arc::clone(&runtime);
+        let running = tokio::spawn(async move {
+            running_runtime
+                .execute_companion_chat_turn(
+                    DaemonPlainChatRequest {
+                        schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
+                        message: "ordinary mobile request".into(),
+                    },
+                    chat_turn_pipeline::ChatTurnCancellation::default(),
+                    gate,
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), &mut wait_for_intent)
+            .await
+            .expect("real pipeline reaches companion effect intent");
+
+        let pending = authority
+            .begin_revoke_pending_after_effect_boundary(&challenge.device_id)
+            .await
+            .expect("persist revoke across unstarted provider boundary")
+            .expect("active device receives one pending revoke");
+        assert_eq!(pending.kind, MutationKind::Revoke);
+        release_start.notify_waiters();
+        assert!(matches!(
+            running.await.expect("join companion pipeline"),
+            Err(CompanionChatTurnError::Indeterminate)
+        ));
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            0,
+            "PendingRevoke before the concrete start lease launches no provider"
+        );
+
+        lease
+            .complete_confirmed()
+            .expect("close no-write leased carrier after blocked start");
+        drop(lease);
+        authority
+            .wait_for_revoke_drain(&challenge.device_id)
+            .await
+            .expect("owned lease drains after blocked provider start");
+        assert!(matches!(
+            authority
+                .reconcile_audit(pending.mutation_id, AuditObservation::Observed)
+                .expect("finalize exact revoke receipt"),
+            crate::daemon::companion_authority::Reconcile::Finalized(_)
+        ));
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join.await.expect("join companion-bound test writer").expect("writer terminal");
     }
 
     struct DiscardingGuiSink;

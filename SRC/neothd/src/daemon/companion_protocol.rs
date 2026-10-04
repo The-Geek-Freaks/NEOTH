@@ -1,10 +1,9 @@
-//! W2306 candidate: v3 authenticated mobile-companion wire contract.
+//! Stable v3 authenticated mobile-companion wire contract.
 //!
-//! This is an isolated candidate, not compiled or integrated.  It deliberately
-//! defines application bytes independently of serde's map ordering.  Peeroxide
-//! provides the encrypted message carrier; this module binds a durable device
-//! signing key to that carrier without treating the per-invite Noise key as a
-//! durable identity.
+//! This standalone module deliberately defines application bytes independently
+//! of serde's map ordering. Peeroxide provides the encrypted message carrier;
+//! this module binds a durable device signing key to that carrier without
+//! treating the per-invite Noise key as a durable identity.
 
 use std::fmt;
 
@@ -15,22 +14,29 @@ use uuid::Uuid;
 
 pub const COMPANION_V3_SCHEMA_VERSION: u8 = 3;
 pub const COMPANION_V3_MAX_FRAME_BYTES: usize = 8 * 1024;
+pub const COMPANION_V3_MAX_CHAT_TERMINAL_BYTES: usize = 80 * 1024;
+pub const COMPANION_V3_MAX_CHAT_MESSAGE_BYTES: usize = 640;
+pub const COMPANION_V3_MAX_CHAT_RECORDS: usize = 64;
 pub const COMPANION_V3_MAX_LABEL_BYTES: usize = 64;
 pub const COMPANION_V3_MAX_ACTIVE_TURNS: usize = 8;
 pub const COMPANION_V3_STATUS_SCOPE: &str = "companion.status.read";
+pub const COMPANION_V3_CHAT_SCOPE: &str = "companion.chat.send";
 const ENROLL_DOMAIN: &[u8] = b"NEOTH/companion/v3/enroll";
 const STATUS_DOMAIN: &[u8] = b"NEOTH/companion/v3/status";
+const CHAT_DOMAIN: &[u8] = b"NEOTH/companion/v3/chat";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompanionScope {
     StatusRead,
+    ChatSend,
 }
 
 impl CompanionScope {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::StatusRead => COMPANION_V3_STATUS_SCOPE,
+            Self::ChatSend => COMPANION_V3_CHAT_SCOPE,
         }
     }
 }
@@ -80,6 +86,7 @@ pub struct EnrollmentProof {
     pub client_noise_public_key: [u8; 32],
     pub device_signing_public_key: [u8; 32],
     pub client_nonce: [u8; 32],
+    pub requested_scope: CompanionScope,
     pub label: String,
     /// Exact 64-byte Ed25519 signature. A Vec avoids depending on serde's
     /// fixed-array support while validation keeps the wire representation
@@ -95,6 +102,55 @@ pub struct EnrollmentAccepted {
     pub revision: u64,
     pub granted_scope: CompanionScope,
     pub reconnect: ReconnectDescriptor,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatChallenge {
+    pub schema_version: u8,
+    pub device_id: CompanionDeviceId,
+    pub revision: u64,
+    pub listener_generation: u64,
+    pub daemon_boot_id: String,
+    pub challenge_nonce: [u8; 32],
+    pub issued_at_unix: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatRequest {
+    pub schema_version: u8,
+    pub device_id: CompanionDeviceId,
+    pub revision: u64,
+    pub listener_generation: u64,
+    pub daemon_boot_id: String,
+    pub challenge_nonce: [u8; 32],
+    pub request_id: Uuid,
+    pub message: String,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionChatRecordKind { Stdout, Stderr, Notice }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatRecord { pub kind: CompanionChatRecordKind, pub text: String }
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionChatOutcome { Accepted, Denied, Busy, Unavailable, Timeout, Indeterminate }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatTerminal {
+    pub schema_version: u8,
+    pub request_id: Uuid,
+    pub outcome: CompanionChatOutcome,
+    pub records: Vec<CompanionChatRecord>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 /// A server-minted, in-memory, one-use challenge.  It is bound to the exact
@@ -148,6 +204,8 @@ pub enum ServerFrame {
     EnrollmentAccepted(EnrollmentAccepted),
     StatusChallenge(StatusChallenge),
     StatusSnapshot(CompanionStatusSnapshot),
+    ChatChallenge(ChatChallenge),
+    ChatTerminal(CompanionChatTerminal),
     Denied(CompanionDenied),
 }
 
@@ -253,6 +311,7 @@ impl EnrollmentProof {
         push_field(&mut out, &self.client_noise_public_key);
         push_field(&mut out, &self.device_signing_public_key);
         push_field(&mut out, &self.client_nonce);
+        push_field(&mut out, self.requested_scope.as_str().as_bytes());
         push_field(&mut out, self.label.as_bytes());
         Ok(out)
     }
@@ -269,6 +328,7 @@ impl EnrollmentProof {
         transport_peer_key: [u8; 32],
         client_noise_public_key: [u8; 32],
         client_nonce: [u8; 32],
+        requested_scope: CompanionScope,
         label: String,
         signing_key: &SigningKey,
     ) -> Result<Self, ProtocolError> {
@@ -279,6 +339,7 @@ impl EnrollmentProof {
             client_noise_public_key,
             device_signing_public_key: signing_key.verifying_key().to_bytes(),
             client_nonce,
+            requested_scope,
             label,
             signature: Vec::new(),
         };
@@ -287,6 +348,67 @@ impl EnrollmentProof {
             .to_bytes()
             .to_vec();
         Ok(result)
+    }
+}
+
+impl ChatChallenge {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_version(self.schema_version)?;
+        if self.daemon_boot_id.is_empty() || self.daemon_boot_id.len() > 128 {
+            return Err(ProtocolError::InvalidBootId);
+        }
+        Ok(())
+    }
+}
+
+impl CompanionChatRequest {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_version(self.schema_version)?;
+        if self.daemon_boot_id.is_empty() || self.daemon_boot_id.len() > 128
+            || self.message.is_empty()
+            || self.message.len() > COMPANION_V3_MAX_CHAT_MESSAGE_BYTES
+            // Match the daemon's sealed plain-chat boundary exactly: only a
+            // slash after leading whitespace selects a local CLI action.
+            // Embedded path separators and URLs remain ordinary text and are
+            // signed/preserved as supplied.
+            || self.message.trim_start().starts_with('/') {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(CHAT_DOMAIN.len() + 192 + self.daemon_boot_id.len() + self.message.len());
+        push_field(&mut out, CHAT_DOMAIN);
+        push_field(&mut out, &[self.schema_version]);
+        push_field(&mut out, self.device_id.0.as_bytes());
+        push_field(&mut out, &self.revision.to_be_bytes());
+        push_field(&mut out, &self.listener_generation.to_be_bytes());
+        push_field(&mut out, self.daemon_boot_id.as_bytes());
+        push_field(&mut out, &self.challenge_nonce);
+        push_field(&mut out, self.request_id.as_bytes());
+        push_field(&mut out, self.message.as_bytes());
+        Ok(out)
+    }
+
+    pub fn signed(challenge: &ChatChallenge, request_id: Uuid, message: String, signing_key: &SigningKey) -> Result<Self, ProtocolError> {
+        challenge.validate()?;
+        let mut result = Self {
+            schema_version: COMPANION_V3_SCHEMA_VERSION,
+            device_id: challenge.device_id.clone(), revision: challenge.revision,
+            listener_generation: challenge.listener_generation,
+            daemon_boot_id: challenge.daemon_boot_id.clone(), challenge_nonce: challenge.challenge_nonce,
+            request_id, message, signature: Vec::new(),
+        };
+        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
+        Ok(result)
+    }
+
+    pub fn verify_with(&self, device_public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+        let key = VerifyingKey::from_bytes(device_public_key).map_err(|_| ProtocolError::InvalidSignature)?;
+        key.verify(&self.signing_bytes()?, &signature_bytes(&self.signature)?)
+            .map_err(|_| ProtocolError::InvalidSignature)
     }
 }
 
@@ -391,6 +513,24 @@ impl CompanionStatusSnapshot {
     }
 }
 
+impl CompanionChatTerminal {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_version(self.schema_version)?;
+        if self.records.len() > COMPANION_V3_MAX_CHAT_RECORDS {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        match self.outcome {
+            CompanionChatOutcome::Accepted => {
+                if self.provider.as_deref().is_none_or(str::is_empty)
+                    || self.model.as_deref().is_none_or(str::is_empty) { return Err(ProtocolError::InvalidFrame); }
+            }
+            _ if !self.records.is_empty() || self.provider.is_some() || self.model.is_some() => return Err(ProtocolError::InvalidFrame),
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 impl ServerFrame {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         match self {
@@ -400,6 +540,8 @@ impl ServerFrame {
             }
             Self::StatusChallenge(value) => value.validate(),
             Self::StatusSnapshot(value) => value.validate(),
+            Self::ChatChallenge(value) => value.validate(),
+            Self::ChatTerminal(value) => value.validate(),
             Self::Denied(value) => value.validate(),
         }
     }
@@ -418,7 +560,17 @@ pub fn encode_frame<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
 
 pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
     frame.validate()?;
-    encode_frame(frame)
+    match frame {
+        ServerFrame::ChatTerminal(_) => encode_chat_terminal(frame),
+        _ => encode_frame(frame),
+    }
+}
+
+pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
+    let ServerFrame::ChatTerminal(value) = frame else { return Err(ProtocolError::InvalidFrame); };
+    value.validate()?;
+    let bytes = serde_json::to_vec(frame).map_err(|_| ProtocolError::InvalidFrame)?;
+    (bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES).then_some(bytes).ok_or(ProtocolError::InvalidFrame)
 }
 
 pub fn decode_frame<T: for<'de> Deserialize<'de>>(frame: &[u8]) -> Result<T, ProtocolError> {
@@ -429,8 +581,14 @@ pub fn decode_frame<T: for<'de> Deserialize<'de>>(frame: &[u8]) -> Result<T, Pro
 }
 
 pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame, ProtocolError> {
-    let value: ServerFrame = decode_frame(frame)?;
+    if frame.is_empty() || frame.len() > COMPANION_V3_MAX_CHAT_TERMINAL_BYTES {
+        return Err(ProtocolError::InvalidFrame);
+    }
+    let value: ServerFrame = serde_json::from_slice(frame).map_err(|_| ProtocolError::InvalidFrame)?;
     value.validate()?;
+    if !matches!(value, ServerFrame::ChatTerminal(_)) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES {
+        return Err(ProtocolError::InvalidFrame);
+    }
     Ok(value)
 }
 
@@ -455,6 +613,44 @@ fn signature_bytes(bytes: &[u8]) -> Result<Signature, ProtocolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text() {
+        let signing = SigningKey::from_bytes(&[9; 32]);
+        let challenge = ChatChallenge {
+            schema_version: 3, device_id: CompanionDeviceId(Uuid::nil()), revision: 2,
+            listener_generation: 3, daemon_boot_id: "boot".into(), challenge_nonce: [4; 32], issued_at_unix: 1,
+        };
+        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "ordinary text".into(), &signing).unwrap();
+        assert!(request.verify_with(&signing.verifying_key().to_bytes()).is_ok());
+        let mut path = request.clone(); path.message = "ordinary / path".into();
+        assert!(path.validate().is_ok());
+        let mut url = request.clone(); url.message = "https://example.test/a/b".into();
+        assert!(url.validate().is_ok());
+        let mut slash = request.clone(); slash.message = "\n \t /help".into();
+        assert!(slash.validate().is_err());
+        let exact_limit = CompanionChatRequest::signed(
+            &challenge,
+            Uuid::now_v7(),
+            "x".repeat(COMPANION_V3_MAX_CHAT_MESSAGE_BYTES),
+            &signing,
+        )
+        .unwrap();
+        assert!(exact_limit.validate().is_ok());
+        let mut overlong = request;
+        overlong.message = "x".repeat(COMPANION_V3_MAX_CHAT_MESSAGE_BYTES + 1);
+        assert!(overlong.validate().is_err());
+    }
+
+    #[test]
+    fn chat_terminal_never_exposes_records_for_nonaccepted_outcomes() {
+        let terminal = CompanionChatTerminal {
+            schema_version: 3, request_id: Uuid::nil(), outcome: CompanionChatOutcome::Busy,
+            records: vec![CompanionChatRecord { kind: CompanionChatRecordKind::Stdout, text: "private".into() }],
+            provider: None, model: None,
+        };
+        assert!(terminal.validate().is_err());
+    }
 
     #[test]
     fn server_frames_use_only_stable_adjacent_tags_and_bounded_denials() {

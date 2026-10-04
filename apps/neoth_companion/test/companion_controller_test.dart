@@ -36,6 +36,19 @@ void main() {
       expect(bridge.pairCalls, 1);
     });
 
+    test('flat paired producer result persists its explicit chat scope and hex descriptor', () async {
+      final store = _MemoryStore();
+      final bridge = _FakeBridge(pairResult: _chatPairedResult());
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.pair(_chatInvite, 'Pixel');
+
+      expect(store.enrollment?.grantedScope, 'companion.chat.send');
+      expect(store.enrollment?.reconnectDescriptor['rendezvous_topic_hex'], hasLength(64));
+      expect(controller.canSendChat, isTrue);
+    });
+
     test('restored enrollment reaches the real status state only for its same device id', () async {
       final store = _MemoryStore(enrollment: _accepted());
       final bridge = _FakeBridge(reconnectResult: _statusResult());
@@ -88,63 +101,151 @@ void main() {
 
       expect(bridge.disposeCalls, 1);
     });
+
+    test('chat-scope enrollment sends one accepted terminal and never retries it', () async {
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatResult: _chatAcceptedResult());
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      await controller.sendChat('ordinary text');
+
+      expect(controller.chatTerminal?.outcome, 'accepted');
+      expect(controller.chatTerminal?.records.single.text, 'hello');
+      expect(bridge.chatCalls, 1);
+    });
+
+    test('status-only enrollment refuses chat locally without starting a bridge operation', () async {
+      final store = _MemoryStore(enrollment: _accepted());
+      final bridge = _FakeBridge();
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      await controller.sendChat('ordinary text');
+
+      expect(bridge.chatCalls, 0);
+      expect(controller.chatLocalMessage, contains('does not have chat permission'));
+    });
+
+    test('typed indeterminate terminal remains visible and is not retried', () async {
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatResult: _chatIndeterminateResult());
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      await controller.sendChat('ordinary text');
+
+      expect(controller.chatTerminal?.outcome, 'indeterminate');
+      expect(bridge.chatCalls, 1);
+    });
+
+    test('a public busy terminal stays typed even when the ABI uses its failed result code', () async {
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatResult: _chatBusyResult());
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      await controller.sendChat('ordinary text');
+
+      expect(controller.chatTerminal?.outcome, 'busy');
+      expect(bridge.chatCalls, 1);
+    });
   });
 }
 
 const _deviceId = '7fb8ae0f-9e36-4a64-83e2-972dff9af880';
-const _invite = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60';
+const _invite = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60&scope=companion.status.read';
+const _chatInvite = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60&scope=companion.chat.send';
 
 EnrollmentAccepted _accepted() => EnrollmentAccepted(
       deviceId: _deviceId,
       revision: 1,
-      grantedScope: 'status_read',
+      grantedScope: 'companion.status.read',
       reconnectDescriptor: const <String, Object?>{
         'schema_version': 3,
         'carrier': 'peeroxide-hyperswarm-v3',
-        'rendezvous_topic': 'public',
-        'daemon_noise_public_key': 'public',
+        'rendezvous_topic_hex': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'daemon_noise_public_key_hex': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         'descriptor_generation': 1,
       },
     );
 
 NativeBridgeResult _acceptedResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
-      'type': 'enrollment_accepted',
-      'body': <String, Object?>{
-        'schema_version': 3,
-        'device_id': _deviceId,
-        'revision': 1,
-        'granted_scope': 'status_read',
-        'reconnect': _accepted().reconnectDescriptor,
-      },
+      'state': 'paired',
+      'device_id': _deviceId,
+      'revision': 1,
+      'granted_scope': 'companion.status.read',
+      'descriptor': _accepted().reconnectDescriptor,
+    });
+
+NativeBridgeResult _chatPairedResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+      'state': 'paired',
+      'device_id': _deviceId,
+      'revision': 2,
+      'granted_scope': 'companion.chat.send',
+      'descriptor': _accepted().reconnectDescriptor,
     });
 
 NativeBridgeResult _statusResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
-      'type': 'status_snapshot',
-      'body': <String, Object?>{
-        'schema_version': 3,
-        'device_id': _deviceId,
-        'daemon_boot_id': 'boot-a',
-        'readiness': 'ready',
-        'observed_at_unix': 1700000000,
-        'active_turns': const <Object?>[],
-      },
+      'state': 'status',
+      'device_id': _deviceId,
+      'daemon_boot_id': 'boot-a',
+      'readiness': 'ready',
+      'observed_at_unix': 1700000000,
+      'active_turns': const <Object?>[],
     });
 
 NativeBridgeResult _statusWithUnavailableTurns() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
-      'type': 'status_snapshot',
-      'body': <String, Object?>{
-        'schema_version': 3,
-        'device_id': _deviceId,
-        'daemon_boot_id': 'boot-a',
-        'readiness': 'ready',
-        'observed_at_unix': 1700000000,
-        'active_turns': null,
-      },
+      'state': 'status',
+      'device_id': _deviceId,
+      'daemon_boot_id': 'boot-a',
+      'readiness': 'ready',
+      'observed_at_unix': 1700000000,
+      'active_turns': null,
     });
 
 NativeBridgeResult _deniedResult(String code) => NativeBridgeResult(NativeOperationResult.denied, <String, Object?>{
-      'type': 'denied',
-      'body': <String, Object?>{'schema_version': 3, 'code': code},
+      'state': 'denied',
+      'code': code,
+    });
+
+EnrollmentAccepted _chatAccepted() => EnrollmentAccepted(
+      deviceId: _deviceId,
+      revision: 2,
+      grantedScope: 'companion.chat.send',
+      reconnectDescriptor: _accepted().reconnectDescriptor,
+    );
+
+NativeBridgeResult _chatAcceptedResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+      'kind': 'chat',
+      'schema_version': 3,
+      'request_id': '11111111-1111-1111-1111-111111111111',
+      'outcome': 'accepted',
+      'records': <Object?>[
+        <String, Object?>{'kind': 'stdout', 'text': 'hello'},
+      ],
+      'provider': 'provider-a',
+      'model': 'model-a',
+    });
+
+NativeBridgeResult _chatIndeterminateResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+      'kind': 'chat',
+      'schema_version': 3,
+      'request_id': '22222222-2222-2222-2222-222222222222',
+      'outcome': 'indeterminate',
+      'records': const <Object?>[],
+    });
+
+NativeBridgeResult _chatBusyResult() => NativeBridgeResult(NativeOperationResult.failed, <String, Object?>{
+      'kind': 'chat',
+      'schema_version': 3,
+      'request_id': '33333333-3333-3333-3333-333333333333',
+      'outcome': 'busy',
+      'records': const <Object?>[],
     });
 
 class _MemoryStore implements CompanionStore {
@@ -163,11 +264,13 @@ class _MemoryStore implements CompanionStore {
 }
 
 class _FakeBridge implements NativeBridge {
-  _FakeBridge({this.pairResult, this.reconnectResult});
+  _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult});
   NativeBridgeResult? pairResult;
   NativeBridgeResult? reconnectResult;
+  NativeBridgeResult? chatResult;
   int pairCalls = 0;
   int reconnectCalls = 0;
+  int chatCalls = 0;
   int disposeCalls = 0;
 
   @override
@@ -181,5 +284,10 @@ class _FakeBridge implements NativeBridge {
   Future<NativeBridgeResult> reconnect(String descriptorJson, String deviceId) async {
     reconnectCalls++;
     return reconnectResult ?? const NativeBridgeResult(NativeOperationResult.failed);
+  }
+  @override
+  Future<NativeBridgeResult> chat(String descriptorJson, String deviceId, String message) async {
+    chatCalls++;
+    return chatResult ?? const NativeBridgeResult(NativeOperationResult.failed);
   }
 }

@@ -1062,8 +1062,9 @@ async fn post_rpc(
 
 pub(crate) async fn companion_v3_mint_pair(
     home: &Path,
+    requested_scope: crate::daemon::companion_protocol::CompanionScope,
 ) -> Result<crate::daemon::companion_runtime::CompanionV3Invite, CompanionV3ClientError> {
-    companion_v3_post(home, "/companion/v3/pair/mint", &serde_json::json!({})).await
+    companion_v3_post(home, "/companion/v3/pair/mint", &serde_json::json!({"requested_scope": requested_scope})).await
 }
 
 pub(crate) async fn companion_v3_list_devices(

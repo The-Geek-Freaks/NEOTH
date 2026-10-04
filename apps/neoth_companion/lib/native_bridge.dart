@@ -19,6 +19,7 @@ class NativeBridgeResult {
 abstract interface class NativeBridge {
   Future<NativeBridgeResult> pair(String inviteUrl, String label);
   Future<NativeBridgeResult> reconnect(String descriptorJson, String deviceId);
+  Future<NativeBridgeResult> chat(String descriptorJson, String deviceId, String message);
   Future<void> dispose();
 }
 
@@ -33,6 +34,8 @@ typedef _PairStartNative = Pointer<_Operation> Function(Pointer<_Bridge>, Pointe
 typedef _PairStartDart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int);
 typedef _ReconnectStartNative = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr);
 typedef _ReconnectStartDart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int);
+typedef _ChatStartNative = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr);
+typedef _ChatStartDart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int);
 typedef _PollNative = Int32 Function(Pointer<_Operation>, Pointer<Uint8>, IntPtr, Pointer<IntPtr>);
 typedef _PollDart = int Function(Pointer<_Operation>, Pointer<Uint8>, int, Pointer<IntPtr>);
 typedef _OperationVoidNative = Void Function(Pointer<_Operation>);
@@ -46,6 +49,7 @@ class FfiNativeBridge implements NativeBridge {
       : _bridgeFree = library.lookupFunction<_BridgeFreeNative, _BridgeFreeDart>('neoth_companion_bridge_free'),
         _pairStart = library.lookupFunction<_PairStartNative, _PairStartDart>('neoth_companion_pair_start'),
         _reconnectStart = library.lookupFunction<_ReconnectStartNative, _ReconnectStartDart>('neoth_companion_reconnect_start'),
+        _chatStart = library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_chat_start'),
         _poll = library.lookupFunction<_PollNative, _PollDart>('neoth_companion_operation_poll'),
         _operationCancel = library.lookupFunction<_OperationVoidNative, _OperationVoidDart>('neoth_companion_operation_cancel'),
         _operationFree = library.lookupFunction<_OperationVoidNative, _OperationVoidDart>('neoth_companion_operation_free'),
@@ -62,6 +66,7 @@ class FfiNativeBridge implements NativeBridge {
   final _BridgeFreeDart _bridgeFree;
   final _PairStartDart _pairStart;
   final _ReconnectStartDart _reconnectStart;
+  final _ChatStartDart _chatStart;
   final _PollDart _poll;
   final _OperationVoidDart _operationCancel;
   final _OperationVoidDart _operationFree;
@@ -100,6 +105,21 @@ class FfiNativeBridge implements NativeBridge {
     return _start((descriptor, descriptorLength, id, idLength) => _reconnectStart(_bridge, descriptor, descriptorLength, id, idLength), descriptorJson, deviceId);
   }
 
+  @override
+  Future<NativeBridgeResult> chat(String descriptorJson, String deviceId, String message) {
+    if (!isBoundedReconnectInput(descriptorJson, deviceId)) {
+      return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
+    }
+    validateOrdinaryChatMessage(message);
+    return _startThree(
+      (descriptor, descriptorLength, id, idLength, text, textLength) =>
+          _chatStart(_bridge, descriptor, descriptorLength, id, idLength, text, textLength),
+      descriptorJson,
+      deviceId,
+      message,
+    );
+  }
+
   Future<NativeBridgeResult> _start(
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int) invoke, String first, String second) async {
     _requireLive();
@@ -123,6 +143,41 @@ class FfiNativeBridge implements NativeBridge {
       secondBytes.fillRange(0, secondBytes.length, 0);
       calloc.free(firstNative);
       calloc.free(secondNative);
+    }
+  }
+
+  Future<NativeBridgeResult> _startThree(
+      Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int) invoke,
+      String first,
+      String second,
+      String third) async {
+    _requireLive();
+    if (_active != null) return const NativeBridgeResult(NativeOperationResult.failed);
+    final firstBytes = utf8.encode(first);
+    final secondBytes = utf8.encode(second);
+    final thirdBytes = utf8.encode(third);
+    final firstNative = calloc<Uint8>(firstBytes.length);
+    final secondNative = calloc<Uint8>(secondBytes.length);
+    final thirdNative = calloc<Uint8>(thirdBytes.length);
+    try {
+      firstNative.asTypedList(firstBytes.length).setAll(0, firstBytes);
+      secondNative.asTypedList(secondBytes.length).setAll(0, secondBytes);
+      thirdNative.asTypedList(thirdBytes.length).setAll(0, thirdBytes);
+      final operation = invoke(firstNative, firstBytes.length, secondNative, secondBytes.length, thirdNative, thirdBytes.length);
+      if (operation == nullptr) return const NativeBridgeResult(NativeOperationResult.failed);
+      _active = operation;
+      _activeFinished = Completer<void>();
+      return await _pollUntilTerminal(operation);
+    } finally {
+      firstNative.asTypedList(firstBytes.length).fillRange(0, firstBytes.length, 0);
+      secondNative.asTypedList(secondBytes.length).fillRange(0, secondBytes.length, 0);
+      thirdNative.asTypedList(thirdBytes.length).fillRange(0, thirdBytes.length, 0);
+      firstBytes.fillRange(0, firstBytes.length, 0);
+      secondBytes.fillRange(0, secondBytes.length, 0);
+      thirdBytes.fillRange(0, thirdBytes.length, 0);
+      calloc.free(firstNative);
+      calloc.free(secondNative);
+      calloc.free(thirdNative);
     }
   }
 
@@ -150,21 +205,30 @@ class FfiNativeBridge implements NativeBridge {
       // ABI r1 returned 1 for a probe whose buffer was absent; ABI r2 uses 5.
       // Both spellings are accepted only for this size-discovery call, so a
       // deployed r1 bridge cannot turn into a false terminal success.
-      if ((first != 1 && first != 5) || required.value == 0 || required.value > 8192) {
+      if ((first != 1 && first != 5) || required.value == 0 || required.value > 80 * 1024) {
         return NativeBridgeResult(_resultKind(first));
       }
-      final output = calloc<Uint8>(required.value + 1);
+      final outputLength = required.value;
+      final output = calloc<Uint8>(outputLength + 1);
       try {
-        final second = _poll(operation, output, required.value + 1, required);
+        final second = _poll(operation, output, outputLength + 1, required);
         final terminal = _resultKind(second);
-        if (terminal != NativeOperationResult.ok && terminal != NativeOperationResult.denied) return NativeBridgeResult(terminal);
-        final decoded = jsonDecode(utf8.decode(output.asTypedList(required.value), allowMalformed: false));
+        // Chat's public busy/unavailable/timeout/indeterminate terminals use
+        // the ABI's failed result code. Decode the bounded public JSON for
+        // that terminal too; a legacy failure with no valid JSON still stays
+        // a plain failed result below.
+        if (terminal != NativeOperationResult.ok &&
+            terminal != NativeOperationResult.denied &&
+            terminal != NativeOperationResult.failed) {
+          return NativeBridgeResult(terminal);
+        }
+        final decoded = jsonDecode(utf8.decode(output.asTypedList(outputLength), allowMalformed: false));
         if (decoded is! Map<String, Object?>) return const NativeBridgeResult(NativeOperationResult.failed);
         return NativeBridgeResult(terminal, decoded);
       } on FormatException {
         return const NativeBridgeResult(NativeOperationResult.failed);
       } finally {
-        output.asTypedList(required.value + 1).fillRange(0, required.value + 1, 0);
+        output.asTypedList(outputLength + 1).fillRange(0, outputLength + 1, 0);
         calloc.free(output);
       }
     } finally {
