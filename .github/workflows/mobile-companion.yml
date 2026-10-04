@@ -106,10 +106,30 @@ jobs:
     needs: [android-native, ios-native]
     if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
     runs-on: macos-15
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    env:
+      # CodeQL cannot trace a compilation delegated to an already-running
+      # Gradle daemon. This fresh hosted job disables daemon reuse while the
+      # existing Flutter APK build runs between CodeQL init and analysis.
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
+      - name: Initialize CodeQL for the materialized Kotlin build
+        uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          # The generated application will be created under GITHUB_WORKSPACE
+          # below; source-root must be relative to that workspace.
+          source-root: .
+          queries: +security-and-quality
+          debug: true
+          debug-artifact-name: mobile-companion-codeql-kotlin-debug
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: mobile-companion-android-native
@@ -139,7 +159,24 @@ jobs:
           $head = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $head -ne $env:GITHUB_SHA) { throw 'Materialization checkout is not the dispatched commit.' }
           .github/scripts/mobile/assemble-native-manifest.ps1 -NativeRoot $native -AndroidManifest (Join-Path $native 'android-native-manifest.json') -IosManifest (Join-Path $native 'ios-native-manifest.json') -OutputManifest (Join-Path $native 'native-artifact-manifest.json') -ExpectedSourceHead $head
-          .github/scripts/mobile/materialize-neoth-companion.ps1 -FlutterSdk (Join-Path $env:RUNNER_TEMP 'flutter') -SourceDirectory (Join-Path (Get-Location) 'apps/neoth_companion') -ExpectedPubspecLockSha256 $env:FLUTTER_PUBSPEC_LOCK_SHA256 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'neoth_companion') -VerifiedNativeArtifactRoot $native -NativeArtifactManifest (Join-Path $native 'native-artifact-manifest.json') -Stage all
+          $output = Join-Path $env:GITHUB_WORKSPACE '.mobile-companion-build'
+          if (Test-Path -LiteralPath $output) { throw "CodeQL materialization output must be fresh: $output" }
+          .github/scripts/mobile/materialize-neoth-companion.ps1 -FlutterSdk (Join-Path $env:RUNNER_TEMP 'flutter') -SourceDirectory (Join-Path (Get-Location) 'apps/neoth_companion') -ExpectedPubspecLockSha256 $env:FLUTTER_PUBSPEC_LOCK_SHA256 -OutputDirectory $output -VerifiedNativeArtifactRoot $native -NativeArtifactManifest (Join-Path $native 'native-artifact-manifest.json') -Stage all
+          $kotlin = Join-Path $output 'android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'
+          if (-not (Test-Path -LiteralPath $kotlin -PathType Leaf)) { throw "Materialized Kotlin input missing: $kotlin" }
+          $sourceKotlin = Join-Path (Get-Location) 'apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'
+          if (-not (Test-Path -LiteralPath $sourceKotlin -PathType Leaf)) { throw "Original Kotlin source missing: $sourceKotlin" }
+          $sourceKotlinSha256 = (Get-FileHash -LiteralPath $sourceKotlin -Algorithm SHA256).Hash
+          $materializedKotlinSha256 = (Get-FileHash -LiteralPath $kotlin -Algorithm SHA256).Hash
+          if ($materializedKotlinSha256 -ne $sourceKotlinSha256) { throw "Materialized Kotlin differs from original source: expected=$sourceKotlinSha256 actual=$materializedKotlinSha256" }
+          $apk = Join-Path $output 'build/app/outputs/flutter-apk/app-arm64-v8a-release.apk'
+          if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw 'Flutter Android build did not produce the CodeQL-traced APK input.' }
+          $proof = [ordered]@{ schema='neoth.mobile.codeql-kotlin-input.v2'; source_root='.'; original_kotlin_path='apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'; original_kotlin_sha256=$sourceKotlinSha256; materialized_output='.mobile-companion-build'; kotlin_path='.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'; kotlin_sha256=$materializedKotlinSha256; apk_path='.mobile-companion-build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk'; apk_sha256=(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash } | ConvertTo-Json
+          [System.IO.File]::WriteAllText((Join-Path $output 'codeql-kotlin-input.json'), $proof + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+      - name: Analyze Kotlin compiled by the materialized Flutter build
+        uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        with:
+          category: /language:java-kotlin-mobile-materialized
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mobile-companion-hosted-evidence
@@ -147,12 +184,13 @@ jobs:
             ${{ runner.temp }}/native/native-artifact-manifest.json
             ${{ runner.temp }}/native/android-native-manifest.json
             ${{ runner.temp }}/native/ios-native-manifest.json
-            ${{ runner.temp }}/neoth_companion/hosted-evidence.json
-            ${{ runner.temp }}/neoth_companion/ios-ffi-symbols.json
-            ${{ runner.temp }}/neoth_companion/pubspec.lock
-            ${{ runner.temp }}/neoth_companion/build/app/outputs/flutter-apk
-            ${{ runner.temp }}/neoth_companion/build/ios/iphoneos/Runner.app
-            ${{ runner.temp }}/neoth-companion-hosted-logs-*
+            ${{ github.workspace }}/.mobile-companion-build/hosted-evidence.json
+            ${{ github.workspace }}/.mobile-companion-build/ios-ffi-symbols.json
+            ${{ github.workspace }}/.mobile-companion-build/codeql-kotlin-input.json
+            ${{ github.workspace }}/.mobile-companion-build/pubspec.lock
+            ${{ github.workspace }}/.mobile-companion-build/build/app/outputs/flutter-apk
+            ${{ github.workspace }}/.mobile-companion-build/build/ios/iphoneos/Runner.app
+            ${{ github.workspace }}/neoth-companion-hosted-logs-*
           if-no-files-found: error
           retention-days: 14
 

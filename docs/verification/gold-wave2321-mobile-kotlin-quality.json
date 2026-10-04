@@ -1,0 +1,22 @@
+{
+  "schema": "neoth.wave2321.mobile-kotlin-build-analysis.v1",
+  "status": "reviewed-integrated-hosted-extraction-pending",
+  "base": "f85bd91481c50ed40eb56d341dd3885964036706",
+  "sourcePath": ".github/workflows/mobile-companion.yml",
+  "sourceSha256": "370D1F3046C0A52979694134169E1F0B6CCD29338CFE2207A23E035D0756489C",
+  "reviewSha256": "DD67FC4D32DC4292CE722A4FE064C50D345FA63E35E6CFDF3D524D900E199287",
+  "priorReviewSha256": "B8FA9F960C2B701983DF15D739E8DF2364D96E653C7287D9AC6F032CBEF99F3F",
+  "behavior": [
+    "Manual Kotlin CodeQL initialization and analysis bracket the existing Flutter APK build.",
+    "Fresh generated project stays under GITHUB_WORKSPACE for source-root membership; reused Gradle daemons are disabled.",
+    "Materialized MainActivity must hash-identically match original source; hashes of both and APK are retained.",
+    "Workspace log upload follows the actual materializer output parent."
+  ],
+  "ciScope": "Existing workflow_dispatch and materialize-flutter job only; no second CI stream; bootstrap branch unchanged.",
+  "settingsChanged": false,
+  "scannerLanguagesRemoved": false,
+  "dynamicQuality": "The earlier expanded Java/Kotlin+Ruby probe failed; recurring JavaScript/TypeScript+Python quality passed. This adds real Kotlin build extraction; it is not a successful-extraction claim.",
+  "localRuntimeExecuted": false,
+  "hostedExtraction": "pending",
+  "releaseReady": false
+}

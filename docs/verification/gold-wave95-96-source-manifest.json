@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T12:00:41.2233795Z",
-  "validationStatus": "wave2322-hosted-locks-admitted-execution-pending",
+  "capturedUtc": "2026-10-04T12:05:13.7091418Z",
+  "validationStatus": "wave2321-reviewed-mobile-kotlin-analysis-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -113,8 +113,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
-      "bytes": 8965,
-      "sha256": "31DBE9FE6C4105C454ADF1D64E81697905000E6D2F65432EB7A1B2533C762563"
+      "bytes": 12307,
+      "sha256": "370D1F3046C0A52979694134169E1F0B6CCD29338CFE2207A23E035D0756489C"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
@@ -3502,6 +3502,11 @@
       "sha256": "FE119925F072BB4F02E112CAA4643CE782EF2497C7EAB9E3DB8E040D48FDD626"
     },
     {
+      "path": "docs/verification/gold-wave2321-mobile-kotlin-quality.json",
+      "bytes": 1423,
+      "sha256": "B85D6D1885C0BC422A544721F1DC6BDE08CEDB8DCC48017562ADE034B7B50571"
+    },
+    {
       "path": "docs/verification/gold-wave2322-mobile-lock-publication.json",
       "bytes": 2242,
       "sha256": "FF9E1D4CE4E6EE895D166403E5591BCCBF8FAE9507E23E0CA735A0D894D74255"
@@ -4648,8 +4653,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2365909,
-      "sha256": "BEA9D321B5C273AD3252C7E12DA86676C2D1934D98514CF14C822A4F8206BD19"
+      "bytes": 2367037,
+      "sha256": "ACDA6EB16246775093F78D484826615CCFB97512A21D4CF04EAFDD10481E943F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

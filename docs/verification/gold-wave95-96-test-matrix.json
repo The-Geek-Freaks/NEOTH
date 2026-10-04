@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2322-hosted-locks-admitted-execution-pending",
+  "status": "wave2321-reviewed-mobile-kotlin-analysis-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 382412,
-    "sha256": "E6D1948AADED84CF52072AE2649A74FED366497EDEA29D710130B9280C0FC161"
+    "bytes": 382606,
+    "sha256": "6E013C398E157D25620527550ABD82397C7F689B20FB1F2B95FB64F714450B22"
   },
-  "sourceInputs": 2092,
+  "sourceInputs": 2093,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -73784,6 +73784,32 @@
       }
     ],
     "note": "Original hosted bootstrap lock artifacts verified and imported; focus521/native/mobile execution pending; protected SRC/Cargo.lock excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2321MobileKotlinAnalysis": {
+    "base": "f85bd91481c50ed40eb56d341dd3885964036706",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "bytes": 12307,
+        "sha256": "370D1F3046C0A52979694134169E1F0B6CCD29338CFE2207A23E035D0756489C",
+        "blob": "5ef22eeef436f7135cb6ade56362a2e0a0feed5a"
+      },
+      {
+        "path": "docs/verification/gold-wave2321-mobile-kotlin-quality.json",
+        "bytes": 1423,
+        "sha256": "B85D6D1885C0BC422A544721F1DC6BDE08CEDB8DCC48017562ADE034B7B50571",
+        "blob": "46850256623a97e5b6328d48ee253badeb3cf4bc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2367037,
+        "sha256": "ACDA6EB16246775093F78D484826615CCFB97512A21D4CF04EAFDD10481E943F",
+        "blob": "4ff19f98af3db1a16693108b38851480213ab8f1"
+      }
+    ],
+    "note": "Manual Kotlin build tracing integrated into the existing mobile materialization job. No settings or language removal; no new dispatch stream; hosted extraction still pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

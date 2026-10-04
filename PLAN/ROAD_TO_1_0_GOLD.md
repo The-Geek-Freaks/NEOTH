@@ -18080,3 +18080,11 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Current format-producer Preflight 37200336019 and configured Python/JavaScript Code Quality 37200335729 succeeded. The earlier expanded Kotlin/Ruby probe remains a separate unsupported-extraction diagnostic; no GitHub setting was changed.
 - Next: exact521 Rust coverage on the published producer, followed by native/mobile build qualification and actual device journeys. GOLD-R4-12 remains open.
 - Report: docs/verification/gold-wave2322-mobile-lock-publication.json. Raw prior PLAN bytes retained; absolute local BSOD hold unchanged.
+
+
+## W2321 - Analyze Kotlin during the existing materialized Android build (2026-10-04)
+
+- Added manual Java/Kotlin CodeQL tracing around the existing Flutter APK build in the mobile workflow's materialize-flutter job. The bootstrap-only branch and workflow_dispatch trigger remain unchanged; no new CI stream or scanner-setting change was made.
+- The generated application now lives in a fresh workspace child so CodeQL source-root includes its Kotlin compilation. Gradle daemon reuse is disabled. Evidence requires the materialized MainActivity SHA to equal the original source, binds the APK hash, and retains the CodeQL debug database plus logs at the actual workspace path.
+- Corrected the specific log-upload path found during Root review; independent R2 static review passed. Hosted Kotlin extraction and platform build acceptance remain pending. Existing recurring JavaScript/Python Code Quality passes are distinct from the earlier expanded Kotlin/Ruby probe failure.
+- Report: docs/verification/gold-wave2321-mobile-kotlin-quality.json. No local runtime, .slint edits, protected-file import, or PLAN backlog deletion.
