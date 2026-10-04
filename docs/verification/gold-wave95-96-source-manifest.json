@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T20:26:51.3393327Z",
-  "validationStatus": "wave2360_reviewed_mobile_stop_shape_and_pair_diagnostics_hosted_pending",
+  "capturedUtc": "2026-10-04T21:12:31.5587498Z",
+  "validationStatus": "w2362-reviewed-source-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 25635,
-      "sha256": "8FE5ACCAB79388C1089B269DE8B0B3D778FBE273D69CE5A3E548D55F9ADFBDDF"
+      "bytes": 26420,
+      "sha256": "57F00CF2183FB1EC1245E24E88EF4CDEFE304462E01EDAF17A75464C3BF5DA7D"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
-      "bytes": 12307,
-      "sha256": "370D1F3046C0A52979694134169E1F0B6CCD29338CFE2207A23E035D0756489C"
+      "bytes": 12588,
+      "sha256": "D6B37A9048A013721D775017C0837F28E668143ACA10103EF7D654C911E6265E"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
@@ -333,18 +333,18 @@
     },
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
-      "bytes": 7790,
-      "sha256": "A35235ACA469DCA7C0B21F8C0DFFDE15467452327C7823F0314D038F946DB4AB"
+      "bytes": 7764,
+      "sha256": "FA8E36D024BCE3F85C03B7D1CA4E76DFCEB24D2FC8DE55935F3618B160426CE6"
     },
     {
       "path": "apps/neoth_companion/lib/main.dart",
-      "bytes": 10863,
-      "sha256": "C5150818661CD4ED3ED13759F2BDE552C598AB42038C3D96D2D636C17999F2D6"
+      "bytes": 10852,
+      "sha256": "6B60ECD5EB58C19775CB085FB5FF87A8EBAF523DB872D0BC2BBC70D0F9F86C97"
     },
     {
       "path": "apps/neoth_companion/lib/models.dart",
-      "bytes": 7132,
-      "sha256": "472067CCC23DFDA00ADA6C017DC63DE2C25DE71659560E2A4EA1374444B2D5DE"
+      "bytes": 7287,
+      "sha256": "215E9766FE0646CE1F2A06E6E724624400790FECA3A8452AADDC0F7B64D0FD78"
     },
     {
       "path": "apps/neoth_companion/lib/native_bridge.dart",
@@ -353,8 +353,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/secure_store.dart",
-      "bytes": 3821,
-      "sha256": "AD462A9FFBD9DACA42558D8A66C3C25D769E9217C9D68447B3B9CAA643682421"
+      "bytes": 4031,
+      "sha256": "5C4950FB69292BDE7D03C3365C2637D5E5F385D2D1F1153A41F4AE12479CDC4C"
     },
     {
       "path": "apps/neoth_companion/pubspec.lock",
@@ -373,13 +373,18 @@
     },
     {
       "path": "apps/neoth_companion/test/bridge_input_test.dart",
-      "bytes": 2537,
-      "sha256": "9258C5DAF8A48334D1D6C786F9D37561B044CE35D6E9EF13E411D7ADA645EB27"
+      "bytes": 2535,
+      "sha256": "BF1097242B6BE66D8A7D45C900324983486417A818636AAF1767204F6D1809A1"
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "bytes": 16357,
-      "sha256": "370A56B06DEFFD4455DF5E40C7174ADB78631EB37D7901DEF3947327A15C05E3"
+      "bytes": 16369,
+      "sha256": "A9FC3DAD1EC8E4723642872D79A104646B73C601F8F7FF171109AF9CB628E26B"
+    },
+    {
+      "path": "apps/neoth_companion/test/secure_store_test.dart",
+      "bytes": 2032,
+      "sha256": "DEF7FD2D377EB0DE31761029B17FD97306AE2151239C185EAFB12034ED7EE321"
     },
     {
       "path": "bridges/companion-native/ABI_CONTRACT.md",
@@ -3587,6 +3592,11 @@
       "sha256": "5D612E489F188E4337686FDB3149E04E0B834331AA518EC285A003CE1A2E5322"
     },
     {
+      "path": "docs/verification/gold-wave2361-2362-mobile-discovery-flutter.json",
+      "bytes": 4215,
+      "sha256": "5670AA1BE35C5C2F31AB704808AC44BCA2852552E42BCFB9ECEDDD960F5249F9"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4728,8 +4738,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2388169,
-      "sha256": "4A7939E62299D7F491836430FDB56C1AA1C7067E6E55774BB99DAEB470B9015B"
+      "bytes": 2390248,
+      "sha256": "A5D66C8BDF5ECC7D7A92A6D6D4E0A1459E71ACB8D1DE1F73374CDA2A43F88363"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -10530,6 +10540,16 @@
       "path": "SRC/vendor/matrix-sdk/uniffi.toml",
       "bytes": 267,
       "sha256": "1A294D0E48F8ABF54169910C75166EAF8413DA36CF9F9EDC84BD28070D69D441"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
+      "bytes": 7303,
+      "sha256": "91EF69A6C20AC3FD4E8A70A43774BD6DABE4AA5A44B4D609260065CBA02CEF50"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/swarm.rs",
+      "bytes": 77906,
+      "sha256": "D77E8AA69339EEF08ADD93EAB5A023F21F49D02E95447C157F0EF5EA01A737BD"
     },
     {
       "path": "THIRD_PARTY_LICENSES",

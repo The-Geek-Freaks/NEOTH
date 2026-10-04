@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2360_reviewed_mobile_stop_shape_and_pair_diagnostics_hosted_pending",
+  "status": "w2362-reviewed-source-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 385473,
-    "sha256": "3F65F0564C72A4DDDC1C755E9BDECD7EED5BAE99B644E8AFF3623EDD69BC4E72"
+    "bytes": 386168,
+    "sha256": "12222BE2750613BD712D7BA04809E79659915868268E3B40132A2DFA13816319"
   },
-  "sourceInputs": 2108,
+  "sourceInputs": 2112,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -74598,6 +74598,92 @@
       }
     ],
     "note": "Actual17fc RPC3 and graceful WAL drain are admitted subclaims; mobile pair still140s pending, native both13/14 shape failure. Persist late-listener stop, preserve canonical flat Chat, add opt-in fixed phases and four core plus one bridge exact gates. No local execution; hosted/native/device/release open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2362Mobile": {
+    "base": "cecf862e7b696458a5a8946206c5326b6e5c375e",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 26420,
+        "sha256": "57F00CF2183FB1EC1245E24E88EF4CDEFE304462E01EDAF17A75464C3BF5DA7D",
+        "blob": "44a0b30e6c72975feffca07a0746ef5a9387a06d"
+      },
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "bytes": 12588,
+        "sha256": "D6B37A9048A013721D775017C0837F28E668143ACA10103EF7D654C911E6265E",
+        "blob": "7c2fb2a5e1e60d0338709f930128fa4d9a430cae"
+      },
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 7764,
+        "sha256": "FA8E36D024BCE3F85C03B7D1CA4E76DFCEB24D2FC8DE55935F3618B160426CE6",
+        "blob": "7baeb646dbb5e6e90616803cd94e899046870871"
+      },
+      {
+        "path": "apps/neoth_companion/lib/main.dart",
+        "bytes": 10852,
+        "sha256": "6B60ECD5EB58C19775CB085FB5FF87A8EBAF523DB872D0BC2BBC70D0F9F86C97",
+        "blob": "4bf177645eb8425589ac8632a6d140a20ebae502"
+      },
+      {
+        "path": "apps/neoth_companion/lib/models.dart",
+        "bytes": 7287,
+        "sha256": "215E9766FE0646CE1F2A06E6E724624400790FECA3A8452AADDC0F7B64D0FD78",
+        "blob": "3394d99a293c6337fd5d76da04fdc0067d300ef4"
+      },
+      {
+        "path": "apps/neoth_companion/lib/secure_store.dart",
+        "bytes": 4031,
+        "sha256": "5C4950FB69292BDE7D03C3365C2637D5E5F385D2D1F1153A41F4AE12479CDC4C",
+        "blob": "d859df793e79d7fd1af22a1b7c49f14860dec0b7"
+      },
+      {
+        "path": "apps/neoth_companion/test/bridge_input_test.dart",
+        "bytes": 2535,
+        "sha256": "BF1097242B6BE66D8A7D45C900324983486417A818636AAF1767204F6D1809A1",
+        "blob": "f073b1119f48bcb78df3464dd8581a0051a3f91f"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 16369,
+        "sha256": "A9FC3DAD1EC8E4723642872D79A104646B73C601F8F7FF171109AF9CB628E26B",
+        "blob": "c833215cd508ae7f3d4b86b4d2f9a66dec362526"
+      },
+      {
+        "path": "apps/neoth_companion/test/secure_store_test.dart",
+        "bytes": 2032,
+        "sha256": "DEF7FD2D377EB0DE31761029B17FD97306AE2151239C185EAFB12034ED7EE321",
+        "blob": "811841ebfe8133098db258a734e9434a07e86278"
+      },
+      {
+        "path": "docs/verification/gold-wave2361-2362-mobile-discovery-flutter.json",
+        "bytes": 4215,
+        "sha256": "5670AA1BE35C5C2F31AB704808AC44BCA2852552E42BCFB9ECEDDD960F5249F9",
+        "blob": "59eaf4a69144fc95d048c9b6c782a2d6b5323223"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2390248,
+        "sha256": "A5D66C8BDF5ECC7D7A92A6D6D4E0A1459E71ACB8D1DE1F73374CDA2A43F88363",
+        "blob": "613aca2063219a4a13c27be45f4da8ace14543b1"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
+        "bytes": 7303,
+        "sha256": "91EF69A6C20AC3FD4E8A70A43774BD6DABE4AA5A44B4D609260065CBA02CEF50",
+        "blob": "5093288968bd7b755c59539b7f9433018bc5db51"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 77906,
+        "sha256": "D77E8AA69339EEF08ADD93EAB5A023F21F49D02E95447C157F0EF5EA01A737BD",
+        "blob": "f637a319f677c6a01fea8c3018a71e79207a1c33"
+      }
+    ],
+    "note": "W2361 fixed discovery outcomes; W2362 hosted Flutter analyzer/storage/Java17 repair. No local executable validation. Prior native producers and exact regressions passed; actual pair and mobile apps remain pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

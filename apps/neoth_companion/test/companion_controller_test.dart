@@ -262,11 +262,11 @@ const _deviceId = '7fb8ae0f-9e36-4a64-83e2-972dff9af880';
 const _invite = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60&scope=companion.status.read';
 const _chatInvite = 'neoth://companion/pair?v=3&topic=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&psk=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&server_pk=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&ttl=60&scope=companion.chat.send';
 
-EnrollmentAccepted _accepted() => EnrollmentAccepted(
+EnrollmentAccepted _accepted() => const EnrollmentAccepted(
       deviceId: _deviceId,
       revision: 1,
       grantedScope: 'companion.status.read',
-      reconnectDescriptor: const <String, Object?>{
+      reconnectDescriptor: <String, Object?>{
         'schema_version': 3,
         'carrier': 'peeroxide-hyperswarm-v3',
         'rendezvous_topic_hex': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -291,16 +291,16 @@ NativeBridgeResult _chatPairedResult() => NativeBridgeResult(NativeOperationResu
       'descriptor': _accepted().reconnectDescriptor,
     });
 
-NativeBridgeResult _statusResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+NativeBridgeResult _statusResult() => const NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
       'state': 'status',
       'device_id': _deviceId,
       'daemon_boot_id': 'boot-a',
       'readiness': 'ready',
       'observed_at_unix': 1700000000,
-      'active_turns': const <Object?>[],
+      'active_turns': <Object?>[],
     });
 
-NativeBridgeResult _statusWithUnavailableTurns() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+NativeBridgeResult _statusWithUnavailableTurns() => const NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
       'state': 'status',
       'device_id': _deviceId,
       'daemon_boot_id': 'boot-a',
@@ -321,7 +321,7 @@ EnrollmentAccepted _chatAccepted() => EnrollmentAccepted(
       reconnectDescriptor: _accepted().reconnectDescriptor,
     );
 
-NativeBridgeResult _chatAcceptedResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+NativeBridgeResult _chatAcceptedResult() => const NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
       'kind': 'chat',
       'schema_version': 3,
       'request_id': '11111111-1111-1111-1111-111111111111',
@@ -333,20 +333,20 @@ NativeBridgeResult _chatAcceptedResult() => NativeBridgeResult(NativeOperationRe
       'model': 'model-a',
     });
 
-NativeBridgeResult _chatIndeterminateResult() => NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
+NativeBridgeResult _chatIndeterminateResult() => const NativeBridgeResult(NativeOperationResult.ok, <String, Object?>{
       'kind': 'chat',
       'schema_version': 3,
       'request_id': '22222222-2222-2222-2222-222222222222',
       'outcome': 'indeterminate',
-      'records': const <Object?>[],
+      'records': <Object?>[],
     });
 
-NativeBridgeResult _chatBusyResult() => NativeBridgeResult(NativeOperationResult.failed, <String, Object?>{
+NativeBridgeResult _chatBusyResult() => const NativeBridgeResult(NativeOperationResult.failed, <String, Object?>{
       'kind': 'chat',
       'schema_version': 3,
       'request_id': '33333333-3333-3333-3333-333333333333',
       'outcome': 'busy',
-      'records': const <Object?>[],
+      'records': <Object?>[],
     });
 
 class _MemoryStore implements CompanionStore {

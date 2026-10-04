@@ -19,7 +19,7 @@ void main() {
 
     test('requires the public UUID to fit the 36-byte ABI field', () {
       expect(isBoundedReconnectInput('{}', _deviceId), isTrue);
-      expect(isBoundedReconnectInput('{}', '${_deviceId}é'), isFalse);
+      expect(isBoundedReconnectInput('{}', '$_deviceIdé'), isFalse);
     });
 
     test('accepts the 640-byte ordinary chat limit and rejects a multibyte overflow', () {

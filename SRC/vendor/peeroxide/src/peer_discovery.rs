@@ -28,6 +28,18 @@ const MAX_RELAY_ADDRESSES_PER_PEER: usize = 8;
 const MAX_LOOKUP_RESULTS: usize = 32;
 const MAX_PEERS_PER_LOOKUP_RESULT: usize = 256;
 
+const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
+
+/// Emits only a fixed, secret-free discovery outcome while the explicit
+/// companion diagnostic mode is enabled. Callers emit once per bounded
+/// refresh operation, never once per untrusted peer, topic, key, endpoint,
+/// payload, or error.
+fn companion_discovery_phase(phase: &str) {
+    if std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1") {
+        eprintln!("NEOTH_COMPANION_DISCOVERY_PHASE={phase}");
+    }
+}
+
 pub(crate) enum DiscoveryEvent {
     PeerFound {
         public_key: [u8; 32],
@@ -76,35 +88,46 @@ async fn do_refresh(
     event_tx: &mpsc::Sender<DiscoveryEvent>,
 ) {
     if config.is_server {
-        match dht.announce(config.topic, key_pair, relay_addresses).await {
+        let topic_announce = match dht.announce(config.topic, key_pair, relay_addresses).await {
             Ok(r) => {
                 tracing::debug!(closest = r.closest_nodes.len(), "announce complete");
+                true
             }
             Err(e) => {
                 tracing::warn!(err = %e, "announce failed");
+                false
             }
-        }
+        };
 
         // Self-announce: announce hash(publicKey) so that nodes closest to our
-        // public key store a ForwardEntry.  This is how PEER_HANDSHAKE requests
+        // public key store a ForwardEntry. This is how PEER_HANDSHAKE requests
         // get routed — Node.js does this in persistent.js announce().
         let pk_target = hash(&key_pair.public_key);
-        match dht.announce(pk_target, key_pair, relay_addresses).await {
+        let key_announce = match dht.announce(pk_target, key_pair, relay_addresses).await {
             Ok(r) => {
                 tracing::debug!(
                     closest = r.closest_nodes.len(),
                     "self-announce (hash(pk)) complete"
                 );
+                true
             }
             Err(e) => {
                 tracing::warn!(err = %e, "self-announce (hash(pk)) failed");
+                false
             }
-        }
+        };
+
+        companion_discovery_phase(if topic_announce && key_announce {
+            "announce_success"
+        } else {
+            "announce_failure"
+        });
     }
 
     if config.is_client {
         match dht.lookup(config.topic).await {
             Ok(results) => {
+                let mut found_peer = false;
                 for result in results.into_iter().take(MAX_LOOKUP_RESULTS) {
                     tracing::debug!(
                         from = %format!("{}:{}", result.from.host, result.from.port),
@@ -112,6 +135,7 @@ async fn do_refresh(
                         "lookup result"
                     );
                     for peer in result.peers.into_iter().take(MAX_PEERS_PER_LOOKUP_RESULT) {
+                        found_peer = true;
                         tracing::debug!(
                             pk = %hex_short(&peer.public_key),
                             relay_count = peer.relay_addresses.len(),
@@ -137,9 +161,15 @@ async fn do_refresh(
                         });
                     }
                 }
+                companion_discovery_phase(if found_peer {
+                    "lookup_peers"
+                } else {
+                    "lookup_none"
+                });
             }
             Err(e) => {
                 tracing::warn!(err = %e, "lookup failed");
+                companion_discovery_phase("lookup_failure");
             }
         }
     }

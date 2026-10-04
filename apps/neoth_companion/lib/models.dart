@@ -21,7 +21,9 @@ class EnrollmentAccepted {
     if (json['state'] != 'paired') throw const FormatException('unexpected bridge enrollment result');
     final scope = json['granted_scope'];
     final reconnect = json['descriptor'];
-    if ((scope != companionStatusReadScope && scope != companionChatSendScope) || reconnect is! Map<String, Object?>) {
+    if (scope is! String ||
+        (scope != companionStatusReadScope && scope != companionChatSendScope) ||
+        reconnect is! Map<String, Object?>) {
       throw const FormatException('invalid public enrollment response');
     }
     return EnrollmentAccepted(
@@ -134,15 +136,14 @@ class CompanionStatus {
   factory CompanionStatus.fromBridgeJson(Map<String, Object?> json) {
     if (json['state'] != 'status') throw const FormatException('unexpected bridge status result');
     final turns = json['active_turns'];
-    if (turns != null && (turns is! List || turns.length > 8)) {
-      throw const FormatException('invalid redacted status response');
-    }
-    return CompanionStatus(
-      deviceId: _uuid(json['device_id']),
-      daemonBootId: _boundedText(json['daemon_boot_id'], 128),
-      readiness: _boundedText(json['readiness'], 32),
-      observedAtUnix: _positiveInt(json['observed_at_unix']),
-      activeTurns: turns == null ? null : turns.map((value) {
+    final List<Map<String, Object?>>? activeTurns;
+    if (turns == null) {
+      activeTurns = null;
+    } else {
+      if (turns is! List || turns.length > 8) {
+        throw const FormatException('invalid redacted status response');
+      }
+      activeTurns = turns.map((value) {
         if (value is! Map<String, Object?>) throw const FormatException('invalid active turn');
         final phase = value['phase'];
         final sequence = value['latest_sequence'];
@@ -150,7 +151,14 @@ class CompanionStatus {
           throw const FormatException('invalid active turn');
         }
         return value;
-      }).toList(growable: false),
+      }).toList(growable: false);
+    }
+    return CompanionStatus(
+      deviceId: _uuid(json['device_id']),
+      daemonBootId: _boundedText(json['daemon_boot_id'], 128),
+      readiness: _boundedText(json['readiness'], 32),
+      observedAtUnix: _positiveInt(json['observed_at_unix']),
+      activeTurns: activeTurns,
     );
   }
 }
@@ -175,7 +183,7 @@ Map<String, Object?> _publicDescriptor(Map<String, Object?> value) {
 }
 
 bool _lowerHex(Object? value, int length) =>
-    value is String && value.length == length && RegExp('^[0-9a-f]{$length}$').hasMatch(value);
+    value is String && value.length == length && RegExp('^[0-9a-f]{$length}\$').hasMatch(value);
 
 String _boundedText(Object? value, int maxLength) {
   if (value is! String || value.isEmpty || utf8.encode(value).length > maxLength) {

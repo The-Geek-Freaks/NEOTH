@@ -52,7 +52,7 @@ class _NeothCompanionAppState extends State<NeothCompanionApp> with WidgetsBindi
   void dispose() {
     // The channel is process-global. Drop this State's handler before its
     // controllers so a late platform deep link cannot target a dead widget.
-    unawaited(_links.setMethodCallHandler(null));
+    _links.setMethodCallHandler(null);
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.dispose();
     super.dispose();

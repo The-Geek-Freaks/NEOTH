@@ -50,8 +50,11 @@ class SecureCompanionStore implements CompanionStore {
     final scope = values[_scopeKey];
     final descriptor = values[_descriptorKey];
     if (id == null && revision == null && scope == null && descriptor == null) return null;
-    if (id == null || revision == null ||
-        (scope != companionStatusReadScope && scope != companionChatSendScope) || descriptor == null) {
+    if (id == null ||
+        revision == null ||
+        scope is! String ||
+        (scope != companionStatusReadScope && scope != companionChatSendScope) ||
+        descriptor == null) {
       await clearEnrollment();
       return null;
     }
@@ -67,15 +70,14 @@ class SecureCompanionStore implements CompanionStore {
 
   @override
   Future<void> saveEnrollment(EnrollmentAccepted enrollment) async {
-    await _storage.writeAll(enrollment.toStorage().map((key, value) {
-      switch (key) {
-        case 'device_id': return MapEntry(_deviceIdKey, value);
-        case 'revision': return MapEntry(_revisionKey, value);
-        case 'granted_scope': return MapEntry(_scopeKey, value);
-        case 'reconnect': return MapEntry(_descriptorKey, value);
-        default: throw StateError('unexpected enrollment value');
-      }
-    }));
+    // The device id is the enrollment commit marker. Clearing it first means
+    // an interrupted update cannot combine a new descriptor with an old id.
+    // The protected device secret remains intact for a deliberate retry.
+    await _storage.delete(key: _deviceIdKey);
+    await _storage.write(key: _revisionKey, value: '${enrollment.revision}');
+    await _storage.write(key: _scopeKey, value: enrollment.grantedScope);
+    await _storage.write(key: _descriptorKey, value: jsonEncode(enrollment.reconnectDescriptor));
+    await _storage.write(key: _deviceIdKey, value: enrollment.deviceId);
   }
 
   @override

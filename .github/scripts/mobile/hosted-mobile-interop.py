@@ -46,6 +46,15 @@ PAIR_MARKERS = tuple(
     (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))
     for phase in (*PAIR_PHASES, *(f"failed.{phase}" for phase in PAIR_PHASES))
 )
+DISCOVERY_PHASES = (
+    "announce_success", "announce_failure", "lookup_none", "lookup_peers",
+    "lookup_failure", "connect_attempt_started", "connect_attempt_succeeded",
+    "connect_attempt_failed", "connect_attempt_timed_out",
+)
+DISCOVERY_MARKERS = tuple(
+    (phase, f"NEOTH_COMPANION_DISCOVERY_PHASE={phase}".encode("ascii"))
+    for phase in DISCOVERY_PHASES
+)
 
 def sha(path: pathlib.Path) -> str: return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 def brief(value: str) -> str: return value.replace("\n", " ").replace("\r", " ")[:160]
@@ -62,9 +71,11 @@ class ShutdownMarkerCollector:
         self.stream, self.lock = stream, threading.Lock()
         self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
+        self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.reader_error = False
         self.overlap = max(
-            len(marker) for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS)
+            len(marker)
+            for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS, *DISCOVERY_MARKERS)
         ) - 1
         self.thread = threading.Thread(target=self._drain, daemon=True)
         self.thread.start()
@@ -81,6 +92,9 @@ class ShutdownMarkerCollector:
                     for name, marker in PAIR_MARKERS:
                         if marker in window:
                             self.pair_observed[name] = True
+                    for name, marker in DISCOVERY_MARKERS:
+                        if marker in window:
+                            self.discovery_observed[name] = True
                 tail = window[-self.overlap:]
         except Exception:
             with self.lock:
@@ -98,6 +112,7 @@ class ShutdownMarkerCollector:
             return {
                 "markers": dict(self.observed),
                 "pair_markers": dict(self.pair_observed),
+                "discovery_markers": dict(self.discovery_observed),
                 "reader_closed": not self.thread.is_alive(),
                 "reader_error": self.reader_error,
             }
@@ -369,7 +384,7 @@ def main() -> int:
                 receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
             else:
                 if serve.stdout is not None: serve.stdout.close()
-                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"reader_closed":True,"reader_error":True}
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else

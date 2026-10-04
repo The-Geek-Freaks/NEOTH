@@ -1,0 +1,107 @@
+{
+  "schema": "neoth.wave2361-2362.mobile-discovery-flutter.v1",
+  "base": "cecf862e7b696458a5a8946206c5326b6e5c375e",
+  "status": "reviewed_source_hosted_pending",
+  "priorInterop": {
+    "run": 37232406848,
+    "producer": "cecf862e7b696458a5a8946206c5326b6e5c375e",
+    "wholeRun": "failure",
+    "exactCoreCasesPassed": 4,
+    "exactBridgeCasesPassed": 1,
+    "actualCliAndBridgeBuilt": true,
+    "inviteMinted": true,
+    "pairDeadlineSeconds": 140,
+    "inviteTtlSeconds": 300,
+    "bothLocalTopicJoins": true,
+    "bothPeerConnectionsReceived": false,
+    "serveExitCode": 0,
+    "walDrained": true,
+    "partialChecksSha256": "D5C22F83980539AAEF2423C34F84AE292EF6F8E13C0609EFE0EF5992EE5A4385"
+  },
+  "priorNative": {
+    "run": 37233623788,
+    "producer": "cecf862e7b696458a5a8946206c5326b6e5c375e",
+    "wholeRun": "failure",
+    "linuxHostBridgePassed": 14,
+    "macosHostBridgePassed": 14,
+    "androidAbis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86_64"
+    ],
+    "iosSlices": [
+      "ios-arm64",
+      "ios-arm64_x86_64-simulator"
+    ],
+    "flutterAnalyzerErrors": 6,
+    "flutterAnalyzerInfos": 9,
+    "flutterTestsRan": false,
+    "appBuildAccepted": false,
+    "producerPartialChecksSha256": "3F0E6DBD671798347DC792A242937894C957798BC05DFE6B937152F13E864F43",
+    "terminalChecksSha256": "AEB2B1BA4DA347EDE88D89FAA6E8476532AFF1DAB1DE0A7AE25D1B1E245CAABE"
+  },
+  "changes": [
+    "Add opt-in fixed DHT announce, lookup and connection outcomes; retain bounded booleans and no raw peer material.",
+    "Keep discovery behavior unchanged: a first lookup before announcement is a source-level liveness possibility, not an established runtime cause.",
+    "Fix the hosted Flutter analyzer errors and lints without changing protocol acceptance.",
+    "Replace unavailable storage writeAll with marker-last writes; a focused regression proves partial cleanup, secret retention and full roundtrip.",
+    "Select pinned setup-java v4 Temurin17 and explicitly bind Flutter to JAVA_HOME for the generated Gradle8.3 project."
+  ],
+  "sources": [
+    {
+      "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
+      "sha256": "91EF69A6C20AC3FD4E8A70A43774BD6DABE4AA5A44B4D609260065CBA02CEF50"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/swarm.rs",
+      "sha256": "D77E8AA69339EEF08ADD93EAB5A023F21F49D02E95447C157F0EF5EA01A737BD"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "57F00CF2183FB1EC1245E24E88EF4CDEFE304462E01EDAF17A75464C3BF5DA7D"
+    },
+    {
+      "path": ".github/workflows/mobile-companion.yml",
+      "sha256": "D6B37A9048A013721D775017C0837F28E668143ACA10103EF7D654C911E6265E"
+    },
+    {
+      "path": "apps/neoth_companion/lib/main.dart",
+      "sha256": "6B60ECD5EB58C19775CB085FB5FF87A8EBAF523DB872D0BC2BBC70D0F9F86C97"
+    },
+    {
+      "path": "apps/neoth_companion/lib/models.dart",
+      "sha256": "215E9766FE0646CE1F2A06E6E724624400790FECA3A8452AADDC0F7B64D0FD78"
+    },
+    {
+      "path": "apps/neoth_companion/lib/secure_store.dart",
+      "sha256": "5C4950FB69292BDE7D03C3365C2637D5E5F385D2D1F1153A41F4AE12479CDC4C"
+    },
+    {
+      "path": "apps/neoth_companion/lib/companion_controller.dart",
+      "sha256": "FA8E36D024BCE3F85C03B7D1CA4E76DFCEB24D2FC8DE55935F3618B160426CE6"
+    },
+    {
+      "path": "apps/neoth_companion/test/bridge_input_test.dart",
+      "sha256": "BF1097242B6BE66D8A7D45C900324983486417A818636AAF1767204F6D1809A1"
+    },
+    {
+      "path": "apps/neoth_companion/test/companion_controller_test.dart",
+      "sha256": "A9FC3DAD1EC8E4723642872D79A104646B73C601F8F7FF171109AF9CB628E26B"
+    },
+    {
+      "path": "apps/neoth_companion/test/secure_store_test.dart",
+      "sha256": "DEF7FD2D377EB0DE31761029B17FD97306AE2151239C185EAFB12034ED7EE321"
+    }
+  ],
+  "staticReviews": {
+    "discovery": "91118F1F47D779FBB456766E8F7DBCF28F7855DDA993440A32EDBC14D099470F",
+    "flutter": "B6E37CF4B3667DC080B0E6DBDEDAFA62A6E6ED8C08D7B2A8090F0F794A6B2F67"
+  },
+  "portableRegistrations": 2750,
+  "focusedCases": 528,
+  "localExecutableValidationRan": false,
+  "interopAccepted": false,
+  "nativeAppAccepted": false,
+  "physicalDeviceAccepted": false,
+  "signedReleaseAccepted": false
+}

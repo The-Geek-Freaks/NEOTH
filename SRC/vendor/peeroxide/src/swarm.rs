@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::time::Duration;
 
 use rand::Rng;
@@ -33,6 +33,45 @@ static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
 
 fn next_stream_id() -> u32 {
     NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
+
+/// Per-actor fixed diagnostic bitset. The actor may retry bounded connection
+/// work indefinitely, so a concurrency limit alone cannot bound diagnostic
+/// output. Each phase is therefore emitted at most once for this actor.
+struct CompanionDiscoveryDiagnostics {
+    enabled: bool,
+    emitted: AtomicU8,
+}
+
+impl CompanionDiscoveryDiagnostics {
+    const CONNECT_ATTEMPT_STARTED: u8 = 1 << 0;
+    const CONNECT_ATTEMPT_SUCCEEDED: u8 = 1 << 1;
+    const CONNECT_ATTEMPT_FAILED: u8 = 1 << 2;
+    const CONNECT_ATTEMPT_TIMED_OUT: u8 = 1 << 3;
+
+    fn from_environment() -> Self {
+        Self {
+            enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
+            emitted: AtomicU8::new(0),
+        }
+    }
+
+    /// Emits one fixed, secret-free aggregate phase for the actor. Unknown
+    /// labels are ignored so no dynamic diagnostic data reaches stderr.
+    fn phase(&self, phase: &'static str) {
+        let bit = match phase {
+            "connect_attempt_started" => Self::CONNECT_ATTEMPT_STARTED,
+            "connect_attempt_succeeded" => Self::CONNECT_ATTEMPT_SUCCEEDED,
+            "connect_attempt_failed" => Self::CONNECT_ATTEMPT_FAILED,
+            "connect_attempt_timed_out" => Self::CONNECT_ATTEMPT_TIMED_OUT,
+            _ => return,
+        };
+        if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+            eprintln!("NEOTH_COMPANION_DISCOVERY_PHASE={phase}");
+        }
+    }
 }
 
 const DEFAULT_MAX_PEERS: usize = 64;
@@ -337,6 +376,7 @@ impl SwarmStartup {
             next_connection_registration_id: 1,
             establishment_tasks: ConnectionEstablishmentTasks::default(),
             outbound_connect_tasks: OutboundConnectTasks::default(),
+            discovery_diagnostics: Arc::new(CompanionDiscoveryDiagnostics::from_environment()),
             server_registered: false,
             relay_address: Some(relay_address),
             active_connects: 0,
@@ -570,6 +610,7 @@ struct SwarmActor {
     next_connection_registration_id: u64,
     establishment_tasks: ConnectionEstablishmentTasks,
     outbound_connect_tasks: OutboundConnectTasks,
+    discovery_diagnostics: Arc<CompanionDiscoveryDiagnostics>,
 
     server_registered: bool,
     relay_address: Option<Ipv4Peer>,
@@ -1195,9 +1236,11 @@ impl SwarmActor {
             let dht = self.dht.clone();
             let key_pair = self.key_pair.clone();
             let rh = self.runtime_handle.clone();
+            let diagnostics = Arc::clone(&self.discovery_diagnostics);
 
             self.outbound_connect_tasks.spawn(pk, async move {
                 let conn_runtime = UdxRuntime::shared(rh);
+                diagnostics.phase("connect_attempt_started");
                 tracing::debug!(pk = %short_hex(&pk), "connecting to peer");
                 match tokio::time::timeout(
                     CONNECT_ATTEMPT_TIMEOUT,
@@ -1206,6 +1249,7 @@ impl SwarmActor {
                 .await
                 {
                     Ok(Ok(conn)) => {
+                        diagnostics.phase("connect_attempt_succeeded");
                         tracing::debug!(pk = %short_hex(&pk), "peer connected");
                         ConnectAttemptResult {
                             public_key: pk,
@@ -1213,6 +1257,7 @@ impl SwarmActor {
                         }
                     }
                     Ok(Err(e)) => {
+                        diagnostics.phase("connect_attempt_failed");
                         tracing::debug!(pk = %short_hex(&pk), err = %e, "peer connect failed");
                         ConnectAttemptResult {
                             public_key: pk,
@@ -1220,6 +1265,7 @@ impl SwarmActor {
                         }
                     }
                     Err(_) => {
+                        diagnostics.phase("connect_attempt_timed_out");
                         tracing::debug!(pk = %short_hex(&pk), "peer connect timed out");
                         ConnectAttemptResult {
                             public_key: pk,
