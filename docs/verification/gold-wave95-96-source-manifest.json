@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T19:46:30.0341819Z",
-  "validationStatus": "wave2353_2354_reviewed_mobile_rpc_wal_repairs_hosted_pending",
+  "capturedUtc": "2026-10-04T20:26:51.3393327Z",
+  "validationStatus": "wave2360_reviewed_mobile_stop_shape_and_pair_diagnostics_hosted_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 24284,
-      "sha256": "BD261EB2B176A30550CF2DD5365F52013D8E8C863F84BB8168CF66B530B619E5"
+      "bytes": 25635,
+      "sha256": "8FE5ACCAB79388C1089B269DE8B0B3D778FBE273D69CE5A3E548D55F9ADFBDDF"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 3657,
-      "sha256": "4E5496B872950FD9CFF5AEAC5EBFBA9A0847A66C719F4127C4272DDDFD82F0BF"
+      "bytes": 4330,
+      "sha256": "075142319DC186DF58FACDC7EC8CB9876DAD8346B179A2544FD501643B5981B9"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -408,8 +408,8 @@
     },
     {
       "path": "bridges/companion-native/src/lib.rs",
-      "bytes": 45535,
-      "sha256": "493E28602B245825694C5AF5FAE507FDFD2B25E8F8EDF8B0DD825B85BC275A26"
+      "bytes": 46505,
+      "sha256": "D6A8273A1F3327787EBECAC9939922541F3862AA04D04064E0D814642663CE85"
     },
     {
       "path": "bridges/companion-native/TEST_PLAN.md",
@@ -3582,6 +3582,11 @@
       "sha256": "AACA72774F2D5AAEBEBD2186B7877CD739513B586B5F5B16041F069F81D4D0C0"
     },
     {
+      "path": "docs/verification/gold-wave2360-mobile-pair-progress.json",
+      "bytes": 3256,
+      "sha256": "5D612E489F188E4337686FDB3149E04E0B834331AA518EC285A003CE1A2E5322"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4723,8 +4728,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2386240,
-      "sha256": "EDA6708EAD30840FFAE41C1B3E2AB730C5FE09764DB92665E04DBA869434E032"
+      "bytes": 2388169,
+      "sha256": "4A7939E62299D7F491836430FDB56C1AA1C7067E6E55774BB99DAEB470B9015B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6628,8 +6633,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 55794,
-      "sha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583"
+      "bytes": 60595,
+      "sha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",

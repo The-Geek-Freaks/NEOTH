@@ -41,7 +41,7 @@ jobs:
       - name: Build exact host debug CLI and cdylib
         timeout-minutes: 25
         run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
-      - name: Run exact companion RPC response regressions
+      - name: Run exact companion RPC and shutdown regressions
         timeout-minutes: 15
         working-directory: SRC
         env:
@@ -55,13 +55,23 @@ jobs:
           for identity in \
             daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body \
             daemon::audit_rpc::client::tests::rpc_response_requires_one_exact_content_length \
-            daemon::audit_rpc::client::tests::rpc_response_rejects_malformed_status_and_headers
+            daemon::audit_rpc::client::tests::rpc_response_rejects_malformed_status_and_headers \
+            daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 3
+          test "$ordinal" -eq 4
+      - name: Run exact bridge public result regression
+        timeout-minutes: 5
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-result-regression.log"
       - name: Run fixed isolated-home pair/status/chat/revoke
         timeout-minutes: 10
         run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp

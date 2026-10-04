@@ -37,6 +37,15 @@ SHUTDOWN_MARKERS = (
     ("wal_join_entry", b"shutdown checkpoint: WAL join entry"),
     ("wal_drained", b"WAL writer task drained cleanly"),
 )
+PAIR_PHASES = (
+    "bootstrap_started", "bootstrap_ready", "topic_joined", "awaiting_connection",
+    "connection_received", "psk_verified", "proof_read", "response_written",
+    "teardown_started", "teardown_completed",
+)
+PAIR_MARKERS = tuple(
+    (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))
+    for phase in (*PAIR_PHASES, *(f"failed.{phase}" for phase in PAIR_PHASES))
+)
 
 def sha(path: pathlib.Path) -> str: return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 def brief(value: str) -> str: return value.replace("\n", " ").replace("\r", " ")[:160]
@@ -52,8 +61,11 @@ class ShutdownMarkerCollector:
     def __init__(self, stream: Any) -> None:
         self.stream, self.lock = stream, threading.Lock()
         self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
+        self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.reader_error = False
-        self.overlap = max(len(marker) for _, marker in SHUTDOWN_MARKERS) - 1
+        self.overlap = max(
+            len(marker) for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS)
+        ) - 1
         self.thread = threading.Thread(target=self._drain, daemon=True)
         self.thread.start()
 
@@ -66,6 +78,9 @@ class ShutdownMarkerCollector:
                     for name, marker in SHUTDOWN_MARKERS:
                         if marker in window:
                             self.observed[name] = True
+                    for name, marker in PAIR_MARKERS:
+                        if marker in window:
+                            self.pair_observed[name] = True
                 tail = window[-self.overlap:]
         except Exception:
             with self.lock:
@@ -82,6 +97,7 @@ class ShutdownMarkerCollector:
         with self.lock:
             return {
                 "markers": dict(self.observed),
+                "pair_markers": dict(self.pair_observed),
                 "reader_closed": not self.thread.is_alive(),
                 "reader_error": self.reader_error,
             }
@@ -263,7 +279,7 @@ def main() -> int:
         home=pathlib.Path(base)/"home"; home.mkdir(mode=0o700); health_port,companion_port=port(),port()
         config=write_config(home,provider.url,health_port,companion_port)
         receipt["isolated_config_sha256"]=sha(config)
-        env={**os.environ,"NEOTH_HOME":str(home)}
+        env={**os.environ,"NEOTH_HOME":str(home),"NEOTH_COMPANION_DIAGNOSTICS":"1"}
         # Bind consent to this isolated loopback route through the public CLI.
         # The running daemon still rechecks that durable grant before dispatch.
         invoke([str(binary),"--output","json","consent","grant","openai_compat"],env,budget(work_deadline,20.0))
@@ -272,9 +288,14 @@ def main() -> int:
         # shutdown markers and never raw output.
         serve=subprocess.Popen([str(binary),"serve","--config",str(config)],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,bufsize=0)
         shutdown_markers=None
+        bridge_diagnostics_previous=None
+        bridge_diagnostics_set=False
         try:
             assert serve.stdout is not None
             shutdown_markers=ShutdownMarkerCollector(serve.stdout)
+            bridge_diagnostics_previous=os.environ.get("NEOTH_COMPANION_DIAGNOSTICS")
+            os.environ["NEOTH_COMPANION_DIAGNOSTICS"]="1"
+            bridge_diagnostics_set=True
             readiness_deadline=min(time.monotonic()+30,work_deadline)
             while time.monotonic()<readiness_deadline and serve.poll() is None:
                 if health(health_port,budget(work_deadline,2.0)): break
@@ -337,13 +358,18 @@ def main() -> int:
             active_exception=sys.exc_info()[0] is not None
             try: shutdown=stop_serve(serve,cleanup_deadline)
             except Exception: shutdown="shutdown_error"
+            if bridge_diagnostics_set:
+                if bridge_diagnostics_previous is None:
+                    os.environ.pop("NEOTH_COMPANION_DIAGNOSTICS",None)
+                else:
+                    os.environ["NEOTH_COMPANION_DIAGNOSTICS"]=bridge_diagnostics_previous
             receipt["serve_exit_code"]=serve.returncode
             receipt["serve_shutdown"]=shutdown
             if shutdown_markers is not None:
                 receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
             else:
                 if serve.stdout is not None: serve.stdout.close()
-                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"reader_closed":True,"reader_error":True}
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else

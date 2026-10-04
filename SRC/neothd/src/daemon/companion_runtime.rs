@@ -288,12 +288,9 @@ impl CompanionRuntime {
     }
 
     pub(crate) async fn shutdown_and_drain(&self) -> Result<()> {
-        // A closed watch channel means every listener has already released its
-        // receiver.  That is a classified no-live-owner condition; the joins
-        // below still prove every retained task terminal before WAL shutdown.
-        if self.shutdown_tx.send(true).is_err() {
-            tracing::debug!("companion runtime shutdown had no live receivers");
-        }
+        // Persist shutdown before taking task ownership: a retained pair task
+        // can subscribe only after this call, and must still observe stop.
+        request_runtime_shutdown(&self.shutdown_tx);
         // Take ownership before joining; no mutex is held across a listener
         // await, so every carrier can observe cancellation and drain before
         // the final WAL sender is released.
@@ -391,15 +388,33 @@ impl CompanionRuntime {
         let expected_client_noise = invite_client_noise_key(&topic, &psk);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(INVITE_TTL_SECS);
         let mut shutdown = self.shutdown_tx.subscribe();
-        let mut rendezvous = crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
+        if *shutdown.borrow() {
+            return Ok(());
+        }
+        let mut diagnostics = CompanionPairDiagnostics::from_environment();
+        diagnostics.phase("bootstrap_started");
+        let mut rendezvous = match crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
             topic,
             expected_client_noise,
             self.daemon_key.clone(),
             deadline,
             shutdown.clone(),
         )
-        .await?;
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                diagnostics.failed("bootstrap_started");
+                return Err(error);
+            }
+        };
+        // The rendezvous constructor returns only after both its bootstrap and
+        // server-only topic join succeeded; emit both completed fixed phases.
+        diagnostics.phase("bootstrap_ready");
+        diagnostics.phase("topic_joined");
+        let mut terminal_phase = "topic_joined";
         let result = async {
+            diagnostics.phase("awaiting_connection");
             loop {
                 let next = tokio::select! {
                     biased;
@@ -408,12 +423,18 @@ impl CompanionRuntime {
                     next = rendezvous.recv() => next,
                 };
                 let Some(mut connection) = next else { break; };
+                terminal_phase = "connection_received";
+                diagnostics.phase(terminal_phase);
                 if connection.is_initiator { continue; }
                 let observed_noise = *connection.remote_public_key();
                 let raw_psk = tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.read()).await
                     .context("v3 pair psk read timeout")??.context("v3 pair closed before psk")?;
                 if !constant_time_eq(&raw_psk, &psk) { continue; }
+                terminal_phase = "psk_verified";
+                diagnostics.phase(terminal_phase);
                 let proof: EnrollmentProof = read_frame(&mut connection).await?;
+                terminal_phase = "proof_read";
+                diagnostics.phase(terminal_phase);
                 let accepted = match self.enroll_after_verified_pairing(proof, observed_noise, topic, requested_scope).await {
                     Ok(value) => value,
                     Err(error) => {
@@ -427,11 +448,19 @@ impl CompanionRuntime {
                 };
                 rendezvous.leave().await?;
                 write_frame(&mut connection, &ServerFrame::EnrollmentAccepted(accepted)).await?;
+                terminal_phase = "response_written";
+                diagnostics.phase(terminal_phase);
                 break;
             }
             Ok(())
         }.await;
+        diagnostics.phase("teardown_started");
         let teardown = rendezvous.shutdown_checked().await;
+        match (&result, &teardown) {
+            (Err(_), _) => diagnostics.failed(terminal_phase),
+            (Ok(()), Err(_)) => diagnostics.failed("teardown_started"),
+            (Ok(()), Ok(())) => diagnostics.phase("teardown_completed"),
+        }
         result?;
         teardown
     }
@@ -1146,6 +1175,49 @@ async fn join_companion_task(
         .with_context(|| format!("{label} task panicked or was cancelled"))?
         .with_context(|| format!("{label} task returned an unverified terminal error"))
 }
+const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
+
+/// One listener emits each fixed phase at most once. The bitset bounds output
+/// under hostile repeated connections and never carries peer material.
+struct CompanionPairDiagnostics {
+    enabled: bool,
+    emitted: u16,
+}
+
+impl CompanionPairDiagnostics {
+    fn from_environment() -> Self {
+        Self {
+            enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
+            emitted: 0,
+        }
+    }
+
+    fn phase(&mut self, phase: &'static str) {
+        let bit = match phase {
+            "bootstrap_started" => 0,
+            "bootstrap_ready" => 1,
+            "topic_joined" => 2,
+            "awaiting_connection" => 3,
+            "connection_received" => 4,
+            "psk_verified" => 5,
+            "proof_read" => 6,
+            "response_written" => 7,
+            "teardown_started" => 8,
+            "teardown_completed" => 9,
+            _ => return,
+        };
+        if self.enabled && self.emitted & (1 << bit) == 0 {
+            self.emitted |= 1 << bit;
+            eprintln!("NEOTH_COMPANION_PAIR_PHASE={phase}");
+        }
+    }
+
+    fn failed(&mut self, last: &'static str) {
+        if self.enabled {
+            eprintln!("NEOTH_COMPANION_PAIR_PHASE=failed.{last}");
+        }
+    }
+}
 fn random_32() -> Result<[u8; 32]> {
     let mut value = [0u8; 32];
     getrandom::getrandom(&mut value)?;
@@ -1205,6 +1277,14 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
         .fold(0u8, |diff, (a, b)| diff | (a ^ b))
         == 0
 }
+
+fn request_runtime_shutdown(shutdown_tx: &watch::Sender<bool>) {
+    // `send()` without a live receiver does not persist a value for a later
+    // subscription. Pair tasks subscribe inside their spawned future, so use
+    // the watch value itself as the durable shutdown state.
+    shutdown_tx.send_replace(true);
+}
+
 fn build_pair_url(
     topic: [u8; 32],
     psk: [u8; 16],
@@ -1282,6 +1362,58 @@ mod tests {
             first, second,
             "restart must retain the key pinned by paired clients"
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_shutdown_before_pair_listener_subscription_exits_cleanly() {
+        let home = tempfile::tempdir().expect("create companion stop-race home");
+        let config_path = home.path().join("freedom.yaml");
+        let config = crate::config::FreedomConfig::default();
+        let crate::cli::serve_tasks::WalSetup {
+            segment_path,
+            writer,
+            writer_join,
+            ..
+        } = crate::cli::serve_tasks::prepare_wal(home.path(), None)
+            .await
+            .expect("prepare companion stop-race WAL");
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config,
+            config_path.clone(),
+        ));
+        let chat = Arc::new(DaemonChatRuntime::new(
+            home.path().to_path_buf(),
+            config_path,
+            segment_path,
+            controller,
+            writer.clone(),
+        ));
+        let runtime = CompanionRuntime::load(
+            home.path().to_path_buf(),
+            writer.clone(),
+            Arc::clone(&chat),
+            "testboot".into(),
+            1,
+        )
+        .expect("load companion runtime");
+
+        request_runtime_shutdown(&runtime.shutdown_tx);
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.run_pair_listener([1; 32], [2; 16], CompanionScope::StatusRead),
+        )
+        .await
+        .expect("stopped pair listener returns without rendezvous")
+        .expect("persistent stop is a clean listener terminal");
+
+        drop(runtime);
+        drop(chat);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), writer_join)
+            .await
+            .expect("companion stop-race writer drains within bound")
+            .expect("join companion stop-race writer")
+            .expect("companion stop-race writer succeeds");
     }
 
     #[tokio::test]

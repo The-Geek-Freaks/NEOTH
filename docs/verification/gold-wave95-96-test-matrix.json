@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2353_2354_reviewed_mobile_rpc_wal_repairs_hosted_pending",
+  "status": "wave2360_reviewed_mobile_stop_shape_and_pair_diagnostics_hosted_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 385270,
-    "sha256": "F343304612027D17357AAF79CAB3C07108061B773C8EB683182212D32C0D0A52"
+    "bytes": 385473,
+    "sha256": "3F65F0564C72A4DDDC1C755E9BDECD7EED5BAE99B644E8AFF3623EDD69BC4E72"
   },
-  "sourceInputs": 2107,
+  "sourceInputs": 2108,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "DA564065FB23B2DC38D73D496098C1410A5358C20AC30161DFAF91DF2D685583",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     },
     {
@@ -16520,6 +16520,12 @@
       "test": "daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/client.rs",
       "sourceSha256": "1D396ABCF1186E41CE1E8E0CC5CF398B88192935A4808D1C205FD4147FF647D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sourceSha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
       "junitClass": "neoth"
     }
   ],
@@ -74548,6 +74554,50 @@
       }
     ],
     "note": "Repair HTTP body decoding and release companion WAL sender root after listener drain. Three exact hosted RPC regressions plus actual pair/status/chat/revoke/clean daemon exit pending; categorical shutdown markers only. Local runtime hold observed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2360MobilePairProgress": {
+    "base": "17fc92de96868b92d4c0cc9b076e83bb02104c1a",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 25635,
+        "sha256": "8FE5ACCAB79388C1089B269DE8B0B3D778FBE273D69CE5A3E548D55F9ADFBDDF",
+        "blob": "a88164eae7426852ac120ed32389dbb0aa3e6d88"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 4330,
+        "sha256": "075142319DC186DF58FACDC7EC8CB9876DAD8346B179A2544FD501643B5981B9",
+        "blob": "40c1c0d8f96ac3bc42fee9c7d228659612781b94"
+      },
+      {
+        "path": "bridges/companion-native/src/lib.rs",
+        "bytes": 46505,
+        "sha256": "D6A8273A1F3327787EBECAC9939922541F3862AA04D04064E0D814642663CE85",
+        "blob": "d486ae2bf165cbc87b059246eb92f159f969de0d"
+      },
+      {
+        "path": "docs/verification/gold-wave2360-mobile-pair-progress.json",
+        "bytes": 3256,
+        "sha256": "5D612E489F188E4337686FDB3149E04E0B834331AA518EC285A003CE1A2E5322",
+        "blob": "56da5fc22829f05de87540fa8e6b3052b6337d89"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2388169,
+        "sha256": "4A7939E62299D7F491836430FDB56C1AA1C7067E6E55774BB99DAEB470B9015B",
+        "blob": "06bf5deb8fb7443bdb290356e30c9fd8d60be66e"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 60595,
+        "sha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD",
+        "blob": "4de03729804daf4d4a9f85bf67d8edf8876607f2"
+      }
+    ],
+    "note": "Actual17fc RPC3 and graceful WAL drain are admitted subclaims; mobile pair still140s pending, native both13/14 shape failure. Persist late-listener stop, preserve canonical flat Chat, add opt-in fixed phases and four core plus one bridge exact gates. No local execution; hosted/native/device/release open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

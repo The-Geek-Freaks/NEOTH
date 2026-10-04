@@ -52,6 +52,12 @@ fn client_only_join_opts() -> JoinOpts {
     options
 }
 
+fn diagnostic_pair_phase(phase: &'static str) {
+    if matches!(std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref(), Ok("1")) {
+        eprintln!("NEOTH_COMPANION_PHASE bridge_{phase}");
+    }
+}
+
 #[repr(C)]
 pub struct neoth_companion_bridge {
     inner: Bridge,
@@ -105,6 +111,7 @@ enum PublicResult {
     Denied { code: &'static str },
     Failed { code: &'static str },
     Cancelled,
+    #[serde(untagged)]
     Chat(PublicChatResult),
 }
 
@@ -247,10 +254,12 @@ async fn pair(
     config.max_peers = 1;
     config.max_parallel = 1;
 
+    diagnostic_pair_phase("bootstrap_started");
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, invite.ttl).await {
         Ok(value) => value,
         Err(result) => return result,
     };
+    diagnostic_pair_phase("bootstrap_ready");
     let result = pair_on_swarm(
         &swarm,
         &mut connections,
@@ -261,10 +270,14 @@ async fn pair(
         &mut cancel,
     )
     .await;
+    diagnostic_pair_phase("teardown_started");
     // This is the sole owner of the swarm task. Every cancellation and every
     // terminal protocol outcome destroys then awaits the actual network task.
     let _ = swarm.destroy().await;
+    diagnostic_pair_phase("swarm_destroyed");
     let _ = swarm_task.await;
+    diagnostic_pair_phase("swarm_task_joined");
+    diagnostic_pair_phase("teardown_completed");
     result
 }
 
@@ -285,8 +298,13 @@ async fn pair_on_swarm(
     {
         return PublicResult::Failed { code: "rendezvous_join_failed" };
     }
+    diagnostic_pair_phase("topic_joined");
+    diagnostic_pair_phase("awaiting_connection");
     let mut conn = match await_cancelable(cancel, invite.ttl, connections.recv()).await {
-        Wait::Value(Some(conn)) => conn,
+        Wait::Value(Some(conn)) => {
+            diagnostic_pair_phase("connection_received");
+            conn
+        }
         Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" },
         Wait::Expired => return PublicResult::Failed { code: "pair_timeout" },
         Wait::Cancelled => return PublicResult::Cancelled,
@@ -296,12 +314,14 @@ async fn pair_on_swarm(
     if conn.remote_public_key() != &invite.server_key {
         return PublicResult::Denied { code: "daemon_key_mismatch" };
     }
+    diagnostic_pair_phase("daemon_key_pinned");
     match write_cancelable(&mut conn, &invite.psk, invite.ttl, cancel).await {
         Write::Sent => {}
         Write::Cancelled => return PublicResult::Cancelled,
         Write::Expired => return PublicResult::Failed { code: "pair_timeout" },
         Write::Failed => return PublicResult::Failed { code: "transport_write_failed" },
     }
+    diagnostic_pair_phase("psk_written");
 
     let client_nonce = match fresh_nonce() {
         Some(value) => value,
@@ -329,9 +349,13 @@ async fn pair_on_swarm(
         Write::Expired => return PublicResult::Failed { code: "pair_timeout" },
         Write::Failed => return PublicResult::Failed { code: "transport_write_failed" },
     }
+    diagnostic_pair_phase("enrollment_proof_written");
     let accepted = match await_cancelable(cancel, invite.ttl, conn.read()).await {
         Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
-            Ok(ServerFrame::EnrollmentAccepted(value)) => value,
+            Ok(ServerFrame::EnrollmentAccepted(value)) => {
+                diagnostic_pair_phase("enrollment_accepted");
+                value
+            }
             Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
             Ok(_) | Err(_) => return PublicResult::Denied { code: "enrollment_rejected" },
         },
@@ -347,6 +371,7 @@ async fn pair_on_swarm(
     {
         return PublicResult::Denied { code: "invalid_reconnect_descriptor" };
     }
+    diagnostic_pair_phase("descriptor_validated");
     PublicResult::Paired {
         device_id: accepted.device_id.to_string(),
         revision: accepted.revision,

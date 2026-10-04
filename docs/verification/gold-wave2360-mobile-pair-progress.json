@@ -1,0 +1,71 @@
+{
+  "schema": "neoth.wave2360.mobile-pair-progress.v1",
+  "base": "17fc92de96868b92d4c0cc9b076e83bb02104c1a",
+  "status": "reviewed_source_hosted_pending",
+  "priorInterop": {
+    "run": 37229849142,
+    "head": "17fc92de96868b92d4c0cc9b076e83bb02104c1a",
+    "wholeRun": "failure",
+    "rpcCasesPassed": 3,
+    "inviteMinted": true,
+    "serveExitCode": 0,
+    "serveShutdown": "graceful",
+    "walDrained": true,
+    "pairDeadlineSeconds": 140,
+    "pairAccepted": false,
+    "partialChecksSha256": "3A3E078A24D8A9AD5698B1262798DD39B50E0AC4BB4A2A5C3B351BAAA27B59AB"
+  },
+  "priorNative": {
+    "run": 37231186475,
+    "head": "17fc92de96868b92d4c0cc9b076e83bb02104c1a",
+    "wholeRun": "failure",
+    "linuxHostBridgePassed": 13,
+    "macosHostBridgePassed": 13,
+    "failedOnBoth": "tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text",
+    "artifacts": 0,
+    "crossCompileAccepted": false
+  },
+  "changes": [
+    "Persist stop before retained listener joins; an already-stopped late subscriber returns cleanly before network startup.",
+    "One variant-level serde(untagged) annotation aligns direct Chat serialization with the existing flat FFI encoder; other state tags and all eight ABI symbols are unchanged.",
+    "Opt-in fixed-only bridge phase log and bounded per-listener daemon phase booleans locate pairing versus teardown progress without persisting peer material.",
+    "Four exact core regressions and one exact bridge shape regression precede the unchanged actual product flow."
+  ],
+  "sources": [
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "8FE5ACCAB79388C1089B269DE8B0B3D778FBE273D69CE5A3E548D55F9ADFBDDF"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "sha256": "075142319DC186DF58FACDC7EC8CB9876DAD8346B179A2544FD501643B5981B9"
+    },
+    {
+      "path": "bridges/companion-native/src/lib.rs",
+      "sha256": "D6A8273A1F3327787EBECAC9939922541F3862AA04D04064E0D814642663CE85"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sha256": "1F07FB55498D60643863B474570DA6D7CFAF5EF8B64C07222498483F914CC6AD"
+    }
+  ],
+  "newPortableRegistration": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
+  "portableRegistrations": 2750,
+  "focusedCases": 528,
+  "staticReviews": {
+    "stopRace": "71DD0D55105DF20F5953AD26CBEACC0C863ECDB38AA2F3AD877E64195CB23847",
+    "bridgeShape": "7DEE0B94750474C49F17379F12591A185DB69084BD1FAEED3CFCD1319EDB83F6",
+    "finalFourFile": "F7E274A157A32C636A3B5CA5131C15028690EA7CEADCEAEB65770A5FCACCBFCE"
+  },
+  "scopeLimits": [
+    "No evidence yet locates a particular transport or network root cause.",
+    "The separate W2356 vendor candidate is not integrated.",
+    "Existing390-second work plus180-second cleanup plus30-second margin, protocol trust checks, no-retry policy and actual product success assertions are unchanged.",
+    "Focused528 acceptance remains bound to209855494db16fc99a504ee430bc8d0287754b77; this report does not transfer it to the new producer."
+  ],
+  "localExecutableValidationRan": false,
+  "interopAccepted": false,
+  "nativeAccepted": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}
