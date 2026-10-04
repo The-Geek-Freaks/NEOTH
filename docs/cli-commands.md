@@ -1265,6 +1265,24 @@ Inspect the selected repository's code-map lifecycle state without creating, mig
 
 GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairing invite (rendezvous topic + PSK) and show it as a server-side QR/URL preview; NEOTH does not ship a phone client. With the default `cluster` feature it drives the single-use HyperDHT/authenticated Noise-IK P2P handshake; `--write-invite-for-serve` hands the invite to a configured running daemon for daemon-lifetime in-memory token use, never durable token storage or restart recovery
 
+### `neoth companion devices`
+
+Read or revoke v3 durable device grants through the same-user daemon owner.  No subcommand opens the authority store directly
+
+#### `neoth companion devices list`
+
+#### `neoth companion devices revoke`
+
+- `<DEVICE_ID>`
+
+#### `neoth companion devices status`
+
+- `<DEVICE_ID>`
+
+### `neoth companion pair-mobile`
+
+Mint a v3 phone QR through the RUNNING daemon.  The daemon, rather than this CLI process, owns the persistent Noise responder key encoded in `server_pk` and all later listener/recovery work
+
 ### `neoth companion pair-phone`
 
 Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet. The server-side HyperDHT / authenticated Noise-IK transport accepts only the topic-and-PSK-HKDF-derived client static key before allocation, then verifies the encrypted application PSK as defense in depth. The invite is single-use, short-lived, and requires the `cluster` feature

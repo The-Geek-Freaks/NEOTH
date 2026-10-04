@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_mutex_and_fixture_typecheck_repair_pending",
+  "status": "hosted_compile_passed_behavior_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 382800,
-    "sha256": "04C627068E7C7E8575B0821F459EC61312E45BC7C75B91F51E7DFF9D6A14E110"
+    "bytes": 382789,
+    "sha256": "83941356C4450CE1F6CB01A79C6EEDB8B88C957131C775A47D70B5EB3E304143"
   },
   "sourceInputs": 2094,
   "requiredNativeTests": [
@@ -73924,6 +73924,32 @@
       }
     ],
     "note": "27 hosted diagnostics map to three repaired source causes; testtypecheck and actualCLIreference export remain required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2325HostedCompileAndReference": {
+    "base": "689571aeb190a505e2a54ea6def6a04a93ee5868",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 267546,
+        "sha256": "4F7BF67AC6C3383E82F006BCDF31D7B81A63F48F6EEA52E61BBC89E575E1E9E5",
+        "blob": "07dae51f6efc2f92220a0aaf46f0e52a40aafbbb"
+      },
+      {
+        "path": "docs/verification/gold-wave2325-mobile-compile-repair.json",
+        "bytes": 7027,
+        "sha256": "351D92DB964EE09AF38FF04EAD02FFDCC0BF7368F5F288C8065ADC11D2468021",
+        "blob": "0445cd1acfcc46d8ab00ab31d549fca6a19031d8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2370467,
+        "sha256": "60ED043255FF6DD80F8B16218D99A2E3701B0D9EBE4F46B4F81140EE16BD355B",
+        "blob": "0cb7e434ed2e533729a12188abc73a266f116aef"
+      }
+    ],
+    "note": "Hosted core test typecheck and CLI build passed on689571; exact original CLI reference admitted. Focused/native/mobile behavior remains pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
