@@ -1068,7 +1068,11 @@ pub(crate) async fn companion_v3_mint_pair(
     home: &Path,
     requested_scope: crate::daemon::companion_protocol::CompanionScope,
 ) -> Result<crate::daemon::companion_runtime::CompanionV3Invite, CompanionV3ClientError> {
-    companion_v3_mint_post(home, &serde_json::json!({"requested_scope": requested_scope})).await
+    companion_v3_mint_post(
+        home,
+        &serde_json::json!({"requested_scope": requested_scope}),
+    )
+    .await
 }
 
 pub(crate) async fn companion_v3_list_devices(
@@ -1115,16 +1119,16 @@ async fn companion_v3_mint_post<T: serde::de::DeserializeOwned>(
     request: &impl serde::Serialize,
 ) -> Result<T, CompanionV3ClientError> {
     let body = serde_json::to_string(request).map_err(|_| CompanionV3ClientError::Malformed)?;
-    let sidecar =
-        read_sidecar(home).map_err(|error| CompanionV3ClientError::Unavailable(error.to_string()))?;
+    let sidecar = read_sidecar(home)
+        .map_err(|error| CompanionV3ClientError::Unavailable(error.to_string()))?;
     if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
         return Err(CompanionV3ClientError::Unavailable(format!(
             "stale audit-RPC sidecar (daemon pid {} does not own the endpoint)",
             sidecar.pid
         )));
     }
-    let token =
-        read_rpc_token(home).map_err(|error| CompanionV3ClientError::Unavailable(error.to_string()))?;
+    let token = read_rpc_token(home)
+        .map_err(|error| CompanionV3ClientError::Unavailable(error.to_string()))?;
     let request = format!(
         "POST /companion/v3/pair/mint HTTP/1.1\r\n\
          Host: neoth-local\r\n\
@@ -1191,18 +1195,18 @@ async fn exchange_companion_mint_rpc(
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
     let endpoint_label = format!("{endpoint:?}");
     tokio::time::timeout(COMPANION_MINT_EXCHANGE_TIMEOUT, async move {
-        let mut stream = tokio::time::timeout(
-            RPC_EXCHANGE_TIMEOUT,
-            super::transport::connect(&endpoint),
-        )
-        .await
-        .map_err(|_| {
-            AuditRpcClientError::Unavailable(format!(
-                "companion pair mint connect with {endpoint:?} exceeded the {}s deadline",
-                RPC_EXCHANGE_TIMEOUT.as_secs()
-            ))
-        })?
-        .map_err(|error| AuditRpcClientError::Unavailable(format!("connect {endpoint:?}: {error}")))?;
+        let mut stream =
+            tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, super::transport::connect(&endpoint))
+                .await
+                .map_err(|_| {
+                    AuditRpcClientError::Unavailable(format!(
+                        "companion pair mint connect with {endpoint:?} exceeded the {}s deadline",
+                        RPC_EXCHANGE_TIMEOUT.as_secs()
+                    ))
+                })?
+                .map_err(|error| {
+                    AuditRpcClientError::Unavailable(format!("connect {endpoint:?}: {error}"))
+                })?;
         tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(request.as_bytes()))
             .await
             .map_err(|_| {

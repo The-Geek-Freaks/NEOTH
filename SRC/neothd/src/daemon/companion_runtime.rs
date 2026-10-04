@@ -72,7 +72,9 @@ fn report_pair_readiness(
     sender: &mut Option<oneshot::Sender<PairListenerReadiness>>,
     result: PairListenerReadiness,
 ) -> bool {
-    sender.take().is_none_or(|sender| sender.send(result).is_ok())
+    sender
+        .take()
+        .is_none_or(|sender| sender.send(result).is_ok())
 }
 
 /// A status reply is not a detached timeout future.  This owner retains the
@@ -440,7 +442,8 @@ impl CompanionRuntime {
         &self,
         prepared: PreparedCompanionV3Invite,
     ) -> Result<()> {
-        self.join_failed_pair_listener(&prepared.pair_task_key).await
+        self.join_failed_pair_listener(&prepared.pair_task_key)
+            .await
     }
 
     pub(crate) fn publish_prepared_pair_invite(
@@ -565,7 +568,7 @@ impl CompanionRuntime {
             None,
             pair_stop_rx,
         )
-            .await
+        .await
     }
 
     async fn run_pair_listener_until_ready(
@@ -1788,7 +1791,10 @@ mod tests {
         let owner = PairListenerOwner {
             stop_tx,
             task: tokio::spawn(async move {
-                stop_rx.changed().await.expect("pair owner stop sender remains live");
+                stop_rx
+                    .changed()
+                    .await
+                    .expect("pair owner stop sender remains live");
                 assert!(*stop_rx.borrow());
                 Ok(())
             }),
@@ -1850,8 +1856,7 @@ mod tests {
             1
         );
         assert_eq!(
-            remaining_pair_invite_ttl_at(now + Duration::from_secs(INVITE_TTL_SECS), now)
-                .unwrap(),
+            remaining_pair_invite_ttl_at(now + Duration::from_secs(INVITE_TTL_SECS), now).unwrap(),
             INVITE_TTL_SECS
         );
         assert!(remaining_pair_invite_ttl_at(now + Duration::from_millis(500), now).is_err());

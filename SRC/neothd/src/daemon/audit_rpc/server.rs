@@ -2389,13 +2389,14 @@ async fn serve_companion_pair_mint(
             return Err(error);
         }
     };
-    let write_result = match tokio::time::timeout(write_budget, writer.write_all(response.as_bytes())).await {
-        Ok(result) => result,
-        Err(_) => {
-            runtime.cancel_prepared_pair_invite(prepared).await?;
-            anyhow::bail!("companion pair mint response write exceeded lifecycle deadline")
-        }
-    };
+    let write_result =
+        match tokio::time::timeout(write_budget, writer.write_all(response.as_bytes())).await {
+            Ok(result) => result,
+            Err(_) => {
+                runtime.cancel_prepared_pair_invite(prepared).await?;
+                anyhow::bail!("companion pair mint response write exceeded lifecycle deadline")
+            }
+        };
     if let Err(error) = write_result {
         runtime.cancel_prepared_pair_invite(prepared).await?;
         return Err(error).context("write ready companion pair invitation");
@@ -2442,7 +2443,9 @@ async fn write_companion_mint_terminal(
     match tokio::time::timeout(write_budget, writer.write_all(response.as_bytes())).await {
         Ok(Ok(())) => close_companion_mint_writer(writer, deadline).await,
         Ok(Err(error)) => Err(error).context("write companion pair mint terminal response"),
-        Err(_) => anyhow::bail!("companion pair mint terminal response write exceeded lifecycle deadline"),
+        Err(_) => {
+            anyhow::bail!("companion pair mint terminal response write exceeded lifecycle deadline")
+        }
     }
 }
 

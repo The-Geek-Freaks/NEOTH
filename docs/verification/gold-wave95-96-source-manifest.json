@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T22:21:59.5154615Z",
-  "validationStatus": "w2367-reviewed-source-hosted-pending",
+  "capturedUtc": "2026-10-04T22:25:06.4048693Z",
+  "validationStatus": "w2367-hosted-format-imported-validation-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6553,8 +6553,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 70250,
-      "sha256": "C20DAD498F7202A1F98346A8E44B71AF66ED308404C64B937BED99C99DB1E9E8"
+      "bytes": 70361,
+      "sha256": "D666AEB5641A682EBD4FA384155427986B17E1C288AA42F7360A6154341866BE"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
@@ -6563,8 +6563,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 105825,
-      "sha256": "0FDF66A2730E2EF2FC63C59B6C01F2B9094B64A324B085314B81554ACE2F890D"
+      "bytes": 105880,
+      "sha256": "036E7DB8B96C7015A96A8811B5F4993C6AFC0ADE3196408D8B2D74D5F7365826"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
@@ -6653,8 +6653,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 75026,
-      "sha256": "59C8A03F1DF15F861222325F66A982C1C7E7D37ABC2F3407E8CF2832E9FDCF02"
+      "bytes": 75099,
+      "sha256": "0506AA5E4F4ED74313A50E8AFDD84459233A66A56141DE9D1E7B952377FE3127"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
