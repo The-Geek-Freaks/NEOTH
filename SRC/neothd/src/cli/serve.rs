@@ -680,6 +680,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         webchat_boot_id,
         Arc::clone(&gui_chat_runtime),
     ));
+    // Default-off v3 mobile status vertical.  The daemon loads its private
+    // responder key before any CLI can mint a QR, but listeners start only
+    // after the mandatory same-user IPC owner is up.
+    let companion_v3_runtime = if config.companion.enabled && config.companion.p2p_enabled {
+        Some(crate::daemon::companion_runtime::CompanionRuntime::load(
+            neoth_home.clone(), writer.clone(), gui_chat_boot_id.0.clone(), 1,
+        ).context("load durable companion v3 runtime")?)
+    } else { None };
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) =
         crate::cli::serve_tasks::spawn_audit_rpc(crate::cli::serve_tasks::AuditRpcInputs {
@@ -690,6 +698,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             gui_chat_runtime: Arc::clone(&gui_chat_runtime),
             conversation_runtime: Arc::clone(&conversation_runtime),
             webchat: config.companion.enabled.then(|| Arc::clone(&webchat_state)),
+            companion_runtime: companion_v3_runtime.clone(),
             pid_guard: daemon_pid_guard,
             endpoint_nonce: &audit_endpoint_nonce,
             membership: std::sync::Arc::clone(&membership_controller),
@@ -707,11 +716,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             gui_chat_runtime: Arc::clone(&gui_chat_runtime),
             conversation_runtime: Arc::clone(&conversation_runtime),
             webchat: config.companion.enabled.then(|| Arc::clone(&webchat_state)),
+            companion_runtime: companion_v3_runtime.clone(),
             pid_guard: daemon_pid_guard,
             endpoint_nonce: &audit_endpoint_nonce,
         })
         .await
         .context("start mandatory daemon audit RPC")?;
+
+    if let Some(runtime) = companion_v3_runtime.as_ref() {
+        runtime.start().await.context("start companion v3 device listeners and recovery")?;
+    }
 
     // W185: only an accepted native-Ollama provider owns this controller. The
     // reload controller rejects provider kind/endpoint/model changes, so this
@@ -3082,6 +3096,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         plugin_invoker_registration,
         shared_provider,
         companion_state,
+        companion_v3_runtime,
         worker_watch_handle,
         channel_tasks,
         readiness_publishers,

@@ -291,20 +291,33 @@ impl PublicRendezvous {
     ///
     /// Dropping this value remains an abort-only last resort for panics, but
     /// every normal listener terminal path reaches this explicit join.
-    pub(crate) async fn shutdown(mut self) {
+    /// Request terminal carrier destruction and return only after the nested
+    /// Peeroxide/DHT actor proved its join.  New response owners use this
+    /// checked form before reporting a completed delivery; callers that only
+    /// need legacy best-effort cleanup retain [`Self::shutdown`] below.
+    pub(crate) async fn shutdown_checked(mut self) -> Result<()> {
         match (self.peer_handle.take(), self.swarm_task.take()) {
             (Some(handle), Some(task)) => {
-                if let Err(error) = shutdown_started_public_rendezvous(handle, task).await {
-                    error!(%error, "public rendezvous graceful teardown was not proven");
-                }
+                shutdown_started_public_rendezvous(handle, task).await
             }
             (None, Some(task)) => {
-                if let Err(error) = task.await {
-                    error!(%error, "public rendezvous actor ended without graceful teardown proof");
-                }
+                task.await.map_err(|error| uncertain_start_error(format!(
+                    "public rendezvous actor ended without graceful teardown proof: {error}"
+                )))
             }
-            (Some(handle), None) => drop(handle),
-            (None, None) => {}
+            (Some(handle), None) => {
+                drop(handle);
+                Err(uncertain_start_error("public rendezvous lost its actor join handle".into()))
+            }
+            (None, None) => Ok(()),
+        }
+    }
+
+    /// Legacy best-effort compatibility wrapper.  V3 response delivery must
+    /// call [`Self::shutdown_checked`] and classify an unproven drain instead.
+    pub(crate) async fn shutdown(self) {
+        if let Err(error) = self.shutdown_checked().await {
+            error!(%error, "public rendezvous graceful teardown was not proven");
         }
     }
 }
@@ -333,13 +346,20 @@ fn server_only_join_opts() -> peeroxide::JoinOpts {
 ///
 /// Keeping this construction beside the sole spawn caller prevents an optional
 /// or keyless public rendezvous from being reintroduced by a future caller.
-fn public_rendezvous_config(expected_remote_static_key: [u8; 32]) -> peeroxide::SwarmConfig {
+fn public_rendezvous_config(
+    expected_remote_static_key: [u8; 32],
+    server_key_pair: Option<peeroxide::KeyPair>,
+) -> peeroxide::SwarmConfig {
     let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
     // Mandatory v2 companion admission: a public topic alone can never reserve
     // a transport slot. Peeroxide verifies this static key during the responder
     // Noise handshake, before reply, registration, stream establishment, or the
     // bounded connection receiver.
     config.server_expected_remote_static_key = Some(expected_remote_static_key);
+    // v3 companion reconnects pin the daemon's durable Noise key from the
+    // QR invitation.  v2 passes `None` and therefore retains its existing
+    // ephemeral server-key behaviour exactly.
+    config.key_pair = server_key_pair;
     config
 }
 
@@ -353,12 +373,51 @@ pub(crate) async fn spawn_public_rendezvous(
     deadline: tokio::time::Instant,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<PublicRendezvous> {
+    spawn_public_rendezvous_with_optional_key(
+        topic,
+        expected_remote_static_key,
+        None,
+        deadline,
+        shutdown,
+    )
+    .await
+}
+
+/// Start a public rendezvous with a daemon-owned Noise server key.  The
+/// caller must retain and durably own this key before publishing its public
+/// half in an invitation.  This does not loosen v2 admission: the expected
+/// authenticated remote static key remains mandatory and teardown is shared
+/// with [`spawn_public_rendezvous`].
+pub(crate) async fn spawn_public_rendezvous_with_key(
+    topic: [u8; 32],
+    expected_remote_static_key: [u8; 32],
+    server_key_pair: peeroxide::KeyPair,
+    deadline: tokio::time::Instant,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<PublicRendezvous> {
+    spawn_public_rendezvous_with_optional_key(
+        topic,
+        expected_remote_static_key,
+        Some(server_key_pair),
+        deadline,
+        shutdown,
+    )
+    .await
+}
+
+async fn spawn_public_rendezvous_with_optional_key(
+    topic: [u8; 32],
+    expected_remote_static_key: [u8; 32],
+    server_key_pair: Option<peeroxide::KeyPair>,
+    deadline: tokio::time::Instant,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<PublicRendezvous> {
     // Reject persistent pre-cancellation / already-expired admission before
     // constructing the public-bootstrap config.
     if *shutdown.borrow() || tokio::time::Instant::now() >= deadline {
         anyhow::bail!("public rendezvous cancelled or expired before bootstrap spawn");
     }
-    let config = public_rendezvous_config(expected_remote_static_key);
+    let config = public_rendezvous_config(expected_remote_static_key, server_key_pair);
     let startup = peeroxide::spawn_starting(config)
         .await
         .context("peeroxide begin public rendezvous startup")?;
@@ -2961,8 +3020,23 @@ mod tests {
     #[test]
     fn public_rendezvous_requires_and_wires_the_expected_remote_static_key() {
         let expected = [0x5au8; 32];
-        let config = public_rendezvous_config(expected);
+        let config = public_rendezvous_config(expected, None);
         assert_eq!(config.server_expected_remote_static_key, Some(expected));
+        assert!(config.key_pair.is_none(), "v2 remains keyless/ephemeral");
+    }
+
+    #[test]
+    fn v3_public_rendezvous_retains_the_supplied_daemon_noise_key() {
+        let expected_remote = [0x51u8; 32];
+        let supplied = peeroxide::KeyPair::from_seed([0x73u8; 32]);
+        let expected_server = supplied.public_key;
+        let config = public_rendezvous_config(expected_remote, Some(supplied));
+        assert_eq!(config.server_expected_remote_static_key, Some(expected_remote));
+        assert_eq!(
+            config.key_pair.expect("v3 requires supplied server key").public_key,
+            expected_server,
+            "the public QR key must be the actual peeroxide responder key"
+        );
     }
 
     #[tokio::test]

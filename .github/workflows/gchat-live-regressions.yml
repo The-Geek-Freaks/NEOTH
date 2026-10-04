@@ -135,6 +135,7 @@ jobs:
             SRC/neothd/src/channels/gchat.rs \
             SRC/neothd/src/channels/readiness.rs \
             SRC/neothd/src/channels/routing.rs \
+            SRC/neothd/src/cli/companion.rs \
             SRC/neothd/src/cli/serve_tasks.rs \
             SRC/neothd/src/cli/consent.rs \
             SRC/neothd/src/cli/consent_outbox.rs \
@@ -256,6 +257,11 @@ jobs:
             SRC/neothd/src/daemon/gui_chat_bridge.rs \
             SRC/neothd/src/daemon/gui_chat_protocol.rs \
             SRC/neothd/src/daemon/mod.rs \
+            SRC/neothd/src/daemon/companion_protocol.rs \
+            SRC/neothd/src/daemon/companion_authority.rs \
+            SRC/neothd/src/daemon/companion_runtime.rs \
+            SRC/neothd/src/daemon/companion_runtime_unavailable.rs \
+            SRC/neothd/src/wal/companion_mutation_receipts.rs \
             SRC/neothd/src/daemon/webchat/tests.rs \
             SRC/neothd/src/media/audio.rs \
             SRC/neothd/src/media/conversation_loop.rs \
@@ -869,9 +875,27 @@ jobs:
           run_case 501 lib cluster::executor::tests::execution_deadline_drops_started_provider_and_preserves_indeterminate_reservation cluster::executor::tests::execution_deadline_drops_started_provider_and_preserves_indeterminate_reservation --lib
           run_case 502 lib cluster::executor::tests::execution_deadline_wait_preserves_millisecond_absolute_boundaries cluster::executor::tests::execution_deadline_wait_preserves_millisecond_absolute_boundaries --lib
           run_case 503 lib cluster::executor::tests::revoke_persistence_failure_releases_lease_and_preserves_reservation cluster::executor::tests::revoke_persistence_failure_releases_lease_and_preserves_reservation --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 503
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 503
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 503
+          run_case 504 lib wal::companion_mutation_receipts::tests::descriptor_is_public_redacted_and_round_trips_exactly wal::companion_mutation_receipts::tests::descriptor_is_public_redacted_and_round_trips_exactly --lib
+          run_case 505 lib wal::companion_mutation_receipts::tests::descriptor_rejects_unbound_or_noncanonical_fingerprint wal::companion_mutation_receipts::tests::descriptor_rejects_unbound_or_noncanonical_fingerprint --lib
+          run_case 506 lib wal::writer::tests::append_no_ack_refuses_closed_companion_mutation_receipt wal::writer::tests::append_no_ack_refuses_closed_companion_mutation_receipt --lib
+          run_case 507 lib wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen wal::writer::tests::companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen --lib
+          run_case 508 lib wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation wal::writer::tests::companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation --lib
+          run_case 509 lib daemon::companion_protocol::tests::server_frames_use_only_stable_adjacent_tags_and_bounded_denials daemon::companion_protocol::tests::server_frames_use_only_stable_adjacent_tags_and_bounded_denials --lib
+          run_case 510 lib daemon::companion_protocol::tests::validated_server_decode_rejects_bad_version_and_descriptor_in_every_body daemon::companion_protocol::tests::validated_server_decode_rejects_bad_version_and_descriptor_in_every_body --lib
+          run_case 511 lib daemon::companion_authority::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan daemon::companion_authority::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan --lib
+          run_case 512 lib daemon::companion_authority::tests::decoded_status_frame_retains_prewrite_marker_until_confirmed daemon::companion_authority::tests::decoded_status_frame_retains_prewrite_marker_until_confirmed --lib
+          run_case 513 lib daemon::companion_authority::tests::revoke_drain_waits_for_owned_lease_release daemon::companion_authority::tests::revoke_drain_waits_for_owned_lease_release --lib
+          run_case 514 lib daemon::companion_authority::tests::persisted_delivery_marker_refuses_serialized_same_store_reconstruction daemon::companion_authority::tests::persisted_delivery_marker_refuses_serialized_same_store_reconstruction --lib
+          run_case 515 lib daemon::companion_authority::tests::terminal_receipt_must_be_exact_and_bounded daemon::companion_authority::tests::terminal_receipt_must_be_exact_and_bounded --lib
+          run_case 516 lib daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication --lib
+          run_case 517 lib daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key --lib
+          run_case 518 lib daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown --lib
+          run_case 519 lib daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain --lib
+          run_case 520 lib daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain --lib
+          run_case 521 lib daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 521
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 521
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 521
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

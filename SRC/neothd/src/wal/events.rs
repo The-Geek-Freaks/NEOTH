@@ -316,6 +316,10 @@ pub enum ExtendedSubtype {
     MicrophoneOpenResult = 0x39,
     /// A2 — closed cancellation settlement for one opaque conversation turn.
     RealtimeTurnCancel = 0x3A,
+    /// W2311 — closed, metadata-only receipt for one Companion enrollment or
+    /// revocation state transition. Its exact mutation/device/revision/kind/key
+    /// fingerprint binding is recovered through a writer-owned WAL lookup.
+    CompanionMutationReceipt = 0x3B,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -428,6 +432,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::MicrophoneOpenIntent => "microphone_open_intent",
             ExtendedSubtype::MicrophoneOpenResult => "microphone_open_result",
             ExtendedSubtype::RealtimeTurnCancel => "realtime_turn_cancel",
+            ExtendedSubtype::CompanionMutationReceipt => "companion_mutation_receipt",
         }
     }
 
@@ -492,6 +497,7 @@ impl ExtendedSubtype {
             0x38 => Some(ExtendedSubtype::MicrophoneOpenIntent),
             0x39 => Some(ExtendedSubtype::MicrophoneOpenResult),
             0x3A => Some(ExtendedSubtype::RealtimeTurnCancel),
+            0x3B => Some(ExtendedSubtype::CompanionMutationReceipt),
             _ => None,
         }
     }
@@ -558,6 +564,7 @@ impl ExtendedSubtype {
             Self::MicrophoneOpenIntent,
             Self::MicrophoneOpenResult,
             Self::RealtimeTurnCancel,
+            Self::CompanionMutationReceipt,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4194,6 +4201,7 @@ mod tests {
             ExtendedSubtype::DocumentSkillApplied,
             ExtendedSubtype::DocumentMemoryApplied,
             ExtendedSubtype::DocumentNoteApplied,
+            ExtendedSubtype::CompanionMutationReceipt,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

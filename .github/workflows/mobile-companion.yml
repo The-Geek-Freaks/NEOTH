@@ -1,0 +1,188 @@
+name: Mobile Companion Native Producer
+
+on:
+  workflow_dispatch:
+    inputs:
+      bridge_cargo_sha256:
+        description: Exact SHA-256 of bridges/companion-native/Cargo.toml
+        required: true
+        default: 32C9D28EE3D60F8C4357EACD9E1ED536F6282109799CA77CBB9168B61467A224
+        type: string
+      bridge_lib_sha256:
+        description: Exact SHA-256 of bridges/companion-native/src/lib.rs
+        required: true
+        default: B36A5F3A2D285A54DD4AC85FF567CDA8D9CE7E88D81763618A6E148258C41481
+        type: string
+      bridge_header_sha256:
+        description: Exact SHA-256 of bridges/companion-native/include/neoth_companion_bridge.h
+        required: true
+        default: F35DE614E11D6616B205B2F64B5500CA4714083C24B4881738ABC50D87CE3E4A
+        type: string
+      canonical_protocol_sha256:
+        description: Required frozen R4 SHA-256 of SRC/neothd/src/daemon/companion_protocol.rs
+        required: false
+        default: ''
+        type: string
+      flutter_pubspec_lock_sha256:
+        description: Required SHA-256 of final apps/neoth_companion/pubspec.lock
+        required: false
+        default: ''
+        type: string
+      bootstrap_locks:
+        description: Generate first-run bridge and Flutter lockfile candidates only
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-companion-native-producer-main
+  cancel-in-progress: false
+
+jobs:
+  android-native:
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    runs-on: ubuntu-24.04
+    env:
+      BRIDGE_CARGO_SHA256: ${{ inputs.bridge_cargo_sha256 }}
+      BRIDGE_LIB_SHA256: ${{ inputs.bridge_lib_sha256 }}
+      BRIDGE_HEADER_SHA256: ${{ inputs.bridge_header_sha256 }}
+      CANONICAL_PROTOCOL_SHA256: ${{ inputs.canonical_protocol_sha256 }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # v1
+        with:
+          toolchain: 1.91.0
+      - name: Install pinned Android NDK r27c
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 https://dl.google.com/android/repository/android-ndk-r27c-linux.zip --output "$RUNNER_TEMP/android-ndk-r27c-linux.zip"
+          unzip -q "$RUNNER_TEMP/android-ndk-r27c-linux.zip" -d "$RUNNER_TEMP"
+          test -x "$RUNNER_TEMP/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r27c" >> "$GITHUB_ENV"
+      - name: Build and test bridge for Android ABIs
+        shell: bash
+        run: bash .github/scripts/mobile/build-android-bridge.sh "$RUNNER_TEMP/native"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-companion-android-native
+          path: ${{ runner.temp }}/native
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-native:
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    runs-on: macos-15
+    env:
+      BRIDGE_CARGO_SHA256: ${{ inputs.bridge_cargo_sha256 }}
+      BRIDGE_LIB_SHA256: ${{ inputs.bridge_lib_sha256 }}
+      BRIDGE_HEADER_SHA256: ${{ inputs.bridge_header_sha256 }}
+      CANONICAL_PROTOCOL_SHA256: ${{ inputs.canonical_protocol_sha256 }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # v1
+        with:
+          toolchain: 1.91.0
+      - name: Build and test bridge as an iOS XCFramework
+        shell: bash
+        run: bash .github/scripts/mobile/build-ios-bridge.sh "$RUNNER_TEMP/native"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-companion-ios-native
+          path: ${{ runner.temp }}/native
+          if-no-files-found: error
+          retention-days: 14
+
+  materialize-flutter:
+    needs: [android-native, ios-native]
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mobile-companion-android-native
+          path: ${{ runner.temp }}/native
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mobile-companion-ios-native
+          path: ${{ runner.temp }}/native
+      - name: Fetch pinned Flutter SDK 3.24.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) archive='flutter_macos_arm64_3.24.5-stable.zip' ;;
+            x86_64) archive='flutter_macos_3.24.5-stable.zip' ;;
+            *) echo "unsupported macOS runner architecture: $(uname -m)" >&2; exit 64 ;;
+          esac
+          curl --fail --location --retry 3 --retry-delay 2 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive" --output "$RUNNER_TEMP/flutter-3.24.5.zip"
+          ditto -x -k "$RUNNER_TEMP/flutter-3.24.5.zip" "$RUNNER_TEMP"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version | grep -F 'Flutter 3.24.5'
+      - name: Verify producer outputs and materialize Flutter overlay
+        shell: pwsh
+        env:
+          FLUTTER_PUBSPEC_LOCK_SHA256: ${{ inputs.flutter_pubspec_lock_sha256 }}
+        run: |
+          $native = Join-Path $env:RUNNER_TEMP 'native'
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:GITHUB_SHA) { throw 'Materialization checkout is not the dispatched commit.' }
+          .github/scripts/mobile/assemble-native-manifest.ps1 -NativeRoot $native -AndroidManifest (Join-Path $native 'android-native-manifest.json') -IosManifest (Join-Path $native 'ios-native-manifest.json') -OutputManifest (Join-Path $native 'native-artifact-manifest.json') -ExpectedSourceHead $head
+          .github/scripts/mobile/materialize-neoth-companion.ps1 -FlutterSdk (Join-Path $env:RUNNER_TEMP 'flutter') -SourceDirectory (Join-Path (Get-Location) 'apps/neoth_companion') -ExpectedPubspecLockSha256 $env:FLUTTER_PUBSPEC_LOCK_SHA256 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'neoth_companion') -VerifiedNativeArtifactRoot $native -NativeArtifactManifest (Join-Path $native 'native-artifact-manifest.json') -Stage all
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-companion-hosted-evidence
+          path: |
+            ${{ runner.temp }}/native/native-artifact-manifest.json
+            ${{ runner.temp }}/native/android-native-manifest.json
+            ${{ runner.temp }}/native/ios-native-manifest.json
+            ${{ runner.temp }}/neoth_companion/hosted-evidence.json
+            ${{ runner.temp }}/neoth_companion/ios-ffi-symbols.json
+            ${{ runner.temp }}/neoth_companion/pubspec.lock
+            ${{ runner.temp }}/neoth_companion/build/app/outputs/flutter-apk
+            ${{ runner.temp }}/neoth_companion/build/ios/iphoneos/Runner.app
+            ${{ runner.temp }}/neoth-companion-hosted-logs-*
+          if-no-files-found: error
+          retention-days: 14
+
+  bootstrap-locks:
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks == true
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # v1
+        with:
+          toolchain: 1.91.0
+      - name: Fetch pinned Flutter SDK 3.24.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.5-stable.tar.xz --output "$RUNNER_TEMP/flutter-3.24.5.tar.xz"
+          tar -xJf "$RUNNER_TEMP/flutter-3.24.5.tar.xz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version | grep -F 'Flutter 3.24.5'
+      - name: Bootstrap missing mobile lockfile candidates only
+        shell: bash
+        env:
+          FLUTTER_SDK: ${{ runner.temp }}/flutter
+        run: bash .github/scripts/mobile/bootstrap-mobile-locks.sh "$RUNNER_TEMP/mobile-lock-bootstrap"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-companion-lock-bootstrap
+          path: ${{ runner.temp }}/mobile-lock-bootstrap
+          if-no-files-found: error
+          retention-days: 14

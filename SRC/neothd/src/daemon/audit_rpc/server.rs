@@ -673,6 +673,10 @@ pub struct AuditRpcState {
     pub(crate) conversation_runtime: Option<Arc<dyn ConversationRuntime>>,
     /// W682 browser authority; minted only over the same-user audit-RPC route.
     pub(crate) webchat: Option<Arc<crate::daemon::webchat::WebChatState>>,
+    /// W2309 v3 companion authority is constructed once by `serve`.  The
+    /// same-user RPC exposes only daemon-owned mint/list/revoke verbs; a CLI
+    /// can never construct a listener, writer, key or authority store.
+    pub(crate) companion_runtime: Option<Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
 }
 
 /// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
@@ -1233,10 +1237,16 @@ async fn handle_one_pre_admission(
             | "/webchat/handoff/mint"
             | "/webchat/handoff/resume"
             | "/webchat/runtime-status"
+            | "/companion/v3/pair/mint"
+            | "/companion/v3/devices"
+            | "/companion/v3/device/revoke"
     );
     let webchat_mint_route = req.path == "/webchat/handoff/mint";
     let webchat_resume_route = req.path == "/webchat/handoff/resume";
     let webchat_status_route = req.path == "/webchat/runtime-status";
+    let companion_v3_mint_route = req.path == "/companion/v3/pair/mint";
+    let companion_v3_list_route = req.path == "/companion/v3/devices";
+    let companion_v3_revoke_route = req.path == "/companion/v3/device/revoke";
     if req.method != "POST"
         || !(membership_route
             || internal_route
@@ -1292,6 +1302,9 @@ async fn handle_one_pre_admission(
     }
     if webchat_status_route {
         return handle_webchat_runtime_status(stream, state).await;
+    }
+    if companion_v3_mint_route || companion_v3_list_route || companion_v3_revoke_route {
+        return handle_companion_v3_route(stream, state, req.path.as_str(), &req.body).await;
     }
 
     if chat_route {
@@ -2167,6 +2180,47 @@ async fn handle_webchat_runtime_status(
     let _ = stream
         .write_all(http_response_json(200, &body).as_bytes())
         .await;
+    let _ = stream.shutdown().await;
+    Ok(ConnectionOutcome::Complete)
+}
+
+/// W2309's CLI façade is deliberately same-user IPC only.  The handlers do
+/// not accept topic, PSK, server key, grant revision or storage path from the
+/// caller; those values remain inside `CompanionRuntime`.
+async fn handle_companion_v3_route(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+    path: &str,
+    body: &[u8],
+) -> Result<ConnectionOutcome> {
+    let Some(runtime) = state.companion_runtime.as_ref().cloned() else {
+        let _ = stream.write_all(http_response(503, "companion v3 unavailable").as_bytes()).await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    };
+    let response = match path {
+        "/companion/v3/pair/mint" if body == b"{}" => {
+            runtime.mint_pair_invite().await.map(|value| serde_json::to_string(&value))
+        }
+        "/companion/v3/devices" if body == b"{}" => {
+            runtime.list_devices().map(|value| serde_json::to_string(&value))
+        }
+        "/companion/v3/device/revoke" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct RevokeRequest { device_id: crate::daemon::companion_protocol::CompanionDeviceId }
+            let request = serde_json::from_slice::<RevokeRequest>(body).context("decode companion v3 revoke request");
+            match request {
+                Ok(request) => runtime.revoke_device(request.device_id).await.map(|revoked| serde_json::to_string(&serde_json::json!({"revoked": revoked}))),
+                Err(error) => Err(error),
+            }
+        }
+        _ => Err(anyhow::anyhow!("invalid companion v3 route or request body")),
+    };
+    match response {
+        Ok(Ok(json)) => { let _ = stream.write_all(http_response_json(200, &json).as_bytes()).await; }
+        Ok(Err(error)) | Err(error) => { let _ = stream.write_all(http_response(422, "companion v3 request refused").as_bytes()).await; tracing::debug!(%error, "companion v3 RPC refused"); }
+    }
     let _ = stream.shutdown().await;
     Ok(ConnectionOutcome::Complete)
 }

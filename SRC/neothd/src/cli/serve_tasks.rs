@@ -4380,6 +4380,7 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) conversation_runtime:
         std::sync::Arc<dyn crate::daemon::conversation_registry::ConversationRuntime>,
     pub(crate) webchat: Option<std::sync::Arc<crate::daemon::webchat::WebChatState>>,
+    pub(crate) companion_runtime: Option<std::sync::Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
     pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
     pub(crate) endpoint_nonce: &'a str,
     #[cfg(feature = "cluster")]
@@ -4411,6 +4412,7 @@ pub(crate) async fn spawn_audit_rpc(
         gui_chat_runtime,
         conversation_runtime,
         webchat,
+        companion_runtime,
         pid_guard,
         endpoint_nonce,
         #[cfg(feature = "cluster")]
@@ -4433,6 +4435,7 @@ pub(crate) async fn spawn_audit_rpc(
         gui_chat_runtime: Some(gui_chat_runtime),
         conversation_runtime: Some(conversation_runtime),
         webchat,
+        companion_runtime,
         cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
         // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
         fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),
@@ -8782,6 +8785,9 @@ pub(crate) struct BackgroundHandles {
     /// Root companion state retained in addition to the HTTP/P2P task clones.
     /// The state owns a WAL sender even when both companion servers are off.
     pub companion_state: Arc<crate::daemon::companion::CompanionState>,
+    /// V3 mobile listeners own accepted Peeroxide sessions and can append an
+    /// exact mutation receipt.  Drain them before the last WAL sender closes.
+    pub companion_v3_runtime: Option<Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
     pub worker_watch_handle: Option<JoinHandle<()>>,
     /// Shared with the credential reconciler. Handles are keyed by channel so
     /// one rotated credential never interrupts unrelated adapters.
@@ -8938,6 +8944,7 @@ pub(crate) async fn shutdown_background_tasks(
         plugin_invoker_registration,
         shared_provider,
         companion_state,
+        companion_v3_runtime,
         worker_watch_handle,
         channel_tasks,
         readiness_publishers,
@@ -9282,6 +9289,10 @@ pub(crate) async fn shutdown_background_tasks(
     // its accept loop and in-flight JoinSet cannot outlive the authority
     // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
+    if let Some(runtime) = companion_v3_runtime.as_ref() {
+        runtime.shutdown_and_drain().await
+            .context("companion v3 listener drain before WAL shutdown")?;
+    }
     crate::cli::serve_tasks::join_connector_control_rpc(connector_control_rpc_task).await;
     crate::cli::serve_tasks::abort_optional(local_models_refresh_task).await;
     // Stop admission first. The listener owns accepted handlers in its JoinSet;

@@ -18030,3 +18030,36 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Corrected the existing revoke-persistence regression to require the retired transport-binding rejection that follows the recovered member auth-epoch advance. The test still requires durable Indeterminate recovery, a committed tombstone, stale-grant denial, released effect lease, preserved reservation, and exactly one provider call. Production execution code is unchanged.
 - Independent static reviews: parity 18A0F66CB02077AD9B570EFF61C9A5848E3519D71E1AB14687EB68A8573DC997; executor 9AD73E1B66CF314BBFB22D9F68A1655FCA946FE43A380FC81EF414397FFBAD8A. Report: docs/verification/gold-wave2316-focused503-repairs.json.
 - Counts remain 503 focused identities, 2,723 portable native registrations and 52 live-audio registrations. New producer hosted checks remain pending; the local BSOD hold, no-Slint rule, preserved dirty files and stopped Claude polling remain in force. Mobile candidates are separate, unintegrated and unqualified.
+
+
+## W2319 - Durable mobile status vertical and hosted Android/iOS producer (2026-10-04)
+
+- Integrated the reviewed v3 companion status.read path: daemon-minted one-time
+  invites pin a persistent Noise key; durable device grants bind separate
+  signing and reconnect identities; CLI pair-mobile and devices list/status/revoke
+  use the running daemon's same-user control path.
+- Status delivery holds a durable marker and owned transport lease. Revocation
+  denies first, drains retained tasks, and finalizes only through the closed WAL
+  mutation-receipt path. Uncertain teardown/reload preserves the denying marker.
+- Added the standalone Rust C ABI bridge and Flutter Android/iOS client sources.
+  The app uses a software seed protected by Keystore/Keychain. The pinned hosted
+  producer builds native inputs and materializes the official Flutter template.
+  The iOS Podfile selects the framework directory, and seven explicit linker
+  roots plus a final Runner symbol proof bind the Dart FFI entry points.
+- W2316 producer 8792d8ea9e153999b7ca0031913ba654197c4b3e passed run 37197087561;
+  Root admitted its 503 exact cases, 20 Google Chat guards, 63 Python contracts,
+  four actual CLI/daemon product scenarios and both daemon shutdown/WAL proofs.
+  This predecessor evidence does not validate the newly integrated mobile source.
+- Registered 18 additional exact native cases: 2723 -> 2741 portable identities
+  and 503 -> 521 focused cases. The original focused order is preserved.
+- Next: hosted fast checks/format receipts; bootstrap only the absent mobile
+  locks and verify their original artifacts before a separate Root import;
+  then focused/native/mobile validation on the final producer. Full native CI
+  is deferred to that producer to avoid qualifying an immediately superseded tree.
+- GOLD-R4-12 remains open. This is the status.read slice; chat/stream/turn-cancel,
+  notifications/files/offline replay, GUI/Buddy device management, platform
+  upgrades, signing and actual device acceptance are not closed by this batch.
+- Local BSOD hold maintained. No compiler, parser, test, fixture, app, GUI,
+  Docker or model runtime was launched locally; no .slint change, no Claude poll.
+  Protected .gitignore and SRC/Cargo.lock were not imported or staged.
+- Report: docs/verification/gold-wave2319-mobile-status-vertical.json.

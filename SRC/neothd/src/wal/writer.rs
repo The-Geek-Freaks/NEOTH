@@ -32,6 +32,7 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
 const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-receipt-authority";
 const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
+const COMPANION_MUTATION_RECEIPT_AUTHORITY_SENTINEL: &str = ".companion-mutation-receipt-authority";
 const TRANSCRIPT_MINING_AUTHORITY_SENTINEL: &str = ".transcript-mining-authority";
 const COUNTERPARTY_CONSENT_AUTHORITY_SENTINEL: &str = ".counterparty-consent-authority";
 const DREAM_AUDIT_AUTHORITY_SENTINEL: &str = ".dream-audit-authority";
@@ -51,6 +52,9 @@ static CONTEXT_EVIDENCE_RECEIPT_PROCESS_AUTHORITY: std::sync::LazyLock<
 // does not share Context Evidence's bounded side-ledger lock: the former
 // serializes a scan plus an optional write in authenticated *primary* WAL.
 static TRUST_DECISION_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static COMPANION_MUTATION_RECEIPT_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 static TRANSCRIPT_MINING_PROCESS_AUTHORITY: std::sync::LazyLock<
@@ -93,6 +97,22 @@ fn refuse_generic_context_evidence_receipt(header: &EventHeaderV2) -> Result<(),
 fn is_trust_decision_header(header: &EventHeaderV2) -> bool {
     header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
         && header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+}
+
+fn is_companion_mutation_receipt_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && header.event_subtype
+            == crate::wal::events::ExtendedSubtype::CompanionMutationReceipt as u8
+}
+
+fn refuse_generic_companion_mutation_receipt(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_companion_mutation_receipt_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Companion mutation receipts require the authenticated append-once writer API",
+        )));
+    }
+    Ok(())
 }
 
 /// Schema-2 TrustDecision events are durable admission receipts.  They are
@@ -565,6 +585,7 @@ pub struct WriteRequest {
     /// an existing authenticated receipt is a successful terminal result
     /// without a new frame offset.
     trust_decision_once: Option<TrustDecisionOnce>,
+    companion_mutation_receipt_once: Option<CompanionMutationReceiptOnce>,
     /// Closed transcript-mining proof admission. Unlike a generic append, this
     /// carries a persisted exact descriptor whose authenticated read-back is
     /// the only successful terminal result.
@@ -663,6 +684,15 @@ struct TrustDecisionOnce {
             >,
         >,
     >,
+}
+
+struct CompanionMutationReceiptOnce {
+    home: PathBuf,
+    expected: crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor,
+    reply: Option<oneshot::Sender<Result<
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
+    >>>,
 }
 
 struct TranscriptMiningOnce {
@@ -822,6 +852,28 @@ impl TrustDecisionOnce {
     ) {
         if let Some(reply) = self.reply.take() {
             let _ = reply.send(outcome);
+        }
+    }
+}
+
+impl CompanionMutationReceiptOnce {
+    fn finish(
+        mut self,
+        outcome: Result<
+            crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
+            crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() { let _ = reply.send(outcome); }
+    }
+}
+
+impl Drop for CompanionMutationReceiptOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptError::Indeterminate,
+            ));
         }
     }
 }
@@ -1739,6 +1791,7 @@ impl WalWriterHandle {
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_companion_mutation_receipt(&header)?;
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
@@ -1768,6 +1821,7 @@ impl WalWriterHandle {
             force_authentication_marker,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -1797,6 +1851,7 @@ impl WalWriterHandle {
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_companion_mutation_receipt(&header)?;
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
@@ -1819,6 +1874,7 @@ impl WalWriterHandle {
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -1903,6 +1959,7 @@ impl WalWriterHandle {
                 quota_reservation,
             }),
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -1962,6 +2019,27 @@ impl WalWriterHandle {
             // A JoinError means this caller cannot prove whether the worker
             // reached primary-WAL durability.  It must leave recovery blocked.
             Err(_) => Err(crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate),
+        }
+    }
+
+    /// Writer-owned companion mutation receipt transaction.  Dropping the
+    /// caller future cannot free its descriptor; a restart must reconcile the
+    /// same mutation id against authenticated WAL before any second append.
+    pub(crate) async fn append_companion_mutation_receipt_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor,
+    ) -> Result<
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            writer.append_companion_mutation_receipt_once_blocking(&home, expected)
+        }).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(crate::wal::companion_mutation_receipts::CompanionMutationReceiptError::Indeterminate),
         }
     }
 
@@ -2073,6 +2151,7 @@ impl WalWriterHandle {
             force_authentication_marker: true,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: Some(DreamAuditOnce {
@@ -2146,6 +2225,7 @@ impl WalWriterHandle {
             force_authentication_marker: true,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2274,6 +2354,7 @@ impl WalWriterHandle {
             force_authentication_marker: true,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             dream_audit_once: None,
             redaction_rewrite_once: None,
@@ -2345,6 +2426,7 @@ impl WalWriterHandle {
             force_authentication_marker: true,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: Some(TranscriptMiningOnce {
                 home: home.to_path_buf(),
                 expected,
@@ -2415,6 +2497,7 @@ impl WalWriterHandle {
                 expected,
                 reply: Some(reply_tx),
             }),
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -2436,6 +2519,40 @@ impl WalWriterHandle {
         reply_rx
             .blocking_recv()
             .unwrap_or(Err(TrustDecisionOnceError::Indeterminate))
+    }
+
+    fn append_companion_mutation_receipt_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor,
+    ) -> Result<
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
+    > {
+        use crate::wal::companion_mutation_receipts::CompanionMutationReceiptError;
+        if !self.authentication_markers_enabled { return Err(CompanionMutationReceiptError::Indeterminate); }
+        let payload = expected.payload().map_err(|_| CompanionMutationReceiptError::Indeterminate)?;
+        if payload.len() > MAX_PAYLOAD_BYTES { return Err(CompanionMutationReceiptError::Indeterminate); }
+        let header = expected.header(&payload);
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header, payload, ack: ack_tx, force_authentication_marker: true,
+            context_evidence_receipt_once: None, trust_decision_once: None,
+            companion_mutation_receipt_once: Some(CompanionMutationReceiptOnce {
+                home: home.to_path_buf(), expected, reply: Some(reply_tx),
+            }),
+            transcript_mining_once: None, counterparty_consent_once: None,
+            dream_audit_once: None, redaction_rewrite_once: None, quota_admission: None,
+            #[cfg(test)] test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)] test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.companion_mutation_receipt_once.take() {
+            once.finish(Err(CompanionMutationReceiptError::Indeterminate));
+        }
+        reply_rx.blocking_recv().unwrap_or(Err(CompanionMutationReceiptError::Indeterminate))
     }
 
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
@@ -2499,6 +2616,7 @@ impl WalWriterHandle {
     pub fn try_append_sync(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_companion_mutation_receipt(&header)?;
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
@@ -2523,6 +2641,7 @@ impl WalWriterHandle {
                 force_authentication_marker: false,
                 context_evidence_receipt_once: None,
                 trust_decision_once: None,
+                companion_mutation_receipt_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
@@ -2554,6 +2673,7 @@ impl WalWriterHandle {
     ) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_companion_mutation_receipt(&header)?;
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
@@ -2580,6 +2700,7 @@ impl WalWriterHandle {
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            companion_mutation_receipt_once: None,
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
@@ -3990,6 +4111,35 @@ struct TrustDecisionAuthority {
     _file_guard: std::fs::File,
 }
 
+fn companion_mutation_receipt_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(COMPANION_MUTATION_RECEIPT_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_companion_mutation_receipt_authority(
+    home: &Path,
+) -> Result<CompanionMutationReceiptAuthority, WalError> {
+    let process_authority = std::sync::Arc::clone(&*COMPANION_MUTATION_RECEIPT_PROCESS_AUTHORITY);
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5), process_authority.lock_owned(),
+    ).await.map_err(|_| compaction_recovery_error(
+        "Companion mutation receipt process authority remained busy for >5s",
+    ))?;
+    let sentinel = companion_mutation_receipt_authority_sentinel(home);
+    let file_guard = tokio::task::spawn_blocking(move || {
+        super::redact::lock_segment_for_rewrite(&sentinel)
+    }).await.map_err(|error| compaction_recovery_error(format!(
+        "Companion mutation receipt authority task failed: {error}",
+    )))?.map_err(|error| compaction_recovery_error(format!(
+        "acquire capability-bound Companion mutation receipt authority: {error:#}",
+    )))?;
+    Ok(CompanionMutationReceiptAuthority { _process_guard: process_guard, _file_guard: file_guard })
+}
+
+struct CompanionMutationReceiptAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
+
 fn transcript_mining_authority_sentinel(home: &Path) -> PathBuf {
     home.join("wal").join(TRANSCRIPT_MINING_AUTHORITY_SENTINEL)
 }
@@ -5166,6 +5316,7 @@ async fn run_writer(
         };
         let is_receipt = is_context_evidence_receipt_header(&req.header);
         let mut trust_decision_once = req.trust_decision_once.take();
+        let mut companion_mutation_receipt_once = req.companion_mutation_receipt_once.take();
         let mut transcript_mining_once = req.transcript_mining_once.take();
         let mut counterparty_consent_once = req.counterparty_consent_once.take();
         let mut dream_audit_once = req.dream_audit_once.take();
@@ -5194,6 +5345,7 @@ async fn run_writer(
         } else {
             false
         };
+        let is_companion_mutation_receipt = is_companion_mutation_receipt_header(&req.header);
         // RAW_TEXT remains a normal generic WAL event, but the closed
         // transcript-mining owner may also carry one exact planned RAW_TEXT
         // descriptor.  The reserved Bound/Revoked subtypes, in contrast,
@@ -5207,6 +5359,8 @@ async fn run_writer(
             || (is_receipt && req.force_authentication_marker)
             || is_durable_trust_decision != trust_decision_once.is_some()
             || (trust_decision_once.is_some() && !req.force_authentication_marker)
+            || is_companion_mutation_receipt != companion_mutation_receipt_once.is_some()
+            || (companion_mutation_receipt_once.is_some() && !req.force_authentication_marker)
             || (is_transcript_mining_proof && transcript_mining_once.is_none())
             || (transcript_mining_once.is_some() && !transcript_mining_once_matches_frame)
             || (transcript_mining_once.is_some() && !req.force_authentication_marker)
@@ -5842,6 +5996,49 @@ async fn run_writer(
                 }
             }
         }
+        let mut companion_mutation_receipt_authority = None;
+        if let Some(once) = companion_mutation_receipt_once.take() {
+            use crate::wal::companion_mutation_receipts::{CompanionMutationReceiptError as Error, CompanionMutationReceiptLookup as Lookup};
+            let expected_payload = match once.expected.payload() {
+                Ok(payload) => payload,
+                Err(_) => { once.finish(Err(Error::Indeterminate)); continue; }
+            };
+            // `HeaderBuilder::build` samples a new HLC/event identity.  The
+            // immutable binding here is therefore the closed payload plus its
+            // reserved extended kind, not a freshly rebuilt full header.
+            if req.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
+                || req.header.event_subtype
+                    != crate::wal::events::ExtendedSubtype::CompanionMutationReceipt as u8
+                || expected_payload != req.payload
+            {
+                once.finish(Err(Error::Indeterminate)); continue;
+            }
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = matches!(tokio::task::spawn_blocking(move || canonical_home_matches(&requested_home, &authoritative_home)).await, Ok(Ok(true)));
+            if !homes_match { once.finish(Err(Error::Indeterminate)); continue; }
+            let authority = match acquire_companion_mutation_receipt_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => { once.finish(Err(Error::Indeterminate)); continue; }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(Error::Indeterminate)); drop(authority); continue;
+            };
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None).await.is_err() {
+                once.finish(Err(Error::Indeterminate)); drop(authority); continue;
+            }
+            pending_unsynced = false;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected.clone();
+            match tokio::task::spawn_blocking(move || crate::wal::companion_mutation_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)).await {
+                Ok(Ok(Lookup::Exact)) => { once.finish(Ok(crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome::ExistingExact)); drop(authority); continue; }
+                Ok(Ok(Lookup::Conflict)) => { once.finish(Err(Error::Conflict)); drop(authority); continue; }
+                Ok(Ok(Lookup::Duplicate)) => { once.finish(Err(Error::Duplicate)); drop(authority); continue; }
+                Ok(Ok(Lookup::AbsentComplete)) => { req.companion_mutation_receipt_once = Some(once); companion_mutation_receipt_authority = Some(authority); }
+                _ => { once.finish(Err(Error::Indeterminate)); drop(authority); continue; }
+            }
+        }
         let mut context_evidence_receipt_authority = None;
         let frame = encode_frame(&req.header, &req.payload);
         let frame_triggers_marker = compaction_state.as_ref().is_some_and(|state| {
@@ -6013,6 +6210,12 @@ async fn run_writer(
                         crate::permissions::trust_ledger::TrustDecisionOnceOutcome::AppendedExact,
                     ));
                 }
+                if let Some(once) = req.companion_mutation_receipt_once.take() {
+                    once.finish(Ok(
+                        crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome::AppendedExact,
+                    ));
+                }
+                drop(companion_mutation_receipt_authority);
                 if let Some(once) = req.transcript_mining_once.take() {
                     let lookup_home = hmac_home.clone();
                     let lookup_expected = once.expected.clone();
@@ -8105,6 +8308,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn append_no_ack_refuses_closed_companion_mutation_receipt() {
+        let dir = tempdir().unwrap();
+        let (writer, join) = spawn(dir.path().join("000001.wal")).expect("writer");
+        let descriptor = companion_mutation_descriptor(
+            crate::wal::companion_mutation_receipts::CompanionMutationKind::Enroll,
+        );
+        let payload = descriptor.payload().expect("closed public receipt payload");
+        let header = descriptor.header(&payload);
+        let error = writer
+            .append_no_ack(header, payload)
+            .await
+            .expect_err("no-ack must not bypass companion append-once authority");
+        assert!(error.to_string().contains("append-once"));
+        drop(writer);
+        join.await.expect("join writer");
+    }
+
+    #[tokio::test]
     async fn append_no_ack_after_writer_closed_returns_writer_closed_error() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
@@ -9260,6 +9481,7 @@ mod tests {
                 force_authentication_marker: false,
                 context_evidence_receipt_once: None,
                 trust_decision_once: None,
+                companion_mutation_receipt_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
@@ -11200,5 +11422,48 @@ mod tests {
         assert_eq!(reloaded.conversation_sha256(), first.conversation_sha256());
         drop(writer);
         join.await.unwrap();
+    }
+
+    fn companion_mutation_descriptor(
+        kind: crate::wal::companion_mutation_receipts::CompanionMutationKind,
+    ) -> crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor {
+        crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor {
+            schema_version: crate::wal::companion_mutation_receipts::COMPANION_MUTATION_RECEIPT_SCHEMA_VERSION,
+            mutation_id: uuid::Uuid::from_u128(0x101), device_id: uuid::Uuid::from_u128(0x202),
+            revision: 7, kind, key_sha256: "c".repeat(64),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen() {
+        use crate::wal::companion_mutation_receipts::{CompanionMutationKind, CompanionMutationReceiptError, CompanionMutationReceiptOutcome};
+        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
+        let descriptor = companion_mutation_descriptor(CompanionMutationKind::Enroll);
+        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
+        let (left, right) = tokio::join!(writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone()), writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone()));
+        assert!(matches!(left.unwrap(), CompanionMutationReceiptOutcome::AppendedExact | CompanionMutationReceiptOutcome::ExistingExact));
+        assert!(matches!(right.unwrap(), CompanionMutationReceiptOutcome::AppendedExact | CompanionMutationReceiptOutcome::ExistingExact));
+        let mut conflict = descriptor.clone(); conflict.key_sha256 = "d".repeat(64);
+        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), conflict).await.unwrap_err(), CompanionMutationReceiptError::Conflict);
+        drop(writer); join.await.expect("join first writer");
+        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("reopen writer");
+        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), descriptor).await.unwrap(), CompanionMutationReceiptOutcome::ExistingExact);
+        drop(writer); join.await.expect("join reopened writer");
+    }
+
+    #[tokio::test]
+    async fn companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation() {
+        use crate::wal::companion_mutation_receipts::{CompanionMutationKind, CompanionMutationReceiptOutcome};
+        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
+        let descriptor = companion_mutation_descriptor(CompanionMutationKind::Revoke);
+        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-cancel-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let caller_writer = writer.with_test_ack_gate(gate.clone()); let caller_home = home.path().to_path_buf(); let caller_descriptor = descriptor.clone();
+        let caller = tokio::spawn(async move { caller_writer.append_companion_mutation_receipt_once(&caller_home, caller_descriptor).await });
+        gate.wait_until_durable().await; caller.abort(); assert!(caller.await.is_err()); gate.release();
+        drop(writer); join.await.expect("owned writer retires request");
+        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-cancel-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("restart writer");
+        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), descriptor).await.unwrap(), CompanionMutationReceiptOutcome::ExistingExact);
+        drop(writer); join.await.expect("join restarted writer");
     }
 }

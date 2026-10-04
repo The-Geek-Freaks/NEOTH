@@ -33,6 +33,19 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
+/// Typed daemon-owner errors for the v3 companion CLI façade.  A failed
+/// response is never retried by minting an in-process invitation: only the
+/// running daemon knows the persistent responder key advertised in a QR.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CompanionV3ClientError {
+    #[error("companion v3 daemon unavailable: {0}")]
+    Unavailable(String),
+    #[error("companion v3 daemon refused request: HTTP {0}")]
+    Refused(u16),
+    #[error("companion v3 daemon returned malformed response")]
+    Malformed,
+}
+
 /// W39 distinguishes the only fallback-safe phase from every outcome after a
 /// request could have reached the daemon.  A caller may use its standalone
 /// path only for [`PreWriteUnavailable`]; refusal, EOF, malformed replies,
@@ -1045,6 +1058,47 @@ async fn post_rpc(
         len = body.len(),
     );
     exchange_rpc(sidecar.endpoint, req).await
+}
+
+pub(crate) async fn companion_v3_mint_pair(
+    home: &Path,
+) -> Result<crate::daemon::companion_runtime::CompanionV3Invite, CompanionV3ClientError> {
+    companion_v3_post(home, "/companion/v3/pair/mint", &serde_json::json!({})).await
+}
+
+pub(crate) async fn companion_v3_list_devices(
+    home: &Path,
+) -> Result<Vec<crate::daemon::companion_runtime::CompanionV3DeviceView>, CompanionV3ClientError> {
+    companion_v3_post(home, "/companion/v3/devices", &serde_json::json!({})).await
+}
+
+pub(crate) async fn companion_v3_revoke_device(
+    home: &Path,
+    device_id: crate::daemon::companion_protocol::CompanionDeviceId,
+) -> Result<bool, CompanionV3ClientError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RevokeResponse { revoked: bool }
+    let response: RevokeResponse = companion_v3_post(
+        home,
+        "/companion/v3/device/revoke",
+        &serde_json::json!({"device_id": device_id}),
+    ).await?;
+    Ok(response.revoked)
+}
+
+async fn companion_v3_post<T: serde::de::DeserializeOwned>(
+    home: &Path,
+    path: &str,
+    request: &impl serde::Serialize,
+) -> Result<T, CompanionV3ClientError> {
+    let body = serde_json::to_string(request).map_err(|_| CompanionV3ClientError::Malformed)?;
+    let (status, response) = post_rpc(home, path, &body).await.map_err(|error| match error {
+        AuditRpcClientError::Unavailable(detail) => CompanionV3ClientError::Unavailable(detail),
+        AuditRpcClientError::Refused(status) => CompanionV3ClientError::Refused(status),
+    })?;
+    if status != 200 { return Err(CompanionV3ClientError::Refused(status)); }
+    serde_json::from_str(&response).map_err(|_| CompanionV3ClientError::Malformed)
 }
 
 async fn exchange_rpc(
