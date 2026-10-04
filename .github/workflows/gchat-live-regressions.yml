@@ -866,9 +866,12 @@ jobs:
           run_case 498 lib cluster::executor::tests::deadline_crossing_at_final_external_permit_never_calls_provider cluster::executor::tests::deadline_crossing_at_final_external_permit_never_calls_provider --lib
           run_case 499 lib cluster::heartbeat::tests::validate_hello_rejects_v8_before_deadline_worker_admission cluster::heartbeat::tests::validate_hello_rejects_v8_before_deadline_worker_admission --lib
           run_case 500 lib cluster::membership::tests::v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline cluster::membership::tests::v10_to_v11_migration_marks_unresolved_indeterminate_keeps_result_custody_and_does_not_infer_deadline --lib
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 500
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 500
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 500
+          run_case 501 lib cluster::executor::tests::execution_deadline_drops_started_provider_and_preserves_indeterminate_reservation cluster::executor::tests::execution_deadline_drops_started_provider_and_preserves_indeterminate_reservation --lib
+          run_case 502 lib cluster::executor::tests::execution_deadline_wait_preserves_millisecond_absolute_boundaries cluster::executor::tests::execution_deadline_wait_preserves_millisecond_absolute_boundaries --lib
+          run_case 503 lib cluster::executor::tests::revoke_persistence_failure_releases_lease_and_preserves_reservation cluster::executor::tests::revoke_persistence_failure_releases_lease_and_preserves_reservation --lib
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 503
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 503
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 503
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
 

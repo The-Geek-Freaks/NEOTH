@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.gold.wave2305.focused500-repairs.v1",
+  "base": "291ed8b3810d542a2aec1b2a4b0e616f0f2b7e53",
+  "priorRun": 37154400073,
+  "priorArtifact": 11286081888,
+  "priorZipSha256": "D7C9D5DF8C0CFF78DE663C0E92A8514F1FCA67234C342D5A7F526A0CBED404A8",
+  "partialEvidenceSha256": "0FAA0B47C456F8C81A5F10DD2EE8A0FAC351276A4E5EED575D18F786D75F8282",
+  "priorCore": {
+    "failed": 3,
+    "started": 500,
+    "passed": 497,
+    "executed": 500,
+    "wholeRunAccepted": false
+  },
+  "repairs": [
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "sourceSha256": "A13B15D9071CD1C7BA0AEAFB2757C3E23588A97788A6EE02D122F184F695FA45",
+      "reviewSha256": "D14D100AF5A29C586FD6DA75AFE48DD976A3FBCFD4A0E173E9E08B4653502C1F",
+      "test": "cluster::outbound_tests::capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling",
+      "case": 386,
+      "change": "Derive fixture absolute deadline from current live clock; retain capped tag, exact73-token ceiling and authorized peer assertions."
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "sourceSha256": "A2FD2FD5CA6EAEC1B76E61B24B0BA81C8191E429EFFBE6DE348935796BFAA904",
+      "reviewSha256": "7E5A4DACB896FB618E0C8516CD1DD168CE10F0765AE8F0BED9FFA20139199B5E",
+      "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+      "case": 409,
+      "change": "Register existing Buddy outbound-status and outbound-mark-indeterminate CLI leaves with explicit Unwired GUI coverage and exact negative inventory assertions."
+    },
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "sourceSha256": "16DCB5BD9B3174D5CB8D67AABEC9EF27FB944F515FCA964A0686D6B72D9FE5E7",
+      "reviewSha256": "FC46A6F1E63C412F28672FF1B0A31BC3089786F5BD454DE81CDBE4979818D555",
+      "test": "cluster::executor::tests::queued_live_task_expiring_after_real_enqueue_never_calls_provider",
+      "case": 497,
+      "change": "Supply default model before AuthorizedProvider admission and bound mock-start handoff; preserve real queue and exact one-provider-call assertion. Same repair applied to newly added active-deadline fixture."
+    }
+  ],
+  "focused500ExistingOrderPreserved": true,
+  "combinedFocusedCases": 503,
+  "portableNativeRegistrations": 2723,
+  "liveAudioRegistrations": 52,
+  "localExecutableValidationRan": false,
+  "hosted": "Final combined producer pending",
+  "releaseReady": false
+}

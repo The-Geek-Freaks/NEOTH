@@ -126,6 +126,7 @@ impl ClusterTaskJob {
         self.deadline_rejected_notify = Some(notify);
         self
     }
+
 }
 
 fn task_deadline_now_unix(_job: &ClusterTaskJob) -> i64 {
@@ -140,6 +141,29 @@ fn notify_deadline_rejected(_job: &ClusterTaskJob) {
     #[cfg(test)]
     if let Some(notify) = &_job.deadline_rejected_notify {
         notify.notify_one();
+    }
+}
+
+fn execution_deadline_wait_at(deadline_unix: i64, now_millis: u64) -> std::time::Duration {
+    let deadline_millis = if deadline_unix <= 0 {
+        0
+    } else {
+        (deadline_unix as u64).saturating_mul(1_000)
+    };
+    std::time::Duration::from_millis(deadline_millis.saturating_sub(now_millis))
+}
+
+fn execution_deadline_wait(job: &ClusterTaskJob) -> std::time::Duration {
+    execution_deadline_wait_at(job.deadline_unix, now_unix_ms())
+}
+
+fn execution_deadline_timer_wait(
+    deadline_wait: std::time::Duration,
+) -> Option<std::time::Duration> {
+    if deadline_wait <= TASK_INFERENCE_TIMEOUT {
+        Some(deadline_wait)
+    } else {
+        None
     }
 }
 
@@ -753,11 +777,33 @@ async fn run_one_task_execution_inner(
     // From this point onward a local future drop is conservatively remote-
     // indeterminate if membership revocation wins.
     external_permit.mark_transport_may_have_started();
-    let provider_call = tokio::time::timeout(TASK_INFERENCE_TIMEOUT, provider.complete(req));
-    tokio::pin!(provider_call);
-    let provider_outcome = tokio::select! {
-        biased;
-        _ = external_permit.cancelled() => {
+    let execution_context_digest = task_result_context_digest(&job);
+    let deadline_timer_wait = execution_deadline_timer_wait(execution_deadline_wait(&job));
+    let deadline_elapsed = tokio::time::sleep(
+        deadline_timer_wait.unwrap_or(TASK_INFERENCE_TIMEOUT),
+    );
+    let deadline_enabled = deadline_timer_wait.is_some();
+    tokio::pin!(deadline_elapsed);
+    enum ProviderCallOutcome<T> {
+        Revoked,
+        Deadline,
+        Finished(T),
+    }
+    // Keep the provider future in this scope. Revocation and deadline paths
+    // leave it before their durable classification, which records only the
+    // local-drop ambiguity and never claims an upstream abort or refund.
+    let provider_outcome = {
+        let provider_call = tokio::time::timeout(TASK_INFERENCE_TIMEOUT, provider.complete(req));
+        tokio::pin!(provider_call);
+        tokio::select! {
+            biased;
+            _ = external_permit.cancelled() => ProviderCallOutcome::Revoked,
+            _ = &mut deadline_elapsed, if deadline_enabled => ProviderCallOutcome::Deadline,
+            outcome = &mut provider_call => ProviderCallOutcome::Finished(outcome),
+        }
+    };
+    match provider_outcome {
+        ProviderCallOutcome::Revoked => {
             tracing::warn!(
                 task_id = %job.task_id,
                 stable_node_id = %job.membership_grant.stable_node_id(),
@@ -772,7 +818,6 @@ async fn run_one_task_execution_inner(
                     %error,
                     "cluster executor: could not persist indeterminate provider outcome"
                 );
-                std::mem::forget(effect_guard);
                 return TaskExecutionResult::suppressed(TaskResultBody {
                     task_id: job.task_id,
                     status: TaskResultStatus::Failed {
@@ -795,9 +840,55 @@ async fn run_one_task_execution_inner(
                 effective_output_token_ceiling,
             });
         }
-        outcome = &mut provider_call => outcome,
-    };
-    let result = match provider_outcome {
+        ProviderCallOutcome::Deadline => {
+            tracing::warn!(
+                task_id = %job.task_id,
+                stable_node_id = %job.membership_grant.stable_node_id(),
+                "cluster executor: provider future locally dropped at absolute deadline without upstream abort acknowledgement"
+            );
+            let store = crate::cluster::membership::MembershipStore::open(&execution_context.home);
+            let classified = store.and_then(|store| {
+                store.mark_worker_task_execution_indeterminate(
+                    &job.membership_grant,
+                    &job.task_id,
+                    &execution_context_digest,
+                    (now_unix_ms() / 1_000) as i64,
+                )
+            });
+            if let Err(error) = classified {
+                tracing::error!(
+                    task_id = %job.task_id,
+                    %error,
+                    "cluster executor: could not persist deadline-expired provider outcome"
+                );
+                // The locally-owned provider future was dropped at the inner
+                // scope boundary above. Suppress ordinary delivery and release
+                // this guard through normal RAII; the exact pre-provider
+                // reservation remains durable even when classification fails.
+                return TaskExecutionResult::suppressed(TaskResultBody {
+                    task_id: job.task_id,
+                    status: TaskResultStatus::Failed {
+                        error: "deadline_expiry_classification_failed".to_string(),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                    requested_max_output_tokens: job.max_output_tokens,
+                    effective_output_token_ceiling,
+                });
+            }
+            return TaskExecutionResult::suppressed(TaskResultBody {
+                task_id: job.task_id,
+                status: TaskResultStatus::Failed {
+                    error: "provider_outcome_indeterminate_after_deadline".to_string(),
+                },
+                result: None,
+                provider_name: Some(provider_name),
+                requested_max_output_tokens: job.max_output_tokens,
+                effective_output_token_ceiling,
+            });
+        }
+        ProviderCallOutcome::Finished(provider_outcome) => {
+            let result = match provider_outcome {
         Ok(Ok(completion)) if completion.identity.is_bound() => {
             let result = truncate_to_bytes(&completion.text, MAX_TASK_RESULT_BYTES);
             TaskResultBody {
@@ -840,7 +931,7 @@ async fn run_one_task_execution_inner(
             requested_max_output_tokens: job.max_output_tokens,
             effective_output_token_ceiling,
         },
-    };
+            };
     if let Err(error) = external_permit.validate((now_unix_ms() / 1_000) as i64) {
         tracing::error!(
             task_id = %job.task_id,
@@ -856,7 +947,6 @@ async fn run_one_task_execution_inner(
                 %persist_error,
                 "cluster executor: could not persist indeterminate provider outcome"
             );
-            std::mem::forget(effect_guard);
             return TaskExecutionResult::suppressed(TaskResultBody {
                 task_id: job.task_id,
                 status: TaskResultStatus::Failed {
@@ -880,6 +970,8 @@ async fn run_one_task_execution_inner(
         });
     }
     TaskExecutionResult::guarded(result, effect_guard)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1704,6 +1796,302 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoke_persistence_failure_releases_lease_and_preserves_reservation() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct DropProbe(Arc<AtomicBool>);
+
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        struct BlockingProvider {
+            calls: Arc<AtomicUsize>,
+            started: Arc<tokio::sync::Notify>,
+            dropped: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Provider for BlockingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let _drop_probe = DropProbe(Arc::clone(&self.dropped));
+                self.started.notify_one();
+                std::future::pending().await
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let now = (now_unix_ms() / 1_000) as i64;
+        let live_sessions = Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
+        let controller = crate::cluster::membership::MembershipController::open(
+            home.path(),
+            Arc::clone(&live_sessions),
+        )
+        .unwrap();
+        let identity =
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path()).unwrap();
+        let transport = crate::cluster::membership::TransportIdentity::peeroxide(
+            &identity.peeroxide_key_pair().public_key,
+        );
+        let attestation = identity
+            .attest_endpoint(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                crate::cluster::membership::BootId::new(),
+                "executor-cancel-test".into(),
+                "test".into(),
+                crate::cluster::membership::AuthEpoch::INITIAL,
+                crate::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        controller
+            .store()
+            .confirm_attestation(
+                &attestation,
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "executor-cancel-test",
+                now,
+            )
+            .unwrap();
+        controller
+            .store()
+            .set_task_delegate_assignment(transport.as_str(), true, 0)
+            .unwrap();
+        let grant = controller
+            .store()
+            .admit(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                now,
+            )
+            .unwrap();
+        let stable = grant.stable_node_id().clone();
+        let queued = ClusterTaskJob::authorized(
+            "cancel-me".into(),
+            "block".into(),
+            None,
+            None,
+            i64::MAX,
+            "aa".into(),
+            None,
+            grant,
+        )
+        .unwrap();
+        let context_digest = task_result_context_digest(&queued);
+        let reservation_task_id = queued.task_id.clone();
+        let reservation_grant = queued.membership_grant.clone();
+        let reservation_peer = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
+        assert_eq!(
+            controller
+                .store()
+                .reserve_worker_task_execution(
+                    &reservation_grant,
+                    &reservation_task_id,
+                    &context_digest,
+                    now,
+                )
+                .unwrap(),
+            crate::cluster::membership::WorkerTaskExecutionReservation::Reserved,
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let provider = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                Arc::new(BlockingProvider {
+                    calls: Arc::clone(&calls),
+                    started: Arc::clone(&started),
+                    dropped: Arc::clone(&dropped),
+                }),
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Full,
+                ),
+                None,
+                "cluster.test.inflight_membership_cancel",
+            ),
+        );
+        let mut execution = tokio::spawn(run_one_task_execution(
+            Some(provider),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        ));
+        let started_wait = started.notified();
+        tokio::pin!(started_wait);
+        tokio::select! {
+            _ = &mut started_wait => {}
+            early = &mut execution => {
+                let early = early.unwrap();
+                panic!(
+                    "executor exited before provider start: status={:?}, suppress_delivery={}",
+                    early.body.status,
+                    early.suppress_delivery
+                );
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                panic!("provider did not start within 5 seconds");
+            }
+        }
+        assert!(
+            live_sessions
+                .effect_registry()
+                .snapshot()
+                .iter()
+                .any(|effect| {
+                    effect.stable_node_id == stable
+                        && effect.kind
+                            == crate::cluster::membership::LiveMembershipKind::ExternalPermit
+                }),
+            "provider start must transition the captured membership effect"
+        );
+
+        let revoke_controller = controller.clone();
+        let request_id = uuid::Uuid::now_v7().to_string();
+        let revoke_binding = controller
+            .store()
+            .build_revoke_binding(
+                stable.as_str(),
+                "operator",
+                "test",
+                Some(&request_id),
+            )
+            .unwrap()
+            .expect("active membership must build an exact revocation binding");
+        let revoke_binding_for_task = revoke_binding.clone();
+        let authority_path = controller.store().path().to_path_buf();
+        let persistence_failure = crate::cluster::membership::fail_indeterminate_persistence_for_test(
+            authority_path.clone(),
+            request_id.clone(),
+            "provider_transport_may_have_started_local_abort_without_upstream_ack".to_string(),
+        );
+        let revoke = tokio::task::spawn_blocking(move || {
+            revoke_controller.revoke_bound(&revoke_binding_for_task, now + 1)
+        });
+        let revoke_error = tokio::time::timeout(std::time::Duration::from_secs(10), revoke)
+            .await
+            .expect("revoke did not acknowledge provider cancellation within 10 seconds")
+            .unwrap()
+            .expect_err("classification failure must not claim a completed revocation");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), execution)
+            .await
+            .expect("executor did not return after membership cancellation")
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "revocation must wait until the locally aborted provider future is dropped"
+        );
+        assert!(result.suppress_delivery, "no post-revoke result is emitted");
+        assert!(matches!(
+            result.body.status,
+            TaskResultStatus::Failed { ref error } if error == "membership_revocation_classification_failed"
+        ));
+        assert!(
+            format!("{revoke_error:#}").contains("revocation external effects remain durably unclassified"),
+            "the failed classification must fail closed instead of reporting a revoke receipt",
+        );
+        assert!(
+            live_sessions.effect_registry().snapshot().is_empty(),
+            "classification failure must still release the generation lease"
+        );
+        let pending = controller
+            .revocation_status(&request_id)
+            .unwrap()
+            .expect("failed revoke must retain its exact durable intent");
+        assert_eq!(
+            pending.state,
+            crate::cluster::membership::RevocationIntentState::Pending
+        );
+        assert!(pending.external_effects_unclassified);
+        assert!(!pending.tombstone_committed);
+        assert!(controller.store().revoke_receipt(&stable).unwrap().is_none());
+        let conn = rusqlite::Connection::open(&authority_path).unwrap();
+        let ordinary_outbox_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(ordinary_outbox_rows, 0);
+        drop(conn);
+        let reopened = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        let pending_admission = reopened
+            .reserve_worker_task_execution(
+                &reservation_grant,
+                &reservation_task_id,
+                &context_digest,
+                (now_unix_ms() / 1_000) as i64,
+            )
+            .expect_err("pending unclassified revocation must deny production admission");
+        assert!(
+            format!("{pending_admission:#}")
+                .contains("membership grant has a pending revocation intent"),
+            "admission must revalidate the pending revocation before inspecting the reservation",
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let reservation_state: String = rusqlite::Connection::open(&authority_path)
+            .unwrap()
+            .query_row(
+                "SELECT state FROM task_delegate_worker_reservations WHERE transport_identity=?1 AND task_id=?2 AND context_digest=?3",
+                rusqlite::params![&reservation_peer, &reservation_task_id, &context_digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(reservation_state, "reserved");
+        drop(persistence_failure);
+        let recovered = controller
+            .revoke_bound(&revoke_binding, now + 2)
+            .expect("controlled recovery must return the explicit indeterminate receipt");
+        assert_eq!(
+            recovered.intent_state,
+            crate::cluster::membership::RevocationIntentState::Indeterminate
+        );
+        assert_eq!(
+            recovered.indeterminate_reason.as_deref(),
+            Some("pending_revocation_recovered_without_process_effect_classification")
+        );
+        assert!(
+            controller
+                .revocation_status(&request_id)
+                .unwrap()
+                .expect("recovered intent remains auditable")
+                .tombstone_committed
+        );
+        let recovered_admission = reopened
+            .reserve_worker_task_execution(
+                &reservation_grant,
+                &reservation_task_id,
+                &context_digest,
+                (now_unix_ms() / 1_000) as i64,
+            )
+            .expect_err("the recovered tombstone must also deny the stale grant");
+        assert!(
+            format!("{recovered_admission:#}").contains("membership grant is no longer active")
+                || format!("{recovered_admission:#}").contains("membership grant is revoked"),
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn provider_error_is_redacted_failure() {
         use crate::providers::Completion;
@@ -2225,6 +2613,11 @@ mod tests {
             fn name(&self) -> &'static str {
                 "deadline-queue"
             }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
+
             async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
                 if call == 0 {
@@ -2268,7 +2661,12 @@ mod tests {
             .send(job(home.path(), "hold the sole executor worker"))
             .await
             .unwrap();
-        first_started.notified().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            first_started.notified(),
+        )
+        .await
+        .expect("fixture blocker did not reach the authorized provider");
 
         // The second task is live at authenticated ingress and travels through
         // the actual bounded dispatcher.  The first provider task keeps it
@@ -2351,6 +2749,148 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(
             matches!(result.status, TaskResultStatus::Rejected { ref reason } if reason == "deadline_expired")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn execution_deadline_drops_started_provider_and_preserves_indeterminate_reservation() {
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct DropProbe(Arc<AtomicBool>);
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        struct BlockingProvider {
+            calls: Arc<AtomicUsize>,
+            started: Arc<tokio::sync::Notify>,
+            dropped: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl Provider for BlockingProvider {
+            fn name(&self) -> &'static str { "execution-deadline" }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
+
+            async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                let _probe = DropProbe(Arc::clone(&self.dropped));
+                std::future::pending::<anyhow::Result<Completion>>().await
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(BlockingProvider {
+                calls: Arc::clone(&calls),
+                started: Arc::clone(&started),
+                dropped: Arc::clone(&dropped),
+            }),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.execution-deadline",
+        );
+        let queued = job_with_deadline(
+            home.path(),
+            "provider starts before the absolute execution deadline",
+            (now_unix_ms() / 1_000) as i64 + 5,
+        );
+        let context_digest = task_result_context_digest(&queued);
+        let reservation_peer = queued.membership_grant.transport_identity().as_str().to_string();
+        let reservation_task_id = queued.task_id.clone();
+        let reservation_grant = queued.membership_grant.clone();
+        let store = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        assert_eq!(
+            store.reserve_worker_task_execution(
+                &reservation_grant,
+                &queued.task_id,
+                &context_digest,
+                (now_unix_ms() / 1_000) as i64,
+            ).unwrap(),
+            crate::cluster::membership::WorkerTaskExecutionReservation::Reserved,
+        );
+        let execution = tokio::spawn(run_one_task_execution(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        ));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            started.notified(),
+        )
+        .await
+        .expect("execution-deadline fixture did not reach the authorized provider");
+        tokio::time::advance(std::time::Duration::from_secs(6)).await;
+        let outcome = execution.await.unwrap();
+        assert!(outcome.suppress_delivery, "deadline ambiguity must suppress ordinary TaskResult offering");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(dropped.load(Ordering::SeqCst), "deadline branch must locally drop the active provider future");
+        let authority_path = store.path().to_path_buf();
+        let conn = rusqlite::Connection::open(&authority_path).unwrap();
+        let reservation_state: String = conn.query_row(
+            "SELECT state FROM task_delegate_worker_reservations WHERE transport_identity=?1 AND task_id=?2 AND context_digest=?3",
+            rusqlite::params![&reservation_peer, &reservation_task_id, &context_digest],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(reservation_state, "indeterminate");
+        let ordinary_outbox_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(ordinary_outbox_rows, 0);
+        drop(conn);
+        drop(store);
+        let restarted = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        assert_eq!(
+            restarted.reserve_worker_task_execution(
+                &reservation_grant,
+                &reservation_task_id,
+                &context_digest,
+                (now_unix_ms() / 1_000) as i64,
+            ).unwrap(),
+            crate::cluster::membership::WorkerTaskExecutionReservation::Existing,
+            "restarted authority retains indeterminate custody and cannot reexecute",
+        );
+        let restart_outbox_rows: i64 = rusqlite::Connection::open(&authority_path).unwrap().query_row(
+            "SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(restart_outbox_rows, 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "restart duplicate admission cannot invoke a second provider");
+    }
+
+    #[test]
+    fn execution_deadline_wait_preserves_millisecond_absolute_boundaries() {
+        let deadline_unix = 1_700_000_001_i64;
+        assert_eq!(
+            execution_deadline_wait_at(deadline_unix, 1_700_000_000_999),
+            std::time::Duration::from_millis(1),
+            "one millisecond before the epoch deadline must not wait a rounded second",
+        );
+        assert_eq!(
+            execution_deadline_wait_at(deadline_unix, 1_700_000_001_000),
+            std::time::Duration::ZERO,
+            "the exact epoch deadline is immediately terminal",
+        );
+        assert_eq!(
+            execution_deadline_wait_at(deadline_unix, 1_700_000_001_001),
+            std::time::Duration::ZERO,
+            "a provider cannot receive time after the absolute epoch deadline",
+        );
+        let far_future = execution_deadline_wait_at(i64::MAX, 0);
+        assert_eq!(far_future, std::time::Duration::from_millis(u64::MAX));
+        assert_eq!(
+            execution_deadline_timer_wait(far_future),
+            None,
+            "a far-future epoch uses the ordinary 120-second timeout without constructing an overflowing deadline timer",
         );
     }
 }

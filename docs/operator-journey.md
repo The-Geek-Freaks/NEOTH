@@ -190,7 +190,14 @@ documents paths whose audit is best-effort or log-only.
   cannot settle the indeterminate operation. Cluster task delegation uses protocol v9 and
   rejects older Hello versions, including v8. The v10-to-v11 membership migration marks
   legacy unresolved `prepared` and `accepted` operations `indeterminate`, retains completed
-  result custody, and never infers a historical deadline.
+  result custody, and never infers a historical deadline. Once permitted provider work has
+  started, the worker also observes that deadline: expiry drops the local future, preserves
+  its durable worker reservation as `indeterminate`, and suppresses any ordinary result.
+  This is not a remote-abort acknowledgement, refund, automatic retry, or re-delegation.
+  The existing master-side `outbound-mark-indeterminate` reconciliation remains explicit.
+  If revocation cannot durably persist its classification, its intent remains `pending` and
+  externally unclassified, the grant stays denied, and no success receipt is invented; only
+  controlled recovery may write the explicit indeterminate/tombstone outcome.
 - **Cluster revoke.** `neoth cluster revoke <stable-node-id>` (also exposed through
   `neoth buddy cluster revoke`) commits a versioned revocation tombstone and durable
   membership/audit/teardown outbox before acknowledging the mutation. A running daemon

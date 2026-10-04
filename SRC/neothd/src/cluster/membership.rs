@@ -29,6 +29,50 @@ const LOCAL_IDENTITY_FILE: &str = "cluster-node-identity.json";
 const LOCAL_IDENTITY_LOCK: &str = "cluster-node-identity.lock";
 const AUTHORITY_DB_FILE: &str = "cluster-membership.db";
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IndeterminatePersistenceFailureTarget {
+    authority_path: PathBuf,
+    request_id: String,
+    reason: String,
+}
+
+#[cfg(test)]
+static INDETERMINATE_PERSIST_FAILURE_TARGET: Mutex<Option<IndeterminatePersistenceFailureTarget>> =
+    Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) struct IndeterminatePersistenceFailureGuard(IndeterminatePersistenceFailureTarget);
+
+#[cfg(test)]
+impl Drop for IndeterminatePersistenceFailureGuard {
+    fn drop(&mut self) {
+        let mut target = INDETERMINATE_PERSIST_FAILURE_TARGET
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if target.as_ref() == Some(&self.0) {
+            target.take();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fail_indeterminate_persistence_for_test(
+    authority_path: PathBuf,
+    request_id: String,
+    reason: String,
+) -> IndeterminatePersistenceFailureGuard {
+    let target = IndeterminatePersistenceFailureTarget {
+        authority_path,
+        request_id,
+        reason,
+    };
+    *INDETERMINATE_PERSIST_FAILURE_TARGET
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(target.clone());
+    IndeterminatePersistenceFailureGuard(target)
+}
+
 pub fn validate_revocation_request_id(value: &str) -> Result<()> {
     let parsed = uuid::Uuid::parse_str(value).context("revocation request id is not a UUID")?;
     anyhow::ensure!(
@@ -2286,16 +2330,33 @@ impl MembershipEffectGuard {
     }
 
     fn persist_indeterminate(&self, request_id: &str, reason: &str, now_unix: i64) -> Result<()> {
-        MembershipStore::open_path(self.authority_path.clone(), false)?
-            .mark_revocation_indeterminate(request_id, reason, now_unix)
+        let store = MembershipStore::open_path(self.authority_path.clone(), false)?;
+        #[cfg(test)]
+        {
+            let mut injected = INDETERMINATE_PERSIST_FAILURE_TARGET
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if injected.as_ref().is_some_and(|target| {
+                target.authority_path == self.authority_path
+                    && target.request_id == request_id
+                    && target.reason == reason
+            }) {
+                injected.take();
+                anyhow::bail!("injected indeterminate persistence failure");
+            }
+        }
+        store.mark_revocation_indeterminate(request_id, reason, now_unix)
     }
 }
 
 /// RAII admission permit held across the physical provider/carrier operation.
 /// Dropping a provider future is only a local abort. If transport may have
-/// started and revocation wins the race, callers must durably classify the
-/// request as indeterminate before this permit (and its generation lease) is
-/// released.
+/// started and revocation wins the race, normal cancellation handling must
+/// durably classify the request as indeterminate before this permit (and its
+/// generation lease) is released. If that persistence itself fails, retaining
+/// the lease cannot establish durability: the already-persisted pending
+/// revocation intent must remain fail-closed until controlled recovery records
+/// explicit indeterminate state.
 pub struct MembershipExternalEffectPermit<'a> {
     guard: &'a mut MembershipEffectGuard,
     transport_may_have_started: bool,
@@ -3912,6 +3973,37 @@ impl MembershipStore {
         )?;
         tx.commit()?;
         Ok(WorkerTaskExecutionReservation::Reserved)
+    }
+
+    /// A locally dropped provider future has no upstream abort acknowledgement.
+    /// Keep the exact pre-provider reservation, but classify it durably so a
+    /// duplicate can never infer that another provider execution is safe.
+    pub fn mark_worker_task_execution_indeterminate(
+        &self,
+        grant: &MembershipGrant,
+        task_id: &str,
+        context_digest: &str,
+        now_unix: i64,
+    ) -> Result<()> {
+        validate_task_delegate_operation_id(task_id)?;
+        validate_lower_sha256(context_digest, "worker task reservation context digest")?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        revalidate_grant_on(&tx, grant, now_unix)?;
+        let changed = tx.execute(
+            "UPDATE task_delegate_worker_reservations SET state='indeterminate',updated_at=?4 WHERE transport_identity=?1 AND task_id=?2 AND context_digest=?3 AND state='reserved'",
+            params![grant.transport_identity().as_str(), task_id, context_digest, now_unix],
+        )?;
+        if changed == 0 {
+            let state: String = tx.query_row(
+                "SELECT state FROM task_delegate_worker_reservations WHERE transport_identity=?1 AND task_id=?2 AND context_digest=?3",
+                params![grant.transport_identity().as_str(), task_id, context_digest],
+                |row| row.get(0),
+            )?;
+            anyhow::ensure!(state == "indeterminate", "worker task reservation cannot be classified indeterminate");
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Load only pending rows for this exact authenticated route.  A fresh

@@ -8968,7 +8968,9 @@ mod tests {
             (
                 "cluster/executor.rs",
                 1,
-                "17d636f3c6e0a513d653f9566b69fbee6203ebb586b218bef5394dd09451927c",
+                // The same AuthorizedProvider request is now scoped so a
+                // revoke or deadline drops its future before classification.
+                "d5efd9c8d98f8d4c344ccff57afe0b43ee7b4518dc0825e8cb57a1867e670353",
             ),
             (
                 "coding/cerebellum_provider.rs",

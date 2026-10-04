@@ -1181,6 +1181,7 @@ fn capped_outbound_dispatch_uses_fail_closed_tag_and_carries_exact_ceiling() {
         .expect("construct capped outbound controller");
     controller.install_peer_streams(streams);
     let mut request = dispatch_request("op-capped", "task-capped", exact);
+    request.deadline_unix = live_now.saturating_add(60);
     request.model_hint = Some("advisory-only".into());
     request.max_output_tokens = Some(73);
 
