@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "reviewed_mobile_chat_integrated_hosted_validation_pending",
+  "status": "source_syntax_repaired_hosted_validation_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 382996,
-    "sha256": "E84C6DB11AFCF0FF6EC0659EE2CFA483FB55CE93CA64173F574D8EFC27E9FBB7"
+    "bytes": 383171,
+    "sha256": "DAD081BAF6584184BC495FBBCA2A8357952B4C280A6B399C2F31625A4971E5CD"
   },
-  "sourceInputs": 2095,
+  "sourceInputs": 2096,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+      "sourceSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
       "junitClass": "neoth"
     },
     {
@@ -74156,6 +74156,32 @@
       }
     ],
     "note": "CoreR4/nativeBridgeR2/Flutter reviewed; seven new tests and case511 module correction. Predecessor core510passed,11unexecuted. Hosted/mobile/device/release acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2329MobileSyntax": {
+    "base": "b103bfbeb8cb7771680c0744c24f7f5bae0252e6",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2329-mobile-syntax.json",
+        "bytes": 823,
+        "sha256": "53D749AC87D8813127B3C443B4090C59047AF1040A35399A1A8232814B6A06C6",
+        "blob": "803d46bbb408119d919c5c85befa1520b72df4e8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2373166,
+        "sha256": "2891FA2502887DC196F4950F2388EA3E65C14C374278641A498DC67CC4CE2DA3",
+        "blob": "662f1feb141ec77ca91750de4eab09bfff1fd562"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 54195,
+        "sha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
+        "blob": "7e5e90919b93c9b102676abb50cafd1ba2bdd9bf"
+      }
+    ],
+    "note": "Exact missing match keyword from hosted Preflight37207018594; no local runtime and no behavior acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

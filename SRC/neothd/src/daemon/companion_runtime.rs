@@ -870,7 +870,7 @@ impl CompanionRuntime {
             // terminal cap after envelope overhead. Do not truncate or call it
             // accepted: replace it before any write with a fresh public
             // indeterminate terminal for this exact request id.
-            Err(_) => lease.chat_terminal_frame(CompanionChatTerminal {
+            Err(_) => match lease.chat_terminal_frame(CompanionChatTerminal {
                 schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
                 outcome: CompanionChatOutcome::Indeterminate,
                 records: Vec::new(), provider: None, model: None,

@@ -18114,3 +18114,10 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Added seven portable core regressions: expected portable total2748, focused528. Case511 now includes its real_store_regression module. All other520 predecessor cases retain their identities. Bridge/Dart tests remain separate mobile-lane coverage.
 - Predecessor run37204239578 on0bdfb1d7dbf7d4722d065450c4d82fedc4c01dab failed at case511 discovery (0tests), after510 actual tests passed; remaining11 were not executed. Original archive/digests and actual logs are bound by PARTIAL_CORE_CHECKS SHA15BD8739945B874F68B1352A58C6B9B062D14EAD8492D8447174A83050975280. This is not a full acceptance result.
 - Next checks remain hosted compilation, generated CLI reference for --scope, focused528/native/liveAudio52, mobile artifact production, actual native bridge-daemon interoperability, device behavior and signed release. No local executable validation, .slint changes or Claude polling occurred.
+
+### W2329 - Repair hosted mobile terminal-fallback syntax (2026-10-04)
+
+- Preflight37207018594 on b103bfbeb8cb7771680c0744c24f7f5bae0252e6 rejected companion_runtime.rs:877 before formatting: the existing nested terminal fallback Result arms lacked their match keyword. Code Quality37207018452 succeeded independently; neither proves compilation or chat behavior.
+- Insert only that keyword. Root verified the candidate equals this exact one-token replacement and preserves all terminal serialization, marker completion and checked carrier drain branches. No test or production guard is weakened.
+- The failed formatter artifact is incomplete and is not imported. Fresh hosted formatting, core test type checking and compiled CLI reference are still required before focused528 and native/mobile acceptance. No executable ran locally. Prior PLAN bytes and protected unrelated changes remain intact.
+- Report: docs/verification/gold-wave2329-mobile-syntax.json.

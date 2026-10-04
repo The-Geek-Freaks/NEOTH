@@ -1,0 +1,14 @@
+{
+  "schema": "neoth.wave2329.mobile-syntax.v1",
+  "base": "b103bfbeb8cb7771680c0744c24f7f5bae0252e6",
+  "status": "minimal_source_repair_hosted_validation_pending",
+  "failureRun": 37207018594,
+  "diagnostic": "companion_runtime.rs:877 missing match before nested terminal fallback result arms",
+  "source": "SRC/neothd/src/daemon/companion_runtime.rs",
+  "beforeSha256": "A5C060BBF2E71C2C0400025C1B6E5A03C993960C7A9BA461CB7BC2410FC68A7E",
+  "afterSha256": "EC9E8FA1D84015DB8C78FDF7BDB68F6FB51A3DE8A063179D5E9A301012CCEEF9",
+  "delta": "Insert one match keyword; preserve all terminal and checked-drain branches",
+  "failedLogSha256": "8FCE301D725E00BF4C057AD4F31F4E0C0DFDF6009EBBBD7AFD7721C39873F99C",
+  "localExecutableValidationRan": false,
+  "acceptance": "Hosted syntax/format, compile and behavior proofs pending"
+}
