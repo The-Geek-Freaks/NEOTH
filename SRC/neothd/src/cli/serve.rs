@@ -684,10 +684,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // responder key before any CLI can mint a QR, but listeners start only
     // after the mandatory same-user IPC owner is up.
     let companion_v3_runtime = if config.companion.enabled && config.companion.p2p_enabled {
-        Some(crate::daemon::companion_runtime::CompanionRuntime::load(
-            neoth_home.clone(), writer.clone(), gui_chat_boot_id.0.clone(), 1,
-        ).context("load durable companion v3 runtime")?)
-    } else { None };
+        Some(
+            crate::daemon::companion_runtime::CompanionRuntime::load(
+                neoth_home.clone(),
+                writer.clone(),
+                gui_chat_boot_id.0.clone(),
+                1,
+            )
+            .context("load durable companion v3 runtime")?,
+        )
+    } else {
+        None
+    };
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) =
         crate::cli::serve_tasks::spawn_audit_rpc(crate::cli::serve_tasks::AuditRpcInputs {
@@ -724,7 +732,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         .context("start mandatory daemon audit RPC")?;
 
     if let Some(runtime) = companion_v3_runtime.as_ref() {
-        runtime.start().await.context("start companion v3 device listeners and recovery")?;
+        runtime
+            .start()
+            .await
+            .context("start companion v3 device listeners and recovery")?;
     }
 
     // W185: only an accepted native-Ollama provider owns this controller. The

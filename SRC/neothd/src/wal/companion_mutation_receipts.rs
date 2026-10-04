@@ -5,7 +5,7 @@
 //! and the lookup has reported a complete authenticated prefix.  Callers must
 //! keep their authority mutation pending on every other result.
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -39,11 +39,17 @@ impl CompanionMutationReceiptDescriptor {
             self.schema_version == COMPANION_MUTATION_RECEIPT_SCHEMA_VERSION,
             "unsupported companion mutation receipt schema"
         );
-        ensure!(self.revision > 0, "companion mutation receipt revision is zero");
+        ensure!(
+            self.revision > 0,
+            "companion mutation receipt revision is zero"
+        );
         ensure!(
             self.key_sha256.len() == 64
                 && self.key_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-                && self.key_sha256.bytes().all(|byte| !byte.is_ascii_uppercase()),
+                && self
+                    .key_sha256
+                    .bytes()
+                    .all(|byte| !byte.is_ascii_uppercase()),
             "companion mutation receipt key fingerprint is not lowercase SHA-256"
         );
         Ok(())
@@ -157,7 +163,9 @@ mod tests {
     #[test]
     fn descriptor_is_public_redacted_and_round_trips_exactly() {
         let descriptor = descriptor();
-        let payload = descriptor.payload().expect("bounded public descriptor encodes");
+        let payload = descriptor
+            .payload()
+            .expect("bounded public descriptor encodes");
         assert!(!String::from_utf8_lossy(&payload).contains("bearer"));
         assert!(!String::from_utf8_lossy(&payload).contains("signing_key"));
         assert_eq!(decode(&payload).expect("typed decode"), descriptor);

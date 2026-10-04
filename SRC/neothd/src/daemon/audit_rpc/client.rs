@@ -1078,12 +1078,15 @@ pub(crate) async fn companion_v3_revoke_device(
 ) -> Result<bool, CompanionV3ClientError> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct RevokeResponse { revoked: bool }
+    struct RevokeResponse {
+        revoked: bool,
+    }
     let response: RevokeResponse = companion_v3_post(
         home,
         "/companion/v3/device/revoke",
         &serde_json::json!({"device_id": device_id}),
-    ).await?;
+    )
+    .await?;
     Ok(response.revoked)
 }
 
@@ -1093,11 +1096,15 @@ async fn companion_v3_post<T: serde::de::DeserializeOwned>(
     request: &impl serde::Serialize,
 ) -> Result<T, CompanionV3ClientError> {
     let body = serde_json::to_string(request).map_err(|_| CompanionV3ClientError::Malformed)?;
-    let (status, response) = post_rpc(home, path, &body).await.map_err(|error| match error {
-        AuditRpcClientError::Unavailable(detail) => CompanionV3ClientError::Unavailable(detail),
-        AuditRpcClientError::Refused(status) => CompanionV3ClientError::Refused(status),
-    })?;
-    if status != 200 { return Err(CompanionV3ClientError::Refused(status)); }
+    let (status, response) = post_rpc(home, path, &body)
+        .await
+        .map_err(|error| match error {
+            AuditRpcClientError::Unavailable(detail) => CompanionV3ClientError::Unavailable(detail),
+            AuditRpcClientError::Refused(status) => CompanionV3ClientError::Refused(status),
+        })?;
+    if status != 200 {
+        return Err(CompanionV3ClientError::Refused(status));
+    }
     serde_json::from_str(&response).map_err(|_| CompanionV3ClientError::Malformed)
 }
 

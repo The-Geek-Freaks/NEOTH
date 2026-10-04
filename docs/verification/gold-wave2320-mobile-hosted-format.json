@@ -1,0 +1,29 @@
+{
+  "schema": "neoth.wave2320.mobile-hosted-format.v1",
+  "status": "verified-hosted-format-import-new-head-validation-pending",
+  "producer": "7cdf816bd4df1e1d03d7bad103dc35f8c4c2a96a",
+  "run": 37200048550,
+  "artifact": 11302054199,
+  "archiveSha256": "DD72C7BEAA85C4A25652AE8340DED3AB18647026F7BE2347FCC6209E643F84D8",
+  "patchSha256": "19BD1909F4E526158ED90F3B9D8A7CA982FA488EABD8A2E725EB0BA1E50A4AA1",
+  "sourcePaths": [
+    "SRC/neothd/src/cli/companion.rs",
+    "SRC/neothd/src/cli/serve.rs",
+    "SRC/neothd/src/cli/serve_tasks.rs",
+    "SRC/neothd/src/cluster/hyperswarm.rs",
+    "SRC/neothd/src/daemon/audit_rpc/client.rs",
+    "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+    "SRC/neothd/src/daemon/audit_rpc/server.rs",
+    "SRC/neothd/src/daemon/companion_authority.rs",
+    "SRC/neothd/src/daemon/companion_protocol.rs",
+    "SRC/neothd/src/daemon/companion_runtime.rs",
+    "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+    "SRC/neothd/src/daemon/mod.rs",
+    "SRC/neothd/src/wal/companion_mutation_receipts.rs",
+    "SRC/neothd/src/wal/mod.rs",
+    "SRC/neothd/src/wal/writer.rs"
+  ],
+  "localExecutableValidationRan": false,
+  "nativeDeviceReleaseAcceptance": false,
+  "qualityFinding": "Automatic Code Quality expanded to Kotlin and Ruby: Kotlin extraction requires a manual build; no extractable Ruby source was found. Follow-up remains open; no scan was disabled."
+}

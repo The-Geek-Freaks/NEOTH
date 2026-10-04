@@ -297,17 +297,17 @@ impl PublicRendezvous {
     /// need legacy best-effort cleanup retain [`Self::shutdown`] below.
     pub(crate) async fn shutdown_checked(mut self) -> Result<()> {
         match (self.peer_handle.take(), self.swarm_task.take()) {
-            (Some(handle), Some(task)) => {
-                shutdown_started_public_rendezvous(handle, task).await
-            }
-            (None, Some(task)) => {
-                task.await.map_err(|error| uncertain_start_error(format!(
+            (Some(handle), Some(task)) => shutdown_started_public_rendezvous(handle, task).await,
+            (None, Some(task)) => task.await.map_err(|error| {
+                uncertain_start_error(format!(
                     "public rendezvous actor ended without graceful teardown proof: {error}"
-                )))
-            }
+                ))
+            }),
             (Some(handle), None) => {
                 drop(handle);
-                Err(uncertain_start_error("public rendezvous lost its actor join handle".into()))
+                Err(uncertain_start_error(
+                    "public rendezvous lost its actor join handle".into(),
+                ))
             }
             (None, None) => Ok(()),
         }
@@ -3031,9 +3031,15 @@ mod tests {
         let supplied = peeroxide::KeyPair::from_seed([0x73u8; 32]);
         let expected_server = supplied.public_key;
         let config = public_rendezvous_config(expected_remote, Some(supplied));
-        assert_eq!(config.server_expected_remote_static_key, Some(expected_remote));
         assert_eq!(
-            config.key_pair.expect("v3 requires supplied server key").public_key,
+            config.server_expected_remote_static_key,
+            Some(expected_remote)
+        );
+        assert_eq!(
+            config
+                .key_pair
+                .expect("v3 requires supplied server key")
+                .public_key,
             expected_server,
             "the public QR key must be the actual peeroxide responder key"
         );

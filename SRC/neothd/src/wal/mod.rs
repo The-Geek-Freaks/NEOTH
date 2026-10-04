@@ -4,12 +4,12 @@
 
 pub mod builder;
 pub mod compaction;
+/// W2311 closed exact receipts for Companion enrollment/revocation mutations.
+pub(crate) mod companion_mutation_receipts;
 /// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).
 pub mod compress;
-/// W2311 closed exact receipts for Companion enrollment/revocation mutations.
-pub(crate) mod companion_mutation_receipts;
 /// CC-RUNTIME-P0 — bounded, authenticated append-once receipt ledger.
 ///
 /// This deliberately lives beside (rather than inside) the segment scanner:

@@ -106,9 +106,14 @@ async fn run_pair_mobile_v3(output: OutputFormat) -> Result<()> {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&invite)?),
         OutputFormat::Table => {
             let qr = render_pairing_qr(&invite.pair_url);
-            if !qr.is_empty() { println!("{qr}"); }
+            if !qr.is_empty() {
+                println!("{qr}");
+            }
             println!("{}", invite.pair_url);
-            println!("Expires in {}s. The QR pins the daemon's actual persistent Noise key.", invite.expires_in_secs);
+            println!(
+                "Expires in {}s. The QR pins the daemon's actual persistent Noise key.",
+                invite.expires_in_secs
+            );
         }
     }
     Ok(())
@@ -118,22 +123,42 @@ async fn run_devices_v3(command: CompanionDevicesCommand, output: OutputFormat) 
     let home = crate::config::FreedomConfig::default_neoth_home();
     match command {
         CompanionDevicesCommand::List => print_devices_v3(
-            crate::daemon::audit_rpc::companion_v3_list_devices(&home).await
-                .map_err(|error| anyhow::anyhow!("read v3 devices from running daemon: {error}"))?, output),
+            crate::daemon::audit_rpc::companion_v3_list_devices(&home)
+                .await
+                .map_err(|error| anyhow::anyhow!("read v3 devices from running daemon: {error}"))?,
+            output,
+        ),
         CompanionDevicesCommand::Status { device_id } => {
             let id = parse_device_id(&device_id)?;
-            let device = crate::daemon::audit_rpc::companion_v3_list_devices(&home).await
-                .map_err(|error| anyhow::anyhow!("read v3 device status from running daemon: {error}"))?
-                .into_iter().find(|device| device.device_id == id)
+            let device = crate::daemon::audit_rpc::companion_v3_list_devices(&home)
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!("read v3 device status from running daemon: {error}")
+                })?
+                .into_iter()
+                .find(|device| device.device_id == id)
                 .ok_or_else(|| anyhow::anyhow!("v3 companion device not found"))?;
             print_devices_v3(vec![device], output)
         }
         CompanionDevicesCommand::Revoke { device_id } => {
-            let revoked = crate::daemon::audit_rpc::companion_v3_revoke_device(&home, parse_device_id(&device_id)?)
-                .await.map_err(|error| anyhow::anyhow!("revoke v3 device through running daemon: {error}"))?;
+            let revoked = crate::daemon::audit_rpc::companion_v3_revoke_device(
+                &home,
+                parse_device_id(&device_id)?,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("revoke v3 device through running daemon: {error}"))?;
             match output {
-                OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({"revoked": revoked})),
-                OutputFormat::Table => println!("{}", if revoked { "Device revoked." } else { "Device was already revoked." }),
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::json!({"revoked": revoked}))
+                }
+                OutputFormat::Table => println!(
+                    "{}",
+                    if revoked {
+                        "Device revoked."
+                    } else {
+                        "Device was already revoked."
+                    }
+                ),
             }
             Ok(())
         }
@@ -141,14 +166,27 @@ async fn run_devices_v3(command: CompanionDevicesCommand, output: OutputFormat) 
 }
 
 fn parse_device_id(value: &str) -> Result<crate::daemon::companion_protocol::CompanionDeviceId> {
-    Ok(crate::daemon::companion_protocol::CompanionDeviceId(uuid::Uuid::parse_str(value)
-        .map_err(|_| anyhow::anyhow!("device_id must be a UUID"))?))
+    Ok(crate::daemon::companion_protocol::CompanionDeviceId(
+        uuid::Uuid::parse_str(value).map_err(|_| anyhow::anyhow!("device_id must be a UUID"))?,
+    ))
 }
 
-fn print_devices_v3(devices: Vec<crate::daemon::companion_runtime::CompanionV3DeviceView>, output: OutputFormat) -> Result<()> {
+fn print_devices_v3(
+    devices: Vec<crate::daemon::companion_runtime::CompanionV3DeviceView>,
+    output: OutputFormat,
+) -> Result<()> {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&devices)?),
-        OutputFormat::Table => for device in devices { println!("{}\t{}\t{}\t{}", device.device_id, device.grant_state, device.revision, device.label); },
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&devices)?)
+        }
+        OutputFormat::Table => {
+            for device in devices {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    device.device_id, device.grant_state, device.revision, device.label
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -69,11 +69,11 @@ pub mod clock_floor;
 /// via `POST /api/v1/companion/pair` (POST-only, SameSite=Lax CSRF guard,
 /// loopback-only bind, WAL `0x0B`/`0x0C` audit frames).
 pub mod companion;
+pub mod companion_authority;
 /// The v3 protocol is the durable, daemon-owned mobile status companion. It coexists with
 /// the v2 preview/loopback companion and is reached only through its typed
 /// protocol/authority/runtime boundaries.
 pub mod companion_protocol;
-pub mod companion_authority;
 #[cfg(feature = "cluster")]
 pub(crate) mod companion_runtime;
 #[cfg(not(feature = "cluster"))]

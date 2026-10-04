@@ -4380,7 +4380,8 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) conversation_runtime:
         std::sync::Arc<dyn crate::daemon::conversation_registry::ConversationRuntime>,
     pub(crate) webchat: Option<std::sync::Arc<crate::daemon::webchat::WebChatState>>,
-    pub(crate) companion_runtime: Option<std::sync::Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
+    pub(crate) companion_runtime:
+        Option<std::sync::Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
     pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
     pub(crate) endpoint_nonce: &'a str,
     #[cfg(feature = "cluster")]
@@ -9290,7 +9291,9 @@ pub(crate) async fn shutdown_background_tasks(
     // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
     if let Some(runtime) = companion_v3_runtime.as_ref() {
-        runtime.shutdown_and_drain().await
+        runtime
+            .shutdown_and_drain()
+            .await
             .context("companion v3 listener drain before WAL shutdown")?;
     }
     crate::cli::serve_tasks::join_connector_control_rpc(connector_control_rpc_task).await;

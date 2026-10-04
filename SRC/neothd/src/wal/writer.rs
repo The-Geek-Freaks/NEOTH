@@ -689,10 +689,14 @@ struct TrustDecisionOnce {
 struct CompanionMutationReceiptOnce {
     home: PathBuf,
     expected: crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor,
-    reply: Option<oneshot::Sender<Result<
-        crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
-        crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
-    >>>,
+    reply: Option<
+        oneshot::Sender<
+            Result<
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome,
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
+            >,
+        >,
+    >,
 }
 
 struct TranscriptMiningOnce {
@@ -864,7 +868,9 @@ impl CompanionMutationReceiptOnce {
             crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
         >,
     ) {
-        if let Some(reply) = self.reply.take() { let _ = reply.send(outcome); }
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
     }
 }
 
@@ -2530,29 +2536,51 @@ impl WalWriterHandle {
         crate::wal::companion_mutation_receipts::CompanionMutationReceiptError,
     > {
         use crate::wal::companion_mutation_receipts::CompanionMutationReceiptError;
-        if !self.authentication_markers_enabled { return Err(CompanionMutationReceiptError::Indeterminate); }
-        let payload = expected.payload().map_err(|_| CompanionMutationReceiptError::Indeterminate)?;
-        if payload.len() > MAX_PAYLOAD_BYTES { return Err(CompanionMutationReceiptError::Indeterminate); }
+        if !self.authentication_markers_enabled {
+            return Err(CompanionMutationReceiptError::Indeterminate);
+        }
+        let payload = expected
+            .payload()
+            .map_err(|_| CompanionMutationReceiptError::Indeterminate)?;
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(CompanionMutationReceiptError::Indeterminate);
+        }
         let header = expected.header(&payload);
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
         let (reply_tx, reply_rx) = oneshot::channel();
         let request = WriteRequest {
-            header, payload, ack: ack_tx, force_authentication_marker: true,
-            context_evidence_receipt_once: None, trust_decision_once: None,
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
             companion_mutation_receipt_once: Some(CompanionMutationReceiptOnce {
-                home: home.to_path_buf(), expected, reply: Some(reply_tx),
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
             }),
-            transcript_mining_once: None, counterparty_consent_once: None,
-            dream_audit_once: None, redaction_rewrite_once: None, quota_admission: None,
-            #[cfg(test)] test_ack_gate: self.test_ack_gate.clone(),
-            #[cfg(test)] test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+            transcript_mining_once: None,
+            counterparty_consent_once: None,
+            dream_audit_once: None,
+            redaction_rewrite_once: None,
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
-            && let Some(once) = request.companion_mutation_receipt_once.take() {
+            && let Some(once) = request.companion_mutation_receipt_once.take()
+        {
             once.finish(Err(CompanionMutationReceiptError::Indeterminate));
         }
-        reply_rx.blocking_recv().unwrap_or(Err(CompanionMutationReceiptError::Indeterminate))
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(CompanionMutationReceiptError::Indeterminate))
     }
 
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
@@ -4112,7 +4140,8 @@ struct TrustDecisionAuthority {
 }
 
 fn companion_mutation_receipt_authority_sentinel(home: &Path) -> PathBuf {
-    home.join("wal").join(COMPANION_MUTATION_RECEIPT_AUTHORITY_SENTINEL)
+    home.join("wal")
+        .join(COMPANION_MUTATION_RECEIPT_AUTHORITY_SENTINEL)
 }
 
 async fn acquire_companion_mutation_receipt_authority(
@@ -4120,19 +4149,33 @@ async fn acquire_companion_mutation_receipt_authority(
 ) -> Result<CompanionMutationReceiptAuthority, WalError> {
     let process_authority = std::sync::Arc::clone(&*COMPANION_MUTATION_RECEIPT_PROCESS_AUTHORITY);
     let process_guard = tokio::time::timeout(
-        std::time::Duration::from_secs(5), process_authority.lock_owned(),
-    ).await.map_err(|_| compaction_recovery_error(
-        "Companion mutation receipt process authority remained busy for >5s",
-    ))?;
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| {
+        compaction_recovery_error(
+            "Companion mutation receipt process authority remained busy for >5s",
+        )
+    })?;
     let sentinel = companion_mutation_receipt_authority_sentinel(home);
-    let file_guard = tokio::task::spawn_blocking(move || {
-        super::redact::lock_segment_for_rewrite(&sentinel)
-    }).await.map_err(|error| compaction_recovery_error(format!(
-        "Companion mutation receipt authority task failed: {error}",
-    )))?.map_err(|error| compaction_recovery_error(format!(
-        "acquire capability-bound Companion mutation receipt authority: {error:#}",
-    )))?;
-    Ok(CompanionMutationReceiptAuthority { _process_guard: process_guard, _file_guard: file_guard })
+    let file_guard =
+        tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
+            .await
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "Companion mutation receipt authority task failed: {error}",
+                ))
+            })?
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "acquire capability-bound Companion mutation receipt authority: {error:#}",
+                ))
+            })?;
+    Ok(CompanionMutationReceiptAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
 }
 
 struct CompanionMutationReceiptAuthority {
@@ -5998,10 +6041,15 @@ async fn run_writer(
         }
         let mut companion_mutation_receipt_authority = None;
         if let Some(once) = companion_mutation_receipt_once.take() {
-            use crate::wal::companion_mutation_receipts::{CompanionMutationReceiptError as Error, CompanionMutationReceiptLookup as Lookup};
+            use crate::wal::companion_mutation_receipts::{
+                CompanionMutationReceiptError as Error, CompanionMutationReceiptLookup as Lookup,
+            };
             let expected_payload = match once.expected.payload() {
                 Ok(payload) => payload,
-                Err(_) => { once.finish(Err(Error::Indeterminate)); continue; }
+                Err(_) => {
+                    once.finish(Err(Error::Indeterminate));
+                    continue;
+                }
             };
             // `HeaderBuilder::build` samples a new HLC/event identity.  The
             // immutable binding here is therefore the closed payload plus its
@@ -6011,32 +6059,79 @@ async fn run_writer(
                     != crate::wal::events::ExtendedSubtype::CompanionMutationReceipt as u8
                 || expected_payload != req.payload
             {
-                once.finish(Err(Error::Indeterminate)); continue;
+                once.finish(Err(Error::Indeterminate));
+                continue;
             }
             let requested_home = once.home.clone();
             let authoritative_home = hmac_home.clone();
-            let homes_match = matches!(tokio::task::spawn_blocking(move || canonical_home_matches(&requested_home, &authoritative_home)).await, Ok(Ok(true)));
-            if !homes_match { once.finish(Err(Error::Indeterminate)); continue; }
+            let homes_match = matches!(
+                tokio::task::spawn_blocking(move || canonical_home_matches(
+                    &requested_home,
+                    &authoritative_home
+                ))
+                .await,
+                Ok(Ok(true))
+            );
+            if !homes_match {
+                once.finish(Err(Error::Indeterminate));
+                continue;
+            }
             let authority = match acquire_companion_mutation_receipt_authority(&hmac_home).await {
                 Ok(authority) => authority,
-                Err(_) => { once.finish(Err(Error::Indeterminate)); continue; }
+                Err(_) => {
+                    once.finish(Err(Error::Indeterminate));
+                    continue;
+                }
             };
             let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
-                once.finish(Err(Error::Indeterminate)); drop(authority); continue;
+                once.finish(Err(Error::Indeterminate));
+                drop(authority);
+                continue;
             };
             if compaction_state.frames() > 0
-                && emit_compaction_marker(&mut state, compaction_state, key, None).await.is_err() {
-                once.finish(Err(Error::Indeterminate)); drop(authority); continue;
+                && emit_compaction_marker(&mut state, compaction_state, key, None)
+                    .await
+                    .is_err()
+            {
+                once.finish(Err(Error::Indeterminate));
+                drop(authority);
+                continue;
             }
             pending_unsynced = false;
             let lookup_home = hmac_home.clone();
             let lookup_expected = once.expected.clone();
-            match tokio::task::spawn_blocking(move || crate::wal::companion_mutation_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)).await {
-                Ok(Ok(Lookup::Exact)) => { once.finish(Ok(crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome::ExistingExact)); drop(authority); continue; }
-                Ok(Ok(Lookup::Conflict)) => { once.finish(Err(Error::Conflict)); drop(authority); continue; }
-                Ok(Ok(Lookup::Duplicate)) => { once.finish(Err(Error::Duplicate)); drop(authority); continue; }
-                Ok(Ok(Lookup::AbsentComplete)) => { req.companion_mutation_receipt_once = Some(once); companion_mutation_receipt_authority = Some(authority); }
-                _ => { once.finish(Err(Error::Indeterminate)); drop(authority); continue; }
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::companion_mutation_receipts::lookup_exact_at_home(
+                    &lookup_home,
+                    &lookup_expected,
+                )
+            })
+            .await
+            {
+                Ok(Ok(Lookup::Exact)) => {
+                    once.finish(Ok(crate::wal::companion_mutation_receipts::CompanionMutationReceiptOutcome::ExistingExact));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::Conflict)) => {
+                    once.finish(Err(Error::Conflict));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::Duplicate)) => {
+                    once.finish(Err(Error::Duplicate));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(Lookup::AbsentComplete)) => {
+                    req.companion_mutation_receipt_once = Some(once);
+                    companion_mutation_receipt_authority = Some(authority);
+                }
+                _ => {
+                    once.finish(Err(Error::Indeterminate));
+                    drop(authority);
+                    continue;
+                }
             }
         }
         let mut context_evidence_receipt_authority = None;
@@ -11428,42 +11523,122 @@ mod tests {
         kind: crate::wal::companion_mutation_receipts::CompanionMutationKind,
     ) -> crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor {
         crate::wal::companion_mutation_receipts::CompanionMutationReceiptDescriptor {
-            schema_version: crate::wal::companion_mutation_receipts::COMPANION_MUTATION_RECEIPT_SCHEMA_VERSION,
-            mutation_id: uuid::Uuid::from_u128(0x101), device_id: uuid::Uuid::from_u128(0x202),
-            revision: 7, kind, key_sha256: "c".repeat(64),
+            schema_version:
+                crate::wal::companion_mutation_receipts::COMPANION_MUTATION_RECEIPT_SCHEMA_VERSION,
+            mutation_id: uuid::Uuid::from_u128(0x101),
+            device_id: uuid::Uuid::from_u128(0x202),
+            revision: 7,
+            kind,
+            key_sha256: "c".repeat(64),
         }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen() {
-        use crate::wal::companion_mutation_receipts::{CompanionMutationKind, CompanionMutationReceiptError, CompanionMutationReceiptOutcome};
-        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
+    async fn companion_mutation_receipt_once_accepts_queued_binding_then_handles_duplicate_conflict_and_reopen()
+     {
+        use crate::wal::companion_mutation_receipts::{
+            CompanionMutationKind, CompanionMutationReceiptError, CompanionMutationReceiptOutcome,
+        };
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
         let descriptor = companion_mutation_descriptor(CompanionMutationKind::Enroll);
-        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
-        let (left, right) = tokio::join!(writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone()), writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone()));
-        assert!(matches!(left.unwrap(), CompanionMutationReceiptOutcome::AppendedExact | CompanionMutationReceiptOutcome::ExistingExact));
-        assert!(matches!(right.unwrap(), CompanionMutationReceiptOutcome::AppendedExact | CompanionMutationReceiptOutcome::ExistingExact));
-        let mut conflict = descriptor.clone(); conflict.key_sha256 = "d".repeat(64);
-        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), conflict).await.unwrap_err(), CompanionMutationReceiptError::Conflict);
-        drop(writer); join.await.expect("join first writer");
-        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("reopen writer");
-        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), descriptor).await.unwrap(), CompanionMutationReceiptOutcome::ExistingExact);
-        drop(writer); join.await.expect("join reopened writer");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("companion-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("writer");
+        let (left, right) = tokio::join!(
+            writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone()),
+            writer.append_companion_mutation_receipt_once(home.path(), descriptor.clone())
+        );
+        assert!(matches!(
+            left.unwrap(),
+            CompanionMutationReceiptOutcome::AppendedExact
+                | CompanionMutationReceiptOutcome::ExistingExact
+        ));
+        assert!(matches!(
+            right.unwrap(),
+            CompanionMutationReceiptOutcome::AppendedExact
+                | CompanionMutationReceiptOutcome::ExistingExact
+        ));
+        let mut conflict = descriptor.clone();
+        conflict.key_sha256 = "d".repeat(64);
+        assert_eq!(
+            writer
+                .append_companion_mutation_receipt_once(home.path(), conflict)
+                .await
+                .unwrap_err(),
+            CompanionMutationReceiptError::Conflict
+        );
+        drop(writer);
+        join.await.expect("join first writer");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("companion-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("reopen writer");
+        assert_eq!(
+            writer
+                .append_companion_mutation_receipt_once(home.path(), descriptor)
+                .await
+                .unwrap(),
+            CompanionMutationReceiptOutcome::ExistingExact
+        );
+        drop(writer);
+        join.await.expect("join reopened writer");
     }
 
     #[tokio::test]
     async fn companion_mutation_receipt_once_keeps_owned_append_after_caller_cancellation() {
-        use crate::wal::companion_mutation_receipts::{CompanionMutationKind, CompanionMutationReceiptOutcome};
-        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
+        use crate::wal::companion_mutation_receipts::{
+            CompanionMutationKind, CompanionMutationReceiptOutcome,
+        };
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
         let descriptor = companion_mutation_descriptor(CompanionMutationKind::Revoke);
-        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-cancel-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("companion-cancel-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("writer");
         let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
-        let caller_writer = writer.with_test_ack_gate(gate.clone()); let caller_home = home.path().to_path_buf(); let caller_descriptor = descriptor.clone();
-        let caller = tokio::spawn(async move { caller_writer.append_companion_mutation_receipt_once(&caller_home, caller_descriptor).await });
-        gate.wait_until_durable().await; caller.abort(); assert!(caller.await.is_err()); gate.release();
-        drop(writer); join.await.expect("owned writer retires request");
-        let (writer, join) = spawn_test_writer_at_home(wal.join("companion-cancel-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("restart writer");
-        assert_eq!(writer.append_companion_mutation_receipt_once(home.path(), descriptor).await.unwrap(), CompanionMutationReceiptOutcome::ExistingExact);
-        drop(writer); join.await.expect("join restarted writer");
+        let caller_writer = writer.with_test_ack_gate(gate.clone());
+        let caller_home = home.path().to_path_buf();
+        let caller_descriptor = descriptor.clone();
+        let caller = tokio::spawn(async move {
+            caller_writer
+                .append_companion_mutation_receipt_once(&caller_home, caller_descriptor)
+                .await
+        });
+        gate.wait_until_durable().await;
+        caller.abort();
+        assert!(caller.await.is_err());
+        gate.release();
+        drop(writer);
+        join.await.expect("owned writer retires request");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("companion-cancel-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("restart writer");
+        assert_eq!(
+            writer
+                .append_companion_mutation_receipt_once(home.path(), descriptor)
+                .await
+                .unwrap(),
+            CompanionMutationReceiptOutcome::ExistingExact
+        );
+        drop(writer);
+        join.await.expect("join restarted writer");
     }
 }

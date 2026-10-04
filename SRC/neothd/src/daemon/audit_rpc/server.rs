@@ -2194,32 +2194,52 @@ async fn handle_companion_v3_route(
     body: &[u8],
 ) -> Result<ConnectionOutcome> {
     let Some(runtime) = state.companion_runtime.as_ref().cloned() else {
-        let _ = stream.write_all(http_response(503, "companion v3 unavailable").as_bytes()).await;
+        let _ = stream
+            .write_all(http_response(503, "companion v3 unavailable").as_bytes())
+            .await;
         let _ = stream.shutdown().await;
         return Ok(ConnectionOutcome::Complete);
     };
     let response = match path {
-        "/companion/v3/pair/mint" if body == b"{}" => {
-            runtime.mint_pair_invite().await.map(|value| serde_json::to_string(&value))
-        }
-        "/companion/v3/devices" if body == b"{}" => {
-            runtime.list_devices().map(|value| serde_json::to_string(&value))
-        }
+        "/companion/v3/pair/mint" if body == b"{}" => runtime
+            .mint_pair_invite()
+            .await
+            .map(|value| serde_json::to_string(&value)),
+        "/companion/v3/devices" if body == b"{}" => runtime
+            .list_devices()
+            .map(|value| serde_json::to_string(&value)),
         "/companion/v3/device/revoke" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
-            struct RevokeRequest { device_id: crate::daemon::companion_protocol::CompanionDeviceId }
-            let request = serde_json::from_slice::<RevokeRequest>(body).context("decode companion v3 revoke request");
+            struct RevokeRequest {
+                device_id: crate::daemon::companion_protocol::CompanionDeviceId,
+            }
+            let request = serde_json::from_slice::<RevokeRequest>(body)
+                .context("decode companion v3 revoke request");
             match request {
-                Ok(request) => runtime.revoke_device(request.device_id).await.map(|revoked| serde_json::to_string(&serde_json::json!({"revoked": revoked}))),
+                Ok(request) => runtime
+                    .revoke_device(request.device_id)
+                    .await
+                    .map(|revoked| serde_json::to_string(&serde_json::json!({"revoked": revoked}))),
                 Err(error) => Err(error),
             }
         }
-        _ => Err(anyhow::anyhow!("invalid companion v3 route or request body")),
+        _ => Err(anyhow::anyhow!(
+            "invalid companion v3 route or request body"
+        )),
     };
     match response {
-        Ok(Ok(json)) => { let _ = stream.write_all(http_response_json(200, &json).as_bytes()).await; }
-        Ok(Err(error)) | Err(error) => { let _ = stream.write_all(http_response(422, "companion v3 request refused").as_bytes()).await; tracing::debug!(%error, "companion v3 RPC refused"); }
+        Ok(Ok(json)) => {
+            let _ = stream
+                .write_all(http_response_json(200, &json).as_bytes())
+                .await;
+        }
+        Ok(Err(error)) | Err(error) => {
+            let _ = stream
+                .write_all(http_response(422, "companion v3 request refused").as_bytes())
+                .await;
+            tracing::debug!(%error, "companion v3 RPC refused");
+        }
     }
     let _ = stream.shutdown().await;
     Ok(ConnectionOutcome::Complete)

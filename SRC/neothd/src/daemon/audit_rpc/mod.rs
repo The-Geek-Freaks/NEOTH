@@ -79,12 +79,12 @@ pub use client::{
     try_post_audit_frame_with_subtype,
 };
 pub(crate) use client::{
-    ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
-    conversation_post_cancellable,
+    CompanionV3ClientError, companion_v3_list_devices, companion_v3_mint_pair,
+    companion_v3_revoke_device,
 };
 pub(crate) use client::{
-    companion_v3_list_devices, companion_v3_mint_pair, companion_v3_revoke_device,
-    CompanionV3ClientError,
+    ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
+    conversation_post_cancellable,
 };
 pub(crate) use client::{
     DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,

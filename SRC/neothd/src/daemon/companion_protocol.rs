@@ -162,7 +162,12 @@ pub struct CompanionDenied {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompanionDeniedCode { DeviceDenied, InvalidFrame, RetryLater, Unavailable }
+pub enum CompanionDeniedCode {
+    DeviceDenied,
+    InvalidFrame,
+    RetryLater,
+    Unavailable,
+}
 
 impl CompanionDenied {
     pub fn new(code: CompanionDeniedCode) -> Result<Self, ProtocolError> {
@@ -277,7 +282,10 @@ impl EnrollmentProof {
             label,
             signature: Vec::new(),
         };
-        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
+        result.signature = signing_key
+            .sign(&result.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
         Ok(result)
     }
 }
@@ -314,7 +322,10 @@ impl StatusProof {
         Ok(out)
     }
 
-    pub fn signed(challenge: &StatusChallenge, signing_key: &SigningKey) -> Result<Self, ProtocolError> {
+    pub fn signed(
+        challenge: &StatusChallenge,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
         challenge.validate()?;
         let mut result = Self {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
@@ -325,7 +336,10 @@ impl StatusProof {
             challenge_nonce: challenge.challenge_nonce,
             signature: Vec::new(),
         };
-        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
+        result.signature = signing_key
+            .sign(&result.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
         Ok(result)
     }
 
@@ -353,12 +367,24 @@ impl CompanionStatusSnapshot {
         if self.daemon_boot_id.is_empty() || self.daemon_boot_id.len() > 128 {
             return Err(ProtocolError::InvalidBootId);
         }
-        if self.active_turns.as_ref().is_some_and(|turns| turns.len() > COMPANION_V3_MAX_ACTIVE_TURNS) {
+        if self
+            .active_turns
+            .as_ref()
+            .is_some_and(|turns| turns.len() > COMPANION_V3_MAX_ACTIVE_TURNS)
+        {
             return Err(ProtocolError::TooManyActiveTurns);
         }
-        if self.active_turns.as_ref().into_iter().flatten().any(|turn| {
-            turn.phase.is_empty() || turn.phase.len() > 32 || turn.phase.chars().any(char::is_control)
-        }) {
+        if self
+            .active_turns
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .any(|turn| {
+                turn.phase.is_empty()
+                    || turn.phase.len() > 32
+                    || turn.phase.chars().any(char::is_control)
+            })
+        {
             return Err(ProtocolError::InvalidFrame);
         }
         Ok(())
@@ -420,7 +446,9 @@ fn push_field(out: &mut Vec<u8>, field: &[u8]) {
 }
 
 fn signature_bytes(bytes: &[u8]) -> Result<Signature, ProtocolError> {
-    let bytes: [u8; 64] = bytes.try_into().map_err(|_| ProtocolError::InvalidSignature)?;
+    let bytes: [u8; 64] = bytes
+        .try_into()
+        .map_err(|_| ProtocolError::InvalidSignature)?;
     Ok(Signature::from_bytes(&bytes))
 }
 
@@ -430,12 +458,23 @@ mod tests {
 
     #[test]
     fn server_frames_use_only_stable_adjacent_tags_and_bounded_denials() {
-        let denied = ServerFrame::Denied(CompanionDenied::new(CompanionDeniedCode::DeviceDenied).unwrap());
+        let denied =
+            ServerFrame::Denied(CompanionDenied::new(CompanionDeniedCode::DeviceDenied).unwrap());
         let encoded = encode_server_frame(&denied).unwrap();
         let decoded: ServerFrame = decode_frame(&encoded).unwrap();
         assert_eq!(decoded, denied);
-        assert!(serde_json::from_slice::<ServerFrame>(br#"{"type":"denied","body":{"schema_version":3,"code":"detail_private_path"}}"#).is_err());
-        assert!(serde_json::from_slice::<ServerFrame>(br#"{"type":"denied","body":{"schema_version":3,"code":"ok","extra":true}}"#).is_err());
+        assert!(
+            serde_json::from_slice::<ServerFrame>(
+                br#"{"type":"denied","body":{"schema_version":3,"code":"detail_private_path"}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_slice::<ServerFrame>(
+                br#"{"type":"denied","body":{"schema_version":3,"code":"ok","extra":true}}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

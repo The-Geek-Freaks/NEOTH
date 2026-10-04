@@ -6,13 +6,10 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    daemon::companion_protocol::CompanionDeviceId,
-    wal::writer::WalWriterHandle,
-};
+use crate::{daemon::companion_protocol::CompanionDeviceId, wal::writer::WalWriterHandle};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,7 +33,10 @@ pub(crate) struct CompanionRuntime;
 
 impl CompanionRuntime {
     pub(crate) fn load(
-        _home: PathBuf, _writer: WalWriterHandle, _daemon_boot_id: String, _listener_generation: u64,
+        _home: PathBuf,
+        _writer: WalWriterHandle,
+        _daemon_boot_id: String,
+        _listener_generation: u64,
     ) -> Result<Arc<Self>> {
         bail!("companion v3 requires the cluster feature")
     }
