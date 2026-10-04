@@ -25,7 +25,7 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use companion_protocol::{
-    decode_server_frame, encode_frame, ChatChallenge, CompanionChatOutcome, CompanionChatRecordKind,
+    decode_server_frame, encode_frame, CompanionChatOutcome, CompanionChatRecordKind,
     CompanionChatRequest, CompanionChatTerminal, CompanionDeniedCode, CompanionReadiness, CompanionScope,
     CompanionStatusSnapshot, EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
     COMPANION_V3_SCHEMA_VERSION,
@@ -44,6 +44,13 @@ const CHAT_OUTER_TIMEOUT_SECS: u64 = 125;
 const V2_BOOTSTRAP_INFO: &[u8] = b"NEOTH/companion/noise-static/v2";
 const NOISE_DERIVATION_DOMAIN: &[u8] = b"NEOTH/companion/mobile/noise-static/v3";
 const SIGNING_DERIVATION_DOMAIN: &[u8] = b"NEOTH/companion/mobile/device-signing/v3";
+
+fn client_only_join_opts() -> JoinOpts {
+    let mut options = JoinOpts::default();
+    options.server = false;
+    options.client = true;
+    options
+}
 
 #[repr(C)]
 pub struct neoth_companion_bridge {
@@ -272,7 +279,7 @@ async fn pair_on_swarm(
     cancel: &mut watch::Receiver<bool>,
 ) -> PublicResult {
     if swarm
-        .join(invite.topic, JoinOpts { server: false, client: true })
+        .join(invite.topic, client_only_join_opts())
         .await
         .is_err()
     {
@@ -396,7 +403,7 @@ async fn reconnect_on_swarm(
     cancel: &mut watch::Receiver<bool>,
 ) -> PublicResult {
     if swarm
-        .join(descriptor.rendezvous_topic, JoinOpts { server: false, client: true })
+        .join(descriptor.rendezvous_topic, client_only_join_opts())
         .await
         .is_err()
     {
@@ -481,7 +488,7 @@ async fn chat_on_swarm(
     cancel: &mut watch::Receiver<bool>,
 ) -> PublicResult {
     let timeout = Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS);
-    if swarm.join(descriptor.rendezvous_topic, JoinOpts { server: false, client: true }).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
+    if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
     let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await { Wait::Value(Some(value)) => value, Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" }, Wait::Expired => return PublicResult::Failed { code: "chat_connect_timeout" }, Wait::Cancelled => return PublicResult::Cancelled };
     if conn.remote_public_key() != &descriptor.daemon_noise_public_key { return PublicResult::Denied { code: "daemon_key_mismatch" }; }
     let challenge = match await_cancelable(cancel, timeout, conn.read()).await {

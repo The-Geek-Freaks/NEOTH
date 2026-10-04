@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T17:20:04.6421920Z",
-  "validationStatus": "wave2336_test_fixture_integrated_hosted_probe_pending",
+  "capturedUtc": "2026-10-04T18:41:52.4629602Z",
+  "validationStatus": "wave2347_bridge_api_repair_hosted_retry_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 6726,
-      "sha256": "816F2221C91F8D26860691E58450ECBEEB6966047F272E74C38920BF633B11EA"
+      "bytes": 12292,
+      "sha256": "B3A11D3046DE6923AB9B9F0F0818FBB0E3D07017C93CCA030D3261A87DCB9F69"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -368,8 +368,8 @@
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "bytes": 4182,
-      "sha256": "15922A0BC468923D616A577DBF1F465D7760DA81F998E522E776C9A3626AC61F"
+      "bytes": 4456,
+      "sha256": "C5B0DE59D0EEDD7CB35DEEEF9CF6564D6119CCE59A9E1FD750D949330E942B3F"
     },
     {
       "path": "apps/neoth_companion/test/bridge_input_test.dart",
@@ -408,8 +408,8 @@
     },
     {
       "path": "bridges/companion-native/src/lib.rs",
-      "bytes": 45447,
-      "sha256": "1964F1CD5B5A49902367DB687DB70CB5D48FE12685AF95EB6F074FEF06A86683"
+      "bytes": 45535,
+      "sha256": "493E28602B245825694C5AF5FAE507FDFD2B25E8F8EDF8B0DD825B85BC275A26"
     },
     {
       "path": "bridges/companion-native/TEST_PLAN.md",
@@ -3562,6 +3562,11 @@
       "sha256": "89E485920251F4DC57068A65D5B591E179392F0158B43F00F48F450CDF264A4F"
     },
     {
+      "path": "docs/verification/gold-wave2347-mobile-bridge-batch.json",
+      "bytes": 2642,
+      "sha256": "614D29B7F8D47940A615A0DC4F27BA5240C8C4EBF05937BB2D85E6734029286C"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4703,8 +4708,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2379990,
-      "sha256": "F7176F47A6F12CCE8CD829A7B584F00DD3B6DC7256BE13BCAA44AA4399B848A5"
+      "bytes": 2381746,
+      "sha256": "135D661CEC2AABC4AC7D550ACC6FEB52110B8B50A21AA711F82FAD9BE690A22D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

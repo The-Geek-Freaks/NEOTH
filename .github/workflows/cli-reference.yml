@@ -7,6 +7,10 @@ on:
         description: 'Also run the two real-authority mobile scope and revoke regressions'
         type: boolean
         default: false
+      macos_provider_regression:
+        description: 'Run the exact native macOS Buddy provider GUI callback regression'
+        type: boolean
+        default: false
       slim_clippy:
         description: 'Also verify the exact slim-core production Clippy contract'
         type: boolean
@@ -31,6 +35,7 @@ env:
 jobs:
   generate:
     name: Export exact-source CLI reference
+    if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.workspace_clippy && 90 || inputs.companion_regressions && 75 || 50 }}
     steps:
@@ -163,3 +168,119 @@ jobs:
             ~/.cargo/git/db/
             SRC/target/
           key: ${{ steps.cli-reference-cargo-cache.outputs.cache-primary-key }}
+
+  macos-provider-regression:
+    name: Exact macOS Buddy provider GUI regression
+    if: ${{ inputs.macos_provider_regression && github.ref == 'refs/heads/main' }}
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    steps:
+      - name: Checkout requested source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare exact macOS provider regression evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-macos-provider-regression"
+          mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          printf '%s\n' 'buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback' > "$proof_dir/test-identity.txt"
+
+      - name: Setup Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore macOS native Cargo checkpoint
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+            ${{ runner.os }}-1.91-cargo-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-nextest@0.9.134
+
+      # The native harness resolves target/debug/neoth beside its test executable;
+      # build the real public CLI before running its GUI callback path.
+      - name: Build current public CLI for native GUI harness
+        timeout-minutes: 45
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build -p neoth --bin neoth --locked 2>&1 | tee "$RUNNER_TEMP/neoth-macos-provider-regression/cli-build.log"
+
+      - name: Compile exact macOS native GUI harness
+        timeout-minutes: 120
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo nextest run -p neothd-gui --test neothd-gui-macos-native --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run 2>&1 | tee "$RUNNER_TEMP/neoth-macos-provider-regression/gui-compile.log"
+
+      - name: Run exact Buddy provider GUI callback regression
+        timeout-minutes: 35
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity='buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback'
+          proof_dir="$RUNNER_TEMP/neoth-macos-provider-regression"
+          filter="test(=$identity)"
+          cargo nextest list -p neothd-gui --test neothd-gui-macos-native --locked --profile ci --features neothd-gui/macos-native-gui-test -E "$filter" --message-format json > "$proof_dir/selection.json"
+          python3 - "$proof_dir/selection.json" "$identity" <<'PY'
+          import json
+          import sys
+
+          listing_path, identity = sys.argv[1:]
+          with open(listing_path, encoding="utf-8") as listing_file:
+              listing = json.load(listing_file)
+          suites = listing.get("rust-suites")
+          if not isinstance(suites, dict):
+              raise SystemExit("nextest selection has no rust-suites object")
+          binary_id = "neothd-gui::neothd-gui-macos-native"
+          suite = suites.get(binary_id)
+          if not isinstance(suite, dict) or suite.get("binary-id") != binary_id:
+              raise SystemExit("exact macOS provider test is not owned by the native GUI harness")
+          testcases = suite.get("testcases")
+          if not isinstance(testcases, dict):
+              raise SystemExit("native GUI harness has no testcase map")
+          runnable = [
+              name for name, testcase in testcases.items()
+              if isinstance(testcase, dict)
+              and testcase.get("ignored") is False
+              and testcase.get("filter-match") == {"status": "matches"}
+          ]
+          if runnable != [identity]:
+              raise SystemExit(f"exact macOS provider selection is not one runnable test: {runnable!r}")
+          PY
+          cargo nextest run -p neothd-gui --test neothd-gui-macos-native --locked --profile ci --features neothd-gui/macos-native-gui-test -E "$filter" --no-tests=fail --nocapture 2>&1 | tee "$proof_dir/test.log"
+
+      - name: Upload macOS provider regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-provider-regression-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-macos-provider-regression/
+          if-no-files-found: error
+          retention-days: 14

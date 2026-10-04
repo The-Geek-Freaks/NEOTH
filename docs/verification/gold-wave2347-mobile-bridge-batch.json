@@ -1,0 +1,56 @@
+{
+  "schema": "neoth.wave2347.mobile-bridge-batch.v1",
+  "base": "209855494db16fc99a504ee430bc8d0287754b77",
+  "status": "static_reviewed_integrated_hosted_retry_pending",
+  "previousFocusedAcceptance": {
+    "run": 37221468944,
+    "producer": "209855494db16fc99a504ee430bc8d0287754b77",
+    "rootChecksSha256": "7854A2FB2FFBBBE2D3DBA4866F01C1B566F105CDE7F2762B36AC1464F12BCAD2",
+    "focusedCases": 528,
+    "googleChatGuards": 20,
+    "pythonContracts": 63,
+    "actualProducts": 4,
+    "cleanDaemonDrains": 2,
+    "originalArchives": 8,
+    "archiveEntries": 1091,
+    "rawGitSourceBindings": 236
+  },
+  "interopFailure": {
+    "run": 37225151018,
+    "producer": "209855494db16fc99a504ee430bc8d0287754b77",
+    "logSha256": "116146328D43FD2EEE4CC16DD8B7EE79C469F7972FF6AB3C1DF0C9C928A61F65",
+    "artifactCount": 0,
+    "diagnosis": "Three external literals construct non-exhaustive JoinOpts and fail with E0639 before actual interoperability executes"
+  },
+  "repair": "Use JoinOpts::default then explicit server=false and client=true at pairing, status reconnect and chat reconnect; remove one unused import",
+  "imports": [
+    {
+      "sha": "493E28602B245825694C5AF5FAE507FDFD2B25E8F8EDF8B0DD825B85BC275A26",
+      "base": "1964F1CD5B5A49902367DB687DB70CB5D48FE12685AF95EB6F074FEF06A86683",
+      "path": "bridges/companion-native/src/lib.rs",
+      "candidate": "work/gold-20260906/wave2347-bridge-compile/candidate/bridges/companion-native/src/lib.rs"
+    },
+    {
+      "sha": "C5B0DE59D0EEDD7CB35DEEEF9CF6564D6119CCE59A9E1FD750D949330E942B3F",
+      "base": "15922A0BC468923D616A577DBF1F465D7760DA81F998E522E776C9A3626AC61F",
+      "path": "apps/neoth_companion/README.md",
+      "candidate": "work/gold-20260906/wave2342-mobile-readme/candidate/apps/neoth_companion/README.md"
+    },
+    {
+      "sha": "B3A11D3046DE6923AB9B9F0F0818FBB0E3D07017C93CCA030D3261A87DCB9F69",
+      "base": "816F2221C91F8D26860691E58450ECBEEB6966047F272E74C38920BF633B11EA",
+      "path": ".github/workflows/cli-reference.yml",
+      "candidate": "work/gold-20260906/wave2343-macos-provider-probe/candidate/.github/workflows/cli-reference.yml"
+    }
+  ],
+  "macosDiagnostic": {
+    "reviewSha256": "D2F0F126D7388CC80E5F71EDBEF2367C54900DCE5897754C848F62EB6B3A7C64",
+    "input": "macos_provider_regression",
+    "default": false,
+    "test": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+    "boundary": "Optional exact native macOS test diagnostic; full CI unchanged; not yet executed"
+  },
+  "localExecutableValidationRan": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}

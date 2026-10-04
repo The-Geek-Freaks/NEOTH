@@ -26,11 +26,15 @@ revocation.
 
 A chat-scoped device can send one ordinary message of at most 640 UTF-8 bytes.
 It receives one typed terminal outcome: accepted, denied, busy, unavailable,
-timeout, or indeterminate. Slash actions, streaming, stop/cancel controls,
-attachments, files, notification delivery, history sync, and offline queueing
-are unavailable. An indeterminate result means terminal delivery was not
-confirmed; the app does not repeat the message or claim that a remote turn was
-aborted.
+timeout, or indeterminate. While one chat is pending, **Stop waiting** sends
+the existing local bridge cancellation signal and disables itself after one
+press. It stops this phone from waiting; it does not claim that a daemon or
+provider turn was aborted. A terminal that arrives in the same race remains
+authoritative: accepted stays accepted, and a post-write indeterminate result
+still means delivery or execution is uncertain. The app does not repeat the
+message. Slash actions, streaming, remote turn cancellation, attachments,
+files, notification delivery, history sync, and offline queueing are
+unavailable.
 
 The daemon keeps authority for device records. These commands talk to the
 running daemon through its same-user control path:
@@ -64,18 +68,18 @@ The tracked hosted workflow is
 `.github/workflows/mobile-companion.yml`; its materializer is
 `.github/scripts/mobile/materialize-neoth-companion.ps1`.
 
-The first run deliberately uses the workflow-dispatch input
-`bootstrap_locks=true`. That hosted-only step produces original candidate lock
-artifacts and provenance; it does not build a native library, sign an app, or
-qualify a release. Root reviews the original artifact, command logs and
-provenance before committing the reviewed lock files. A later normal
-qualification uses the committed locks and requires their exact hashes before
-and after dependency resolution.
+Normal hosted qualification uses the already committed bridge and Flutter lock
+files, requiring their exact hashes before and after dependency resolution.
+`bootstrap_locks=true` is retained only as the historical, hosted-only
+recovery path that produced original lock candidates for Root review before
+those locks were committed; it is not the normal build instruction and does
+not qualify a release.
 
 The materializer starts from a pinned Flutter 3.24.5 template, preserves its
 generated Gradle/wrapper/plugin files, and packages only explicitly
 hash-verified bridge inputs. CocoaPods consumes the local framework directory. The iOS gate requires all
-seven bridge entry points to be present in the final Runner binary. These
+eight bridge entry points to be present in the final Runner binary, including
+the one-shot chat entry point. These
 checks still require a successful hosted execution.
 
 ## Acceptance boundary
