@@ -1,0 +1,29 @@
+{
+  "schema": "neoth.wave2351.mobile-pair-diagnostic.v1",
+  "base": "9cf8d21db07670d68bdbbfb9ba6ba7cad585d63a",
+  "status": "reviewed_diagnostic_and_cleanup_correction_hosted_pending",
+  "failedRun": 37226858388,
+  "originalZipSha256": "42373A2CD908433081CAD26A4E952A88CFAFD15155380C946FEABDE307DB4CB4",
+  "partialChecksSha256": "D1F50E363F27952FDAAF58203ACE0CCF2E59FCCDBD4BD415C7BAED3AB6EF3091",
+  "verifiedBoundary": "Real host build, consent grant and HTTP readiness succeeded; first status pairing CLI returned1 without retained cause; cleanup forced daemon exit-9.",
+  "repair": [
+    "Record exact mint stage plus fixed source-bound non-sensitive CLI error category.",
+    "Do not retry an ambiguous invitation mint or retain raw CLI streams.",
+    "Use canonical120-second graceful plus5-second forced cleanup inside existing180-second reserve.",
+    "Forced, unreaped, shutdown-error or nonzero exit cannot produce successful workflow; primary failure is retained."
+  ],
+  "source": ".github/scripts/mobile/hosted-mobile-interop.py",
+  "sourceSha256": "B0C91C4B4C31D4D3DA9484B19D6F1C587E93780A3F100FEAF52A0DDC19BFD8DF",
+  "reviewSha256": "0E52EB542109640B8190B0A44195745B87D9DF24CBBC1D0E4C6E5E70A48C6382",
+  "candidateManifestSha256": "9AB5056DA74DB1CE20776538D2BFF0FB60502F0A26DAFC860F3EBFF18D14E79C",
+  "cleanupTraceSha256": "7F31E3D8A0B838A6BCAE4F2032BA073B8AAD6176756E7B39187F547214D86162",
+  "productionChanged": false,
+  "workSeconds": 390,
+  "cleanupReserveSeconds": 180,
+  "schedulerMarginSeconds": 30,
+  "stepSeconds": 600,
+  "localExecutableValidationRan": false,
+  "interopAccepted": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}

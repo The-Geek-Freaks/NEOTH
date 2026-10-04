@@ -12,6 +12,10 @@ HOSTED_STEP_SECONDS, CLEANUP_RESERVE_SECONDS, START_MARGIN_SECONDS = 600.0, 180.
 WORK_SECONDS = HOSTED_STEP_SECONDS - CLEANUP_RESERVE_SECONDS - START_MARGIN_SECONDS
 
 class WorkDeadline(RuntimeError): pass
+class CliFailure(RuntimeError):
+    def __init__(self, returncode: int, category: str):
+        super().__init__(f"CLI failed rc={returncode} category={category}")
+        self.category = category
 REPLY = "W2328 deterministic loopback reply"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
@@ -63,13 +67,46 @@ def write_config(home: pathlib.Path, provider_url: str, health_port: int, compan
     (home / "credentials.yaml").write_text("provider_key: w2328-loopback-only\n", encoding="utf-8")
     return config
 
-def invoke(argv: list[str], env: dict[str,str], timeout: float) -> bytes:
+def pair_cli_failure_category(stderr: bytes) -> str:
+    # Keep daemon/client diagnostics private: classify fixed public source
+    # strings only, never persist the command stream or an invitation payload.
+    text=stderr.decode("utf-8",errors="replace")
+    if "companion v3 daemon unavailable: stale audit-RPC sidecar" in text: return "daemon_rpc_stale_sidecar"
+    if "companion v3 daemon unavailable: RPC exchange" in text: return "daemon_rpc_exchange_deadline"
+    if "companion v3 daemon unavailable: connect " in text: return "daemon_rpc_transport_unavailable"
+    if "companion v3 daemon unavailable:" in text: return "daemon_rpc_unavailable"
+    if "companion v3 daemon refused request: HTTP 503" in text: return "companion_runtime_unavailable"
+    if "companion v3 daemon refused request: HTTP 422" in text: return "companion_request_refused"
+    if "companion v3 daemon refused request: HTTP 401" in text: return "daemon_rpc_authorization_refused"
+    if "companion v3 daemon refused request: HTTP 404" in text: return "daemon_rpc_route_unavailable"
+    if "companion v3 daemon refused request:" in text: return "daemon_rpc_refused_other"
+    if "companion v3 daemon returned malformed response" in text: return "daemon_rpc_malformed_response"
+    if "companion v3 requires the cluster feature" in text: return "companion_runtime_unavailable"
+    return "unclassified"
+
+def invoke(argv: list[str], env: dict[str,str], timeout: float, pair_mint: bool = False) -> bytes:
     try: item = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
       stderr=subprocess.PIPE, timeout=timeout, check=False)
     except subprocess.TimeoutExpired: raise WorkDeadline("CLI budget exhausted")
     # Pairing stdout is a capability. Never reflect either stream into a CI log.
-    if item.returncode: raise RuntimeError(f"CLI failed rc={item.returncode}")
+    if item.returncode:
+        category=pair_cli_failure_category(item.stderr) if pair_mint else "cli_nonzero"
+        raise CliFailure(item.returncode,category)
     return item.stdout
+
+def stop_serve(serve: subprocess.Popen[bytes], cleanup_deadline: float) -> str:
+    if serve.poll() is not None: return "already_exited"
+    serve.send_signal(signal.SIGTERM)
+    try:
+        serve.wait(timeout=min(120.0,max(0.0,cleanup_deadline-time.monotonic())))
+        return "graceful"
+    except subprocess.TimeoutExpired:
+        serve.kill()
+        remaining=min(5.0,max(0.0,cleanup_deadline-time.monotonic()))
+        if remaining:
+            try: serve.wait(timeout=remaining)
+            except subprocess.TimeoutExpired: return "forced_kill_unreaped"
+        return "forced_kill"
 
 def health(port_number: int, timeout: float) -> bool:
     try:
@@ -154,7 +191,8 @@ def main() -> int:
     process_started=time.monotonic()
     work_deadline=process_started+WORK_SECONDS
     cleanup_deadline=work_deadline+CLEANUP_RESERVE_SECONDS
-    if cleanup_deadline+START_MARGIN_SECONDS != process_started+HOSTED_STEP_SECONDS: raise RuntimeError("invalid work budget")
+    hosted_deadline=process_started+HOSTED_STEP_SECONDS
+    if cleanup_deadline+START_MARGIN_SECONDS != hosted_deadline: raise RuntimeError("invalid work budget")
     ap=argparse.ArgumentParser(); ap.add_argument("--staging",type=pathlib.Path,required=True); ap.add_argument("--receipt",type=pathlib.Path,required=True); ap.add_argument("--allow-external-udp",action="store_true"); ns=ap.parse_args()
     if not ns.allow_external_udp: raise RuntimeError("explicit --allow-external-udp required for Peeroxide public bootstrap/UDP")
     manifest=json.loads((ns.staging/"host-interop-manifest.json").read_text())
@@ -189,8 +227,14 @@ def main() -> int:
                 raise RuntimeError(f"serve readiness failed rc={serve.poll()}")
             bridge=Bridge(library)
             try:
-                pair=lambda scope: invoke([str(binary),"--output","json","companion","pair-mobile","--scope",scope],env,budget(work_deadline,20.0))
-                code,raw=bridge.call("neoth_companion_pair_start",pair_url(pair("status-read")),"w2328-status",timeout=budget(work_deadline))
+                def mint_pair(scope: str, stage: str) -> bytes:
+                    receipt["stage"]=stage
+                    try: return invoke([str(binary),"--output","json","companion","pair-mobile","--scope",scope],env,budget(work_deadline,20.0),pair_mint=True)
+                    except CliFailure as error:
+                        receipt["pair_cli_failure_stage"]=stage
+                        receipt["pair_cli_failure_category"]=error.category
+                        raise
+                code,raw=bridge.call("neoth_companion_pair_start",pair_url(mint_pair("status-read","pair_status_read_mint")),"w2328-status",timeout=budget(work_deadline))
                 status_pair=terminal(raw,"paired") if code==OK else (_ for _ in ()).throw(RuntimeError("status pair rejected"))
                 code,raw=bridge.call("neoth_companion_reconnect_start",json.dumps(status_pair["descriptor"],separators=(",",":")),status_pair["device_id"],timeout=budget(work_deadline))
                 status=terminal(raw,"status") if code==OK else (_ for _ in ()).throw(RuntimeError("status reconnect rejected"))
@@ -204,7 +248,7 @@ def main() -> int:
                 if scope_rejection.get("code") != "invalid_server_frame" or provider.server.request_count != 0:
                     raise RuntimeError("status-scope rejection/provider boundary missing")
                 receipt["steps"]["status_scope_chat_rejected"]={"code":code,"failure_code":"invalid_server_frame","loopback_request_count":0}
-                code,raw=bridge.call("neoth_companion_pair_start",pair_url(pair("chat-send")),"w2328-chat",timeout=budget(work_deadline))
+                code,raw=bridge.call("neoth_companion_pair_start",pair_url(mint_pair("chat-send","pair_chat_send_mint")),"w2328-chat",timeout=budget(work_deadline))
                 chat_pair=terminal(raw,"paired") if code==OK else (_ for _ in ()).throw(RuntimeError("chat pair rejected"))
                 code,raw=bridge.call("neoth_companion_chat_start",json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],"W2328 interop canary",timeout=budget(work_deadline))
                 chat=terminal(raw,"chat") if code==OK else (_ for _ in ()).throw(RuntimeError("chat rejected"))
@@ -232,12 +276,23 @@ def main() -> int:
             receipt["outcome"]="failed"; receipt["failure_category"]="bounded_failure"
             raise
         finally:
-            if serve.poll() is None:
-                serve.send_signal(signal.SIGTERM)
-                try: serve.wait(timeout=15)
-                except subprocess.TimeoutExpired: serve.kill(); serve.wait(timeout=5)
+            active_exception=sys.exc_info()[0] is not None
+            try: shutdown=stop_serve(serve,cleanup_deadline)
+            except Exception: shutdown="shutdown_error"
             receipt["serve_exit_code"]=serve.returncode
+            receipt["serve_shutdown"]=shutdown
+            cleanup_failure = (
+                "forced_kill" if shutdown.startswith("forced_kill") else
+                "shutdown_error" if shutdown == "shutdown_error" else
+                "nonzero_exit" if serve.returncode not in (0,None) else None
+            )
+            if cleanup_failure:
+                receipt["cleanup_failure_category"]=cleanup_failure
+                receipt["outcome"]="failed"
+                if not active_exception: receipt["failure_category"]="serve_cleanup_failure"
             ns.receipt.parent.mkdir(parents=True,exist_ok=True); ns.receipt.write_text(json.dumps(receipt,sort_keys=True,separators=(",",":"))+"\n")
+            if cleanup_failure and not active_exception:
+                raise RuntimeError(f"serve cleanup failed category={cleanup_failure}")
     return 0
 if __name__=="__main__":
     try: raise SystemExit(main())
