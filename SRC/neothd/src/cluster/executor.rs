@@ -126,7 +126,6 @@ impl ClusterTaskJob {
         self.deadline_rejected_notify = Some(notify);
         self
     }
-
 }
 
 fn task_deadline_now_unix(_job: &ClusterTaskJob) -> i64 {
@@ -779,9 +778,8 @@ async fn run_one_task_execution_inner(
     external_permit.mark_transport_may_have_started();
     let execution_context_digest = task_result_context_digest(&job);
     let deadline_timer_wait = execution_deadline_timer_wait(execution_deadline_wait(&job));
-    let deadline_elapsed = tokio::time::sleep(
-        deadline_timer_wait.unwrap_or(TASK_INFERENCE_TIMEOUT),
-    );
+    let deadline_elapsed =
+        tokio::time::sleep(deadline_timer_wait.unwrap_or(TASK_INFERENCE_TIMEOUT));
     let deadline_enabled = deadline_timer_wait.is_some();
     tokio::pin!(deadline_elapsed);
     enum ProviderCallOutcome<T> {
@@ -889,87 +887,87 @@ async fn run_one_task_execution_inner(
         }
         ProviderCallOutcome::Finished(provider_outcome) => {
             let result = match provider_outcome {
-        Ok(Ok(completion)) if completion.identity.is_bound() => {
-            let result = truncate_to_bytes(&completion.text, MAX_TASK_RESULT_BYTES);
-            TaskResultBody {
-                task_id: job.task_id.clone(),
-                status: TaskResultStatus::Completed,
-                result: Some(result),
-                provider_name: Some(completion.identity.provider),
-                requested_max_output_tokens: job.max_output_tokens,
-                effective_output_token_ceiling,
-            }
-        }
-        Ok(Ok(_)) => TaskResultBody {
-            task_id: job.task_id.clone(),
-            status: TaskResultStatus::Failed {
-                error: "provider returned no authenticated response identity".to_string(),
-            },
-            result: None,
-            provider_name: Some(provider_name),
-            requested_max_output_tokens: job.max_output_tokens,
-            effective_output_token_ceiling,
-        },
-        Ok(Err(e)) => TaskResultBody {
-            task_id: job.task_id.clone(),
-            status: TaskResultStatus::Failed {
-                // Redact — a provider error can echo prompt fragments / secrets.
-                error: crate::security::redact::redact_text(&e.to_string()),
-            },
-            result: None,
-            provider_name: Some(provider_name),
-            requested_max_output_tokens: job.max_output_tokens,
-            effective_output_token_ceiling,
-        },
-        Err(_elapsed) => TaskResultBody {
-            task_id: job.task_id.clone(),
-            status: TaskResultStatus::Failed {
-                error: "timeout".to_string(),
-            },
-            result: None,
-            provider_name: Some(provider_name),
-            requested_max_output_tokens: job.max_output_tokens,
-            effective_output_token_ceiling,
-        },
-            };
-    if let Err(error) = external_permit.validate((now_unix_ms() / 1_000) as i64) {
-        tracing::error!(
-            task_id = %job.task_id,
-            %error,
-            "cluster executor: membership effect barrier validation failed"
-        );
-        if let Err(persist_error) = external_permit.persist_indeterminate_if_cancelled(
-            "provider_transport_may_have_started_membership_changed_before_delivery",
-            (now_unix_ms() / 1_000) as i64,
-        ) {
-            tracing::error!(
-                task_id = %job.task_id,
-                %persist_error,
-                "cluster executor: could not persist indeterminate provider outcome"
-            );
-            return TaskExecutionResult::suppressed(TaskResultBody {
-                task_id: job.task_id,
-                status: TaskResultStatus::Failed {
-                    error: "membership_revocation_classification_failed".to_string(),
+                Ok(Ok(completion)) if completion.identity.is_bound() => {
+                    let result = truncate_to_bytes(&completion.text, MAX_TASK_RESULT_BYTES);
+                    TaskResultBody {
+                        task_id: job.task_id.clone(),
+                        status: TaskResultStatus::Completed,
+                        result: Some(result),
+                        provider_name: Some(completion.identity.provider),
+                        requested_max_output_tokens: job.max_output_tokens,
+                        effective_output_token_ceiling,
+                    }
+                }
+                Ok(Ok(_)) => TaskResultBody {
+                    task_id: job.task_id.clone(),
+                    status: TaskResultStatus::Failed {
+                        error: "provider returned no authenticated response identity".to_string(),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                    requested_max_output_tokens: job.max_output_tokens,
+                    effective_output_token_ceiling,
                 },
-                result: None,
-                provider_name: result.provider_name,
-                requested_max_output_tokens: result.requested_max_output_tokens,
-                effective_output_token_ceiling: result.effective_output_token_ceiling,
-            });
-        }
-        return TaskExecutionResult::suppressed(TaskResultBody {
-            task_id: job.task_id,
-            status: TaskResultStatus::Failed {
-                error: "provider_outcome_indeterminate_after_membership_revoke".to_string(),
-            },
-            result: None,
-            provider_name: result.provider_name,
-            requested_max_output_tokens: result.requested_max_output_tokens,
-            effective_output_token_ceiling: result.effective_output_token_ceiling,
-        });
-    }
-    TaskExecutionResult::guarded(result, effect_guard)
+                Ok(Err(e)) => TaskResultBody {
+                    task_id: job.task_id.clone(),
+                    status: TaskResultStatus::Failed {
+                        // Redact — a provider error can echo prompt fragments / secrets.
+                        error: crate::security::redact::redact_text(&e.to_string()),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                    requested_max_output_tokens: job.max_output_tokens,
+                    effective_output_token_ceiling,
+                },
+                Err(_elapsed) => TaskResultBody {
+                    task_id: job.task_id.clone(),
+                    status: TaskResultStatus::Failed {
+                        error: "timeout".to_string(),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                    requested_max_output_tokens: job.max_output_tokens,
+                    effective_output_token_ceiling,
+                },
+            };
+            if let Err(error) = external_permit.validate((now_unix_ms() / 1_000) as i64) {
+                tracing::error!(
+                    task_id = %job.task_id,
+                    %error,
+                    "cluster executor: membership effect barrier validation failed"
+                );
+                if let Err(persist_error) = external_permit.persist_indeterminate_if_cancelled(
+                    "provider_transport_may_have_started_membership_changed_before_delivery",
+                    (now_unix_ms() / 1_000) as i64,
+                ) {
+                    tracing::error!(
+                        task_id = %job.task_id,
+                        %persist_error,
+                        "cluster executor: could not persist indeterminate provider outcome"
+                    );
+                    return TaskExecutionResult::suppressed(TaskResultBody {
+                        task_id: job.task_id,
+                        status: TaskResultStatus::Failed {
+                            error: "membership_revocation_classification_failed".to_string(),
+                        },
+                        result: None,
+                        provider_name: result.provider_name,
+                        requested_max_output_tokens: result.requested_max_output_tokens,
+                        effective_output_token_ceiling: result.effective_output_token_ceiling,
+                    });
+                }
+                return TaskExecutionResult::suppressed(TaskResultBody {
+                    task_id: job.task_id,
+                    status: TaskResultStatus::Failed {
+                        error: "provider_outcome_indeterminate_after_membership_revoke".to_string(),
+                    },
+                    result: None,
+                    provider_name: result.provider_name,
+                    requested_max_output_tokens: result.requested_max_output_tokens,
+                    effective_output_token_ceiling: result.effective_output_token_ceiling,
+                });
+            }
+            TaskExecutionResult::guarded(result, effect_guard)
         }
     }
 }
@@ -1971,21 +1969,17 @@ mod tests {
         let request_id = uuid::Uuid::now_v7().to_string();
         let revoke_binding = controller
             .store()
-            .build_revoke_binding(
-                stable.as_str(),
-                "operator",
-                "test",
-                Some(&request_id),
-            )
+            .build_revoke_binding(stable.as_str(), "operator", "test", Some(&request_id))
             .unwrap()
             .expect("active membership must build an exact revocation binding");
         let revoke_binding_for_task = revoke_binding.clone();
         let authority_path = controller.store().path().to_path_buf();
-        let persistence_failure = crate::cluster::membership::fail_indeterminate_persistence_for_test(
-            authority_path.clone(),
-            request_id.clone(),
-            "provider_transport_may_have_started_local_abort_without_upstream_ack".to_string(),
-        );
+        let persistence_failure =
+            crate::cluster::membership::fail_indeterminate_persistence_for_test(
+                authority_path.clone(),
+                request_id.clone(),
+                "provider_transport_may_have_started_local_abort_without_upstream_ack".to_string(),
+            );
         let revoke = tokio::task::spawn_blocking(move || {
             revoke_controller.revoke_bound(&revoke_binding_for_task, now + 1)
         });
@@ -2010,7 +2004,8 @@ mod tests {
             TaskResultStatus::Failed { ref error } if error == "membership_revocation_classification_failed"
         ));
         assert!(
-            format!("{revoke_error:#}").contains("revocation external effects remain durably unclassified"),
+            format!("{revoke_error:#}")
+                .contains("revocation external effects remain durably unclassified"),
             "the failed classification must fail closed instead of reporting a revoke receipt",
         );
         assert!(
@@ -2027,10 +2022,20 @@ mod tests {
         );
         assert!(pending.external_effects_unclassified);
         assert!(!pending.tombstone_committed);
-        assert!(controller.store().revoke_receipt(&stable).unwrap().is_none());
+        assert!(
+            controller
+                .store()
+                .revoke_receipt(&stable)
+                .unwrap()
+                .is_none()
+        );
         let conn = rusqlite::Connection::open(&authority_path).unwrap();
         let ordinary_outbox_rows: i64 = conn
-            .query_row("SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM task_delegate_result_outbox",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(ordinary_outbox_rows, 0);
         drop(conn);
@@ -2661,12 +2666,9 @@ mod tests {
             .send(job(home.path(), "hold the sole executor worker"))
             .await
             .unwrap();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            first_started.notified(),
-        )
-        .await
-        .expect("fixture blocker did not reach the authorized provider");
+        tokio::time::timeout(std::time::Duration::from_secs(3), first_started.notified())
+            .await
+            .expect("fixture blocker did not reach the authorized provider");
 
         // The second task is live at authenticated ingress and travels through
         // the actual bounded dispatcher.  The first provider task keeps it
@@ -2770,7 +2772,9 @@ mod tests {
         }
         #[async_trait]
         impl Provider for BlockingProvider {
-            fn name(&self) -> &'static str { "execution-deadline" }
+            fn name(&self) -> &'static str {
+                "execution-deadline"
+            }
 
             fn default_model(&self) -> Option<&str> {
                 Some("qwen3")
@@ -2806,17 +2810,23 @@ mod tests {
             (now_unix_ms() / 1_000) as i64 + 5,
         );
         let context_digest = task_result_context_digest(&queued);
-        let reservation_peer = queued.membership_grant.transport_identity().as_str().to_string();
+        let reservation_peer = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
         let reservation_task_id = queued.task_id.clone();
         let reservation_grant = queued.membership_grant.clone();
         let store = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
         assert_eq!(
-            store.reserve_worker_task_execution(
-                &reservation_grant,
-                &queued.task_id,
-                &context_digest,
-                (now_unix_ms() / 1_000) as i64,
-            ).unwrap(),
+            store
+                .reserve_worker_task_execution(
+                    &reservation_grant,
+                    &queued.task_id,
+                    &context_digest,
+                    (now_unix_ms() / 1_000) as i64,
+                )
+                .unwrap(),
             crate::cluster::membership::WorkerTaskExecutionReservation::Reserved,
         );
         let execution = tokio::spawn(run_one_task_execution(
@@ -2824,17 +2834,20 @@ mod tests {
             queued,
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         ));
-        tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            started.notified(),
-        )
-        .await
-        .expect("execution-deadline fixture did not reach the authorized provider");
+        tokio::time::timeout(std::time::Duration::from_secs(3), started.notified())
+            .await
+            .expect("execution-deadline fixture did not reach the authorized provider");
         tokio::time::advance(std::time::Duration::from_secs(6)).await;
         let outcome = execution.await.unwrap();
-        assert!(outcome.suppress_delivery, "deadline ambiguity must suppress ordinary TaskResult offering");
+        assert!(
+            outcome.suppress_delivery,
+            "deadline ambiguity must suppress ordinary TaskResult offering"
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(dropped.load(Ordering::SeqCst), "deadline branch must locally drop the active provider future");
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "deadline branch must locally drop the active provider future"
+        );
         let authority_path = store.path().to_path_buf();
         let conn = rusqlite::Connection::open(&authority_path).unwrap();
         let reservation_state: String = conn.query_row(
@@ -2843,28 +2856,43 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(reservation_state, "indeterminate");
-        let ordinary_outbox_rows: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0),
-        ).unwrap();
+        let ordinary_outbox_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_delegate_result_outbox",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(ordinary_outbox_rows, 0);
         drop(conn);
         drop(store);
         let restarted = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
         assert_eq!(
-            restarted.reserve_worker_task_execution(
-                &reservation_grant,
-                &reservation_task_id,
-                &context_digest,
-                (now_unix_ms() / 1_000) as i64,
-            ).unwrap(),
+            restarted
+                .reserve_worker_task_execution(
+                    &reservation_grant,
+                    &reservation_task_id,
+                    &context_digest,
+                    (now_unix_ms() / 1_000) as i64,
+                )
+                .unwrap(),
             crate::cluster::membership::WorkerTaskExecutionReservation::Existing,
             "restarted authority retains indeterminate custody and cannot reexecute",
         );
-        let restart_outbox_rows: i64 = rusqlite::Connection::open(&authority_path).unwrap().query_row(
-            "SELECT COUNT(*) FROM task_delegate_result_outbox", [], |row| row.get(0),
-        ).unwrap();
+        let restart_outbox_rows: i64 = rusqlite::Connection::open(&authority_path)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM task_delegate_result_outbox",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(restart_outbox_rows, 0);
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "restart duplicate admission cannot invoke a second provider");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "restart duplicate admission cannot invoke a second provider"
+        );
     }
 
     #[test]

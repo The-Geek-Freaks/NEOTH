@@ -4000,7 +4000,10 @@ impl MembershipStore {
                 params![grant.transport_identity().as_str(), task_id, context_digest],
                 |row| row.get(0),
             )?;
-            anyhow::ensure!(state == "indeterminate", "worker task reservation cannot be classified indeterminate");
+            anyhow::ensure!(
+                state == "indeterminate",
+                "worker task reservation cannot be classified indeterminate"
+            );
         }
         tx.commit()?;
         Ok(())

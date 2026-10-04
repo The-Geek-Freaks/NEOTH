@@ -57,5 +57,26 @@
   "finalCombinedFixtureReviewSha256": "FC46A6F1E63C412F28672FF1B0A31BC3089786F5BD454DE81CDBE4979818D555",
   "finalCombinedFixtureManifestSha256": "6049485E73BFCCC91D1E3A59948ADFE84C48000D2657E6C831494CAB41787798",
   "predecessorPartialEvidenceSha256": "0FAA0B47C456F8C81A5F10DD2EE8A0FAC351276A4E5EED575D18F786D75F8282",
-  "fixturePrerequisiteRepair": "Both queue-expiry and new active-deadline fixtures supply qwen3 and bound initial provider-start wait to3 seconds; production cancellation/deadline assertions retained."
+  "fixturePrerequisiteRepair": "Both queue-expiry and new active-deadline fixtures supply qwen3 and bound initial provider-start wait to3 seconds; production cancellation/deadline assertions retained.",
+  "hostedFormat": {
+    "run": 37193828222,
+    "producer": "73c8eb86853624bf8655672715e09c8b195d49f1",
+    "artifact": 11299459331,
+    "zipSha256": "51864BD825D4E55506392F6DF499ADE1A62B85DF1112E4EB67014FBBB771C4E8",
+    "exactThreeEntries": true,
+    "internalDigestsVerified": true,
+    "files": [
+      {
+        "path": "SRC/neothd/src/cluster/executor.rs",
+        "beforeBlob": "79663cf35ea8739a1868e6f3b559db293e0af138",
+        "afterBlob": "3d2a02fd3dffd46aae33a0a831528d97f328e10e"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/membership.rs",
+        "beforeBlob": "a619c385748ee3e5f573abe7ff81b55641523b2c",
+        "afterBlob": "512fbe05b62bca6f84c5451001489b03ad210482"
+      }
+    ],
+    "localFormatterRan": false
+  }
 }
