@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T09:58:59.4298044Z",
-  "validationStatus": "reviewed-source-hosted503-pending",
+  "capturedUtc": "2026-10-04T10:52:58.8839509Z",
+  "validationStatus": "wave2316-static-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3317,6 +3317,11 @@
       "sha256": "3E192A692F9535572138E71996FDF20984A6EF142A65839A0BFDDD4423D72701"
     },
     {
+      "path": "docs/verification/gold-wave2316-focused503-repairs.json",
+      "bytes": 2123,
+      "sha256": "2132A6E328B18062ACB59731C07E66839B37255480A0AEB85CDE93B93590C049"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4458,8 +4463,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2359848,
-      "sha256": "8A6D2D1DB61F1B575700B9E47E96C7C66414077E412E8F7F0BFF3DD134DD0281"
+      "bytes": 2361416,
+      "sha256": "44295567711D195AA4E57E2BB8F3A80899D7A5C738107DAA1372273948546493"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5678,8 +5683,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 90872,
-      "sha256": "A2FD2FD5CA6EAEC1B76E61B24B0BA81C8191E429EFFBE6DE348935796BFAA904"
+      "bytes": 91740,
+      "sha256": "F802CC9E833A3F89E3B6D406F61A3AC7CB78A94C44A578A45C049D54B1AA4FC5"
     },
     {
       "path": "SRC/neothd/src/cli/privacy.rs",
@@ -5863,8 +5868,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 116339,
-      "sha256": "7F0E9761452958C7735279935613A7A0B22DEEBAC7F1756DC2668B7B7FD89417"
+      "bytes": 116575,
+      "sha256": "3D96EFF28C0281379010FF817C14CF707EC19089381A173A702CB7944FFFBB03"
     },
     {
       "path": "SRC/neothd/src/cluster/gossip_wire.rs",

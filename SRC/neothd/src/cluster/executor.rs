@@ -2075,13 +2075,11 @@ mod tests {
             recovered.indeterminate_reason.as_deref(),
             Some("pending_revocation_recovered_without_process_effect_classification")
         );
-        assert!(
-            controller
-                .revocation_status(&request_id)
-                .unwrap()
-                .expect("recovered intent remains auditable")
-                .tombstone_committed
-        );
+        let recovered_status = controller
+            .revocation_status(&request_id)
+            .unwrap()
+            .expect("recovered intent remains auditable");
+        assert!(recovered_status.tombstone_committed);
         let recovered_admission = reopened
             .reserve_worker_task_execution(
                 &reservation_grant,
@@ -2090,9 +2088,13 @@ mod tests {
                 (now_unix_ms() / 1_000) as i64,
             )
             .expect_err("the recovered tombstone must also deny the stale grant");
+        let recovered_admission = format!("{recovered_admission:#}");
         assert!(
-            format!("{recovered_admission:#}").contains("membership grant is no longer active")
-                || format!("{recovered_admission:#}").contains("membership grant is revoked"),
+            recovered_admission.contains("membership grant binding no longer exists"),
+            "recovered tombstone must reject the old grant through its retired binding; \
+             intent_state={:?}, tombstone_committed={}, admission_error={recovered_admission}",
+            recovered_status.state,
+            recovered_status.tombstone_committed,
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }

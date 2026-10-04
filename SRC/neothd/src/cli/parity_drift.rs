@@ -1218,6 +1218,24 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         "the GUI has no operation-bound private result readback",
     ),
     #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-status",
+        "cluster",
+        "cluster task-delegate outbound-status",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate status",
+        "the GUI has no operation-bound read-only status projection",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-mark-indeterminate",
+        "cluster",
+        "cluster task-delegate outbound-mark-indeterminate",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate reconciliation",
+        "the GUI has no explicit authenticated reconciliation action or idempotent state readback",
+    ),
+    #[cfg(feature = "cluster")]
     OperationParity {
         id: "buddy.cluster.status",
         capability: "buddy",
@@ -2366,6 +2384,8 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "cluster.task-delegate.outbound-reset",
         "cluster.task-delegate.outbound-set",
         "cluster.task-delegate.outbound-show",
+        "cluster.task-delegate.outbound-status",
+        "cluster.task-delegate.outbound-mark-indeterminate",
         "cluster.task-delegate.scope-reset",
         "cluster.task-delegate.scope-set",
         "cluster.task-delegate.scope-show",

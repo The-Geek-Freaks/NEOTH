@@ -1,0 +1,43 @@
+{
+  "schema": "neoth.gold.wave2316.focused503-repairs.v1",
+  "base": "53ea4ed07ff58ab12fd7e6a1b0ff0e3f365a3e1e",
+  "priorRun": 37194300728,
+  "priorArtifact": 11301007139,
+  "priorZipSha256": "5FED5011F4910FD61B672446FE8EB4A3B2B1797DA4ABD855928370DB955E6140",
+  "partialEvidenceSha256": "BC358C28AE51766D720C1624CA47C2570399EC125736DEF0B84002D101A7E199",
+  "priorCore": {
+    "skipped": 0,
+    "failed": 2,
+    "passed": 501,
+    "wholeRunAccepted": false,
+    "executed": 503,
+    "started": 503,
+    "wholeRunConclusion": "failure"
+  },
+  "repairs": [
+    {
+      "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "sourceSha256": "F802CC9E833A3F89E3B6D406F61A3AC7CB78A94C44A578A45C049D54B1AA4FC5",
+      "change": "Register the two canonical cluster outbound-status and outbound-mark-indeterminate CLI leaves as Unwired; preserve live leaf comparison and exact negative GUI inventory.",
+      "reviewSha256": "18A0F66CB02077AD9B570EFF61C9A5848E3519D71E1AB14687EB68A8573DC997",
+      "case": 409
+    },
+    {
+      "test": "cluster::executor::tests::revoke_persistence_failure_releases_lease_and_preserves_reservation",
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "sourceSha256": "3D96EFF28C0281379010FF817C14CF707EC19089381A173A702CB7944FFFBB03",
+      "change": "Assert the exact stale transport binding rejection after recovered revocation advances member auth_epoch; retain tombstone, pending denial, reservation, one-call and lease-release assertions with improved diagnostics.",
+      "reviewSha256": "9AD73E1B66CF314BBFB22D9F68A1655FCA946FE43A380FC81EF414397FFBAD8A",
+      "case": 503
+    }
+  ],
+  "focusedRegistrationCount": 503,
+  "portableNativeRegistrations": 2723,
+  "liveAudioRegistrations": 52,
+  "productionExecutionBehaviorChanged": false,
+  "localExecutableValidationRan": false,
+  "hosted": "Prior producer core 501/503 passed; replacement producer pending hosted verification",
+  "releaseReady": false,
+  "priorFinalStatusSha256": "046BC7FFE2C9BD7F3E2B92499DE7E7AC186ED04C739F96C60C07F2EF623E95C9"
+}
