@@ -1,0 +1,83 @@
+{
+  "schema": "neoth.wave2365.android-r8-annotations.v1",
+  "base": "bb0ee692328d5a79a4d3e83ee49fa5ef69ac6640",
+  "status": "reviewed_source_hosted_pending",
+  "priorNative": {
+    "run": 37235482589,
+    "producer": "bb0ee692328d5a79a4d3e83ee49fa5ef69ac6640",
+    "conclusion": "failure",
+    "linuxBridgePassed": 14,
+    "macosBridgePassed": 14,
+    "flutterAnalysis": "No issues found",
+    "flutterTestsPassed": 24,
+    "failureTask": ":app:minifyReleaseWithR8",
+    "missingClasses": [
+      "com.google.errorprone.annotations.CanIgnoreReturnValue",
+      "com.google.errorprone.annotations.CheckReturnValue",
+      "com.google.errorprone.annotations.Immutable",
+      "com.google.errorprone.annotations.RestrictedApi",
+      "javax.annotation.Nullable",
+      "javax.annotation.concurrent.GuardedBy"
+    ],
+    "partialChecksSha256": "6F6FA9EA937547ACAE12496E536BC3BA7E0B8933DE304F74E19CCFFF8E31F9D0"
+  },
+  "repair": {
+    "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
+    "sha256": "8A95FA02F7DD34A530754022C9495F8E7B4BDC6D3FDE01596464D123E47DC35C",
+    "dependencies": [
+      "com.google.errorprone:error_prone_annotations:2.3.2",
+      "com.google.code.findbugs:jsr305:3.0.2"
+    ],
+    "authoredGradleOverlayRejected": true,
+    "r8Enabled": true,
+    "dontwarnAdded": false,
+    "iosStagingUnchanged": true,
+    "reviewSha256": "F4D5D171D058B70A6057BA1313E4FD6D295E9E04CACD77DFFF00E71189F6DE7D",
+    "primarySources": [
+      {
+        "url": "https://repo1.maven.org/maven2/com/google/crypto/tink/tink-android/1.8.0/tink-android-1.8.0.pom",
+        "read": "artifact/version and Gson-only dependency block"
+      },
+      {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/security/security-crypto/1.1.0/security-crypto-1.1.0.pom",
+        "read": "Tink Android 1.8.0 dependency"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/google/error-prone/v2.3.2/annotations/src/main/java/com/google/errorprone/annotations/CanIgnoreReturnValue.java",
+        "read": "class declaration"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/google/error-prone/v2.3.2/annotations/src/main/java/com/google/errorprone/annotations/CheckReturnValue.java",
+        "read": "class declaration"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/google/error-prone/v2.3.2/annotations/src/main/java/com/google/errorprone/annotations/Immutable.java",
+        "read": "class declaration"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/google/error-prone/v2.3.2/annotations/src/main/java/com/google/errorprone/annotations/RestrictedApi.java",
+        "read": "class declaration"
+      },
+      {
+        "url": "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom",
+        "read": "javax.annotation and javax.annotation.concurrent exports"
+      }
+    ]
+  },
+  "interopDiagnostic": {
+    "run": 37236484723,
+    "producer": "bb0ee692328d5a79a4d3e83ee49fa5ef69ac6640",
+    "conclusion": "failure",
+    "bridgeInitialLookup": "lookup_none",
+    "firstPairDeadlineSeconds": 140,
+    "rootCause": "Under investigation; no transport behavior change in this batch."
+  },
+  "portableRegistrations": 2750,
+  "focusedCases": 528,
+  "localExecutableValidationRan": false,
+  "apkAccepted": false,
+  "iosAppAccepted": false,
+  "interopAccepted": false,
+  "physicalDeviceAccepted": false,
+  "signedReleaseAccepted": false
+}

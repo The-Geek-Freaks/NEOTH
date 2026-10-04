@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T21:12:31.5587498Z",
-  "validationStatus": "w2362-reviewed-source-hosted-pending",
+  "capturedUtc": "2026-10-04T21:49:50.2456079Z",
+  "validationStatus": "w2365-reviewed-source-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
-      "bytes": 10971,
-      "sha256": "43546DDAF27519DE82047D483E63664CD3C014B731544A8B9E26C1054A29D77D"
+      "bytes": 11959,
+      "sha256": "8A95FA02F7DD34A530754022C9495F8E7B4BDC6D3FDE01596464D123E47DC35C"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -3597,6 +3597,11 @@
       "sha256": "5670AA1BE35C5C2F31AB704808AC44BCA2852552E42BCFB9ECEDDD960F5249F9"
     },
     {
+      "path": "docs/verification/gold-wave2365-android-r8-annotations.json",
+      "bytes": 3443,
+      "sha256": "F54FC4016491BB691D575D7751DA23819A1B13BA32ED7BE4C17C9F4EF433CB68"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4738,8 +4743,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2390248,
-      "sha256": "A5D66C8BDF5ECC7D7A92A6D6D4E0A1459E71ACB8D1DE1F73374CDA2A43F88363"
+      "bytes": 2391813,
+      "sha256": "B8248703C2B90505C2CFAD6ECB1195C945B3674B35EC0A31EDD6A945ABD8752F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
