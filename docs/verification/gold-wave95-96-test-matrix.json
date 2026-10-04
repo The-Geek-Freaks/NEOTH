@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_core_compilation_and_reference_verified_behavior_pending",
+  "status": "mobile_test_fixtures_repaired_targeted_hosted_probe_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 383923,
-    "sha256": "9557A7EC5740BC54CBBC1AB9A2BEDC7E7E0B48C6F33CC4C189DC230C4E5EDDF8"
+    "bytes": 384106,
+    "sha256": "835F05316D89AC9E52DCB34C3EB3E663A0445D943261F8347EAFB5B694C77CD3"
   },
-  "sourceInputs": 2100,
+  "sourceInputs": 2101,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1758,13 +1758,13 @@
     {
       "test": "daemon::chat_runtime::tests::admitted_plain_daemon_turn_preserves_one_nonzero_wal_session",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2",
+      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::chat_runtime::tests::generic_gui_lifecycle_remains_unattributed_without_an_admitted_turn",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2",
+      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
       "junitClass": "neoth"
     },
     {
@@ -2802,7 +2802,7 @@
     {
       "test": "daemon::chat_runtime::tests::w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2",
+      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
       "junitClass": "neoth"
     },
     {
@@ -8076,7 +8076,7 @@
     {
       "test": "daemon::chat_runtime::tests::w703_admitted_gui_session_scopes_real_transcript_and_isolates_incognito",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2",
+      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
       "junitClass": "neoth"
     },
     {
@@ -16411,31 +16411,31 @@
     {
       "test": "daemon::companion_authority::real_store_regression::persistent_marker_allows_live_revoke_drain_but_reload_refuses_orphan",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::tests::decoded_status_frame_retains_prewrite_marker_until_confirmed",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::tests::revoke_drain_waits_for_owned_lease_release",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::tests::persisted_delivery_marker_refuses_serialized_same_store_reconstruction",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::tests::terminal_receipt_must_be_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
@@ -16489,19 +16489,19 @@
     {
       "test": "daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::real_store_regression::pending_revoke_denies_new_chat_before_waiting_for_its_owned_lease",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_authority::tests::chat_terminal_owner_blocks_revoke_drain_until_carrier_terminal",
       "sourcePath": "SRC/neothd/src/daemon/companion_authority.rs",
-      "sourceSha256": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED",
+      "sourceSha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
       "junitClass": "neoth"
     },
     {
@@ -16513,7 +16513,7 @@
     {
       "test": "daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2",
+      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
       "junitClass": "neoth"
     }
   ],
@@ -17233,7 +17233,7 @@
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
       "bytes": 69088,
-      "sha256": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2"
+      "sha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -74300,6 +74300,44 @@
       }
     ],
     "note": "Hosted37207856207 passes typecheck+actualCLI build; digest-bound reference imported. No behavior acceptance yet.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2334MobileFixtures": {
+    "base": "0bcd55769155cf854f1c7ab33b47cce2f8339440",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 6726,
+        "sha256": "816F2221C91F8D26860691E58450ECBEEB6966047F272E74C38920BF633B11EA",
+        "blob": "0a4050b60a9d3858cd95db4965461cb967f15b9b"
+      },
+      {
+        "path": "docs/verification/gold-wave2334-mobile-fixtures.json",
+        "bytes": 2645,
+        "sha256": "C39E80926FA29E77D31B3873A3949142CB4F29E1FC4252E322A2BA7CB198DCD6",
+        "blob": "97936ed76ccf248f2a62e7ee772cbb1f37a74a46"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2376912,
+        "sha256": "9D0E345841683BD704A18AB0EBF4D0F4058BEC756E2D537A65F520723FB45629",
+        "blob": "b2fcc76c9aea3335389611300c5c2cd24a7f5da4"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+        "bytes": 69088,
+        "sha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+        "blob": "af46b54bff3ea69871af598b8ed61af6a1bf8b7b"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_authority.rs",
+        "bytes": 49918,
+        "sha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
+        "blob": "17180d411ac78279e3ffeb2fc7ff598d33c05b24"
+      }
+    ],
+    "note": "526of528passed; two rejected fixture identities corrected without weakening production checks; existing manual lane gains optional exact two-case diagnostic.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

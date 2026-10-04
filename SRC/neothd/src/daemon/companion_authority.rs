@@ -1142,6 +1142,10 @@ mod real_store_regression {
                 .is_err()
         );
 
+        // A second enrolled device must use its own signing identity. Reusing
+        // the status fixture key would correctly trip the production duplicate
+        // device-key guard before this test reaches its chat-scope assertions.
+        let chat_key = SigningKey::from_bytes(&[12; 32]);
         let chat = EnrollmentProof::signed(
             [8; 32],
             [9; 32],
@@ -1149,7 +1153,7 @@ mod real_store_regression {
             [11; 32],
             CompanionScope::ChatSend,
             "chat".into(),
-            &signing,
+            &chat_key,
         )
         .unwrap();
         let pending = authority
@@ -1162,7 +1166,7 @@ mod real_store_regression {
             .begin_chat_reconnect_for_observed_noise([10; 32], 1, "boot".into(), [12; 32], 3)
             .unwrap();
         let request =
-            CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "one turn".into(), &signing)
+            CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "one turn".into(), &chat_key)
                 .unwrap();
         let lease = authority.authorize_chat(&request, 4).unwrap();
         assert!(authority.authorize_chat(&request, 4).is_err());

@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.wave2334.mobile-fixtures.v1",
+  "base": "0bcd55769155cf854f1c7ab33b47cce2f8339440",
+  "status": "reviewed_test_fixture_repair_targeted_hosted_probe_pending",
+  "failedRun": 37209205820,
+  "partialEvidenceSha256": "09BED96C825DE879AE1A2E733E7DD1E637B38E53A0C603A8E451CE101CCDED2F",
+  "focused": {
+    "executed": 528,
+    "skipped": 0,
+    "passed": 526,
+    "started": 528,
+    "failed": 2
+  },
+  "diagnoses": [
+    "Case524 reused the same device signing key for status and chat devices; production correctly rejects duplicate enrollment",
+    "Case528 supplied observed transport peer [3;32] but its signed proof binds [4;32]; production correctly rejects mismatched carrier"
+  ],
+  "scope": "Two test fixtures only; no production guard or assertion changed",
+  "reviewSha256": "F5D1AAD7B723C5923FCA34942B7D33C016A4D35A96EE659438DFBF75A2928822",
+  "reviewedFiles": [
+    {
+      "candidate": "work/gold-20260906/wave2334-mobile-fixtures/authority/candidate/companion_authority.rs",
+      "after": "544FEA374CB2EA0EA7217769BEC0B38171AC0F5C826F55F63438FBF05A572F8A",
+      "path": "SRC/neothd/src/daemon/companion_authority.rs",
+      "before": "D67148D555A2CDC81F4617E6D4D933CB58274A66E43422CD00E27E36F44E6AED"
+    },
+    {
+      "candidate": "work/gold-20260906/wave2334-mobile-fixtures/chat-runtime/candidate/SRC/neothd/src/daemon/chat_runtime.rs",
+      "after": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "before": "D1D984197AB3A502291149DAA753BEB4D5E904AF1945B309D72C557891B2B8C2"
+    },
+    {
+      "candidate": "work/gold-20260906/wave2334-mobile-fixtures/workflow/candidate/.github/workflows/cli-reference.yml",
+      "after": "816F2221C91F8D26860691E58450ECBEEB6966047F272E74C38920BF633B11EA",
+      "path": ".github/workflows/cli-reference.yml",
+      "before": "0B971561DCB33D02FC5943F1AD3F37CFE22FFA0BCC8229704D9D7E395695403B"
+    }
+  ],
+  "rootNormalization": {
+    "path": "SRC/neothd/src/daemon/companion_authority.rs",
+    "sha256": "D7C4E2477B39D0860B11E14C312A86713EC413E5D5EFDF9954C1D61F8C4432CE",
+    "delta": "Rename only chat_signing to chat_key at three test-local references, keeping the existing formatted call within 100 columns"
+  },
+  "hostedProbe": "Existing manual cli-reference.yml gains optional default-false companion_regressions: two exact tests after real CLI build, zero/ignored selections rejected. Full528 and native gates unchanged.",
+  "localExecutableValidationRan": false,
+  "acceptance": "Targeted probe and fresh complete validation required; partial source proofs are not full acceptance"
+}

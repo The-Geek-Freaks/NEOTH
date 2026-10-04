@@ -1061,7 +1061,7 @@ mod tests {
         )
         .expect("sign real chat enrollment");
         let enrolled = authority
-            .begin_enrollment(enrollment, [3; 32], descriptor, 1)
+            .begin_enrollment(enrollment, [4; 32], descriptor, 1)
             .expect("persist pending chat enrollment");
         authority
             .reconcile_audit(enrolled.mutation_id, AuditObservation::Observed)

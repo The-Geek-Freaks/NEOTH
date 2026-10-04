@@ -3,6 +3,10 @@ name: Generate CLI reference
 on:
   workflow_dispatch:
     inputs:
+      companion_regressions:
+        description: 'Also run the two real-authority mobile scope and revoke regressions'
+        type: boolean
+        default: false
       slim_clippy:
         description: 'Also verify the exact slim-core production Clippy contract'
         type: boolean
@@ -28,7 +32,7 @@ jobs:
   generate:
     name: Export exact-source CLI reference
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || inputs.companion_regressions && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -89,6 +93,32 @@ jobs:
         timeout-minutes: 25
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked
+
+      # Targeted diagnosis before repeating all 528 focus cases. These are real
+      # authority and WAL regressions; this optional probe never replaces the
+      # full focused or native acceptance lanes. Reject zero-test selections.
+      - name: Run exact mobile authority and revoke regressions
+        if: ${{ inputs.companion_regressions }}
+        timeout-minutes: 20
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+          RUST_BACKTRACE: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-companion-regressions"
+          mkdir -p "$proof_dir"
+          ordinal=0
+          for identity in \
+            daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use \
+            daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing
+          do
+            ordinal=$((ordinal + 1))
+            cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
+          done
+          test "$ordinal" -eq 2
 
       # Generate without changing the committed snapshot or bypassing its
       # equality test. A maintainer imports only the SHA/digest-bound output.
