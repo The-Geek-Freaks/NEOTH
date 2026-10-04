@@ -1,0 +1,46 @@
+{
+  "schema": "neoth.wave2353-2354.mobile-rpc-wal-release.v1",
+  "base": "746f1c5ce2d609cd11565d2a7dcdbd3da82d887f",
+  "status": "static_repairs_hosted_pending",
+  "failedRun": 37228033416,
+  "failureEvidenceSha256": "57BFC8AF6EC47D0493CB37EE8ADEF8426E1A1A32370EC6FE1249452173DCBAF0",
+  "priorBoundary": "Actual CLI and bridge built; consent and health readiness passed; first status mint failed as daemon_rpc_malformed_response; process required forced kill after120-second graceful wait.",
+  "repairs": [
+    "Decode the validated HTTP response body for all CompanionV3 RPC replies, preserving status and framing refusal.",
+    "Consume the CompanionRuntime Arc after joined listener drain, releasing its direct and chat-runtime WAL senders before the final writer join."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "sha256": "1D396ABCF1186E41CE1E8E0CC5CF398B88192935A4808D1C205FD4147FF647D4"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sha256": "37C416BEE5BF7F9AAF36A91E4E6D8042773DDBDDC42BD5E79EC38ECF170EAEE5"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "BD261EB2B176A30550CF2DD5365F52013D8E8C863F84BB8168CF66B530B619E5"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "sha256": "4E5496B872950FD9CFF5AEAC5EBFBA9A0847A66C719F4127C4272DDDFD82F0BF"
+    }
+  ],
+  "pairReviewSha256": "6C995E19B07497D97F1F19D6296D687BE8BF6657B82CC8CC37BE86C803678818",
+  "shutdownTraceSha256": "97ADC41D73DA3CA554851AD384ECB545223184E89B69ADB5137874556D27CF2C",
+  "newPortableRegistration": "daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body",
+  "hostedValidation": "Three exact RPC regressions followed by actual isolated CLI/bridge pair, status, scope denial, chat, revoke and graceful exit. Unrun on this repair producer.",
+  "scopeLimits": [
+    "Existing runtime work/cleanup budget remains390+180+30 seconds.",
+    "No speculative Peeroxide actor abort or timeout changes.",
+    "528-case acceptance remains bound to209855494db16fc99a504ee430bc8d0287754b77."
+  ],
+  "localExecutableValidationRan": false,
+  "interopAccepted": false,
+  "deviceAccepted": false,
+  "releaseReady": false,
+  "shutdownReviewSha256": "8E26BF56C130DECA151579D2C36B72487B8CFA29EEFB92647A8F5CDC848BA43F",
+  "categoricalDiagnostics": "Continuously discard merged daemon output in bounded chunks; retain only fixed shutdown checkpoint booleans and collector completion/error state. False means not observed, not proof of absence.",
+  "diagnosticReviewSha256": "B9AFD713D8FD40FB12DE47CC24FBA8E59AA9F72F4FC536855006FB79E83428B8"
+}

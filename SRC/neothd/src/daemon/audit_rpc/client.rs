@@ -1108,10 +1108,23 @@ async fn companion_v3_post<T: serde::de::DeserializeOwned>(
             AuditRpcClientError::Unavailable(detail) => CompanionV3ClientError::Unavailable(detail),
             AuditRpcClientError::Refused(status) => CompanionV3ClientError::Refused(status),
         })?;
+    companion_v3_response_json(status, &response)
+}
+
+fn companion_v3_response_json<T: serde::de::DeserializeOwned>(
+    status: u16,
+    response: &str,
+) -> Result<T, CompanionV3ClientError> {
     if status != 200 {
         return Err(CompanionV3ClientError::Refused(status));
     }
-    serde_json::from_str(&response).map_err(|_| CompanionV3ClientError::Malformed)
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        // `parse_rpc_response` proves this boundary before returning `response`.
+        // Keep the client fail-closed if that invariant is ever changed.
+        .ok_or(CompanionV3ClientError::Malformed)?;
+    serde_json::from_str(body).map_err(|_| CompanionV3ClientError::Malformed)
 }
 
 async fn exchange_rpc(
@@ -1539,6 +1552,29 @@ mod tests {
         ] {
             assert!(parse_rpc_response(malformed).is_err());
         }
+    }
+
+    #[test]
+    fn companion_v3_response_decodes_the_http_enveloped_invite_body() {
+        let body = r#"{"schema_version":3,"pair_url":"neoth-companion://fixture","expires_in_secs":60,"requested_scope":"status_read"}"#;
+        let (status, response) =
+            parse_rpc_response(health_response(200, body)).expect("parse enveloped fixture");
+        let invite: crate::daemon::companion_runtime::CompanionV3Invite =
+            companion_v3_response_json(status, &response).expect("decode enveloped invite body");
+        assert_eq!(invite.schema_version, 3);
+        assert_eq!(
+            invite.requested_scope,
+            crate::daemon::companion_protocol::CompanionScope::StatusRead
+        );
+
+        assert!(matches!(
+            companion_v3_response_json::<serde_json::Value>(422, &response),
+            Err(CompanionV3ClientError::Refused(422))
+        ));
+        assert!(matches!(
+            companion_v3_response_json::<serde_json::Value>(200, "{}"),
+            Err(CompanionV3ClientError::Malformed)
+        ));
     }
 
     #[test]

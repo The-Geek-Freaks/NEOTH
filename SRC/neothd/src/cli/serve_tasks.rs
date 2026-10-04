@@ -9290,11 +9290,14 @@ pub(crate) async fn shutdown_background_tasks(
     // its accept loop and in-flight JoinSet cannot outlive the authority
     // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
-    if let Some(runtime) = companion_v3_runtime.as_ref() {
+    if let Some(runtime) = companion_v3_runtime {
         runtime
             .shutdown_and_drain()
             .await
             .context("companion v3 listener drain before WAL shutdown")?;
+        // Consume the final Arc after all owned pair/device tasks have joined.
+        // CompanionRuntime retains a WalWriterHandle, so retaining it through
+        // the later writer join would keep the writer channel open.
     }
     crate::cli::serve_tasks::join_connector_control_rpc(connector_control_rpc_task).await;
     crate::cli::serve_tasks::abort_optional(local_models_refresh_task).await;

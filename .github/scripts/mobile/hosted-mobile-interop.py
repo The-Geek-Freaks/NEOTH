@@ -21,6 +21,22 @@ SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
  "neoth_companion_operation_free","neoth_companion_bridge_free")
+SHUTDOWN_MARKERS = (
+    ("background_entry", b"shutdown checkpoint: background entry"),
+    ("generation_effects_retired", b"shutdown checkpoint: generation effects retired"),
+    ("channels_dispatch_drained", b"shutdown checkpoint: channels and dispatch drained"),
+    ("updater_shutdown_entry", b"shutdown checkpoint: updater shutdown entry"),
+    ("cron_fleet_drained", b"shutdown checkpoint: cron fleet drained"),
+    ("cluster_drained", b"shutdown checkpoint: cluster drained"),
+    ("outboxes_drained", b"shutdown checkpoint: outboxes drained"),
+    ("core_authority_drained", b"shutdown checkpoint: core authority drained"),
+    ("transports_drained", b"shutdown checkpoint: transports drained"),
+    ("final_pre_wal_tasks_drained", b"shutdown checkpoint: final pre-WAL tasks drained"),
+    ("wal_other_senders_present", b"shutdown checkpoint: WAL other senders present"),
+    ("wal_other_senders_absent", b"shutdown checkpoint: WAL other senders absent"),
+    ("wal_join_entry", b"shutdown checkpoint: WAL join entry"),
+    ("wal_drained", b"WAL writer task drained cleanly"),
+)
 
 def sha(path: pathlib.Path) -> str: return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 def brief(value: str) -> str: return value.replace("\n", " ").replace("\r", " ")[:160]
@@ -30,6 +46,45 @@ def budget(deadline: float, cap: float = DEADLINE) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0: raise WorkDeadline("work deadline exhausted")
     return min(cap, remaining)
+
+class ShutdownMarkerCollector:
+    """Discard a merged daemon stream while retaining only fixed marker booleans."""
+    def __init__(self, stream: Any) -> None:
+        self.stream, self.lock = stream, threading.Lock()
+        self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
+        self.reader_error = False
+        self.overlap = max(len(marker) for _, marker in SHUTDOWN_MARKERS) - 1
+        self.thread = threading.Thread(target=self._drain, daemon=True)
+        self.thread.start()
+
+    def _drain(self) -> None:
+        tail = b""
+        try:
+            while chunk := self.stream.read(4096):
+                window = tail + chunk
+                with self.lock:
+                    for name, marker in SHUTDOWN_MARKERS:
+                        if marker in window:
+                            self.observed[name] = True
+                tail = window[-self.overlap:]
+        except Exception:
+            with self.lock:
+                self.reader_error = True
+        finally:
+            tail = b""
+            try:
+                self.stream.close()
+            except OSError:
+                pass
+
+    def snapshot(self, remaining_cleanup: float) -> dict[str, Any]:
+        self.thread.join(timeout=min(1.0, max(0.0, remaining_cleanup)))
+        with self.lock:
+            return {
+                "markers": dict(self.observed),
+                "reader_closed": not self.thread.is_alive(),
+                "reader_error": self.reader_error,
+            }
 
 class Provider(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
@@ -213,10 +268,13 @@ def main() -> int:
         # The running daemon still rechecks that durable grant before dispatch.
         invoke([str(binary),"--output","json","consent","grant","openai_compat"],env,budget(work_deadline,20.0))
         receipt["steps"]["loopback_consent_granted"]={"granted":True}
-        # Do not PIPE an unconsumed daemon stream: it can deadlock, and daemon
-        # output may contain configuration diagnostics. Receipt carries only rc.
-        serve=subprocess.Popen([str(binary),"serve","--config",str(config)],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Drain the merged daemon stream continuously; retain only fixed
+        # shutdown markers and never raw output.
+        serve=subprocess.Popen([str(binary),"serve","--config",str(config)],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,bufsize=0)
+        shutdown_markers=None
         try:
+            assert serve.stdout is not None
+            shutdown_markers=ShutdownMarkerCollector(serve.stdout)
             readiness_deadline=min(time.monotonic()+30,work_deadline)
             while time.monotonic()<readiness_deadline and serve.poll() is None:
                 if health(health_port,budget(work_deadline,2.0)): break
@@ -281,6 +339,11 @@ def main() -> int:
             except Exception: shutdown="shutdown_error"
             receipt["serve_exit_code"]=serve.returncode
             receipt["serve_shutdown"]=shutdown
+            if shutdown_markers is not None:
+                receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
+            else:
+                if serve.stdout is not None: serve.stdout.close()
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else
