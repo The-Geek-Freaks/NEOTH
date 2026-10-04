@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T16:43:44.9469815Z",
-  "validationStatus": "mobile_test_fixtures_repaired_targeted_hosted_probe_pending",
+  "capturedUtc": "2026-10-04T17:10:06.1285777Z",
+  "validationStatus": "mobile_stop_waiting_integrated_hosted_flutter_validation_pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -333,13 +333,13 @@
     },
     {
       "path": "apps/neoth_companion/lib/companion_controller.dart",
-      "bytes": 6594,
-      "sha256": "DBBA3FE52E448FBBF923E8E39B1BD3F962246B17B8C1694DDDBE9B07D6A81767"
+      "bytes": 7790,
+      "sha256": "A35235ACA469DCA7C0B21F8C0DFFDE15467452327C7823F0314D038F946DB4AB"
     },
     {
       "path": "apps/neoth_companion/lib/main.dart",
-      "bytes": 10374,
-      "sha256": "5DF5F5F937D115F7F5181F06C7370217FC428B9868DCBBBA141B51B1BADD987B"
+      "bytes": 10863,
+      "sha256": "C5150818661CD4ED3ED13759F2BDE552C598AB42038C3D96D2D636C17999F2D6"
     },
     {
       "path": "apps/neoth_companion/lib/models.dart",
@@ -348,8 +348,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/native_bridge.dart",
-      "bytes": 12442,
-      "sha256": "524F1CA3F719DC45895F206E38776B1AF94F28139D835493850E5FF099DE698D"
+      "bytes": 13580,
+      "sha256": "C01CD83D289B734E1AE442FE3F69D8AFCC4131DB035BC080CC0622F6F26FD77E"
     },
     {
       "path": "apps/neoth_companion/lib/secure_store.dart",
@@ -378,8 +378,8 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_controller_test.dart",
-      "bytes": 11778,
-      "sha256": "966FE2ACDDC15D6E42F34B4F56D0D19426B18128FDDBE2164CD6499CA3496022"
+      "bytes": 16357,
+      "sha256": "370A56B06DEFFD4455DF5E40C7174ADB78631EB37D7901DEF3947327A15C05E3"
     },
     {
       "path": "bridges/companion-native/ABI_CONTRACT.md",
@@ -3552,6 +3552,11 @@
       "sha256": "C39E80926FA29E77D31B3873A3949142CB4F29E1FC4252E322A2BA7CB198DCD6"
     },
     {
+      "path": "docs/verification/gold-wave2335-mobile-stop-waiting.json",
+      "bytes": 2962,
+      "sha256": "129AED95FE7926E2ADD8CF6F4B05996FCC9F6E08CDF756685F393492D7C4CD1B"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4693,8 +4698,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2376912,
-      "sha256": "9D0E345841683BD704A18AB0EBF4D0F4058BEC756E2D537A65F520723FB45629"
+      "bytes": 2378628,
+      "sha256": "5F0FE2D38A5BA08E54BD93541E19B76247E6910496717FD704BE88E662262BC9"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

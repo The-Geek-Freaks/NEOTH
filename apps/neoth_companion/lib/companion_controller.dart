@@ -26,6 +26,7 @@ class CompanionController extends ChangeNotifier {
   CompanionChatTerminal? chatTerminal;
   String? chatLocalMessage;
   bool chatPending = false;
+  bool chatCancelRequested = false;
   CompanionViewState state = CompanionViewState.unpaired;
   bool _disposed = false;
 
@@ -91,6 +92,7 @@ class CompanionController extends ChangeNotifier {
 
   bool get canSendChat => _enrollment?.grantedScope == companionChatSendScope;
   bool get canRefreshStatus => _enrollment?.grantedScope == companionStatusReadScope;
+  bool get canStopWaiting => chatPending && !chatCancelRequested;
   String? get grantedScope => _enrollment?.grantedScope;
 
   /// Starts exactly one ordinary text turn. A local validation error is known
@@ -112,15 +114,19 @@ class CompanionController extends ChangeNotifier {
       return;
     }
     chatPending = true;
+    chatCancelRequested = false;
     chatTerminal = null;
     chatLocalMessage = null;
     _notify();
     try {
       final result = await _ensureBridge().chat(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message);
       if (result.publicJson != null) {
+        // A confirmed public terminal wins any earlier local stop presentation.
+        // In particular, an accepted response must not retain "Stop requested".
+        chatLocalMessage = null;
         chatTerminal = CompanionChatTerminal.fromBridgeJson(result.publicJson!);
       } else if (result.kind == NativeOperationResult.cancelled) {
-        chatLocalMessage = 'The phone disconnected before a terminal chat response was confirmed.';
+        chatLocalMessage = 'Waiting stopped before a terminal was confirmed.';
       } else {
         chatLocalMessage = 'Chat could not be started. No message is retried automatically.';
       }
@@ -130,7 +136,27 @@ class CompanionController extends ChangeNotifier {
       chatLocalMessage = 'NEOTH is unavailable. No message is retried automatically.';
     } finally {
       chatPending = false;
+      chatCancelRequested = false;
       _notify();
+    }
+  }
+
+  /// Stops waiting for this one local operation. This is not a provider or
+  /// daemon abort claim: the bridge still owns the terminal poll and drain.
+  Future<void> cancelChat() async {
+    if (_disposed || !canStopWaiting) return;
+    chatCancelRequested = true;
+    chatLocalMessage = 'Stopping the wait…';
+    _notify();
+    // The native cancel call drains synchronously. Yield once so the disabled
+    // control can render, then avoid signalling an operation whose terminal
+    // already won this local cancellation race.
+    await Future<void>.delayed(Duration.zero);
+    if (_disposed || !chatPending || !chatCancelRequested) return;
+    try {
+      await _ensureBridge().cancelActiveChat();
+    } on StateError {
+      // A lifecycle close wins this race. The pending poll still owns cleanup.
     }
   }
 
@@ -141,6 +167,7 @@ class CompanionController extends ChangeNotifier {
     status = null;
     chatTerminal = null;
     chatLocalMessage = null;
+    chatCancelRequested = false;
     _set(CompanionViewState.unpaired);
   }
 

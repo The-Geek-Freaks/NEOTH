@@ -168,6 +168,14 @@ class _CompanionHomeState extends State<CompanionHome> {
                       icon: const Icon(Icons.send),
                       label: Text(widget.controller.chatPending ? 'Waiting for NEOTH' : 'Send once'),
                     ),
+                    if (widget.controller.chatPending)
+                      OutlinedButton.icon(
+                        onPressed: widget.controller.canStopWaiting
+                            ? () => unawaited(widget.controller.cancelChat())
+                            : null,
+                        icon: const Icon(Icons.stop_circle_outlined),
+                        label: Text(widget.controller.chatCancelRequested ? 'Stopping wait…' : 'Stop waiting'),
+                      ),
                     if (widget.controller.chatLocalMessage case final message?)
                       Padding(padding: const EdgeInsets.only(top: 12), child: Text(message)),
                     if (widget.controller.chatTerminal case final terminal?)

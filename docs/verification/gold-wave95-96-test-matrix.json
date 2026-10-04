@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_test_fixtures_repaired_targeted_hosted_probe_pending",
+  "status": "mobile_stop_waiting_integrated_hosted_flutter_validation_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 384106,
-    "sha256": "835F05316D89AC9E52DCB34C3EB3E663A0445D943261F8347EAFB5B694C77CD3"
+    "bytes": 384302,
+    "sha256": "D2EF62944D2AF3D581838BB3F40CC5D99056B49E2E7692B88B8A107DEEA34432"
   },
-  "sourceInputs": 2101,
+  "sourceInputs": 2102,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -74338,6 +74338,50 @@
       }
     ],
     "note": "526of528passed; two rejected fixture identities corrected without weakening production checks; existing manual lane gains optional exact two-case diagnostic.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2335MobileStopWaiting": {
+    "base": "5761f8a2d2d124b420d0ba87afd10cb8f67d02c5",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 7790,
+        "sha256": "A35235ACA469DCA7C0B21F8C0DFFDE15467452327C7823F0314D038F946DB4AB",
+        "blob": "940e80dfb46a5447c957cd7ba2a828c842162d18"
+      },
+      {
+        "path": "apps/neoth_companion/lib/main.dart",
+        "bytes": 10863,
+        "sha256": "C5150818661CD4ED3ED13759F2BDE552C598AB42038C3D96D2D636C17999F2D6",
+        "blob": "d6614854e0d48648997eb3a0d1127af01f4e6294"
+      },
+      {
+        "path": "apps/neoth_companion/lib/native_bridge.dart",
+        "bytes": 13580,
+        "sha256": "C01CD83D289B734E1AE442FE3F69D8AFCC4131DB035BC080CC0622F6F26FD77E",
+        "blob": "d491960a4573c162f36857ac97db8b997390e322"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 16357,
+        "sha256": "370A56B06DEFFD4455DF5E40C7174ADB78631EB37D7901DEF3947327A15C05E3",
+        "blob": "97a285f54f5b52a0ff86e230cb6c36548cc75803"
+      },
+      {
+        "path": "docs/verification/gold-wave2335-mobile-stop-waiting.json",
+        "bytes": 2962,
+        "sha256": "129AED95FE7926E2ADD8CF6F4B05996FCC9F6E08CDF756685F393492D7C4CD1B",
+        "blob": "8714fa1c594f0eb759da97c7ded6521177deeb97"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2378628,
+        "sha256": "5F0FE2D38A5BA08E54BD93541E19B76247E6910496717FD704BE88E662262BC9",
+        "blob": "7d5a16fe08024c2926c95583273f74a61afbaa18"
+      }
+    ],
+    "note": "Four-file reviewed Flutter local wait control; authoritative terminal/free ownership preserved; no runtime acceptance claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

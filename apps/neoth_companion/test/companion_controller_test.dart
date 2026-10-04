@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -154,6 +155,106 @@ void main() {
       expect(controller.chatTerminal?.outcome, 'busy');
       expect(bridge.chatCalls, 1);
     });
+
+    test('stop waiting is gated to one pending chat and does not start another request', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      final send = controller.sendChat('ordinary text');
+      await Future<void>.microtask(() {});
+      expect(controller.canStopWaiting, isTrue);
+      await controller.cancelChat();
+      await controller.cancelChat();
+      expect(controller.chatCancelRequested, isTrue);
+      expect(controller.canStopWaiting, isFalse);
+      expect(bridge.cancelActiveChatCalls, 1);
+      expect(bridge.chatCalls, 1);
+
+      pending.complete(const NativeBridgeResult(NativeOperationResult.cancelled));
+      await send;
+      expect(controller.chatPending, isFalse);
+      expect(controller.chatLocalMessage, 'Waiting stopped before a terminal was confirmed.');
+      await controller.cancelChat();
+      expect(bridge.cancelActiveChatCalls, 1);
+    });
+
+    test('a terminal accepted while stopping wait remains accepted and is not relabelled', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      final send = controller.sendChat('ordinary text');
+      await Future<void>.microtask(() {});
+      await controller.cancelChat();
+      pending.complete(_chatAcceptedResult());
+      await send;
+
+      expect(bridge.cancelActiveChatCalls, 1);
+      expect(controller.chatTerminal?.outcome, 'accepted');
+      expect(controller.chatLocalMessage, isNull);
+    });
+
+    test('a terminal that wins before the scheduled native cancel is not signalled late', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      final send = controller.sendChat('ordinary text');
+      await Future<void>.microtask(() {});
+      final stopping = controller.cancelChat();
+      pending.complete(_chatAcceptedResult());
+      await stopping;
+      await send;
+
+      expect(bridge.cancelActiveChatCalls, 0);
+      expect(controller.chatTerminal?.outcome, 'accepted');
+    });
+
+    test('post-write indeterminate terminal remains typed after stopping wait', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      final send = controller.sendChat('ordinary text');
+      await Future<void>.microtask(() {});
+      await controller.cancelChat();
+      pending.complete(_chatIndeterminateResult());
+      await send;
+
+      expect(controller.chatTerminal?.outcome, 'indeterminate');
+      expect(controller.chatLocalMessage, isNull);
+      expect(bridge.cancelActiveChatCalls, 1);
+    });
+
+    test('dispose delegates cancellation and drain to the native bridge while chat is pending', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final store = _MemoryStore(enrollment: _chatAccepted());
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+
+      await controller.prepareBridge();
+      await controller.restore();
+      unawaited(controller.sendChat('ordinary text'));
+      await Future<void>.microtask(() {});
+      controller.dispose();
+      await Future<void>.microtask(() {});
+
+      expect(bridge.disposeCalls, 1);
+      expect(bridge.cancelActiveChatCalls, 0);
+    });
   });
 }
 
@@ -264,14 +365,16 @@ class _MemoryStore implements CompanionStore {
 }
 
 class _FakeBridge implements NativeBridge {
-  _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult});
+  _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult, this.chatFuture});
   NativeBridgeResult? pairResult;
   NativeBridgeResult? reconnectResult;
   NativeBridgeResult? chatResult;
+  Future<NativeBridgeResult>? chatFuture;
   int pairCalls = 0;
   int reconnectCalls = 0;
   int chatCalls = 0;
   int disposeCalls = 0;
+  int cancelActiveChatCalls = 0;
 
   @override
   Future<void> dispose() async => disposeCalls++;
@@ -288,6 +391,9 @@ class _FakeBridge implements NativeBridge {
   @override
   Future<NativeBridgeResult> chat(String descriptorJson, String deviceId, String message) async {
     chatCalls++;
+    if (chatFuture != null) return chatFuture!;
     return chatResult ?? const NativeBridgeResult(NativeOperationResult.failed);
   }
+  @override
+  Future<void> cancelActiveChat() async => cancelActiveChatCalls++;
 }

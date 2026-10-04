@@ -1,0 +1,51 @@
+{
+  "schema": "neoth.wave2335.mobile-stop-waiting.v1",
+  "base": "5761f8a2d2d124b420d0ba87afd10cb8f67d02c5",
+  "status": "reviewed_source_integrated_flutter_hosted_validation_pending",
+  "scope": "Explicit local Stop waiting for a pending one-shot mobile chat",
+  "sources": [
+    {
+      "path": "apps/neoth_companion/lib/native_bridge.dart",
+      "candidate": "work/gold-20260906/wave2335-mobile-stop-waiting/revision2/candidate/apps/neoth_companion/lib/native_bridge.dart",
+      "baseSha256": "524F1CA3F719DC45895F206E38776B1AF94F28139D835493850E5FF099DE698D",
+      "sha256": "C01CD83D289B734E1AE442FE3F69D8AFCC4131DB035BC080CC0622F6F26FD77E",
+      "baseBlob": "fee3623b7b2ca813efa704f616d1e9c83edea79f"
+    },
+    {
+      "path": "apps/neoth_companion/lib/companion_controller.dart",
+      "candidate": "work/gold-20260906/wave2335-mobile-stop-waiting/revision2/candidate/apps/neoth_companion/lib/companion_controller.dart",
+      "baseSha256": "DBBA3FE52E448FBBF923E8E39B1BD3F962246B17B8C1694DDDBE9B07D6A81767",
+      "sha256": "A35235ACA469DCA7C0B21F8C0DFFDE15467452327C7823F0314D038F946DB4AB",
+      "baseBlob": "912764d476a3b5bff62ba99742a99b4e36269d53"
+    },
+    {
+      "path": "apps/neoth_companion/lib/main.dart",
+      "candidate": "work/gold-20260906/wave2335-mobile-stop-waiting/revision2/candidate/apps/neoth_companion/lib/main.dart",
+      "baseSha256": "5DF5F5F937D115F7F5181F06C7370217FC428B9868DCBBBA141B51B1BADD987B",
+      "sha256": "C5150818661CD4ED3ED13759F2BDE552C598AB42038C3D96D2D636C17999F2D6",
+      "baseBlob": "915281e2c95619123f740cfa75cc37a2df75cbc0"
+    },
+    {
+      "path": "apps/neoth_companion/test/companion_controller_test.dart",
+      "candidate": "work/gold-20260906/wave2335-mobile-stop-waiting/revision2/candidate/apps/neoth_companion/test/companion_controller_test.dart",
+      "baseSha256": "966FE2ACDDC15D6E42F34B4F56D0D19426B18128FDDBE2164CD6499CA3496022",
+      "sha256": "370A56B06DEFFD4455DF5E40C7174ADB78631EB37D7901DEF3947327A15C05E3",
+      "baseBlob": "f07fd6fde6b5b003fb0bea51e1973d2e845d6ad7"
+    }
+  ],
+  "finalFourFileBindingSha256": "240682BC643D5348C950534792FCEDF08ED3C35E7B71354D5E6C8482754CB2D8",
+  "r2ReviewSha256": "0B41D948295D0D93865DFFE05E845CED49207919092DEBAB4236DCEF4F5138D0",
+  "behavior": [
+    "Control appears only while a chat is pending and disables on first press",
+    "Existing native cancellation signal only; poll retains operation terminal/free ownership",
+    "Captured completion keeps generic pair, reconnect and chat disposal ordered",
+    "Accepted or indeterminate terminal clears intermediate stopping copy and preserves its typed outcome",
+    "No automatic retry or remote provider-abort claim"
+  ],
+  "boundaries": [
+    "No wire, daemon, scope or native Rust changes",
+    "Actual remote turn cancellation and streaming remain open",
+    "Flutter tests, native/mobile interop, device and release evidence pending"
+  ],
+  "localExecutableValidationRan": false
+}

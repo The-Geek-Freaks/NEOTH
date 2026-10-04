@@ -20,6 +20,9 @@ abstract interface class NativeBridge {
   Future<NativeBridgeResult> pair(String inviteUrl, String label);
   Future<NativeBridgeResult> reconnect(String descriptorJson, String deviceId);
   Future<NativeBridgeResult> chat(String descriptorJson, String deviceId, String message);
+  /// Signals only the existing in-flight operation. The poll owner retains
+  /// responsibility for observing its terminal result and freeing its handle.
+  Future<void> cancelActiveChat();
   Future<void> dispose();
 }
 
@@ -75,6 +78,7 @@ class FfiNativeBridge implements NativeBridge {
   Completer<void>? _activeFinished;
   Future<void>? _disposeFuture;
   bool _closing = false;
+  bool _activeCancelRequested = false;
 
   static Pointer<_Bridge> _create(_BridgeNewDart newBridge, Uint8List secret) {
     final native = calloc<Uint8>(32);
@@ -134,6 +138,7 @@ class FfiNativeBridge implements NativeBridge {
       final operation = invoke(firstNative, firstBytes.length, secondNative, secondBytes.length);
       if (operation == nullptr) return const NativeBridgeResult(NativeOperationResult.failed);
       _active = operation;
+      _activeCancelRequested = false;
       _activeFinished = Completer<void>();
       return await _pollUntilTerminal(operation);
     } finally {
@@ -166,6 +171,7 @@ class FfiNativeBridge implements NativeBridge {
       final operation = invoke(firstNative, firstBytes.length, secondNative, secondBytes.length, thirdNative, thirdBytes.length);
       if (operation == nullptr) return const NativeBridgeResult(NativeOperationResult.failed);
       _active = operation;
+      _activeCancelRequested = false;
       _activeFinished = Completer<void>();
       return await _pollUntilTerminal(operation);
     } finally {
@@ -191,6 +197,7 @@ class FfiNativeBridge implements NativeBridge {
       return const NativeBridgeResult(NativeOperationResult.cancelled);
     } finally {
       if (_active == operation) _active = null;
+      _activeCancelRequested = false;
       _operationFree(operation);
       _activeFinished?.complete();
       _activeFinished = null;
@@ -237,6 +244,21 @@ class FfiNativeBridge implements NativeBridge {
   }
 
   @override
+  Future<void> cancelActiveChat() async {
+    final operation = _active;
+    if (operation == null) return;
+    _cancelOperation(operation);
+  }
+
+  void _cancelOperation(Pointer<_Operation> operation) {
+    if (_active != operation || _activeCancelRequested) return;
+    _activeCancelRequested = true;
+    // Native cancel blocks until its transport worker drains. It deliberately
+    // does not free this opaque operation; _pollUntilTerminal remains owner.
+    _operationCancel(operation);
+  }
+
+  @override
   Future<void> dispose() {
     return _disposeFuture ??= _disposeSafely();
   }
@@ -244,11 +266,15 @@ class FfiNativeBridge implements NativeBridge {
   Future<void> _disposeSafely() async {
     _closing = true;
     final operation = _active;
+    final activeFinished = _activeFinished;
     if (operation != null) {
-      _operationCancel(operation);
+      // Disposal is generic for pair, reconnect, and chat. Retain the poll
+      // completion before cancellation: native drain can let poll clear the
+      // mutable field before this async continuation resumes.
+      _cancelOperation(operation);
       // The native handle is drained by the normal polling owner before the
       // bridge itself is released; cancellation must not race a worker thread.
-      await _activeFinished!.future;
+      if (activeFinished != null) await activeFinished.future;
     }
     if (_bridge != nullptr) {
       _bridgeFree(_bridge);
