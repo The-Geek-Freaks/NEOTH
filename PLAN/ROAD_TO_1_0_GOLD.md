@@ -18071,3 +18071,12 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Rebound native-test sources and inventories after the exact hosted patch. This is formatting evidence, not compilation, native/mobile, device or release acceptance.
 - Automatic Code Quality expanded to Java/Kotlin and Ruby. Existing Python/JavaScript lanes passed; Kotlin none-build extraction and the Ruby no-source lane failed. The concrete analysis configuration is under investigation; no quality scan was disabled or falsely marked successful.
 - Report: docs/verification/gold-wave2320-mobile-hosted-format.json. Previous raw PLAN prefix and protected .gitignore/SRC/Cargo.lock retained.
+
+
+## W2322 - Publish admitted mobile dependency locks (2026-10-04)
+
+- Hosted bootstrap 37200493299 succeeded on 13fbb4dbbbe73a602f4c8435e0465d6c4e4f4489. Root admitted the original archive, all five entries, generated-lock hashes and three exact raw-Git producer inputs before copying only bridges/companion-native/Cargo.lock and apps/neoth_companion/pubspec.lock.
+- The bootstrap deliberately skipped native Android/iOS materialization. This proves dependency-lock custody, not compilation, application behavior, phone acceptance or release readiness. SRC/Cargo.lock remains the unrelated protected local change and was not imported/staged.
+- Current format-producer Preflight 37200336019 and configured Python/JavaScript Code Quality 37200335729 succeeded. The earlier expanded Kotlin/Ruby probe remains a separate unsupported-extraction diagnostic; no GitHub setting was changed.
+- Next: exact521 Rust coverage on the published producer, followed by native/mobile build qualification and actual device journeys. GOLD-R4-12 remains open.
+- Report: docs/verification/gold-wave2322-mobile-lock-publication.json. Raw prior PLAN bytes retained; absolute local BSOD hold unchanged.

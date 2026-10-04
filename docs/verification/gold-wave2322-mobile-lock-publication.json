@@ -1,0 +1,57 @@
+{
+  "schema": "neoth.wave2322.mobile-lock-publication.v1",
+  "status": "original-hosted-locks-admitted-and-imported",
+  "run": 37200493299,
+  "producer": "13fbb4dbbbe73a602f4c8435e0465d6c4e4f4489",
+  "artifact": 11302159948,
+  "archiveSha256": "1A0D792D15403B707370F908A3D6AD5849F6C5B17215B2D19EB1FC48B8342479",
+  "rootAdmissionSha256": "6E07D8CC2B0002741BA1EBA2A5B540573FA917DC90000099DAE2944C219FB503",
+  "entries": [
+    {
+      "path": "bootstrap-provenance.json",
+      "sha256": "DBB17D26E61CA2CE10D71E617A649BB91DE524FBFCB1642B251B0FFF0CE7E27B",
+      "bytes": 659
+    },
+    {
+      "path": "bridge-Cargo.lock",
+      "sha256": "5ADACE992797F7CC390A9697D8FB216E21E71685DBCB10DB5AE03564387E4379",
+      "bytes": 24602
+    },
+    {
+      "path": "logs/bridge-generate-lockfile.log",
+      "sha256": "9F76A1D0A7DF9D94F55C0D7F80009403127BE68A4E7CD187F6D194C1B8CC1746",
+      "bytes": 1242
+    },
+    {
+      "path": "logs/flutter-pub-get.log",
+      "sha256": "D27130D7E3523B41A6BC76A6E8E2C2E4AD90821804C1281FF3AED7917A2EFBF3",
+      "bytes": 4742
+    },
+    {
+      "path": "pubspec.lock",
+      "sha256": "6B9585056C335C362CA60E3CE696DF5BBBA7EFDF3FEDE4B742E7CB52EDC5697A",
+      "bytes": 10452
+    }
+  ],
+  "sourceBindings": {
+    "schema": "neoth.mobile-lock-bootstrap.v1",
+    "source_head": "13fbb4dbbbe73a602f4c8435e0465d6c4e4f4489",
+    "src_cargo_lock_sha256": "8C51757F1E0CF49885A7EF653237C49C6E3D72E3CA2544E869F094AFF9EA2B20",
+    "bridge_cargo_toml_sha256": "32C9D28EE3D60F8C4357EACD9E1ED536F6282109799CA77CBB9168B61467A224",
+    "bridge_cargo_lock_sha256": "5ADACE992797F7CC390A9697D8FB216E21E71685DBCB10DB5AE03564387E4379",
+    "app_pubspec_yaml_sha256": "36CCCB8F2ADAFBAE6F8DE6479F171B1BE716BC8BAFD22C6F379CA779CB680EB2",
+    "app_pubspec_lock_sha256": "6B9585056C335C362CA60E3CE696DF5BBBA7EFDF3FEDE4B742E7CB52EDC5697A",
+    "outputs": [
+      "bridge-Cargo.lock",
+      "pubspec.lock"
+    ]
+  },
+  "importTargets": [
+    "bridges/companion-native/Cargo.lock",
+    "apps/neoth_companion/pubspec.lock"
+  ],
+  "sourceCargoLockImported": false,
+  "localRuntimeExecuted": false,
+  "nativeMobileDeviceReleaseAcceptance": false,
+  "next": "Focused521 and native/mobile qualification against the published lock/source producer."
+}

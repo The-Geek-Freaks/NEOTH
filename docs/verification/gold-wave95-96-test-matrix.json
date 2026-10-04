@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2320-hosted-format-imported-validation-pending",
+  "status": "wave2322-hosted-locks-admitted-execution-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 381879,
-    "sha256": "9779ED4FE0C7FBD6D8121A3386D77E6A527E798852FBAF2DA213F3B65C73F30C"
+    "bytes": 382412,
+    "sha256": "E6D1948AADED84CF52072AE2649A74FED366497EDEA29D710130B9280C0FC161"
   },
-  "sourceInputs": 2089,
+  "sourceInputs": 2092,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -73752,6 +73752,38 @@
       }
     ],
     "note": "Verified original hosted formatter patch imported; 521 focused identities unchanged. Kotlin/Ruby automatic quality extraction follow-up open. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2322MobileLockPublication": {
+    "base": "13fbb4dbbbe73a602f4c8435e0465d6c4e4f4489",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/pubspec.lock",
+        "bytes": 10452,
+        "sha256": "6B9585056C335C362CA60E3CE696DF5BBBA7EFDF3FEDE4B742E7CB52EDC5697A",
+        "blob": "c21cd8fad06ae172f77e8ee779e6336b303047aa"
+      },
+      {
+        "path": "bridges/companion-native/Cargo.lock",
+        "bytes": 24602,
+        "sha256": "5ADACE992797F7CC390A9697D8FB216E21E71685DBCB10DB5AE03564387E4379",
+        "blob": "8595179370c353a07869d13e4fab58273b7ebe2f"
+      },
+      {
+        "path": "docs/verification/gold-wave2322-mobile-lock-publication.json",
+        "bytes": 2242,
+        "sha256": "FF9E1D4CE4E6EE895D166403E5591BCCBF8FAE9507E23E0CA735A0D894D74255",
+        "blob": "61bf2ae7163916840339b9b10010beec1da7e19d"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2365909,
+        "sha256": "BEA9D321B5C273AD3252C7E12DA86676C2D1934D98514CF14C822A4F8206BD19",
+        "blob": "da506385355149a2e8a84515853577f19cdec2c5"
+      }
+    ],
+    "note": "Original hosted bootstrap lock artifacts verified and imported; focus521/native/mobile execution pending; protected SRC/Cargo.lock excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

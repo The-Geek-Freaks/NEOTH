@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T11:52:53.3407920Z",
-  "validationStatus": "wave2320-hosted-format-imported-validation-pending",
+  "capturedUtc": "2026-10-04T12:00:41.2233795Z",
+  "validationStatus": "wave2322-hosted-locks-admitted-execution-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -342,6 +342,11 @@
       "sha256": "4390C085DEFC744DC82C73B55F3738DC6099F6754B98919A34BE21DA14368A54"
     },
     {
+      "path": "apps/neoth_companion/pubspec.lock",
+      "bytes": 10452,
+      "sha256": "6B9585056C335C362CA60E3CE696DF5BBBA7EFDF3FEDE4B742E7CB52EDC5697A"
+    },
+    {
       "path": "apps/neoth_companion/pubspec.yaml",
       "bytes": 385,
       "sha256": "36CCCB8F2ADAFBAE6F8DE6479F171B1BE716BC8BAFD22C6F379CA779CB680EB2"
@@ -365,6 +370,11 @@
       "path": "bridges/companion-native/ABI_CONTRACT.md",
       "bytes": 3457,
       "sha256": "8407D3DF39147361DC13CCBBDC4C6C133164B50767ED4B7257C75A04C0E478F8"
+    },
+    {
+      "path": "bridges/companion-native/Cargo.lock",
+      "bytes": 24602,
+      "sha256": "5ADACE992797F7CC390A9697D8FB216E21E71685DBCB10DB5AE03564387E4379"
     },
     {
       "path": "bridges/companion-native/Cargo.toml",
@@ -3492,6 +3502,11 @@
       "sha256": "FE119925F072BB4F02E112CAA4643CE782EF2497C7EAB9E3DB8E040D48FDD626"
     },
     {
+      "path": "docs/verification/gold-wave2322-mobile-lock-publication.json",
+      "bytes": 2242,
+      "sha256": "FF9E1D4CE4E6EE895D166403E5591BCCBF8FAE9507E23E0CA735A0D894D74255"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4633,8 +4648,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2364730,
-      "sha256": "8AAC0530F6F01452A468FDD30C19992B1D24AF148CFAB94EFACC6812DD39208A"
+      "bytes": 2365909,
+      "sha256": "BEA9D321B5C273AD3252C7E12DA86676C2D1934D98514CF14C822A4F8206BD19"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
