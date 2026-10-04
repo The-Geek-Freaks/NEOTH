@@ -1,0 +1,22 @@
+{
+  "schema": "neoth.wave2336.mobile-effect-fixture.v1",
+  "base": "eb93d9f429d245a0e10a6a98f5d7dd8c7cb17820",
+  "status": "reviewed_test_fixture_integrated_targeted_hosted_validation_pending",
+  "source": "SRC/neothd/src/daemon/chat_runtime.rs",
+  "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
+  "productionPrefixEqual": true,
+  "failedRun": 37218147287,
+  "failedProducer": "5761f8a2d2d124b420d0ba87afd10cb8f67d02c5",
+  "failedLogSha256": "0814AB80EEB669808F9A67F1A06AA8B12B2F0B2BC4FDA23C2E93F9FC3164B6DD",
+  "diagnosis": "The generic test provider lacks the sealed concrete effect-start adapter, so the real gate correctly rejects before Intent",
+  "repair": [
+    "Dedicated test-only provider uses real prepare_effect, begin_start and started before its call counter",
+    "Other RuntimeProvider fixtures retain their default capability",
+    "Single-consumer release uses notify_one so a late waiter cannot lose the permit",
+    "Existing ten-second wait now reports a premature task result directly"
+  ],
+  "reviewSha256": "B45D002A42F1B410418614759ABBA2C6252EC9C00A5966EC38CE036C9AC40F6A",
+  "candidateManifestSha256": "7B3F443055764E9200C2441D87619DD4B0D45889E0B4DE0ED7576E600A354E8A",
+  "localExecutableValidationRan": false,
+  "acceptance": "Exact two-case hosted probe, complete focused528, native/mobile and release evidence remain required"
+}

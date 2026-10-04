@@ -876,6 +876,44 @@ mod tests {
         }
     }
 
+    /// Dedicated W2336 leaf for the companion revoke-boundary regression. It
+    /// crosses the real permit Intent and concrete start lease before the
+    /// shared runtime double can increment its provider-call counter.
+    struct CompanionEffectStartProvider {
+        inner: Arc<RuntimeProvider>,
+    }
+
+    #[async_trait]
+    impl Provider for CompanionEffectStartProvider {
+        fn name(&self) -> &'static str {
+            self.inner.name()
+        }
+
+        fn w41_effect_start_adapter(&self, _: crate::providers::W41EffectStartProbe) -> bool {
+            true
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            self.inner.default_model()
+        }
+
+        async fn complete_raw(
+            &self,
+            request: Request,
+            permit: &crate::providers::ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            let effect = permit
+                .prepare_effect(crate::providers::ChatTurnEffectKind::Provider {
+                    call_scope: "daemon.chat_runtime.companion_revoke_fixture",
+                    streaming: false,
+                })
+                .await?
+                .context("companion revoke fixture requires a real effect-start reservation")?;
+            effect.begin_start().await?.started().await?;
+            self.inner.complete(request).await
+        }
+    }
+
     /// Test-only pause placed after the real companion gate's durable Intent
     /// admission and before its concrete provider-start lease. It lets the
     /// regression publish a real PendingRevoke in the only meaningful gap.
@@ -967,6 +1005,49 @@ mod tests {
         WalWriterHandle,
         tokio::task::JoinHandle<Result<(), String>>,
     ) {
+        let provider = Arc::new(RuntimeProvider {
+            calls: AtomicUsize::new(0),
+            called: Notify::new(),
+            reply,
+        });
+        let (runtime, home, writer, writer_join) = test_runtime_with_published_provider(
+            grant_consent,
+            published_epoch,
+            Arc::clone(&provider) as Arc<dyn Provider>,
+        )
+        .await;
+        (runtime, provider, home, writer, writer_join)
+    }
+
+    async fn test_runtime_with_companion_effect_adapter(
+        grant_consent: bool,
+        published_epoch: u64,
+    ) -> (
+        Arc<DaemonChatRuntime>,
+        Arc<RuntimeProvider>,
+        tempfile::TempDir,
+        WalWriterHandle,
+        tokio::task::JoinHandle<Result<(), String>>,
+    ) {
+        let provider = Arc::new(RuntimeProvider::default());
+        let published: Arc<dyn Provider> = Arc::new(CompanionEffectStartProvider {
+            inner: Arc::clone(&provider),
+        });
+        let (runtime, home, writer, writer_join) =
+            test_runtime_with_published_provider(grant_consent, published_epoch, published).await;
+        (runtime, provider, home, writer, writer_join)
+    }
+
+    async fn test_runtime_with_published_provider(
+        grant_consent: bool,
+        published_epoch: u64,
+        provider: Arc<dyn Provider>,
+    ) -> (
+        Arc<DaemonChatRuntime>,
+        tempfile::TempDir,
+        WalWriterHandle,
+        tokio::task::JoinHandle<Result<(), String>>,
+    ) {
         let home = tempfile::tempdir().expect("create daemon runtime test home");
         if grant_consent {
             crate::consent::grant(home.path(), ProviderKind::ClaudeCli)
@@ -1000,17 +1081,12 @@ mod tests {
             Arc::clone(&controller),
             wal.writer.clone(),
         ));
-        let provider = Arc::new(RuntimeProvider {
-            calls: AtomicUsize::new(0),
-            called: Notify::new(),
-            reply,
-        });
         runtime
-            .publish_provider(Arc::clone(&provider) as Arc<dyn Provider>, published_epoch)
+            .publish_provider(provider, published_epoch)
             .await
             .expect("publish fixture provider");
         let writer_join = wal.writer_join;
-        (runtime, provider, home, wal.writer, writer_join)
+        (runtime, home, wal.writer, writer_join)
     }
 
     async fn execute_admitted_turn(
@@ -1039,7 +1115,8 @@ mod tests {
 
     #[tokio::test]
     async fn companion_revoke_between_effect_intent_and_provider_start_launches_nothing() {
-        let (runtime, provider, home, writer, writer_join) = test_runtime(true, 0).await;
+        let (runtime, provider, home, writer, writer_join) =
+            test_runtime_with_companion_effect_adapter(true, 0).await;
         let authority =
             Arc::new(DeviceAuthority::load(home.path()).expect("load real companion authority"));
         let signing = SigningKey::from_bytes(&[41; 32]);
@@ -1092,7 +1169,7 @@ mod tests {
         tokio::pin!(wait_for_intent);
         wait_for_intent.as_mut().enable();
         let running_runtime = Arc::clone(&runtime);
-        let running = tokio::spawn(async move {
+        let mut running = tokio::spawn(async move {
             running_runtime
                 .execute_companion_chat_turn(
                     DaemonPlainChatRequest {
@@ -1104,9 +1181,23 @@ mod tests {
                 )
                 .await
         });
-        tokio::time::timeout(Duration::from_secs(10), &mut wait_for_intent)
-            .await
-            .expect("real pipeline reaches companion effect intent");
+        tokio::select! {
+            () = &mut wait_for_intent => {}
+            completed = &mut running => match completed {
+                Ok(Ok(_)) => {
+                    panic!("companion pipeline unexpectedly completed before effect intent")
+                }
+                Ok(Err(error)) => {
+                    panic!("companion pipeline terminated before effect intent: {error:?}")
+                }
+                Err(error) => {
+                    panic!("companion pipeline join failed before effect intent: {error}")
+                }
+            },
+            () = tokio::time::sleep(Duration::from_secs(10)) => {
+                panic!("real pipeline reaches companion effect intent within ten seconds")
+            }
+        }
 
         let pending = authority
             .begin_revoke_pending_after_effect_boundary(&challenge.device_id)
@@ -1114,7 +1205,9 @@ mod tests {
             .expect("persist revoke across unstarted provider boundary")
             .expect("active device receives one pending revoke");
         assert_eq!(pending.kind, MutationKind::Revoke);
-        release_start.notify_waiters();
+        // The only waiter arms inside `begin_start`; retain this one release
+        // permit if the revoke reaches it first.
+        release_start.notify_one();
         assert!(matches!(
             running.await.expect("join companion pipeline"),
             Err(CompanionChatTurnError::Indeterminate)

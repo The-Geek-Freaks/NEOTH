@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_stop_waiting_integrated_hosted_flutter_validation_pending",
+  "status": "wave2336_test_fixture_integrated_hosted_probe_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 384302,
-    "sha256": "D2EF62944D2AF3D581838BB3F40CC5D99056B49E2E7692B88B8A107DEEA34432"
+    "bytes": 384484,
+    "sha256": "3CB514D668799C77F338F19105CC782334DDAEF51197EDCFE2ECFB4BB70F52C9"
   },
-  "sourceInputs": 2102,
+  "sourceInputs": 2103,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1758,13 +1758,13 @@
     {
       "test": "daemon::chat_runtime::tests::admitted_plain_daemon_turn_preserves_one_nonzero_wal_session",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::chat_runtime::tests::generic_gui_lifecycle_remains_unattributed_without_an_admitted_turn",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
       "junitClass": "neoth"
     },
     {
@@ -2802,7 +2802,7 @@
     {
       "test": "daemon::chat_runtime::tests::w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
       "junitClass": "neoth"
     },
     {
@@ -8076,7 +8076,7 @@
     {
       "test": "daemon::chat_runtime::tests::w703_admitted_gui_session_scopes_real_transcript_and_isolates_incognito",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
       "junitClass": "neoth"
     },
     {
@@ -16513,7 +16513,7 @@
     {
       "test": "daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC",
+      "sourceSha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
       "junitClass": "neoth"
     }
   ],
@@ -17232,8 +17232,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 69088,
-      "sha256": "3020000CE2FC79E717BB314B62EA22DD6696A1DF3CA50CE7213288DDBEFBA5EC"
+      "bytes": 72461,
+      "sha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -74382,6 +74382,32 @@
       }
     ],
     "note": "Four-file reviewed Flutter local wait control; authoritative terminal/free ownership preserved; no runtime acceptance claimed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2336MobileEffectFixture": {
+    "base": "eb93d9f429d245a0e10a6a98f5d7dd8c7cb17820",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2336-mobile-effect-fixture.json",
+        "bytes": 1395,
+        "sha256": "89E485920251F4DC57068A65D5B591E179392F0158B43F00F48F450CDF264A4F",
+        "blob": "af7cccd48ba09e92858e701e4d28ef358c86e932"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2379990,
+        "sha256": "F7176F47A6F12CCE8CD829A7B584F00DD3B6DC7256BE13BCAA44AA4399B848A5",
+        "blob": "49ca0ac30ee69d326f005a221f25caa52523d939"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+        "bytes": 72461,
+        "sha256": "D96FBC3B870186F1877FA5119A4318CBE890850F8ECC6D9CE6CC4984B7DC09D8",
+        "blob": "08f32f16e86f8985c0d9f0e5023c026376e06fe0"
+      }
+    ],
+    "note": "Dedicated real effect-start test provider; no production change. Targeted probe and full acceptance pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
