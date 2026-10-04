@@ -1,0 +1,57 @@
+{
+  "schema": "neoth.wave2328.mobile-interop.v1",
+  "base": "473f1b60a215b5001dd0abb2a3622f5d73d16d49",
+  "status": "reviewed_source_integrated_hosted_execution_pending",
+  "candidateManifestSha256": "38C8D7602901C232D3A51A9E53907A4D1A063C788BAB841491CE9DF689641609",
+  "reviewSha256": "FB7A2D0A377DB36ED765A7BF0D3FEEAC7F45B1766BF1AAD53DF574CCDF463989",
+  "sources": [
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "4E34BEE5C9BDBC96481E3072C1A5D3843488788038652A6879C5B41FB6B1FD7F"
+    },
+    {
+      "path": ".github/scripts/mobile/build-host-interop-bridge.sh",
+      "sha256": "3CBAB8EA77E251265F099B9C8D98D59E04FBCB42933917C40EC89C7AB95C1ABC"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "sha256": "3E6A34B8EB5DB7B000CF94AAD80173D07E72F47263E0EEE7DC5216F7FE1CE4E2"
+    }
+  ],
+  "proofSequence": [
+    "Actual debug CLI and public native cdylib built from expected producer",
+    "Status-only pairing and reconnect",
+    "Actual frame-bound chat rejection with zero loopback provider calls",
+    "Fresh ChatSend pairing and exactly one deterministic loopback provider reply",
+    "CLI revoke true and durable revoked state at next revision"
+  ],
+  "externalDependency": "Peeroxide public DHT bootstrap and UDP",
+  "runtimeBudgetSeconds": {
+    "margin": 30,
+    "hostedStep": 600,
+    "work": 390,
+    "cleanup": 180
+  },
+  "localExecutableValidationRan": false,
+  "acceptance": "Hosted interoperability pending; this does not establish Flutter device, signed release or store acceptance",
+  "rootWhitespaceNormalization": [
+    {
+      "path": ".github/scripts/mobile/build-host-interop-bridge.sh",
+      "candidateSha256": "3CBAB8EA77E251265F099B9C8D98D59E04FBCB42933917C40EC89C7AB95C1ABC",
+      "integratedSha256": "3DB93B456E7DB16D44161374D4FCD42EFA79E3319870ACF8EA53123B1269964F",
+      "change": "Remove trailing blank lines only"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "candidateSha256": "4E34BEE5C9BDBC96481E3072C1A5D3843488788038652A6879C5B41FB6B1FD7F",
+      "integratedSha256": "965C6946644B033E57EC5631723E5A7EA2E49474B06C167FB910E889E1E3CD23",
+      "change": "Remove trailing blank lines only"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "candidateSha256": "3E6A34B8EB5DB7B000CF94AAD80173D07E72F47263E0EEE7DC5216F7FE1CE4E2",
+      "integratedSha256": "BD6094A96DA167B62447DB6656A934383DE7B8E4B74C1E7A0EC4C512902519C8",
+      "change": "Remove trailing blank lines only"
+    }
+  ]
+}

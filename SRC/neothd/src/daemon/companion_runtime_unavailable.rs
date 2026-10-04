@@ -9,7 +9,13 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{daemon::{chat_runtime::DaemonChatRuntime, companion_protocol::{CompanionDeviceId, CompanionScope}}, wal::writer::WalWriterHandle};
+use crate::{
+    daemon::{
+        chat_runtime::DaemonChatRuntime,
+        companion_protocol::{CompanionDeviceId, CompanionScope},
+    },
+    wal::writer::WalWriterHandle,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +57,10 @@ impl CompanionRuntime {
         bail!("companion v3 requires the cluster feature")
     }
 
-    pub(crate) async fn mint_pair_invite(self: &Arc<Self>, _requested_scope: CompanionScope) -> Result<CompanionV3Invite> {
+    pub(crate) async fn mint_pair_invite(
+        self: &Arc<Self>,
+        _requested_scope: CompanionScope,
+    ) -> Result<CompanionV3Invite> {
         bail!("companion v3 requires the cluster feature")
     }
 

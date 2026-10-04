@@ -18121,3 +18121,11 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Insert only that keyword. Root verified the candidate equals this exact one-token replacement and preserves all terminal serialization, marker completion and checked carrier drain branches. No test or production guard is weakened.
 - The failed formatter artifact is incomplete and is not imported. Fresh hosted formatting, core test type checking and compiled CLI reference are still required before focused528 and native/mobile acceptance. No executable ran locally. Prior PLAN bytes and protected unrelated changes remain intact.
 - Report: docs/verification/gold-wave2329-mobile-syntax.json.
+
+### W2328 - Real native bridge to daemon hosted interoperability (2026-10-04)
+
+- Added the reviewed manual hosted-only interop lane: exact-source actual public CLI plus native cdylib, isolated ephemeral home, real Peeroxide transport, status-only pairing/reconnect and scope-negative frame rejection, explicit ChatSend pairing, one deterministic loopback provider response, then durable public CLI revoke at the next device revision.
+- R8 uses one process-origin390-second work budget with180seconds for cleanup and30seconds margin within the600-second hosted step. Every readiness/CLI/FFI operation receives the remaining budget; timeout is failure, never denial or success. Safe receipts survive failure, and successful runs require both receipt and build manifest. No raw invitations, keys or CLI streams enter artifacts.
+- Independent static review FB7A2D0A377DB36ED765A7BF0D3FEEAC7F45B1766BF1AAD53DF574CCDF463989 approved this source only. The lane depends on public DHT/UDP availability and has not run. It cannot establish physical-phone, signed release or store acceptance.
+- W2329 follow-up: Preflight37207445888 parses the repaired source and produced original formatter archive11305466003. Root verified API/ZIP SHA e82c370111b1e2e0b0ee3c597fd6e1b15f7216c9c01a8d7a279373b6a5d8c927, all3entries/internal hashes, source HEAD, and all8full Git pre/postimages before importing only that hosted Rust patch. No local formatter ran.
+- Reports: docs/verification/gold-wave2328-mobile-interop.json and gold-wave2329-mobile-syntax.json. Focused528, native/mobile builds and device/release acceptance remain open. Prior raw PLAN content and protected dirty files retained.

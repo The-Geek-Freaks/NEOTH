@@ -10,5 +10,55 @@
   "delta": "Insert one match keyword; preserve all terminal and checked-drain branches",
   "failedLogSha256": "8FCE301D725E00BF4C057AD4F31F4E0C0DFDF6009EBBBD7AFD7721C39873F99C",
   "localExecutableValidationRan": false,
-  "acceptance": "Hosted syntax/format, compile and behavior proofs pending"
+  "acceptance": "Hosted syntax/format, compile and behavior proofs pending",
+  "hostedFormatImport": {
+    "run": 37207445888,
+    "producer": "473f1b60a215b5001dd0abb2a3622f5d73d16d49",
+    "artifactId": 11305466003,
+    "archiveSha256": "E82C370111B1E2E0B0EE3C597FD6E1B15F7216C9C01A8D7A279373B6A5D8C927",
+    "entriesAndInternalHashesVerified": true,
+    "exactGitBlobPairs": [
+      {
+        "path": "SRC/neothd/src/cli/companion.rs",
+        "before": "368afe00555024c5fda878d25c0f4b21b06c91de",
+        "after": "a86b93268b1a2cb0a888472de8af0243d272908b"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "before": "3754130826eb2eaceb768c555e93a783392fffd2",
+        "after": "07fdc95a2bce6adc68bb393d44f917ccf02d06f7"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+        "before": "9634894906f5e5de2554e8fdc9fe7fdbc038cffb",
+        "after": "2931cf94066d3a6565279ecc2ab03f18c2b55bd2"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+        "before": "f627335aa02411e1f521c6e3f02be4c3a3823486",
+        "after": "0e9bc257a0e535ba8415672c30d63d2f35859f22"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_authority.rs",
+        "before": "a69cb30be1ab9c5f459b3b09be36934dd011f52d",
+        "after": "cc08d85b6f10bdf974c5e59c9d09844314e52959"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_protocol.rs",
+        "before": "d19e190caf316e43b3b0bee2c9e3586e14b9122a",
+        "after": "72dd39dc0618b36dcb556be0fb814071ef1b2e5a"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "before": "7e5e90919b93c9b102676abb50cafd1ba2bdd9bf",
+        "after": "e00feda8f9695651d3aa3f1d9b36a48455c0c079"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+        "before": "4030355caa4c0d3f8424bf59f075868050550519",
+        "after": "e5c9109a229ff15d16573bb5af2a3bd5bd6c56fd"
+      }
+    ],
+    "localFormatterRan": false
+  }
 }

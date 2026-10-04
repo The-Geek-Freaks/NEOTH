@@ -2204,14 +2204,19 @@ async fn handle_companion_v3_route(
         "/companion/v3/pair/mint" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
-            struct MintRequest { requested_scope: crate::daemon::companion_protocol::CompanionScope }
-            match serde_json::from_slice::<MintRequest>(body).context("decode companion v3 pairing scope") {
-                Ok(request) => runtime.mint_pair_invite(request.requested_scope)
+            struct MintRequest {
+                requested_scope: crate::daemon::companion_protocol::CompanionScope,
+            }
+            match serde_json::from_slice::<MintRequest>(body)
+                .context("decode companion v3 pairing scope")
+            {
+                Ok(request) => runtime
+                    .mint_pair_invite(request.requested_scope)
                     .await
                     .map(|value| serde_json::to_string(&value)),
                 Err(error) => Err(error),
             }
-        },
+        }
         "/companion/v3/devices" if body == b"{}" => runtime
             .list_devices()
             .map(|value| serde_json::to_string(&value)),

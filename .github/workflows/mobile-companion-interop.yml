@@ -1,0 +1,59 @@
+name: Mobile Companion Hosted Interop R8 Candidate
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+      bridge_cargo_sha256: { required: true, type: string }
+      bridge_lib_sha256: { required: true, type: string }
+      bridge_header_sha256: { required: true, type: string }
+      canonical_protocol_sha256: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  hosted-interop:
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      BRIDGE_CARGO_SHA256: ${{ inputs.bridge_cargo_sha256 }}
+      BRIDGE_LIB_SHA256: ${{ inputs.bridge_lib_sha256 }}
+      BRIDGE_HEADER_SHA256: ${{ inputs.bridge_header_sha256 }}
+      CANONICAL_PROTOCOL_SHA256: ${{ inputs.canonical_protocol_sha256 }}
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.91.0 }
+      - name: Restore CLI-reference Cargo checkpoint
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Build exact host debug CLI and cdylib
+        timeout-minutes: 25
+        run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
+      - name: Run fixed isolated-home pair/status/chat/revoke
+        timeout-minutes: 10
+        run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
+      - name: Require successful-run receipt custody
+        run: |
+          test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
+          test -s "$RUNNER_TEMP/w2328-receipt.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
+        with:
+          name: mobile-companion-hosted-interop-r8
+          path: |
+            ${{ runner.temp }}/w2328-stage/host-interop-manifest.json
+            ${{ runner.temp }}/w2328-receipt.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -120,19 +120,38 @@ impl DaemonChatRuntime {
         effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate>,
     ) -> std::result::Result<DaemonPlainChatResponse, CompanionChatTurnError> {
         validate_request(&request).map_err(|_| CompanionChatTurnError::Denied)?;
-        let admission = self.admit_with_cancellation(cancellation.clone()).await.map_err(|error| match error {
-            AdmissionError::Busy => CompanionChatTurnError::Busy,
-            AdmissionError::Closing | AdmissionError::ProviderUnavailable | AdmissionError::ProviderConfigChanged => CompanionChatTurnError::Unavailable,
-        })?;
-        let _active = ActiveOperationGuard { runtime: self, id: admission.id };
-        let result = self.execute_turn(
-            request, Arc::clone(&admission.provider), Arc::clone(&admission.accepted), cancellation.clone(),
-            Some(effect_gate),
-        ).await;
+        let admission = self
+            .admit_with_cancellation(cancellation.clone())
+            .await
+            .map_err(|error| match error {
+                AdmissionError::Busy => CompanionChatTurnError::Busy,
+                AdmissionError::Closing
+                | AdmissionError::ProviderUnavailable
+                | AdmissionError::ProviderConfigChanged => CompanionChatTurnError::Unavailable,
+            })?;
+        let _active = ActiveOperationGuard {
+            runtime: self,
+            id: admission.id,
+        };
+        let result = self
+            .execute_turn(
+                request,
+                Arc::clone(&admission.provider),
+                Arc::clone(&admission.accepted),
+                cancellation.clone(),
+                Some(effect_gate),
+            )
+            .await;
         cancellation.close();
         match result {
             Ok(response) => Ok(response),
-            Err(error) if error.downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>().is_some() => Err(CompanionChatTurnError::Timeout),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
+                    .is_some() =>
+            {
+                Err(CompanionChatTurnError::Timeout)
+            }
             Err(_) => Err(CompanionChatTurnError::Indeterminate),
         }
     }
@@ -799,7 +818,9 @@ mod tests {
     use crate::cli::init::ProviderKind;
     use crate::daemon::{
         companion_authority::{AuditObservation, DeviceAuthority, MutationKind},
-        companion_protocol::{CompanionChatRequest, CompanionScope, EnrollmentProof, ReconnectDescriptor},
+        companion_protocol::{
+            CompanionChatRequest, CompanionScope, EnrollmentProof, ReconnectDescriptor,
+        },
     };
     use crate::providers::{Completion, CompletionIdentity, Request};
     use async_trait::async_trait;
@@ -1019,9 +1040,8 @@ mod tests {
     #[tokio::test]
     async fn companion_revoke_between_effect_intent_and_provider_start_launches_nothing() {
         let (runtime, provider, home, writer, writer_join) = test_runtime(true, 0).await;
-        let authority = Arc::new(
-            DeviceAuthority::load(home.path()).expect("load real companion authority"),
-        );
+        let authority =
+            Arc::new(DeviceAuthority::load(home.path()).expect("load real companion authority"));
         let signing = SigningKey::from_bytes(&[41; 32]);
         let descriptor = ReconnectDescriptor {
             schema_version: 3,
@@ -1062,13 +1082,12 @@ mod tests {
 
         let intent_seen = Arc::new(Notify::new());
         let release_start = Arc::new(Notify::new());
-        let gate: Arc<dyn crate::providers::ChatTurnEffectGate> = Arc::new(
-            PauseBeforeCompanionStartGate {
+        let gate: Arc<dyn crate::providers::ChatTurnEffectGate> =
+            Arc::new(PauseBeforeCompanionStartGate {
                 inner: lease.chat_effect_gate(),
                 intent_seen: Arc::clone(&intent_seen),
                 release_start: Arc::clone(&release_start),
-            },
-        );
+            });
         let wait_for_intent = intent_seen.notified();
         tokio::pin!(wait_for_intent);
         wait_for_intent.as_mut().enable();
@@ -1123,7 +1142,10 @@ mod tests {
         runtime.close_and_drain().await;
         drop(runtime);
         drop(writer);
-        writer_join.await.expect("join companion-bound test writer").expect("writer terminal");
+        writer_join
+            .await
+            .expect("join companion-bound test writer")
+            .expect("writer terminal");
     }
 
     struct DiscardingGuiSink;

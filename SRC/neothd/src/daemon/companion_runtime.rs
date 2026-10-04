@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     daemon::{
+        chat_runtime::{CompanionChatTurnError, DaemonChatRuntime},
         companion_authority::{
             AuditObservation, DeviceAuthority, DeviceGrant, MutationKind, PendingAudit, Reconcile,
             StatusLease,
@@ -34,7 +35,6 @@ use crate::{
             CompanionStatusSnapshot, EnrollmentAccepted, EnrollmentProof, ReconnectDescriptor,
             ServerFrame, StatusProof,
         },
-        chat_runtime::{CompanionChatTurnError, DaemonChatRuntime},
     },
     wal::{
         companion_mutation_receipts::{
@@ -331,13 +331,23 @@ impl CompanionRuntime {
     /// Only called by the authenticated daemon IPC handler.  It creates a
     /// fresh one-time v3 topic/PSK, but it never starts a transient responder:
     /// the daemon's persistent key has already been loaded above.
-    pub(crate) async fn mint_pair_invite(self: &Arc<Self>, requested_scope: CompanionScope) -> Result<CompanionV3Invite> {
+    pub(crate) async fn mint_pair_invite(
+        self: &Arc<Self>,
+        requested_scope: CompanionScope,
+    ) -> Result<CompanionV3Invite> {
         let mut topic = [0u8; 32];
         let mut psk = [0u8; 16];
         getrandom::getrandom(&mut topic).context("mint companion v3 topic")?;
         getrandom::getrandom(&mut psk).context("mint companion v3 psk")?;
-        self.spawn_pair_listener(topic, psk, requested_scope).await?;
-        let url = build_pair_url(topic, psk, self.daemon_key.public_key, INVITE_TTL_SECS, requested_scope);
+        self.spawn_pair_listener(topic, psk, requested_scope)
+            .await?;
+        let url = build_pair_url(
+            topic,
+            psk,
+            self.daemon_key.public_key,
+            INVITE_TTL_SECS,
+            requested_scope,
+        );
         Ok(CompanionV3Invite {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             pair_url: url,
@@ -346,7 +356,12 @@ impl CompanionRuntime {
         })
     }
 
-    async fn spawn_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16], requested_scope: CompanionScope) -> Result<()> {
+    async fn spawn_pair_listener(
+        self: &Arc<Self>,
+        topic: [u8; 32],
+        psk: [u8; 16],
+        requested_scope: CompanionScope,
+    ) -> Result<()> {
         self.reap_finished_pair_tasks().await?;
         let key = hex::encode(topic);
         let mut tasks = self.pair_tasks.lock().await;
@@ -359,12 +374,20 @@ impl CompanionRuntime {
             "duplicate companion pairing topic"
         );
         let runtime = Arc::clone(self);
-        let task = tokio::spawn(async move { runtime.run_pair_listener(topic, psk, requested_scope).await });
+        let task =
+            tokio::spawn(
+                async move { runtime.run_pair_listener(topic, psk, requested_scope).await },
+            );
         tasks.insert(key, task);
         Ok(())
     }
 
-    async fn run_pair_listener(self: &Arc<Self>, topic: [u8; 32], psk: [u8; 16], requested_scope: CompanionScope) -> Result<()> {
+    async fn run_pair_listener(
+        self: &Arc<Self>,
+        topic: [u8; 32],
+        psk: [u8; 16],
+        requested_scope: CompanionScope,
+    ) -> Result<()> {
         let expected_client_noise = invite_client_noise_key(&topic, &psk);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(INVITE_TTL_SECS);
         let mut shutdown = self.shutdown_tx.subscribe();
@@ -762,22 +785,44 @@ impl CompanionRuntime {
             )
         }) {
             Ok(value) if value.device_id == grant.device_id => value,
-            Ok(_) => return self.close_unaccepted_chat_connection(
-                connection, rendezvous, anyhow::anyhow!("chat listener/grant mapping drift"),
-            ).await,
-            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+            Ok(_) => {
+                return self
+                    .close_unaccepted_chat_connection(
+                        connection,
+                        rendezvous,
+                        anyhow::anyhow!("chat listener/grant mapping drift"),
+                    )
+                    .await;
+            }
+            Err(error) => {
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, error)
+                    .await;
+            }
         };
-        if let Err(error) = write_frame(&mut connection, &ServerFrame::ChatChallenge(challenge)).await {
-            return self.close_unaccepted_chat_connection(connection, rendezvous, error).await;
+        if let Err(error) =
+            write_frame(&mut connection, &ServerFrame::ChatChallenge(challenge)).await
+        {
+            return self
+                .close_unaccepted_chat_connection(connection, rendezvous, error)
+                .await;
         }
         let request: CompanionChatRequest = match read_frame(&mut connection).await {
             Ok(value) => value,
-            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+            Err(error) => {
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, error)
+                    .await;
+            }
         };
         let request_id = request.request_id;
         let now = match companion_now_unix_i64() {
             Ok(value) => value,
-            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+            Err(error) => {
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, error)
+                    .await;
+            }
         };
         let lease = match self.authority.authorize_chat(&request, now) {
             Ok(value) => value,
@@ -795,7 +840,9 @@ impl CompanionRuntime {
                         error.context(format!("chat denial write failed: {denial_error}"))
                     }
                 };
-                return self.close_unaccepted_chat_connection(connection, rendezvous, reason).await;
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, reason)
+                    .await;
             }
         };
         let effect_gate = lease.chat_effect_gate();
@@ -836,34 +883,58 @@ impl CompanionRuntime {
             // its cancellation was observed. Do not label that response as
             // accepted or claim a remote abort.
             CompanionChatTerminal {
-                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                schema_version: COMPANION_V3_SCHEMA_VERSION,
+                request_id,
                 outcome: CompanionChatOutcome::Indeterminate,
-                records: Vec::new(), provider: None, model: None,
+                records: Vec::new(),
+                provider: None,
+                model: None,
             }
-        } else { match result {
-            Ok(response) => CompanionChatTerminal {
-                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
-                outcome: CompanionChatOutcome::Accepted,
-                records: response.records.into_iter().map(|record| CompanionChatRecord {
-                    kind: match record.kind {
-                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stdout => CompanionChatRecordKind::Stdout,
-                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stderr => CompanionChatRecordKind::Stderr,
-                        crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Notice => CompanionChatRecordKind::Notice,
-                    }, text: record.text,
-                }).collect(),
-                provider: Some(response.terminal.provider), model: Some(response.terminal.model),
-            },
-            Err(error) => CompanionChatTerminal {
-                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
-                outcome: match error {
-                    CompanionChatTurnError::Denied => CompanionChatOutcome::Denied,
-                    CompanionChatTurnError::Busy => CompanionChatOutcome::Busy,
-                    CompanionChatTurnError::Unavailable => CompanionChatOutcome::Unavailable,
-                    CompanionChatTurnError::Timeout => CompanionChatOutcome::Timeout,
-                    CompanionChatTurnError::Indeterminate => CompanionChatOutcome::Indeterminate,
-                }, records: Vec::new(), provider: None, model: None,
-            },
-        }};
+        } else {
+            match result {
+                Ok(response) => CompanionChatTerminal {
+                    schema_version: COMPANION_V3_SCHEMA_VERSION,
+                    request_id,
+                    outcome: CompanionChatOutcome::Accepted,
+                    records: response
+                        .records
+                        .into_iter()
+                        .map(|record| CompanionChatRecord {
+                            kind: match record.kind {
+                                crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stdout => {
+                                    CompanionChatRecordKind::Stdout
+                                }
+                                crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stderr => {
+                                    CompanionChatRecordKind::Stderr
+                                }
+                                crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Notice => {
+                                    CompanionChatRecordKind::Notice
+                                }
+                            },
+                            text: record.text,
+                        })
+                        .collect(),
+                    provider: Some(response.terminal.provider),
+                    model: Some(response.terminal.model),
+                },
+                Err(error) => CompanionChatTerminal {
+                    schema_version: COMPANION_V3_SCHEMA_VERSION,
+                    request_id,
+                    outcome: match error {
+                        CompanionChatTurnError::Denied => CompanionChatOutcome::Denied,
+                        CompanionChatTurnError::Busy => CompanionChatOutcome::Busy,
+                        CompanionChatTurnError::Unavailable => CompanionChatOutcome::Unavailable,
+                        CompanionChatTurnError::Timeout => CompanionChatOutcome::Timeout,
+                        CompanionChatTurnError::Indeterminate => {
+                            CompanionChatOutcome::Indeterminate
+                        }
+                    },
+                    records: Vec::new(),
+                    provider: None,
+                    model: None,
+                },
+            }
+        };
         let bytes = match lease.chat_terminal_frame(terminal) {
             Ok(bytes) => bytes,
             // A bounded daemon response can still exceed the mobile carrier's
@@ -871,9 +942,12 @@ impl CompanionRuntime {
             // accepted: replace it before any write with a fresh public
             // indeterminate terminal for this exact request id.
             Err(_) => match lease.chat_terminal_frame(CompanionChatTerminal {
-                schema_version: COMPANION_V3_SCHEMA_VERSION, request_id,
+                schema_version: COMPANION_V3_SCHEMA_VERSION,
+                request_id,
                 outcome: CompanionChatOutcome::Indeterminate,
-                records: Vec::new(), provider: None, model: None,
+                records: Vec::new(),
+                provider: None,
+                model: None,
             }) {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -916,7 +990,9 @@ impl CompanionRuntime {
             }
             (_, Err(teardown_error)) => {
                 self.mark_degraded().await;
-                anyhow::bail!("companion chat terminal carrier drain is indeterminate: {teardown_error}")
+                anyhow::bail!(
+                    "companion chat terminal carrier drain is indeterminate: {teardown_error}"
+                )
             }
         }
     }
@@ -967,7 +1043,10 @@ impl CompanionRuntime {
         topic: [u8; 32],
         requested_scope: CompanionScope,
     ) -> Result<EnrollmentAccepted> {
-        anyhow::ensure!(proof.requested_scope == requested_scope, "pairing scope differs from daemon invite");
+        anyhow::ensure!(
+            proof.requested_scope == requested_scope,
+            "pairing scope differs from daemon invite"
+        );
         let reconnect = ReconnectDescriptor {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             carrier: "peeroxide-hyperswarm-v3".into(),
@@ -1126,7 +1205,13 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
         .fold(0u8, |diff, (a, b)| diff | (a ^ b))
         == 0
 }
-fn build_pair_url(topic: [u8; 32], psk: [u8; 16], server_pk: [u8; 32], ttl: u64, scope: CompanionScope) -> String {
+fn build_pair_url(
+    topic: [u8; 32],
+    psk: [u8; 16],
+    server_pk: [u8; 32],
+    ttl: u64,
+    scope: CompanionScope,
+) -> String {
     format!(
         "neoth://companion/pair?v=3&topic={}&psk={}&server_pk={}&ttl={}&scope={}",
         hex::encode(topic),
@@ -1164,7 +1249,13 @@ mod tests {
     fn v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication() {
         let home = tempfile::tempdir().unwrap();
         let key = load_or_create_server_key(home.path()).unwrap();
-        let url = build_pair_url([1; 32], [2; 16], key.public_key, INVITE_TTL_SECS, CompanionScope::StatusRead);
+        let url = build_pair_url(
+            [1; 32],
+            [2; 16],
+            key.public_key,
+            INVITE_TTL_SECS,
+            CompanionScope::StatusRead,
+        );
         assert_eq!(
             url,
             format!(

@@ -1,9 +1,10 @@
 //! W2306 R5: recovery-safe v3 companion authority candidate.
 //! A persisted delivery marker is written before the daemon may begin status I/O.
 use super::companion_protocol::{
-    COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatRequest, CompanionDeviceId, CompanionScope, CompanionStatusSnapshot,
-    EnrollmentProof, ProtocolError, ReconnectDescriptor, ServerFrame, StatusChallenge, StatusProof,
-    device_key_fingerprint, encode_chat_terminal, encode_server_frame,
+    COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatRequest, CompanionDeviceId,
+    CompanionScope, CompanionStatusSnapshot, EnrollmentProof, ProtocolError, ReconnectDescriptor,
+    ServerFrame, StatusChallenge, StatusProof, device_key_fingerprint, encode_chat_terminal,
+    encode_server_frame,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -122,7 +123,9 @@ struct Challenge {
     value: StatusChallenge,
 }
 #[derive(Clone, Debug)]
-struct ChatChallengeState { value: ChatChallenge }
+struct ChatChallengeState {
+    value: ChatChallenge,
+}
 #[derive(Debug)]
 struct Core {
     state: State,
@@ -254,9 +257,12 @@ fn check_chat_effect_authority(
     );
     anyhow::ensure!(
         c.owned_deliveries.contains(&delivery_id)
-            && c.state.delivery_markers.get(&delivery_id).is_some_and(|marker| {
-                marker.device_id.0 == device_id && marker.revision == revision
-            }),
+            && c.state
+                .delivery_markers
+                .get(&delivery_id)
+                .is_some_and(|marker| {
+                    marker.device_id.0 == device_id && marker.revision == revision
+                }),
         "companion chat delivery lease is no longer live"
     );
     Ok(())
@@ -777,56 +783,118 @@ impl DeviceAuthority {
     /// Fresh chat admission is distinct from status: the expected durable
     /// scope is checked before a challenge exists or a provider can be seen.
     pub fn begin_chat_reconnect_for_observed_noise(
-        &self, noise: [u8; 32], generation: u64, boot: String, nonce: [u8; 32], now: i64,
+        &self,
+        noise: [u8; 32],
+        generation: u64,
+        boot: String,
+        nonce: [u8; 32],
+        now: i64,
     ) -> Result<ChatChallenge> {
         let mut c = self.core()?;
-        anyhow::ensure!(generation > 0 && now >= 0, "invalid reconnect clock/generation");
-        let hits = c.state.devices.values().filter(|grant| {
-            grant.client_noise_key == noise && grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend
-        }).collect::<Vec<_>>();
+        anyhow::ensure!(
+            generation > 0 && now >= 0,
+            "invalid reconnect clock/generation"
+        );
+        let hits = c
+            .state
+            .devices
+            .values()
+            .filter(|grant| {
+                grant.client_noise_key == noise
+                    && grant.phase == Phase::Active
+                    && grant.scope == CompanionScope::ChatSend
+            })
+            .collect::<Vec<_>>();
         anyhow::ensure!(hits.len() == 1, "unauthenticated chat reconnect");
         let (id, revision) = (hits[0].device_id.clone(), hits[0].revision);
         if let Some(existing) = c.chat_challenges.get(&id.0) {
-            anyhow::ensure!(now >= existing.value.issued_at_unix, "backward chat challenge clock");
-            if now - existing.value.issued_at_unix > AGE { c.chat_challenges.remove(&id.0); }
+            anyhow::ensure!(
+                now >= existing.value.issued_at_unix,
+                "backward chat challenge clock"
+            );
+            if now - existing.value.issued_at_unix > AGE {
+                c.chat_challenges.remove(&id.0);
+            }
         }
-        anyhow::ensure!(!c.chat_challenges.contains_key(&id.0), "live chat challenge already exists");
+        anyhow::ensure!(
+            !c.chat_challenges.contains_key(&id.0),
+            "live chat challenge already exists"
+        );
         let value = ChatChallenge {
-            schema_version: COMPANION_V3_SCHEMA_VERSION, device_id: id.clone(), revision,
-            listener_generation: generation, daemon_boot_id: boot, challenge_nonce: nonce, issued_at_unix: now,
+            schema_version: COMPANION_V3_SCHEMA_VERSION,
+            device_id: id.clone(),
+            revision,
+            listener_generation: generation,
+            daemon_boot_id: boot,
+            challenge_nonce: nonce,
+            issued_at_unix: now,
         };
         value.validate().map_err(pe)?;
-        c.chat_challenges.insert(id.0, ChatChallengeState { value: value.clone() });
+        c.chat_challenges.insert(
+            id.0,
+            ChatChallengeState {
+                value: value.clone(),
+            },
+        );
         Ok(value)
     }
-    pub fn authorize_chat(&self, request: &CompanionChatRequest, now: i64) -> Result<CompanionChatLease> {
+    pub fn authorize_chat(
+        &self,
+        request: &CompanionChatRequest,
+        now: i64,
+    ) -> Result<CompanionChatLease> {
         request.validate().map_err(pe)?;
         let mut c = self.core()?;
-        anyhow::ensure!(c.state.delivery_markers.is_empty(), "companion delivery already active");
-        let grant = c.state.devices.get(&request.device_id.0).context("unknown device")?;
-        anyhow::ensure!(grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend, "device chat denied");
+        anyhow::ensure!(
+            c.state.delivery_markers.is_empty(),
+            "companion delivery already active"
+        );
+        let grant = c
+            .state
+            .devices
+            .get(&request.device_id.0)
+            .context("unknown device")?;
+        anyhow::ensure!(
+            grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend,
+            "device chat denied"
+        );
         anyhow::ensure!(grant.revision == request.revision, "stale revision");
         request.verify_with(&grant.signing_key).map_err(pe)?;
-        let challenge = c.chat_challenges.get(&request.device_id.0).context("no authenticated chat challenge")?;
+        let challenge = c
+            .chat_challenges
+            .get(&request.device_id.0)
+            .context("no authenticated chat challenge")?;
         anyhow::ensure!(
-            now >= challenge.value.issued_at_unix && now - challenge.value.issued_at_unix <= AGE
-            && challenge.value.device_id == request.device_id
-            && challenge.value.revision == request.revision
-            && challenge.value.listener_generation == request.listener_generation
-            && challenge.value.daemon_boot_id == request.daemon_boot_id
-            && challenge.value.challenge_nonce == request.challenge_nonce,
+            now >= challenge.value.issued_at_unix
+                && now - challenge.value.issued_at_unix <= AGE
+                && challenge.value.device_id == request.device_id
+                && challenge.value.revision == request.revision
+                && challenge.value.listener_generation == request.listener_generation
+                && challenge.value.daemon_boot_id == request.daemon_boot_id
+                && challenge.value.challenge_nonce == request.challenge_nonce,
             "chat challenge mismatch"
         );
         let delivery_id = Uuid::now_v7();
         let mut next = c.state.clone();
-        next.delivery_markers.insert(delivery_id, DeliveryMarker {
-            delivery_id, device_id: request.device_id.clone(), revision: request.revision,
-        });
+        next.delivery_markers.insert(
+            delivery_id,
+            DeliveryMarker {
+                delivery_id,
+                device_id: request.device_id.clone(),
+                revision: request.revision,
+            },
+        );
         self.publish(&mut c, next)?;
         c.owned_deliveries.insert(delivery_id);
         c.chat_challenges.remove(&request.device_id.0);
         *c.leases.entry(request.device_id.0).or_insert(0) += 1;
-        Ok(StatusLease { store: self.store.clone(), shared: Arc::clone(&self.shared), id: request.device_id.0, delivery_id, revision: request.revision })
+        Ok(StatusLease {
+            store: self.store.clone(),
+            shared: Arc::clone(&self.shared),
+            id: request.device_id.0,
+            delivery_id,
+            revision: request.revision,
+        })
     }
     pub fn device(&self, id: &CompanionDeviceId) -> Result<DeviceGrant> {
         let c = self.core()?;
@@ -977,9 +1045,16 @@ mod real_store_regression {
             daemon_noise_public_key: [2; 32],
             descriptor_generation: 1,
         };
-        let enrollment =
-            EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32], CompanionScope::StatusRead, "phone".into(), &signing)
-                .unwrap();
+        let enrollment = EnrollmentProof::signed(
+            [3; 32],
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            CompanionScope::StatusRead,
+            "phone".into(),
+            &signing,
+        )
+        .unwrap();
         let enrolled = authority
             .begin_enrollment(enrollment, [4; 32], descriptor, 1)
             .unwrap();
@@ -1038,17 +1113,57 @@ mod real_store_regression {
         fs::create_dir_all(&home).unwrap();
         let authority = DeviceAuthority::load(&home).unwrap();
         let signing = SigningKey::from_bytes(&[11; 32]);
-        let descriptor = ReconnectDescriptor { schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(), rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1 };
-        let status = EnrollmentProof::signed([3;32], [4;32], [5;32], [6;32], CompanionScope::StatusRead, "status".into(), &signing).unwrap();
-        let pending = authority.begin_enrollment(status, [4;32], descriptor.clone(), 1).unwrap();
-        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
-        assert!(authority.begin_chat_reconnect_for_observed_noise([5;32], 1, "boot".into(), [7;32], 2).is_err());
+        let descriptor = ReconnectDescriptor {
+            schema_version: 3,
+            carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32],
+            daemon_noise_public_key: [2; 32],
+            descriptor_generation: 1,
+        };
+        let status = EnrollmentProof::signed(
+            [3; 32],
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            CompanionScope::StatusRead,
+            "status".into(),
+            &signing,
+        )
+        .unwrap();
+        let pending = authority
+            .begin_enrollment(status, [4; 32], descriptor.clone(), 1)
+            .unwrap();
+        authority
+            .reconcile_audit(pending.mutation_id, AuditObservation::Observed)
+            .unwrap();
+        assert!(
+            authority
+                .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], 2)
+                .is_err()
+        );
 
-        let chat = EnrollmentProof::signed([8;32], [9;32], [10;32], [11;32], CompanionScope::ChatSend, "chat".into(), &signing).unwrap();
-        let pending = authority.begin_enrollment(chat, [9;32], descriptor, 2).unwrap();
-        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
-        let challenge = authority.begin_chat_reconnect_for_observed_noise([10;32], 1, "boot".into(), [12;32], 3).unwrap();
-        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "one turn".into(), &signing).unwrap();
+        let chat = EnrollmentProof::signed(
+            [8; 32],
+            [9; 32],
+            [10; 32],
+            [11; 32],
+            CompanionScope::ChatSend,
+            "chat".into(),
+            &signing,
+        )
+        .unwrap();
+        let pending = authority
+            .begin_enrollment(chat, [9; 32], descriptor, 2)
+            .unwrap();
+        authority
+            .reconcile_audit(pending.mutation_id, AuditObservation::Observed)
+            .unwrap();
+        let challenge = authority
+            .begin_chat_reconnect_for_observed_noise([10; 32], 1, "boot".into(), [12; 32], 3)
+            .unwrap();
+        let request =
+            CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "one turn".into(), &signing)
+                .unwrap();
         let lease = authority.authorize_chat(&request, 4).unwrap();
         assert!(authority.authorize_chat(&request, 4).is_err());
         drop(lease);
@@ -1069,24 +1184,44 @@ mod real_store_regression {
             descriptor_generation: 1,
         };
         let proof = EnrollmentProof::signed(
-            [3; 32], [4; 32], [5; 32], [6; 32], CompanionScope::ChatSend,
-            "chat".into(), &signing,
+            [3; 32],
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            CompanionScope::ChatSend,
+            "chat".into(),
+            &signing,
         )
         .unwrap();
-        let pending = authority.begin_enrollment(proof, [4; 32], descriptor, 1).unwrap();
-        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        let pending = authority
+            .begin_enrollment(proof, [4; 32], descriptor, 1)
+            .unwrap();
+        authority
+            .reconcile_audit(pending.mutation_id, AuditObservation::Observed)
+            .unwrap();
         let challenge = authority
             .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], 2)
             .unwrap();
-        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "ordinary".into(), &signing).unwrap();
+        let request =
+            CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "ordinary".into(), &signing)
+                .unwrap();
         let lease = authority.authorize_chat(&request, 3).unwrap();
-        let pending_revoke = authority.begin_revoke_pending(&challenge.device_id).unwrap().unwrap();
+        let pending_revoke = authority
+            .begin_revoke_pending(&challenge.device_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(pending_revoke.kind, MutationKind::Revoke);
-        assert!(authority
-            .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [8; 32], 4)
-            .is_err());
+        assert!(
+            authority
+                .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [8; 32], 4)
+                .is_err()
+        );
         let mut drain = Box::pin(authority.wait_for_revoke_drain(&challenge.device_id));
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(1), &mut drain).await.is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut drain)
+                .await
+                .is_err()
+        );
         lease.complete_confirmed().unwrap();
         drop(lease);
         assert!(drain.await.is_ok());
@@ -1237,7 +1372,7 @@ mod tests {
                     owned_deliveries: BTreeSet::new(),
                 }),
                 drained: tokio::sync::Notify::new(),
-            effect_admission: Arc::new(tokio::sync::Mutex::new(())),
+                effect_admission: Arc::new(tokio::sync::Mutex::new(())),
             }),
         };
         assert!(reconstructed.core().is_err());

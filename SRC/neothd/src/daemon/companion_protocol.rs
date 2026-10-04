@@ -132,15 +132,29 @@ pub struct CompanionChatRequest {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompanionChatRecordKind { Stdout, Stderr, Notice }
+pub enum CompanionChatRecordKind {
+    Stdout,
+    Stderr,
+    Notice,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct CompanionChatRecord { pub kind: CompanionChatRecordKind, pub text: String }
+pub struct CompanionChatRecord {
+    pub kind: CompanionChatRecordKind,
+    pub text: String,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompanionChatOutcome { Accepted, Denied, Busy, Unavailable, Timeout, Indeterminate }
+pub enum CompanionChatOutcome {
+    Accepted,
+    Denied,
+    Busy,
+    Unavailable,
+    Timeout,
+    Indeterminate,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -371,7 +385,8 @@ impl CompanionChatRequest {
             // slash after leading whitespace selects a local CLI action.
             // Embedded path separators and URLs remain ordinary text and are
             // signed/preserved as supplied.
-            || self.message.trim_start().starts_with('/') {
+            || self.message.trim_start().starts_with('/')
+        {
             return Err(ProtocolError::InvalidFrame);
         }
         Ok(())
@@ -379,7 +394,9 @@ impl CompanionChatRequest {
 
     pub fn signing_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
         self.validate()?;
-        let mut out = Vec::with_capacity(CHAT_DOMAIN.len() + 192 + self.daemon_boot_id.len() + self.message.len());
+        let mut out = Vec::with_capacity(
+            CHAT_DOMAIN.len() + 192 + self.daemon_boot_id.len() + self.message.len(),
+        );
         push_field(&mut out, CHAT_DOMAIN);
         push_field(&mut out, &[self.schema_version]);
         push_field(&mut out, self.device_id.0.as_bytes());
@@ -392,21 +409,34 @@ impl CompanionChatRequest {
         Ok(out)
     }
 
-    pub fn signed(challenge: &ChatChallenge, request_id: Uuid, message: String, signing_key: &SigningKey) -> Result<Self, ProtocolError> {
+    pub fn signed(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
         challenge.validate()?;
         let mut result = Self {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
-            device_id: challenge.device_id.clone(), revision: challenge.revision,
+            device_id: challenge.device_id.clone(),
+            revision: challenge.revision,
             listener_generation: challenge.listener_generation,
-            daemon_boot_id: challenge.daemon_boot_id.clone(), challenge_nonce: challenge.challenge_nonce,
-            request_id, message, signature: Vec::new(),
+            daemon_boot_id: challenge.daemon_boot_id.clone(),
+            challenge_nonce: challenge.challenge_nonce,
+            request_id,
+            message,
+            signature: Vec::new(),
         };
-        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
+        result.signature = signing_key
+            .sign(&result.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
         Ok(result)
     }
 
     pub fn verify_with(&self, device_public_key: &[u8; 32]) -> Result<(), ProtocolError> {
-        let key = VerifyingKey::from_bytes(device_public_key).map_err(|_| ProtocolError::InvalidSignature)?;
+        let key = VerifyingKey::from_bytes(device_public_key)
+            .map_err(|_| ProtocolError::InvalidSignature)?;
         key.verify(&self.signing_bytes()?, &signature_bytes(&self.signature)?)
             .map_err(|_| ProtocolError::InvalidSignature)
     }
@@ -522,9 +552,14 @@ impl CompanionChatTerminal {
         match self.outcome {
             CompanionChatOutcome::Accepted => {
                 if self.provider.as_deref().is_none_or(str::is_empty)
-                    || self.model.as_deref().is_none_or(str::is_empty) { return Err(ProtocolError::InvalidFrame); }
+                    || self.model.as_deref().is_none_or(str::is_empty)
+                {
+                    return Err(ProtocolError::InvalidFrame);
+                }
             }
-            _ if !self.records.is_empty() || self.provider.is_some() || self.model.is_some() => return Err(ProtocolError::InvalidFrame),
+            _ if !self.records.is_empty() || self.provider.is_some() || self.model.is_some() => {
+                return Err(ProtocolError::InvalidFrame);
+            }
             _ => {}
         }
         Ok(())
@@ -567,10 +602,14 @@ pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError
 }
 
 pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
-    let ServerFrame::ChatTerminal(value) = frame else { return Err(ProtocolError::InvalidFrame); };
+    let ServerFrame::ChatTerminal(value) = frame else {
+        return Err(ProtocolError::InvalidFrame);
+    };
     value.validate()?;
     let bytes = serde_json::to_vec(frame).map_err(|_| ProtocolError::InvalidFrame)?;
-    (bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES).then_some(bytes).ok_or(ProtocolError::InvalidFrame)
+    (bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES)
+        .then_some(bytes)
+        .ok_or(ProtocolError::InvalidFrame)
 }
 
 pub fn decode_frame<T: for<'de> Deserialize<'de>>(frame: &[u8]) -> Result<T, ProtocolError> {
@@ -584,9 +623,11 @@ pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame, ProtocolError> {
     if frame.is_empty() || frame.len() > COMPANION_V3_MAX_CHAT_TERMINAL_BYTES {
         return Err(ProtocolError::InvalidFrame);
     }
-    let value: ServerFrame = serde_json::from_slice(frame).map_err(|_| ProtocolError::InvalidFrame)?;
+    let value: ServerFrame =
+        serde_json::from_slice(frame).map_err(|_| ProtocolError::InvalidFrame)?;
     value.validate()?;
-    if !matches!(value, ServerFrame::ChatTerminal(_)) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES {
+    if !matches!(value, ServerFrame::ChatTerminal(_)) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES
+    {
         return Err(ProtocolError::InvalidFrame);
     }
     Ok(value)
@@ -618,16 +659,34 @@ mod tests {
     fn chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text() {
         let signing = SigningKey::from_bytes(&[9; 32]);
         let challenge = ChatChallenge {
-            schema_version: 3, device_id: CompanionDeviceId(Uuid::nil()), revision: 2,
-            listener_generation: 3, daemon_boot_id: "boot".into(), challenge_nonce: [4; 32], issued_at_unix: 1,
+            schema_version: 3,
+            device_id: CompanionDeviceId(Uuid::nil()),
+            revision: 2,
+            listener_generation: 3,
+            daemon_boot_id: "boot".into(),
+            challenge_nonce: [4; 32],
+            issued_at_unix: 1,
         };
-        let request = CompanionChatRequest::signed(&challenge, Uuid::now_v7(), "ordinary text".into(), &signing).unwrap();
-        assert!(request.verify_with(&signing.verifying_key().to_bytes()).is_ok());
-        let mut path = request.clone(); path.message = "ordinary / path".into();
+        let request = CompanionChatRequest::signed(
+            &challenge,
+            Uuid::now_v7(),
+            "ordinary text".into(),
+            &signing,
+        )
+        .unwrap();
+        assert!(
+            request
+                .verify_with(&signing.verifying_key().to_bytes())
+                .is_ok()
+        );
+        let mut path = request.clone();
+        path.message = "ordinary / path".into();
         assert!(path.validate().is_ok());
-        let mut url = request.clone(); url.message = "https://example.test/a/b".into();
+        let mut url = request.clone();
+        url.message = "https://example.test/a/b".into();
         assert!(url.validate().is_ok());
-        let mut slash = request.clone(); slash.message = "\n \t /help".into();
+        let mut slash = request.clone();
+        slash.message = "\n \t /help".into();
         assert!(slash.validate().is_err());
         let exact_limit = CompanionChatRequest::signed(
             &challenge,
@@ -645,9 +704,15 @@ mod tests {
     #[test]
     fn chat_terminal_never_exposes_records_for_nonaccepted_outcomes() {
         let terminal = CompanionChatTerminal {
-            schema_version: 3, request_id: Uuid::nil(), outcome: CompanionChatOutcome::Busy,
-            records: vec![CompanionChatRecord { kind: CompanionChatRecordKind::Stdout, text: "private".into() }],
-            provider: None, model: None,
+            schema_version: 3,
+            request_id: Uuid::nil(),
+            outcome: CompanionChatOutcome::Busy,
+            records: vec![CompanionChatRecord {
+                kind: CompanionChatRecordKind::Stdout,
+                text: "private".into(),
+            }],
+            provider: None,
+            model: None,
         };
         assert!(terminal.validate().is_err());
     }

@@ -92,7 +92,10 @@ pub enum CompanionDevicesCommand {
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
-pub enum CompanionPairScope { StatusRead, ChatSend }
+pub enum CompanionPairScope {
+    StatusRead,
+    ChatSend,
+}
 
 impl From<CompanionPairScope> for crate::daemon::companion_protocol::CompanionScope {
     fn from(value: CompanionPairScope) -> Self {
@@ -114,7 +117,10 @@ pub async fn run_companion(args: CompanionArgs, output: OutputFormat) -> Result<
     }
 }
 
-async fn run_pair_mobile_v3(scope: crate::daemon::companion_protocol::CompanionScope, output: OutputFormat) -> Result<()> {
+async fn run_pair_mobile_v3(
+    scope: crate::daemon::companion_protocol::CompanionScope,
+    output: OutputFormat,
+) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
     let invite = crate::daemon::audit_rpc::companion_v3_mint_pair(&home, scope)
         .await
