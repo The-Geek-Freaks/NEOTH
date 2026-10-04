@@ -478,7 +478,18 @@ impl CompanionRuntime {
         match self
             .writer
             .append_companion_mutation_receipt_once(&self.home, descriptor)
-            .await?
+            .await
+            .map_err(|error| match error {
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptError::Conflict => {
+                    anyhow::anyhow!("companion mutation receipt conflicts with durable state")
+                }
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptError::Duplicate => {
+                    anyhow::anyhow!("companion mutation receipt duplicate was not exact")
+                }
+                crate::wal::companion_mutation_receipts::CompanionMutationReceiptError::Indeterminate => {
+                    anyhow::anyhow!("companion mutation receipt durability is indeterminate")
+                }
+            })?
         {
             CompanionMutationReceiptOutcome::ExistingExact
             | CompanionMutationReceiptOutcome::AppendedExact => {}
@@ -736,7 +747,7 @@ impl CompanionRuntime {
             companion_now_unix_i64()?,
         )?;
         self.complete_pending_audit(pending.clone()).await?;
-        let grant = self.authority.device(pending.device_id.clone())?;
+        let grant = self.authority.device(&pending.device_id)?;
         self.spawn_active_listener(grant).await?;
         Ok(EnrollmentAccepted {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
@@ -800,14 +811,14 @@ fn signal_listener_stop(owner: &DeviceListenerOwner, operation: &'static str) ->
         // The receiver can already be gone only when the owned task has
         // reached a terminal path. Its JoinHandle remains the required proof;
         // a missing handle is never accepted as a successful drain.
-        Err(()) if owner.task.is_some() => {
+        Err(_) if owner.task.is_some() => {
             tracing::debug!(
                 operation,
                 "companion listener stop receiver was already closed; joining retained task"
             );
             Ok(())
         }
-        Err(()) => anyhow::bail!(
+        Err(_) => anyhow::bail!(
             "{operation} could not signal companion listener and no join handle remains"
         ),
     }

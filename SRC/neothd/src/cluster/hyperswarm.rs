@@ -306,7 +306,7 @@ impl PublicRendezvous {
             (Some(handle), None) => {
                 drop(handle);
                 Err(uncertain_start_error(
-                    "public rendezvous lost its actor join handle".into(),
+                    "public rendezvous lost its actor join handle",
                 ))
             }
             (None, None) => Ok(()),
@@ -371,7 +371,7 @@ pub(crate) async fn spawn_public_rendezvous(
     topic: [u8; 32],
     expected_remote_static_key: [u8; 32],
     deadline: tokio::time::Instant,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<PublicRendezvous> {
     spawn_public_rendezvous_with_optional_key(
         topic,

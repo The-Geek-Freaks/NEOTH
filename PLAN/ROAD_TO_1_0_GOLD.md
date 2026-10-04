@@ -18088,3 +18088,11 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - The generated application now lives in a fresh workspace child so CodeQL source-root includes its Kotlin compilation. Gradle daemon reuse is disabled. Evidence requires the materialized MainActivity SHA to equal the original source, binds the APK hash, and retains the CodeQL debug database plus logs at the actual workspace path.
 - Corrected the specific log-upload path found during Root review; independent R2 static review passed. Hosted Kotlin extraction and platform build acceptance remain pending. Existing recurring JavaScript/Python Code Quality passes are distinct from the earlier expanded Kotlin/Ruby probe failure.
 - Report: docs/verification/gold-wave2321-mobile-kotlin-quality.json. No local runtime, .slint edits, protected-file import, or PLAN backlog deletion.
+
+## W2325 - Repair demonstrated mobile compile integration errors (2026-10-04)
+
+- Focused521 run 37201245920 on 568a62cd failed during the actual CLI build: six Rust type errors, no focused test executed and no generated CLI reference produced. The original diagnostic archive and exact failed-job log are retained and hash-bound; no behavior acceptance is inferred.
+- Correct the generic String conversion, split incompatible RPC error types, explicitly map the closed receipt-error enum, borrow the required device identifier and match Tokio's actual watch-send error. Existing rejecting error paths, durable receipt ordering and mandatory retained-task join remain intact. Remove only two demonstrated new unused bindings.
+- Extend the existing strict CLI operation inventory to all six Companion leaves as Unwired GUI operations. The independent review confirms the exact live leaves and strict negative checks. The committed generated reference lacks four new mobile commands; obtain a real hosted export before repeating focused521.
+- Counts remain 2741 portable registrations, 521 focused identities and 52 live-audio identities. Hosted type checking, tests, native/mobile/device and release acceptance remain open. No local compiler, formatter, test or runtime was executed; protected dirty files and the raw PLAN prefix are preserved.
+- Report: docs/verification/gold-wave2325-mobile-compile-repair.json.

@@ -1,0 +1,81 @@
+{
+  "schema": "neoth.wave2325.mobile-compile-repair.v1",
+  "base": "568a62cd16820e84f5eef24f7eac7624b6b9c0a0",
+  "status": "source_integrated_hosted_validation_pending",
+  "failureRun": 37201245920,
+  "failureUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37201245920",
+  "failureLogSha256": "2FD0F5FDE0B8AA6525E39E62651F8DAA6171BBE85333B7D3A2BEEFAD09DB012D",
+  "failureSummarySha256": "AC8B6B53A445269C9EFFE1D5BF3CDA72DE3528F9A0B53479DB3D08B3BC225F82",
+  "diagnostics": {
+    "run_id": 37201245920,
+    "log": "work/gold-20260906/wave2323-focused521/failed-job-clean.log",
+    "log_sha256": "AA28F73CA29BBB1F537B915B8E82781ACCCA8CAA980260F1EABE2BD9EEB5EC86",
+    "errors_fixed": [
+      "E0283",
+      "E0308",
+      "E0308",
+      "E0277",
+      "E0308",
+      "E0308"
+    ],
+    "warnings_fixed": [
+      "unused_imports",
+      "unused_mut"
+    ]
+  },
+  "changes": [
+    "Resolve six demonstrated Rust type errors without changing checked shutdown or receipt-finalization ordering",
+    "Remove two new unused bindings; preserve unrelated vendored warnings",
+    "Register all six live Companion CLI leaves as explicitly Unwired GUI operations"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "candidate": "work/gold-20260906/wave2325-mobile-compile/candidate/SRC/neothd/src/cluster/hyperswarm.rs",
+      "sha256": "8F30D9AB69B588099CDA81F1CB45DB5FE661CF1F0ABB036B7586EAC8E73E7755",
+      "baseSha256": "EA9A459908CDBA6CC8592949FB993A155B52D1C1995D9ED425C2B4754F7F931F"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "candidate": "work/gold-20260906/wave2325-mobile-compile/candidate/SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "sha256": "45DA891256760943A007D930FC8FC48B3D0CD313CC154822102408AC4C1DDF0F",
+      "baseSha256": "6D1D467EF8C76C25E8C955144F6EC38922F56012EF4967BB5D759DC0359BC928"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "candidate": "work/gold-20260906/wave2325-mobile-compile/candidate/SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "sha256": "E25AD05FCBF7801ED51D95B918AE3889C156C35415A4A297456F5EB10A7BD4CE",
+      "baseSha256": "4DE02AC503B2533820E53C6E260E689B092389ACB1DD117ACF37DB8D090D10B0"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "candidate": "work/gold-20260906/wave2325-mobile-compile/candidate/SRC/neothd/src/daemon/companion_runtime.rs",
+      "sha256": "146D9B724DBBF7BF7612493DD0048C8C9B5E98871E0B96F8CCAD3B3C80D4AA62",
+      "baseSha256": "7A6B08CC9902CD9B06EB8DDA5818C79C4A9AE9B821C4F91D0E6BA14C701D0278"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "candidate": "work/gold-20260906/wave2324-companion-cli-parity/candidate/SRC/neothd/src/cli/parity_drift.rs",
+      "sha256": "34884A5890AA4917A1C56A9659C89B95E6277D5FD0FB5B18B6A69B4CACB9E205",
+      "baseSha256": "F802CC9E833A3F89E3B6D406F61A3AC7CB78A94C44A578A45C049D54B1AA4FC5"
+    }
+  ],
+  "rootStaticReview": "Exact diff and current API shapes checked; error paths retain rejecting behavior and required task join",
+  "parityReviewSha256": "025FFA32A15643A1C7687443D5298029CA45595FBDE9EF8982EC293366CA5DE4",
+  "focused521Started": 0,
+  "focused521Executed": 0,
+  "generatedCliReference": "stale; hosted export required before focused521 rerun",
+  "localExecutableValidationRan": false,
+  "counts": {
+    "portable": 2741,
+    "focused": 521,
+    "liveAudio": 52
+  },
+  "open": [
+    "hosted core test typecheck and CLI build",
+    "hosted generated CLI reference import",
+    "focused521",
+    "native full CI and liveAudio52",
+    "mobile build, device and release acceptance"
+  ]
+}

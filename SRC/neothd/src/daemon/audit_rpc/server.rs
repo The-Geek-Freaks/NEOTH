@@ -2234,7 +2234,13 @@ async fn handle_companion_v3_route(
                 .write_all(http_response_json(200, &json).as_bytes())
                 .await;
         }
-        Ok(Err(error)) | Err(error) => {
+        Ok(Err(error)) => {
+            let _ = stream
+                .write_all(http_response(422, "companion v3 request refused").as_bytes())
+                .await;
+            tracing::debug!(%error, "companion v3 RPC refused");
+        }
+        Err(error) => {
             let _ = stream
                 .write_all(http_response(422, "companion v3 request refused").as_bytes())
                 .await;
