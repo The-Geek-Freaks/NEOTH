@@ -1,0 +1,25 @@
+{
+  "schema": "neoth.wave2370.locked-vendor-test-route.v1",
+  "base": "f47f0f17817ef6acb2abf9838c72773c884371a8",
+  "status": "reviewed-source-hosted-pending",
+  "priorRun": 37243175770,
+  "priorProducer": "f47f0f17817ef6acb2abf9838c72773c884371a8",
+  "productionCliAndBridgeBuild": "hosted-success",
+  "priorFailure": "Cargo refuses peeroxide private lib tests with dev-dependencies outside workspace membership",
+  "priorExactTestsExecuted": 0,
+  "partialEvidenceSha256": "7F295062101E510939E5186EFD4015A445B1BF8630F185530954B8FD66BDFDD2",
+  "localExecutableValidationRan": false,
+  "deviceAccepted": false,
+  "signedReleaseAccepted": false,
+  "portableRegistrations": 2754,
+  "focusedCases": 528,
+  "requiredInteropExactCases": 12,
+  "repairs": [
+    "Temporarily admit peeroxide into the hosted test workspace, explicitly excluding its standalone libudx and peeroxide-dht path dependencies.",
+    "Add only three already-locked dev-dependency edges to the temporary peeroxide lock record; retain --locked, exact test selection and one-pass assertions.",
+    "Restore root manifest, root lock and peeroxide manifest with SHA-256 checks and a fixed post-restoration log terminal. Ordinary shell exits are covered; uncatchable runner termination is not a claimed restoration proof.",
+    "Preserve the exact two-entry product artifact contract; do not upload temporary test workspace files."
+  ],
+  "reviewSha256": "1850E66CD918BB324DFF612811F213A7F287713D38DEB83907CC797ECE94212B",
+  "candidateSha256": "2FE0628975948710F9F27067203B93F784373F785A0FD4228E3BA44B4E00918B"
+}
