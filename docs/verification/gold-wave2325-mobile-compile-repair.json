@@ -77,5 +77,27 @@
     "focused521",
     "native full CI and liveAudio52",
     "mobile build, device and release acceptance"
-  ]
+  ],
+  "hostedFormatting": {
+    "run": 37201805321,
+    "producer": "edec746d64021d12879ff5825fa230146ce558fd",
+    "artifact": 11303471200,
+    "zipSha256": "c7d63646468902929ce4b20f6417e7d56c6189306654e942940de05674a41779",
+    "entries": [
+      {
+        "sha256": "684CC2D9EC2B62F970D2259EDA33141F6289E5638C65590695122F32C5E79EAE",
+        "path": "SHA256SUMS"
+      },
+      {
+        "sha256": "8E1246BDAFD4A981C0D9605A867A879502826F4FA146FBA8BD113081F8A1A06D",
+        "path": "rustfmt.patch"
+      },
+      {
+        "sha256": "45576ACAD01B3A5965EE2B4B4D82DBAB36BB8BDBE74AB91339FD9391B5EBA28F",
+        "path": "source-head.txt"
+      }
+    ],
+    "imported": true,
+    "gitPostimage": "d6e7cb4098fd1b833b514434f5ca95648d37afc4"
+  }
 }

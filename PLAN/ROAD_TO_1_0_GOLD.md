@@ -18096,3 +18096,5 @@ Integrated-producer Preflight 37050994731 on 4d3ba853 passed all six Matrix prov
 - Extend the existing strict CLI operation inventory to all six Companion leaves as Unwired GUI operations. The independent review confirms the exact live leaves and strict negative checks. The committed generated reference lacks four new mobile commands; obtain a real hosted export before repeating focused521.
 - Counts remain 2741 portable registrations, 521 focused identities and 52 live-audio identities. Hosted type checking, tests, native/mobile/device and release acceptance remain open. No local compiler, formatter, test or runtime was executed; protected dirty files and the raw PLAN prefix are preserved.
 - Report: docs/verification/gold-wave2325-mobile-compile-repair.json.
+
+- W2325 formatting follow-up: original Preflight37201805321 artifact11303471200 ZIP/API SHA C7D63646468902929CE4B20F6417E7D56C6189306654E942940DE05674A41779 and exact three entries/internal hashes verified. Import only the hosted RPC reexport ordering patch with full Git postimage d6e7cb4098fd1b833b514434f5ca95648d37afc4. No local formatter; fresh hosted compile/reference remains required.

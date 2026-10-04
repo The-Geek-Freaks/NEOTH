@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile_compile_repair_hosted_validation_pending",
+  "status": "mobile_compile_repair_formatted_hosted_compile_pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 382798,
-    "sha256": "A0D491FF9E3EE0ABE532BEA1E27BED4C2519E5D18232365856304F6888D51CE9"
+    "bytes": 382805,
+    "sha256": "D0215E88B3C9D43ADD103A0FA8AFE3A5B43F723A8742E1E9A3F2644CB88D169B"
   },
   "sourceInputs": 2094,
   "requiredNativeTests": [
@@ -2232,13 +2232,13 @@
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "45DA891256760943A007D930FC8FC48B3D0CD313CC154822102408AC4C1DDF0F",
+      "sourceSha256": "F3BFA4CACC69ED114103679978DC17B71B5C4E701F1B2620F1112E3C906BA8AD",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_feedback_target_requires_exact_terminal_session",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "45DA891256760943A007D930FC8FC48B3D0CD313CC154822102408AC4C1DDF0F",
+      "sourceSha256": "F3BFA4CACC69ED114103679978DC17B71B5C4E701F1B2620F1112E3C906BA8AD",
       "junitClass": "neoth"
     },
     {
@@ -4122,7 +4122,7 @@
     {
       "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::silence_timeout_error_is_typed_retry_guidance_not_a_success_response",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "sourceSha256": "45DA891256760943A007D930FC8FC48B3D0CD313CC154822102408AC4C1DDF0F",
+      "sourceSha256": "F3BFA4CACC69ED114103679978DC17B71B5C4E701F1B2620F1112E3C906BA8AD",
       "junitClass": "neoth"
     },
     {
@@ -73860,6 +73860,32 @@
       }
     ],
     "note": "Six hosted compiler diagnostics repaired; focused521 never executed; real hosted CLI reference is required before focused rerun.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2325HostedFormatting": {
+    "base": "edec746d64021d12879ff5825fa230146ce558fd",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2325-mobile-compile-repair.json",
+        "bytes": 4401,
+        "sha256": "79C000F9CBC5AD3E7A1675FF373D0859279F329B380314BE68A960927F95B0AB",
+        "blob": "fd7c7af016785b40432a7328267d45e3d27d750e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2368845,
+        "sha256": "DF32ED5A2739BF116C7DE32949FC79C124D6124B10138CA592D7C60524FDADD4",
+        "blob": "8412615a465dc4fee4584e5835d9d91570e920f2"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+        "bytes": 20604,
+        "sha256": "F3BFA4CACC69ED114103679978DC17B71B5C4E701F1B2620F1112E3C906BA8AD",
+        "blob": "d6e7cb4098fd1b833b514434f5ca95648d37afc4"
+      }
+    ],
+    "note": "Exact hosted RPC reexport ordering admitted; new producer compile and actual reference export required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

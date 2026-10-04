@@ -79,9 +79,6 @@ pub use client::{
     try_post_audit_frame_with_subtype,
 };
 pub(crate) use client::{
-    companion_v3_list_devices, companion_v3_mint_pair, companion_v3_revoke_device,
-};
-pub(crate) use client::{
     ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
     conversation_post_cancellable,
 };
@@ -92,6 +89,9 @@ pub(crate) use client::{
 pub(crate) use client::{
     GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
     webchat_handoff_mint, webchat_resume_handoff_mint, webchat_runtime_status,
+};
+pub(crate) use client::{
+    companion_v3_list_devices, companion_v3_mint_pair, companion_v3_revoke_device,
 };
 #[cfg(feature = "cluster")]
 pub use client::{
