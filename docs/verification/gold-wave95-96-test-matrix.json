@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 388410,
-    "sha256": "86274CA1D732C12CFCE26A5279199CACF02DFFB3645D62E663C6F8CA7A08D01D"
+    "sha256": "397CBB7DF96EE1164BC45D9D83F23F46995626E8FEB9EFA60EEA374EFA09FF62"
   },
   "sourceInputs": 2124,
   "requiredNativeTests": [
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     },
     {
@@ -16561,7 +16561,7 @@
     {
       "test": "cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E",
+      "sourceSha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
       "junitClass": "neoth"
     }
   ],
@@ -75172,6 +75172,32 @@
       }
     ],
     "note": "Retain rendezvous actor through authenticated response; prior15tests and full daemon WAL cleanup proven but real pair response failed; new16case producer pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2385HostedFormat": {
+    "base": "9e48e54c7586d5f234d421435ff307d463e4811a",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2385-pair-response-lifetime.json",
+        "bytes": 2572,
+        "sha256": "7775EA120543A907A64350AF8259C2D8FD42D5B91F8D468709161083C25BD42F",
+        "blob": "95f6fa1810925c6981d9cd8d353a34bf133e4ba9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2408104,
+        "sha256": "ED7F37E238DD5865F8D76CCFEE215282C47678AC91347AB2D669B848D80EAD3D",
+        "blob": "41395f1b831a47ea9809dad426c3ed44483a01cd"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 170143,
+        "sha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A",
+        "blob": "5af4ee041daa8863fb45539460204031b5c4473d"
+      }
+    ],
+    "note": "Exact producer-bound hosted rustfmt patch applied; source semantics unchanged,16case interop pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

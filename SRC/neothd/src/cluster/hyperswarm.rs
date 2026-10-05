@@ -3054,14 +3054,13 @@ mod tests {
 
     #[tokio::test]
     async fn public_rendezvous_leave_retains_actor_owner_until_checked_shutdown() {
-        let (swarm_task, peer_handle, connections) =
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                peeroxide::spawn(peeroxide::SwarmConfig::default()),
-            )
-            .await
-            .expect("real rendezvous actor startup exceeded test bound")
-            .expect("start real rendezvous actor");
+        let (swarm_task, peer_handle, connections) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            peeroxide::spawn(peeroxide::SwarmConfig::default()),
+        )
+        .await
+        .expect("real rendezvous actor startup exceeded test bound")
+        .expect("start real rendezvous actor");
         let mut rendezvous = PublicRendezvous {
             peer_handle: Some(peer_handle),
             topic: [0x71; 32],
@@ -3084,9 +3083,7 @@ mod tests {
         let retained = rendezvous
             .peer_handle
             .as_ref()
-            .expect(
-                "leave must retain the real actor owner for an in-flight response",
-            );
+            .expect("leave must retain the real actor owner for an in-flight response");
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
             retained.join([0x72; 32], server_only_join_opts()),

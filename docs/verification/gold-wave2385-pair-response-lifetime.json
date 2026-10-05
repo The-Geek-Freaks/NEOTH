@@ -46,5 +46,15 @@
   },
   "localExecutableValidationRan": false,
   "productAcceptance": "pending on new producer",
-  "nativeAndReleaseAcceptance": "not supplied by this batch"
+  "nativeAndReleaseAcceptance": "not supplied by this batch",
+  "hostedFormat": {
+    "codeQuality": "success",
+    "scope": "Two layout-only hunks in actor regression",
+    "producer": "9e48e54c7586d5f234d421435ff307d463e4811a",
+    "patchSha256": "0971E2CD35BCE4F82FC953DB409F68B851468B72482B76A296D7C37AEECAC8D8",
+    "zipSha256": "99D62C4642A865A4784C819F000BA144D4245C1F8CFE4A3852406FF559071F51",
+    "run": 37278663230,
+    "codeQualityRun": 37278663183,
+    "artifact": 11331686014
+  }
 }
