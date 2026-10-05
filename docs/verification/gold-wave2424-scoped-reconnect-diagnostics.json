@@ -1,0 +1,96 @@
+{
+  "schema": "neoth.wave2424.scoped-reconnect-diagnostics.v1",
+  "base": "59ba7d713089f1b126bd471e572450ae084e1221",
+  "status": "independent-static-review-approved-hosted-pending",
+  "nativeBuddy": {
+    "run": "37343742991",
+    "producer": "59ba7d713089f1b126bd471e572450ae084e1221",
+    "accepted": true,
+    "exactCases": 1,
+    "rootRecordSha256": "28121D1D89C063224EFF506D405B48BB5701C3F1AA41281AE7E9BD343785AD25"
+  },
+  "observedV3": {
+    "run": "37355964956",
+    "producer": "59ba7d713089f1b126bd471e572450ae084e1221",
+    "outcome": "failure",
+    "exactRustCasesPassed": 20,
+    "stage": "status_reconnect_start",
+    "failureCategory": "work_deadline",
+    "serveExitCode": 0,
+    "walDrained": true,
+    "rootFailureCustodySha256": "BA5AFFA8023F95CC209F9BB3167E58DE57552A7473FFA3F5599058EA027A063A",
+    "rootPartialRegressionSha256": "ADFF2F3F348888648AF86C8DC81B41FAB83153C49FA453771753BAE01BD6D7E9"
+  },
+  "correction": "Standalone DHT RPC requests already time out after approximately four seconds; the prior first-silent-candidate timeout hypothesis is withdrawn. No timeout/retry repair is made.",
+  "changes": [
+    "Fixed Unscoped/Pair/Active construction scope separates incoming DHT and Swarm diagnostics per actor",
+    "One bounded outgoing summary per connect owner distinguishes candidates, replies, request failures and RPC envelope errors",
+    "Reply-capability consumption is not a sent or wire acknowledgement",
+    "Hosted collector retains bounded role-specific counts plus an observation cursor before reconnect; timestamps do not prove packet emission time"
+  ],
+  "sourceBehaviorChanged": false,
+  "deadlinesChanged": false,
+  "authOrPinsChanged": false,
+  "selection": {
+    "exactRustCases": 24,
+    "pythonCollectorCases": 2,
+    "portableBefore": 2759,
+    "portableAfter": 2760,
+    "newPortableIdentity": "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn",
+    "newVendorIdentity": "hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener"
+  },
+  "limits": {
+    "scalars": "0..65535",
+    "saturationReported": true,
+    "rawPeerMaterialLogged": false,
+    "oncePerActorPhase": true,
+    "oncePerOutgoingOwnerSummary": true
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedRun": "pending",
+    "v3Accepted": false,
+    "v4Held": true,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "review": {
+    "path": "work/gold-20260906/wave2424-review/STATIC_REVIEW.md",
+    "sha256": "88C1D1468CE70F0CC62A4F267AAF36AD80171FD1AA3C49B13E1A72BDC9FE9FDA",
+    "verdict": "APPROVE FOR NARROW INTEGRATION AND HOSTED VALIDATION"
+  },
+  "candidateBindings": [
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+      "sha256": "2C62459EC0C18E4D921140E99135C7A2DAD4ED08A08BCCABCB249213707AA5CB"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/lib.rs",
+      "sha256": "FA87B123CF80BD23FA80559C55ECEA8D21F69D5D3BC2E40BDCC4D61D877D1436"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/swarm.rs",
+      "sha256": "4AA97DF7DC6F2A59287489BE705B5499DF4762F3AA320919321AF44DD70B5D72"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "sha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "3011CA478BE53977A9BB6CF14A5CF8F00F38F087ECBA54111726C7892467EA2E"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "sha256": "89D7894F8D8EA9EC36BD2BDBA7A47009C3F6BB3004E5DEC04BE7A333AD31D2A4"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "sha256": "BB8FB9378002F76A1B6CB6B0AD721FA518636960593C62328A943F9AE7CCC00D"
+    }
+  ]
+}

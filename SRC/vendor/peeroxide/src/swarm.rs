@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::time::Duration;
 
 use rand::Rng;
@@ -13,7 +13,8 @@ use std::sync::Arc;
 use libudx::{RuntimeHandle, UdxRuntime};
 use peeroxide_dht::crypto::hash;
 use peeroxide_dht::hyperdht::{
-    self, HyperDhtConfig, HyperDhtHandle, KeyPair, PeerConnection, ServerEvent, ServerReply,
+    self, CompanionDiagnosticScope, HyperDhtConfig, HyperDhtHandle, KeyPair, PeerConnection,
+    ServerEvent, ServerReply,
 };
 use peeroxide_dht::hyperdht_messages::{
     HandshakeMessage, MODE_REPLY, NoisePayload, RelayThroughInfo, SecretStreamInfo, UdxInfo,
@@ -42,21 +43,26 @@ const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
 /// output. Each phase is therefore emitted at most once for this actor.
 struct CompanionDiscoveryDiagnostics {
     enabled: bool,
-    emitted: AtomicU8,
+    scope: CompanionDiagnosticScope,
+    emitted: AtomicU16,
 }
 
 impl CompanionDiscoveryDiagnostics {
-    const CONNECT_ATTEMPT_STARTED: u8 = 1 << 0;
-    const CONNECT_ATTEMPT_SUCCEEDED: u8 = 1 << 1;
-    const CONNECT_ATTEMPT_FAILED: u8 = 1 << 2;
-    const CONNECT_ATTEMPT_TIMED_OUT: u8 = 1 << 3;
-    const RESPONDER_NOISE_STARTED: u8 = 1 << 4;
-    const CANDIDATE_REJECTED: u8 = 1 << 5;
+    const CONNECT_ATTEMPT_STARTED: u16 = 1 << 0;
+    const CONNECT_ATTEMPT_SUCCEEDED: u16 = 1 << 1;
+    const CONNECT_ATTEMPT_FAILED: u16 = 1 << 2;
+    const CONNECT_ATTEMPT_TIMED_OUT: u16 = 1 << 3;
+    const RESPONDER_NOISE_STARTED: u16 = 1 << 4;
+    const CANDIDATE_REJECTED: u16 = 1 << 5;
+    const RESPONDER_NOISE_AUTHENTICATED: u16 = 1 << 6;
+    const RESPONDER_PIN_REJECTED: u16 = 1 << 7;
+    const RESPONDER_CONNECTION_DELIVERED: u16 = 1 << 8;
 
-    fn from_environment() -> Self {
+    fn from_environment(scope: CompanionDiagnosticScope) -> Self {
         Self {
             enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
-            emitted: AtomicU8::new(0),
+            scope,
+            emitted: AtomicU16::new(0),
         }
     }
 
@@ -70,10 +76,22 @@ impl CompanionDiscoveryDiagnostics {
             "connect_attempt_timed_out" => Self::CONNECT_ATTEMPT_TIMED_OUT,
             "responder_noise_started" => Self::RESPONDER_NOISE_STARTED,
             "candidate_rejected" => Self::CANDIDATE_REJECTED,
+            "responder_noise_authenticated" => Self::RESPONDER_NOISE_AUTHENTICATED,
+            "responder_pin_rejected" => Self::RESPONDER_PIN_REJECTED,
+            "responder_connection_delivered" => Self::RESPONDER_CONNECTION_DELIVERED,
             _ => return,
         };
         if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
             eprintln!("NEOTH_COMPANION_DISCOVERY_PHASE={phase}");
+            match &self.scope {
+                CompanionDiagnosticScope::Unscoped => {}
+                CompanionDiagnosticScope::Pair => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=pair_{phase}");
+                }
+                CompanionDiagnosticScope::Active => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=active_{phase}");
+                }
+            }
         }
     }
 }
@@ -163,6 +181,9 @@ pub struct SwarmConfig {
     pub key_pair: Option<KeyPair>,
     /// Underlying HyperDHT configuration.
     pub dht: HyperDhtConfig,
+    /// Fixed companion diagnostic scope forwarded to the DHT and responder
+    /// actor. `Unscoped` preserves legacy environment-gated marker names.
+    pub companion_diagnostic_scope: CompanionDiagnosticScope,
     /// Maximum total peer connections (default 64).
     ///
     /// Values above 128 are clamped to retain a hard resource ceiling for
@@ -201,6 +222,7 @@ impl Default for SwarmConfig {
         Self {
             key_pair: None,
             dht: HyperDhtConfig::default(),
+            companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
             max_peers: DEFAULT_MAX_PEERS,
             max_parallel: DEFAULT_MAX_PARALLEL,
             firewall: 0,
@@ -392,6 +414,9 @@ impl SwarmStartup {
         let (mut dht_owner, dht, server_rx) = dht_startup.finish();
         let handle_dht = dht.clone();
         let handle_key_pair = key_pair.clone();
+        let discovery_diagnostics = Arc::new(CompanionDiscoveryDiagnostics::from_environment(
+            config.companion_diagnostic_scope,
+        ));
 
         let actor = SwarmActor {
             key_pair,
@@ -411,7 +436,7 @@ impl SwarmStartup {
             next_connection_registration_id: 1,
             establishment_tasks: ConnectionEstablishmentTasks::default(),
             outbound_connect_tasks: OutboundConnectTasks::default(),
-            discovery_diagnostics: Arc::new(CompanionDiscoveryDiagnostics::from_environment()),
+            discovery_diagnostics,
             server_registered: false,
             relay_address: Some(relay_address),
             active_connects: 0,
@@ -607,6 +632,7 @@ struct ActorConfig {
     outbound_expected_remote_static_key: Option<[u8; 32]>,
     relay_through: Option<[u8; 32]>,
     relay_address: Option<std::net::SocketAddr>,
+    companion_diagnostic_scope: CompanionDiagnosticScope,
 }
 
 /// The only decision made between authenticated responder Noise receive and
@@ -845,7 +871,8 @@ impl ConnectionEstablishmentTasks {
 pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmError> {
     let SwarmConfig {
         key_pair,
-        dht,
+        mut dht,
+        companion_diagnostic_scope,
         max_peers,
         max_parallel,
         firewall,
@@ -854,6 +881,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
         relay_through,
         relay_address,
     } = config;
+    dht.companion_diagnostic_scope = companion_diagnostic_scope;
     let runtime = UdxRuntime::new()?;
     let dht_startup = match hyperdht::spawn_starting(&runtime, dht).await {
         Ok(startup) => startup,
@@ -875,6 +903,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
             outbound_expected_remote_static_key,
             relay_through,
             relay_address,
+            companion_diagnostic_scope,
         },
     })
 }
@@ -1552,11 +1581,14 @@ impl SwarmActor {
             let _ = reply_tx.send(None);
             return;
         };
+        self.discovery_diagnostics
+            .phase("responder_noise_authenticated");
         let Some(local_stream_id) = after_server_handshake_admission(
             self.config.server_expected_remote_static_key,
             remote_static_key,
             next_stream_id,
         ) else {
+            self.discovery_diagnostics.phase("responder_pin_rejected");
             tracing::debug!(
                 expected = ?self.config.server_expected_remote_static_key.map(|key| short_hex(&key)),
                 actual = %short_hex(&remote_static_key),
@@ -1664,6 +1696,7 @@ impl SwarmActor {
             let key_pair = self.key_pair.clone();
             let relay_addr = self.config.relay_address;
             let rh = self.runtime_handle.clone();
+            let discovery_diagnostics = Arc::clone(&self.discovery_diagnostics);
             self.establishment_tasks.spawn(async move {
                 match create_server_relay_connection(
                     rh,
@@ -1687,6 +1720,8 @@ impl SwarmActor {
                         };
                         if conn_tx.send(swarm_conn).await.is_err() {
                             tracing::warn!("connection channel closed");
+                        } else {
+                            discovery_diagnostics.phase("responder_connection_delivered");
                         }
                     }
                     Err(e) => {
@@ -1697,6 +1732,7 @@ impl SwarmActor {
         } else {
             let rh = self.runtime_handle.clone();
             let dht = self.dht.clone();
+            let discovery_diagnostics = Arc::clone(&self.discovery_diagnostics);
             self.establishment_tasks.spawn(async move {
                 match create_server_connection(
                     rh,
@@ -1718,6 +1754,8 @@ impl SwarmActor {
                         };
                         if conn_tx.send(swarm_conn).await.is_err() {
                             tracing::warn!("connection channel closed");
+                        } else {
+                            discovery_diagnostics.phase("responder_connection_delivered");
                         }
                     }
                     Err(e) => {
@@ -2088,6 +2126,7 @@ mod tests {
                         outbound_expected_remote_static_key: expected_remote_static_key,
                         relay_through: None,
                         relay_address: None,
+                        companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
                     },
                     runtime_handle: runtime.handle(),
                     topics,
@@ -2105,7 +2144,8 @@ mod tests {
                     outbound_connect_tasks: OutboundConnectTasks::default(),
                     discovery_diagnostics: Arc::new(CompanionDiscoveryDiagnostics {
                         enabled: false,
-                        emitted: AtomicU8::new(0),
+                        scope: CompanionDiagnosticScope::Unscoped,
+                        emitted: AtomicU16::new(0),
                     }),
                     server_registered: false,
                     relay_address: None,

@@ -74,6 +74,20 @@ CONNECT_MARKERS = tuple(
     (phase, f"NEOTH_COMPANION_CONNECT_PHASE={phase}".encode("ascii"))
     for phase in CONNECT_PHASES
 )
+SCOPED_CONNECT_PHASES = (
+    "handshake_dispatch_received", "handshake_routing_local",
+    "handshake_routing_relay", "handshake_routing_closer_nodes",
+    "handshake_routing_dropped", "handshake_local_admitted",
+    "handshake_local_rejected", "handshake_reply_capability_consumed",
+    "handshake_reply_capability_dropped", "responder_noise_started",
+    "responder_noise_authenticated", "responder_pin_rejected",
+    "responder_connection_delivered",
+)
+SCOPED_CONNECT_MARKERS = tuple(
+    (f"{scope}_{phase}", f"NEOTH_COMPANION_CONNECT_PHASE={scope}_{phase}\n".encode("ascii"))
+    for scope in ("pair", "active") for phase in SCOPED_CONNECT_PHASES
+)
+SCOPED_CONNECT_COUNT_LIMIT = 65535
 def sha(path: pathlib.Path) -> str: return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 def brief(value: str) -> str: return value.replace("\n", " ").replace("\r", " ")[:160]
 def port() -> int:
@@ -84,17 +98,19 @@ def budget(deadline: float, cap: float = DEADLINE) -> float:
     return min(cap, remaining)
 
 class ShutdownMarkerCollector:
-    """Discard a merged daemon stream while retaining only fixed marker booleans."""
+    """Discard daemon output while retaining fixed booleans and bounded scoped counts."""
     def __init__(self, stream: Any) -> None:
         self.stream, self.lock = stream, threading.Lock()
         self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.connect_observed = {name: False for name, _ in CONNECT_MARKERS}
+        self.scoped_connect_counts = {name: 0 for name, _ in SCOPED_CONNECT_MARKERS}
+        self.scoped_connect_saturated = False
         self.reader_error = False
         self.overlap = max(
             len(marker)
-            for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS, *DISCOVERY_MARKERS, *CONNECT_MARKERS)
+            for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS, *DISCOVERY_MARKERS, *CONNECT_MARKERS, *SCOPED_CONNECT_MARKERS)
         ) - 1
         self.thread = threading.Thread(target=self._drain, daemon=True)
         self.thread.start()
@@ -117,6 +133,17 @@ class ShutdownMarkerCollector:
                     for name, marker in CONNECT_MARKERS:
                         if marker in window:
                             self.connect_observed[name] = True
+                    for name, marker in SCOPED_CONNECT_MARKERS:
+                        at = window.find(marker)
+                        while at >= 0:
+                            # Retained overlap may contain a complete shorter marker.
+                            # Count it only when this chunk supplies its final byte.
+                            if at + len(marker) > len(tail):
+                                if self.scoped_connect_counts[name] < SCOPED_CONNECT_COUNT_LIMIT:
+                                    self.scoped_connect_counts[name] += 1
+                                else:
+                                    self.scoped_connect_saturated = True
+                            at = window.find(marker, at + len(marker))
                 tail = window[-self.overlap:]
         except Exception:
             with self.lock:
@@ -128,6 +155,25 @@ class ShutdownMarkerCollector:
             except OSError:
                 pass
 
+    def scoped_connect_cursor(self) -> dict[str, Any]:
+        with self.lock:
+            return {"counts": dict(self.scoped_connect_counts),
+                    "saturated": self.scoped_connect_saturated,
+                    "reader_error": self.reader_error}
+
+    def scoped_connect_since(self, cursor: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            end = dict(self.scoped_connect_counts)
+            return {
+                "basis": "collector_observation_cursor",
+                "emission_time_bound": False,
+                "before": dict(cursor["counts"]),
+                "after": end,
+                "observed_delta": {name: count - cursor["counts"][name] for name, count in end.items()},
+                "saturated": cursor["saturated"] or self.scoped_connect_saturated,
+                "reader_error": cursor["reader_error"] or self.reader_error,
+            }
+
     def snapshot(self, remaining_cleanup: float) -> dict[str, Any]:
         self.thread.join(timeout=min(1.0, max(0.0, remaining_cleanup)))
         with self.lock:
@@ -136,6 +182,8 @@ class ShutdownMarkerCollector:
                 "pair_markers": dict(self.pair_observed),
                 "discovery_markers": dict(self.discovery_observed),
                 "connect_markers": dict(self.connect_observed),
+                "scoped_connect_counts": dict(self.scoped_connect_counts),
+                "scoped_connect_saturated": self.scoped_connect_saturated,
                 "reader_closed": not self.thread.is_alive(),
                 "reader_error": self.reader_error,
             }
@@ -360,7 +408,15 @@ def main() -> int:
                 status_pair=terminal(raw,"paired") if code==OK else (_ for _ in ()).throw(RuntimeError("status pair rejected"))
                 receipt["steps"]["status_pair"]={"code":code,"validated":True}
                 receipt["stage"]="status_reconnect_start"
-                code,raw=bridge.call("neoth_companion_reconnect_start",json.dumps(status_pair["descriptor"],separators=(",",":")),status_pair["device_id"],timeout=budget(work_deadline))
+                reconnect_cursor=shutdown_markers.scoped_connect_cursor()
+                print("NEOTH_COMPANION_HOSTED_STAGE=status_reconnect_start",file=sys.stderr,flush=True)
+                try:
+                    code,raw=bridge.call("neoth_companion_reconnect_start",json.dumps(status_pair["descriptor"],separators=(",",":")),status_pair["device_id"],timeout=budget(work_deadline))
+                finally:
+                    # Observe before daemon-wide shutdown. The pipe reader can lag
+                    # emission, so the receipt names an observation cursor only.
+                    receipt["status_reconnect_diagnostics"]=shutdown_markers.scoped_connect_since(reconnect_cursor)
+                    print("NEOTH_COMPANION_HOSTED_STAGE=status_reconnect_finished",file=sys.stderr,flush=True)
                 status=terminal(raw,"status") if code==OK else (_ for _ in ()).throw(RuntimeError("status reconnect rejected"))
                 receipt["steps"]["status"]={"code":code,"readiness":status.get("readiness"),"active_turns_known":status.get("active_turns") is not None}
                 # Source-bound scope rejection: a status grant reaches the
@@ -421,7 +477,7 @@ def main() -> int:
                 receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
             else:
                 if serve.stdout is not None: serve.stdout.close()
-                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"reader_closed":True,"reader_error":True}
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"scoped_connect_counts":{name:0 for name,_ in SCOPED_CONNECT_MARKERS},"scoped_connect_saturated":False,"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else

@@ -48,14 +48,24 @@ use crate::socket_pool::SocketPool;
 static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
 
 const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
-static COMPANION_INCOMING_DIAGNOSTICS: AtomicU16 = AtomicU16::new(0);
 
 /// Fixed, secret-free diagnostics owned by one outgoing connect operation.
 /// A second pairing/reconnect attempt in the same process starts with a fresh
-/// bit set, while concurrent attempts cannot suppress one another.
+/// state, while concurrent attempts cannot suppress one another.
 struct OutgoingConnectDiagnostics {
     enabled: bool,
     emitted: u16,
+    initial_candidates: u16,
+    lookup_candidates: u16,
+    fallback_candidates: u16,
+    attempts_started: u16,
+    attempts_replied: u16,
+    attempts_request_failed: u16,
+    attempts_rpc_error: u16,
+    fallback_started: bool,
+    fallback_completed: bool,
+    terminal: Option<&'static str>,
+    counts_capped: bool,
 }
 
 impl OutgoingConnectDiagnostics {
@@ -63,6 +73,17 @@ impl OutgoingConnectDiagnostics {
         Self {
             enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
             emitted: 0,
+            initial_candidates: 0,
+            lookup_candidates: 0,
+            fallback_candidates: 0,
+            attempts_started: 0,
+            attempts_replied: 0,
+            attempts_request_failed: 0,
+            attempts_rpc_error: 0,
+            fallback_started: false,
+            fallback_completed: false,
+            terminal: None,
+            counts_capped: false,
         }
     }
 
@@ -88,23 +109,164 @@ impl OutgoingConnectDiagnostics {
         }
     }
 
+    fn increment(counter: &mut u16, counts_capped: &mut bool) {
+        if *counter == u16::MAX {
+            *counts_capped = true;
+        } else {
+            *counter += 1;
+        }
+    }
+
+    fn add_initial_candidate(&mut self) {
+        Self::increment(&mut self.initial_candidates, &mut self.counts_capped);
+    }
+
+    fn add_lookup_candidate(&mut self) {
+        Self::increment(&mut self.lookup_candidates, &mut self.counts_capped);
+    }
+
+    fn add_fallback_candidate(&mut self) {
+        Self::increment(&mut self.fallback_candidates, &mut self.counts_capped);
+    }
+
+    fn attempt_started(&mut self) {
+        Self::increment(&mut self.attempts_started, &mut self.counts_capped);
+    }
+
+    fn attempt_replied(&mut self) {
+        Self::increment(&mut self.attempts_replied, &mut self.counts_capped);
+    }
+
+    fn attempt_request_failed(&mut self) {
+        Self::increment(
+            &mut self.attempts_request_failed,
+            &mut self.counts_capped,
+        );
+    }
+
+    fn attempt_rpc_error(&mut self) {
+        Self::increment(
+            &mut self.attempts_rpc_error,
+            &mut self.counts_capped,
+        );
+    }
+
+    fn fallback_started(&mut self) {
+        self.fallback_started = true;
+    }
+
+    fn fallback_completed(&mut self) {
+        self.fallback_completed = true;
+    }
+
+    fn finish(&mut self, result: &Result<PeerConnection, HyperDhtError>) {
+        self.terminal = Some(if result.is_ok() { "ok" } else { "error" });
+    }
+
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self {
+            enabled: true,
+            emitted: 0,
+            initial_candidates: 0,
+            lookup_candidates: 0,
+            fallback_candidates: 0,
+            attempts_started: 0,
+            attempts_replied: 0,
+            attempts_request_failed: 0,
+            attempts_rpc_error: 0,
+            fallback_started: false,
+            fallback_completed: false,
+            terminal: None,
+            counts_capped: false,
+        }
+    }
+
     #[cfg(test)]
     fn emitted(&self) -> u16 {
         self.emitted
     }
 }
 
-/// Incoming request diagnostics remain process-bounded: inbound requests have
-/// no trusted operation owner and must not create unbounded diagnostic output.
-fn companion_incoming_phase(phase: &'static str) {
-    let bit = match phase {
-        "handshake_dispatch_received" => 1,
-        _ => return,
-    };
-    if std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1")
-        && COMPANION_INCOMING_DIAGNOSTICS.fetch_or(bit, Ordering::Relaxed) & bit == 0
-    {
-        eprintln!("NEOTH_COMPANION_CONNECT_PHASE={phase}");
+impl Drop for OutgoingConnectDiagnostics {
+    fn drop(&mut self) {
+        if self.enabled {
+            let terminal = self.terminal.unwrap_or("cancelled");
+            eprintln!(
+                "NEOTH_COMPANION_CONNECT_SUMMARY=initial_candidates={};lookup_candidates={};fallback_candidates={};attempts_started={};attempts_replied={};attempts_request_failed={};attempts_rpc_error={};counts_capped={};fallback_started={};fallback_completed={};terminal={terminal}",
+                self.initial_candidates,
+                self.lookup_candidates,
+                self.fallback_candidates,
+                self.attempts_started,
+                self.attempts_replied,
+                self.attempts_request_failed,
+                self.attempts_rpc_error,
+                self.counts_capped as u8,
+                self.fallback_started as u8,
+                self.fallback_completed as u8,
+            );
+        }
+    }
+}
+
+/// Fixed, secret-free diagnostics owned by a single request-handler actor.
+/// This is deliberately actor-local, so an active listener remains observable
+/// after a completed pairing listener has been destroyed.
+struct IncomingConnectDiagnostics {
+    enabled: bool,
+    scope: CompanionDiagnosticScope,
+    emitted: AtomicU16,
+}
+
+impl IncomingConnectDiagnostics {
+    fn from_environment(scope: CompanionDiagnosticScope) -> Self {
+        Self {
+            enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
+            scope,
+            emitted: AtomicU16::new(0),
+        }
+    }
+
+    fn phase(&self, phase: &'static str) {
+        let bit = match phase {
+            "handshake_dispatch_received" => 1 << 0,
+            "handshake_routing_local" => 1 << 1,
+            "handshake_routing_relay" => 1 << 2,
+            "handshake_routing_closer_nodes" => 1 << 3,
+            "handshake_routing_dropped" => 1 << 4,
+            "handshake_local_admitted" => 1 << 5,
+            "handshake_local_rejected" => 1 << 6,
+            "handshake_reply_capability_consumed" => 1 << 7,
+            "handshake_reply_capability_dropped" => 1 << 8,
+            _ => return,
+        };
+        if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+            match self.scope {
+                CompanionDiagnosticScope::Unscoped => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE={phase}");
+                }
+                CompanionDiagnosticScope::Pair => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=pair_{phase}");
+                }
+                CompanionDiagnosticScope::Active => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=active_{phase}");
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test(scope: CompanionDiagnosticScope) -> Self {
+        Self {
+            enabled: true,
+            scope,
+            emitted: AtomicU16::new(0),
+        }
+    }
+
+    #[cfg(test)]
+    fn emitted(&self) -> u16 {
+        self.emitted.load(Ordering::Relaxed)
     }
 }
 
@@ -269,6 +431,7 @@ pub enum ServerEvent {
 /// possible, so dequeuing an event cannot evade the remote admission limit.
 pub struct ServerReply {
     request: Option<crate::rpc::UserRequest>,
+    diagnostics: Option<Arc<IncomingConnectDiagnostics>>,
 }
 
 impl fmt::Debug for ServerReply {
@@ -283,6 +446,17 @@ impl ServerReply {
     fn new(request: crate::rpc::UserRequest) -> Self {
         Self {
             request: Some(request),
+            diagnostics: None,
+        }
+    }
+
+    fn with_diagnostics(
+        request: crate::rpc::UserRequest,
+        diagnostics: Arc<IncomingConnectDiagnostics>,
+    ) -> Self {
+        Self {
+            request: Some(request),
+            diagnostics: Some(diagnostics),
         }
     }
 
@@ -292,12 +466,28 @@ impl ServerReply {
             return Err(value);
         };
         request.reply(value);
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.phase("handshake_reply_capability_consumed");
+        }
         Ok(())
     }
 
     fn error(mut self, code: u64) {
         if let Some(mut request) = self.request.take() {
             request.error(code);
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.phase("handshake_reply_capability_consumed");
+            }
+        }
+    }
+}
+
+impl Drop for ServerReply {
+    fn drop(&mut self) {
+        if self.request.is_some() {
+            if let Some(diagnostics) = &self.diagnostics {
+                diagnostics.phase("handshake_reply_capability_dropped");
+            }
         }
     }
 }
@@ -538,6 +728,18 @@ pub const DEFAULT_BOOTSTRAP: [&str; 3] = [
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+/// Fixed, receipt-safe scope for companion connection diagnostics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CompanionDiagnosticScope {
+    /// Preserve existing unscoped diagnostic marker names for generic callers.
+    #[default]
+    Unscoped,
+    /// Marks diagnostics emitted by a temporary pairing listener.
+    Pair,
+    /// Marks diagnostics emitted by a ready active listener.
+    Active,
+}
+
 #[derive(Debug, Clone, Default)]
 /// Configuration for a HyperDHT instance.
 #[non_exhaustive]
@@ -546,6 +748,8 @@ pub struct HyperDhtConfig {
     pub dht: DhtConfig,
     /// Persistent storage settings for stored records.
     pub persistent: PersistentConfig,
+    /// Fixed listener role prefix for receipt-safe companion diagnostics.
+    pub companion_diagnostic_scope: CompanionDiagnosticScope,
 }
 
 impl HyperDhtConfig {
@@ -561,6 +765,7 @@ impl HyperDhtConfig {
                 ..DhtConfig::default()
             },
             persistent: PersistentConfig::default(),
+            companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
         }
     }
 }
@@ -1118,14 +1323,17 @@ impl HyperDhtHandle {
         runtime: &UdxRuntime,
     ) -> Result<PeerConnection, HyperDhtError> {
         let mut diagnostics = OutgoingConnectDiagnostics::from_environment();
-        self.connect_with_nodes_diagnostics(
-            key_pair,
-            remote_public_key,
-            relay_addresses,
-            runtime,
-            &mut diagnostics,
-        )
-        .await
+        let result = self
+            .connect_with_nodes_diagnostics(
+                key_pair,
+                remote_public_key,
+                relay_addresses,
+                runtime,
+                &mut diagnostics,
+            )
+            .await;
+        diagnostics.finish(&result);
+        result
     }
 
     async fn connect_with_nodes_diagnostics(
@@ -1141,6 +1349,7 @@ impl HyperDhtHandle {
 
         // Phase 1: Optimistic pre-connect through provided relay addresses.
         for relay in relay_addresses {
+            diagnostics.add_initial_candidate();
             tried.push((relay.host.clone(), relay.port));
             match self
                 .connect_through_node(
@@ -1221,6 +1430,7 @@ impl HyperDhtHandle {
             if skip {
                 continue;
             }
+            diagnostics.add_lookup_candidate();
             tried.push((candidate.host.clone(), candidate.port));
             tracing::debug!(candidate = %format!("{}:{}", candidate.host, candidate.port), "connect_with_nodes: trying node candidate");
             match self
@@ -1244,8 +1454,10 @@ impl HyperDhtHandle {
 
         // Phase 3: Also try relay addresses from a FIND_PEER query (peer records).
         diagnostics.phase("find_peer_fallback_started");
+        diagnostics.fallback_started();
         let peer_replies = self.query_find_peer(target).await?;
         diagnostics.phase("find_peer_fallback_completed");
+        diagnostics.fallback_completed();
         for reply in &peer_replies {
             if let Some(value) = &reply.value {
                 if let Ok(peer) = decode_hyper_peer_from_bytes(value) {
@@ -1256,6 +1468,7 @@ impl HyperDhtHandle {
                         {
                             continue;
                         }
+                        diagnostics.add_fallback_candidate();
                         tried.push((relay.host.clone(), relay.port));
                         match self
                             .connect_through_node(
@@ -1300,15 +1513,18 @@ impl HyperDhtHandle {
             port: target_addr.port(),
         };
         let mut diagnostics = OutgoingConnectDiagnostics::from_environment();
-        self.connect_through_node(
-            key_pair,
-            &remote_public_key,
-            &relay,
-            true,
-            runtime,
-            &mut diagnostics,
-        )
-        .await
+        let result = self
+            .connect_through_node(
+                key_pair,
+                &remote_public_key,
+                &relay,
+                true,
+                runtime,
+                &mut diagnostics,
+            )
+            .await;
+        diagnostics.finish(&result);
+        result
     }
 
     async fn connect_through_node(
@@ -1348,8 +1564,9 @@ impl HyperDhtHandle {
         let noise_bytes = nw.send(&local_payload)?;
         let handshake_value = Router::encode_client_handshake(noise_bytes, None, None)?;
 
+        diagnostics.attempt_started();
         diagnostics.phase("handshake_request_started");
-        let resp = self
+        let resp = match self
             .dht
             .request(
                 UserRequestParams {
@@ -1361,10 +1578,21 @@ impl HyperDhtHandle {
                 &relay.host,
                 relay.port,
             )
-            .await?;
+            .await
+        {
+            Ok(response) => {
+                diagnostics.attempt_replied();
+                response
+            }
+            Err(error) => {
+                diagnostics.attempt_request_failed();
+                return Err(error.into());
+            }
+        };
         diagnostics.phase("handshake_reply_received");
 
         if resp.error != 0 {
+            diagnostics.attempt_rpc_error();
             return Err(HyperDhtError::HandshakeFailed(format!(
                 "error code {}",
                 resp.error
@@ -2426,6 +2654,7 @@ pub async fn spawn_starting(
     runtime: &UdxRuntime,
     config: HyperDhtConfig,
 ) -> Result<HyperDhtStartup, HyperDhtError> {
+    let companion_diagnostic_scope = config.companion_diagnostic_scope;
     let (dht_join, dht_handle) = crate::rpc::spawn(runtime, config.dht).await?;
     let persistent_config = config.persistent;
 
@@ -2437,6 +2666,9 @@ pub async fn spawn_starting(
     let router = Arc::new(Mutex::new(Router::new()));
     let (server_tx, server_rx) = mpsc::channel(SERVER_EVENT_QUEUE_CAPACITY);
     let (admin_tx, admin_rx) = mpsc::unbounded_channel::<AdminRequest>();
+    let incoming_diagnostics = Arc::new(IncomingConnectDiagnostics::from_environment(
+        companion_diagnostic_scope,
+    ));
 
     let request_task = tokio::spawn(run_request_handler(
         request_rx,
@@ -2444,6 +2676,7 @@ pub async fn spawn_starting(
         dht_handle.clone(),
         Arc::clone(&router),
         server_tx.clone(),
+        incoming_diagnostics,
         admin_rx,
     ));
 
@@ -2497,6 +2730,7 @@ async fn run_request_handler(
     dht: DhtHandle,
     router: Arc<Mutex<Router>>,
     server_tx: mpsc::Sender<ServerEvent>,
+    incoming_diagnostics: Arc<IncomingConnectDiagnostics>,
     mut admin_rx: mpsc::UnboundedReceiver<AdminRequest>,
 ) {
     let mut storage = Persistent::new(config);
@@ -2538,9 +2772,15 @@ async fn run_request_handler(
         }
         match req.command {
             PEER_HANDSHAKE => {
-                companion_incoming_phase("handshake_dispatch_received");
+                incoming_diagnostics.phase("handshake_dispatch_received");
                 tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "request: PEER_HANDSHAKE");
-                handle_peer_handshake(req, &dht, &router, &server_tx);
+                handle_peer_handshake(
+                    req,
+                    &dht,
+                    &router,
+                    &server_tx,
+                    &incoming_diagnostics,
+                );
                 continue;
             }
             PEER_HOLEPUNCH => {
@@ -2681,23 +2921,27 @@ fn handle_peer_handshake(
     dht: &DhtHandle,
     router: &Arc<Mutex<Router>>,
     server_tx: &mpsc::Sender<ServerEvent>,
+    diagnostics: &Arc<IncomingConnectDiagnostics>,
 ) {
     let Some(value) = &req.value else {
+        diagnostics.phase("handshake_routing_dropped");
         req.error(1);
         return;
     };
 
     let action = {
         let router = match router.lock() {
-            Ok(r) => r,
+            Ok(router) => router,
             Err(_) => {
+                diagnostics.phase("handshake_routing_dropped");
                 req.error(1);
                 return;
             }
         };
         match router.route_handshake(req.target.as_ref(), &req.from, value) {
-            Ok(a) => a,
+            Ok(action) => action,
             Err(_) => {
+                diagnostics.phase("handshake_routing_dropped");
                 req.error(1);
                 return;
             }
@@ -2706,6 +2950,7 @@ fn handle_peer_handshake(
 
     match action {
         HandshakeAction::Relay { value, to } => {
+            diagnostics.phase("handshake_routing_relay");
             tracing::info!(
                 from = %format!("{}:{}", req.from.host, req.from.port),
                 to = %format!("{}:{}", to.host, to.port),
@@ -2719,31 +2964,38 @@ fn handle_peer_handshake(
             req.reply(Some(value));
         }
         HandshakeAction::HandleLocally(msg) => {
+            diagnostics.phase("handshake_routing_local");
             tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "handshake HANDLE_LOCALLY");
             let from = req.from.clone();
             let target = req.target;
 
-            let _ = try_admit_server_event(
+            let admitted = try_admit_server_event(
                 server_tx,
                 ServerEvent::PeerHandshake {
                     msg,
                     from,
                     target,
-                    reply_tx: ServerReply::new(req),
+                    reply_tx: ServerReply::with_diagnostics(req, Arc::clone(diagnostics)),
                 },
             );
+            diagnostics.phase(if admitted {
+                "handshake_local_admitted"
+            } else {
+                "handshake_local_rejected"
+            });
         }
         HandshakeAction::CloserNodes => {
+            diagnostics.phase("handshake_routing_closer_nodes");
             tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "handshake CLOSER_NODES");
             req.reply(None);
         }
         HandshakeAction::Drop => {
+            diagnostics.phase("handshake_routing_dropped");
             tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "handshake DROP");
             drop(req);
         }
     }
 }
-
 fn handle_peer_holepunch(
     mut req: crate::rpc::UserRequest,
     dht: &DhtHandle,
@@ -2848,22 +3100,57 @@ mod tests {
 
     #[test]
     fn outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase() {
-        let mut first = OutgoingConnectDiagnostics {
-            enabled: true,
-            emitted: 0,
-        };
+        let mut first = OutgoingConnectDiagnostics::for_test();
         first.phase("handshake_request_started");
         first.phase("handshake_request_started");
         assert_eq!(first.emitted(), 1 << 5);
 
-        let mut second = OutgoingConnectDiagnostics {
-            enabled: true,
-            emitted: 0,
-        };
+        let mut second = OutgoingConnectDiagnostics::for_test();
         second.phase("handshake_request_started");
         second.phase("find_peer_fallback_started");
         assert_eq!(second.emitted(), (1 << 5) | (1 << 3));
         assert_eq!(first.emitted(), 1 << 5);
+    }
+
+    #[test]
+    fn companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener() {
+        let mut first = OutgoingConnectDiagnostics::for_test();
+        first.add_lookup_candidate();
+        first.attempt_started();
+        first.attempt_request_failed();
+        first.fallback_started();
+        assert_eq!(first.lookup_candidates, 1);
+        assert_eq!(first.attempts_started, 1);
+        assert_eq!(first.attempts_request_failed, 1);
+        assert!(first.fallback_started);
+        assert_eq!(first.terminal, None);
+
+        let mut second = OutgoingConnectDiagnostics::for_test();
+        second.add_fallback_candidate();
+        second.attempt_started();
+        second.attempt_replied();
+        second.fallback_started();
+        second.fallback_completed();
+        assert_eq!(second.initial_candidates, 0);
+        assert_eq!(second.lookup_candidates, 0);
+        assert_eq!(second.fallback_candidates, 1);
+        assert_eq!(second.attempts_started, 1);
+        assert_eq!(second.attempts_replied, 1);
+        assert!(second.fallback_started);
+        assert!(second.fallback_completed);
+        let failure: Result<PeerConnection, HyperDhtError> = Err(HyperDhtError::NoRelayNodes);
+        second.finish(&failure);
+        assert_eq!(second.terminal, Some("error"));
+        assert_eq!(first.lookup_candidates, 1);
+
+        let pair = IncomingConnectDiagnostics::for_test(CompanionDiagnosticScope::Pair);
+        pair.phase("handshake_dispatch_received");
+        pair.phase("handshake_routing_local");
+        let active = IncomingConnectDiagnostics::for_test(CompanionDiagnosticScope::Active);
+        active.phase("handshake_dispatch_received");
+        active.phase("handshake_routing_local");
+        assert_eq!(pair.emitted(), (1 << 0) | (1 << 1));
+        assert_eq!(active.emitted(), (1 << 0) | (1 << 1));
     }
 
     fn test_peer() -> Ipv4Peer {
@@ -3072,6 +3359,7 @@ mod tests {
                 ..DhtConfig::default()
             },
             persistent: PersistentConfig::default(),
+            companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
         };
         let (join, handle, _server_rx) = spawn(&runtime, config).await.expect("spawn");
         handle.destroy().await.expect("destroy");
@@ -3092,6 +3380,7 @@ mod tests {
                 ..DhtConfig::default()
             },
             persistent: PersistentConfig::default(),
+            companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
         };
 
         let startup = spawn_starting(&runtime, config).await.expect("start DHT");
@@ -3111,6 +3400,7 @@ mod tests {
                 ..DhtConfig::default()
             },
             persistent: PersistentConfig::default(),
+            companion_diagnostic_scope: CompanionDiagnosticScope::Unscoped,
         };
         let (join, handle, _rx) = spawn(&runtime, config).await.expect("spawn");
         let (sent, received) = handle.wire_stats();

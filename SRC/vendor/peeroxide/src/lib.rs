@@ -83,6 +83,6 @@ pub use swarm::{
 // Re-export commonly used types from peeroxide-dht.
 pub use peeroxide_dht::crypto::hash as discovery_key;
 pub use peeroxide_dht::hyperdht::{
-    DEFAULT_BOOTSTRAP, HyperDhtHandle, ImmutablePutResult, KeyPair, MutableGetResult,
-    MutablePutResult,
+    CompanionDiagnosticScope, DEFAULT_BOOTSTRAP, HyperDhtHandle, ImmutablePutResult, KeyPair,
+    MutableGetResult, MutablePutResult,
 };

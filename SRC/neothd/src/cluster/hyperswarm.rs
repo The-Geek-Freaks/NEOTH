@@ -420,6 +420,7 @@ fn server_only_join_opts() -> peeroxide::JoinOpts {
 fn public_rendezvous_config(
     expected_remote_static_key: [u8; 32],
     server_key_pair: Option<peeroxide::KeyPair>,
+    companion_diagnostic_scope: peeroxide::CompanionDiagnosticScope,
 ) -> peeroxide::SwarmConfig {
     let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
     // Mandatory v2 companion admission: a public topic alone can never reserve
@@ -431,6 +432,7 @@ fn public_rendezvous_config(
     // QR invitation.  v2 passes `None` and therefore retains its existing
     // ephemeral server-key behaviour exactly.
     config.key_pair = server_key_pair;
+    config.companion_diagnostic_scope = companion_diagnostic_scope;
     config
 }
 
@@ -448,6 +450,7 @@ pub(crate) async fn spawn_public_rendezvous(
         topic,
         expected_remote_static_key,
         None,
+        peeroxide::CompanionDiagnosticScope::Unscoped,
         deadline,
         shutdown,
         None,
@@ -464,6 +467,7 @@ pub(crate) async fn spawn_public_rendezvous_with_key(
     topic: [u8; 32],
     expected_remote_static_key: [u8; 32],
     server_key_pair: peeroxide::KeyPair,
+    companion_diagnostic_scope: peeroxide::CompanionDiagnosticScope,
     deadline: tokio::time::Instant,
     shutdown: tokio::sync::watch::Receiver<bool>,
     local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
@@ -472,6 +476,7 @@ pub(crate) async fn spawn_public_rendezvous_with_key(
         topic,
         expected_remote_static_key,
         Some(server_key_pair),
+        companion_diagnostic_scope,
         deadline,
         shutdown,
         local_stop,
@@ -483,6 +488,7 @@ async fn spawn_public_rendezvous_with_optional_key(
     topic: [u8; 32],
     expected_remote_static_key: [u8; 32],
     server_key_pair: Option<peeroxide::KeyPair>,
+    companion_diagnostic_scope: peeroxide::CompanionDiagnosticScope,
     deadline: tokio::time::Instant,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     mut local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
@@ -495,7 +501,11 @@ async fn spawn_public_rendezvous_with_optional_key(
     {
         anyhow::bail!("public rendezvous cancelled or expired before bootstrap spawn");
     }
-    let config = public_rendezvous_config(expected_remote_static_key, server_key_pair);
+    let config = public_rendezvous_config(
+        expected_remote_static_key,
+        server_key_pair,
+        companion_diagnostic_scope,
+    );
     let startup = peeroxide::spawn_starting(config)
         .await
         .context("peeroxide begin public rendezvous startup")?;
@@ -3154,9 +3164,20 @@ mod tests {
     #[test]
     fn public_rendezvous_requires_and_wires_the_expected_remote_static_key() {
         let expected = [0x5au8; 32];
-        let config = public_rendezvous_config(expected, None);
+        let config = public_rendezvous_config(
+            expected,
+            None,
+            peeroxide::CompanionDiagnosticScope::Unscoped,
+        );
         assert_eq!(config.server_expected_remote_static_key, Some(expected));
         assert!(config.key_pair.is_none(), "v2 remains keyless/ephemeral");
+        assert!(
+            matches!(
+                config.companion_diagnostic_scope,
+                peeroxide::CompanionDiagnosticScope::Unscoped
+            ),
+            "v2 keeps the legacy unscoped diagnostic stream"
+        );
     }
 
     #[test]
@@ -3164,7 +3185,11 @@ mod tests {
         let expected_remote = [0x51u8; 32];
         let supplied = peeroxide::KeyPair::from_seed([0x73u8; 32]);
         let expected_server = supplied.public_key;
-        let config = public_rendezvous_config(expected_remote, Some(supplied));
+        let config = public_rendezvous_config(
+            expected_remote,
+            Some(supplied),
+            peeroxide::CompanionDiagnosticScope::Pair,
+        );
         assert_eq!(
             config.server_expected_remote_static_key,
             Some(expected_remote)
@@ -3176,6 +3201,29 @@ mod tests {
                 .public_key,
             expected_server,
             "the public QR key must be the actual peeroxide responder key"
+        );
+        assert!(
+            matches!(
+                config.companion_diagnostic_scope,
+                peeroxide::CompanionDiagnosticScope::Pair
+            ),
+            "the pairing constructor binds its fixed diagnostic scope before startup"
+        );
+    }
+
+    #[test]
+    fn active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn() {
+        let config = public_rendezvous_config(
+            [0x36u8; 32],
+            Some(peeroxide::KeyPair::from_seed([0x47u8; 32])),
+            peeroxide::CompanionDiagnosticScope::Active,
+        );
+        assert!(
+            matches!(
+                config.companion_diagnostic_scope,
+                peeroxide::CompanionDiagnosticScope::Active
+            ),
+            "active listener scope must be fixed before the DHT actor starts"
         );
     }
 

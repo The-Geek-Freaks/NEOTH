@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2419 native Buddy repair and hosted formatting published; native acceptance pending",
+  "status": "W2424 diagnostic sources statically approved; hosted V3 acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 390025,
-    "sha256": "38A723444064A0BB052AA385A285CB03619DBA3D375668752EE06E4515DE9733"
+    "bytes": 390414,
+    "sha256": "C52D08127FA12C226096A5BAE0D90EB6755AC77EB3548E6457AC391CFABC35BA"
   },
-  "sourceInputs": 2132,
+  "sourceInputs": 2134,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
@@ -16525,61 +16525,67 @@
     {
       "test": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2",
+      "sourceSha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::rebind_replaces_named_role_selector_with_inline_authority",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
       "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn",
+      "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "sourceSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
       "junitClass": "neoth"
     }
   ],
@@ -75652,6 +75658,81 @@
       }
     ],
     "note": "Exact authenticated hosted formatting patch affects only one assertion layout. 2759 portable tests unchanged; local formatter/runtime prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2424RequiredVendorTests": [
+    {
+      "crate": "peeroxide-dht",
+      "identity": "hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener",
+      "sourcePath": "SRC/vendor/peeroxide-dht/src/hyperdht.rs"
+    }
+  ],
+  "wave2424ScopedReconnectDiagnostics": {
+    "base": "59ba7d713089f1b126bd471e572450ae084e1221",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 32252,
+        "sha256": "3011CA478BE53977A9BB6CF14A5CF8F00F38F087ECBA54111726C7892467EA2E",
+        "blob": "485a46d8ae8e457355c4059a45b55c5e915c874c"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 3754,
+        "sha256": "89D7894F8D8EA9EC36BD2BDBA7A47009C3F6BB3004E5DEC04BE7A333AD31D2A4",
+        "blob": "e88799a5dd1abbd97ec8c02e7618024646afe307"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 15504,
+        "sha256": "FC9F4C1F127E5C73160BE9B3BAA0134306F3C4F4227D73E016734C0FFFDB09E6",
+        "blob": "4ecbb7ae09cfeea73033deb87e3d16189f4a9f73"
+      },
+      {
+        "path": "docs/verification/gold-wave2424-scoped-reconnect-diagnostics.json",
+        "bytes": 3978,
+        "sha256": "9D9BCFA231B29259C8E2E8680FBDB72C36D2FAAC9ACE7F9D901251C7E44BA347",
+        "blob": "6da561f7b62561143095aac59df9e820e2c477fd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2419975,
+        "sha256": "8E8DAFF29AFD04F96C5CED12BC4F379BB232AAF02AB58A72A5B28C045F8F3B52",
+        "blob": "e0c3a1bca2ebdeb64e5b18b27a2f680b43b23bb0"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 176144,
+        "sha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
+        "blob": "940dbf4c3bddce387cc52e1e1878574faab52ed2"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 79501,
+        "sha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A",
+        "blob": "9eb3a2fe511f81af62e33159d9541c2706afe72b"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 141431,
+        "sha256": "2C62459EC0C18E4D921140E99135C7A2DAD4ED08A08BCCABCB249213707AA5CB",
+        "blob": "be014bf900820d7d45538b0c5352804fe6154041"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/lib.rs",
+        "bytes": 3339,
+        "sha256": "078D44F41BBC4297905B506E2D9D78F0F25B9A77DCF5F5EC66B87DBC1CBA6FEB",
+        "blob": "dcba1c0180675a9e4f30ccee27e4b785cb97136c"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 92859,
+        "sha256": "4AA97DF7DC6F2A59287489BE705B5499DF4762F3AA320919321AF44DD70B5D72",
+        "blob": "8240180958165965d7b04ab9bd8c4255a2c7446b"
+      }
+    ],
+    "note": "Fixed Pair/Active actor diagnostics and bounded per-connect summaries;24Rust+2Python selected;1new portable plus1vendor test; no route/timer/auth/ownership changes. Native Buddy37343742991 admitted on59ba7d71; V3 still failed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

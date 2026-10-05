@@ -41,6 +41,9 @@ jobs:
             ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-
             ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Run bounded scoped diagnostics collector regressions
+        timeout-minutes: 2
+        run: python3 -m unittest discover -s .github/scripts/mobile -p 'test_hosted_mobile_interop_diagnostics.py' -v
       - name: Build exact host debug CLI and cdylib
         id: exact_host_build
         timeout-minutes: 25
@@ -147,13 +150,14 @@ jobs:
           for identity in \
             router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination \
             router::tests::handshake_reply_peer_metadata_never_replaces_request_destination \
-            hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase
+            hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase \
+            hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener
           do
             dht_ordinal=$((dht_ordinal + 1))
             cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
-          test "$dht_ordinal" -eq 3
+          test "$dht_ordinal" -eq 4
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         timeout-minutes: 15
@@ -189,13 +193,16 @@ jobs:
             daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join \
             cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown \
             cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht \
-            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation
+            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation \
+            cluster::hyperswarm::tests::public_rendezvous_requires_and_wires_the_expected_remote_static_key \
+            cluster::hyperswarm::tests::v3_public_rendezvous_retains_the_supplied_daemon_noise_key \
+            cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 12
+          test "$ordinal" -eq 15
       - name: Run exact bridge public result regression
         id: exact_bridge_public_result
         timeout-minutes: 5

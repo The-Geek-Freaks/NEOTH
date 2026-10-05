@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T16:44:15.4911867Z",
-  "validationStatus": "W2419 native Buddy repair and hosted formatting published; native acceptance pending",
+  "capturedUtc": "2026-10-05T19:36:01.3598634Z",
+  "validationStatus": "W2424 diagnostic sources statically approved; hosted V3 acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,13 +43,18 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 28891,
-      "sha256": "C5E377E4502A60FD9D760CD34680E0D42E4459CA4FE96DD76E1AFCD27F308241"
+      "bytes": 32252,
+      "sha256": "3011CA478BE53977A9BB6CF14A5CF8F00F38F087ECBA54111726C7892467EA2E"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
       "bytes": 11959,
       "sha256": "8A95FA02F7DD34A530754022C9495F8E7B4BDC6D3FDE01596464D123E47DC35C"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "bytes": 3754,
+      "sha256": "89D7894F8D8EA9EC36BD2BDBA7A47009C3F6BB3004E5DEC04BE7A333AD31D2A4"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -123,8 +128,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 14864,
-      "sha256": "B9601B2025B71D3C01D84394EB1903C84A176A1345BA64C8CB84E6D1ADB8A01D"
+      "bytes": 15504,
+      "sha256": "FC9F4C1F127E5C73160BE9B3BAA0134306F3C4F4227D73E016734C0FFFDB09E6"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3677,6 +3682,11 @@
       "sha256": "2F8B84D88F4EBBC79E2222FFE0F0DCB284DE09FF3DC7C5C78240E3415C1E4251"
     },
     {
+      "path": "docs/verification/gold-wave2424-scoped-reconnect-diagnostics.json",
+      "bytes": 3978,
+      "sha256": "9D9BCFA231B29259C8E2E8680FBDB72C36D2FAAC9ACE7F9D901251C7E44BA347"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4818,8 +4828,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2418508,
-      "sha256": "FD8B585CEA0A541FDA0E437CEE4DB11E54950465F9132162D6924E32EDFBBE3A"
+      "bytes": 2419975,
+      "sha256": "8E8DAFF29AFD04F96C5CED12BC4F379BB232AAF02AB58A72A5B28C045F8F3B52"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6238,8 +6248,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 174476,
-      "sha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913"
+      "bytes": 176144,
+      "sha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
@@ -6723,8 +6733,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 79385,
-      "sha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2"
+      "bytes": 79501,
+      "sha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
@@ -10623,8 +10633,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
-      "bytes": 130889,
-      "sha256": "01AE0C85943A2F85CAC288F557A7BBB4273C6B28B693487B6BC8A90632736B97"
+      "bytes": 141431,
+      "sha256": "2C62459EC0C18E4D921140E99135C7A2DAD4ED08A08BCCABCB249213707AA5CB"
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/router.rs",
@@ -10638,8 +10648,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide/src/lib.rs",
-      "bytes": 3313,
-      "sha256": "A397626CE2AAFF929D64BEAD676313B131A20EFC7853461D925AF93D094E9CE0"
+      "bytes": 3339,
+      "sha256": "078D44F41BBC4297905B506E2D9D78F0F25B9A77DCF5F5EC66B87DBC1CBA6FEB"
     },
     {
       "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
@@ -10648,8 +10658,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide/src/swarm.rs",
-      "bytes": 90623,
-      "sha256": "67C6F5712E96564C58D91D257EBC1D8C759A65923ABF3E7C979AAEFA6DBF12AE"
+      "bytes": 92859,
+      "sha256": "4AA97DF7DC6F2A59287489BE705B5499DF4762F3AA320919321AF44DD70B5D72"
     },
     {
       "path": "THIRD_PARTY_LICENSES",
