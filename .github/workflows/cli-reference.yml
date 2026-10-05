@@ -202,6 +202,7 @@ jobs:
           toolchain: '1.91.0'
 
       - name: Restore macOS native Cargo checkpoint
+        id: macos-provider-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -209,8 +210,12 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+          # The provider-fixture checkpoint is producer-specific. Existing
+          # generic complete/partial keys remain fallback accelerators only.
+          key: ${{ runner.os }}-1.91-cargo-provider-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-1.91-cargo-provider-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
             ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-
@@ -231,6 +236,7 @@ jobs:
           cargo build -p neoth --bin neoth --locked 2>&1 | tee "$RUNNER_TEMP/neoth-macos-provider-regression/cli-build.log"
 
       - name: Compile exact macOS native GUI harness
+        id: compile-macos-native-gui
         timeout-minutes: 120
         working-directory: SRC
         shell: bash
@@ -275,6 +281,22 @@ jobs:
               raise SystemExit(f"exact macOS provider selection is not one runnable test: {runnable!r}")
           PY
           cargo nextest run -p neothd-gui --test neothd-gui-macos-native --locked --profile ci --features neothd-gui/macos-native-gui-test -E "$filter" --no-tests=fail --nocapture 2>&1 | tee "$proof_dir/test.log"
+
+      # This is an optional, producer-specific accelerator. It runs after the
+      # unchanged strict callback so cache upload cannot add latency to its
+      # measurement or turn its result into acceptance evidence.
+      - name: Save completed macOS provider compile checkpoint
+        if: ${{ always() && !cancelled() && steps.compile-macos-native-gui.outcome == 'success' && steps.macos-provider-cargo-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.macos-provider-cargo-cache.outputs.cache-primary-key }}
 
       - name: Upload macOS provider regression evidence
         if: always()

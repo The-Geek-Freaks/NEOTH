@@ -41,6 +41,10 @@ PAIR_PHASES = (
     "bootstrap_started", "bootstrap_ready", "topic_joined", "awaiting_connection",
     "connection_received", "psk_verified", "proof_read", "response_written",
     "teardown_started", "teardown_completed",
+    "enrollment_begin", "enrollment_authority_pending", "enrollment_audit_finalized",
+    "active_listener_ready", "active_listener_unready", "enrollment_rollback_proven",
+    "enrollment_rollback_noop", "enrollment_rollback_unproven", "pair_rendezvous_leave_started",
+    "pair_rendezvous_left", "enrollment_response_write_started", "teardown_failed",
 )
 PAIR_MARKERS = tuple(
     (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))

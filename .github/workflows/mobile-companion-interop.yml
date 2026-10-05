@@ -176,7 +176,8 @@ jobs:
             daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join \
             daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes \
             daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication \
-            daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness
+            daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness \
+            daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"

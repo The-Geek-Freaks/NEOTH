@@ -626,7 +626,6 @@ impl CompanionRuntime {
         // a claim that announcement succeeded or a client will observe it.
         diagnostics.phase("bootstrap_ready");
         diagnostics.phase("topic_joined");
-        let mut terminal_phase = "topic_joined";
         let result = async {
             diagnostics.phase("awaiting_connection");
             loop {
@@ -638,19 +637,25 @@ impl CompanionRuntime {
                     next = rendezvous.recv() => next,
                 };
                 let Some(mut connection) = next else { break; };
-                terminal_phase = "connection_received";
-                diagnostics.phase(terminal_phase);
+                diagnostics.phase("connection_received");
                 if connection.is_initiator { continue; }
                 let observed_noise = *connection.remote_public_key();
                 let raw_psk = tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.read()).await
                     .context("v3 pair psk read timeout")??.context("v3 pair closed before psk")?;
                 if !constant_time_eq(&raw_psk, &psk) { continue; }
-                terminal_phase = "psk_verified";
-                diagnostics.phase(terminal_phase);
+                diagnostics.phase("psk_verified");
                 let proof: EnrollmentProof = read_frame(&mut connection).await?;
-                terminal_phase = "proof_read";
-                diagnostics.phase(terminal_phase);
-                let accepted = match self.enroll_after_verified_pairing(proof, observed_noise, topic, requested_scope).await {
+                diagnostics.phase("proof_read");
+                let accepted = match self
+                    .enroll_after_verified_pairing(
+                        proof,
+                        observed_noise,
+                        topic,
+                        requested_scope,
+                        &mut diagnostics,
+                    )
+                    .await
+                {
                     Ok(value) => value,
                     Err(error) => {
                         let denied = ServerFrame::Denied(CompanionDenied::new(CompanionDeniedCode::DeviceDenied)?);
@@ -661,20 +666,25 @@ impl CompanionRuntime {
                         return Err(error);
                     }
                 };
+                diagnostics.phase("pair_rendezvous_leave_started");
                 rendezvous.leave().await?;
+                diagnostics.phase("pair_rendezvous_left");
+                diagnostics.phase("enrollment_response_write_started");
                 write_frame(&mut connection, &ServerFrame::EnrollmentAccepted(accepted)).await?;
-                terminal_phase = "response_written";
-                diagnostics.phase(terminal_phase);
+                diagnostics.phase("response_written");
                 break;
             }
             Ok(())
         }.await;
+        let failure_phase = result.as_ref().err().map(|_| diagnostics.last_phase());
         diagnostics.phase("teardown_started");
         let teardown = rendezvous.shutdown_checked().await;
-        match (&result, &teardown) {
-            (Err(_), _) => diagnostics.failed(terminal_phase),
-            (Ok(()), Err(_)) => diagnostics.failed("teardown_started"),
-            (Ok(()), Ok(())) => diagnostics.phase("teardown_completed"),
+        if result.is_err() {
+            diagnostics.failed(failure_phase.unwrap_or("unknown"));
+        }
+        match teardown {
+            Ok(()) => diagnostics.phase("teardown_completed"),
+            Err(_) => diagnostics.phase("teardown_failed"),
         }
         result?;
         teardown
@@ -1317,13 +1327,15 @@ impl CompanionRuntime {
         })
     }
 
-    pub(crate) async fn enroll_after_verified_pairing(
+    async fn enroll_after_verified_pairing(
         self: &Arc<Self>,
         proof: EnrollmentProof,
         observed_invite_noise: [u8; 32],
         topic: [u8; 32],
         requested_scope: CompanionScope,
+        diagnostics: &mut CompanionPairDiagnostics,
     ) -> Result<EnrollmentAccepted> {
+        diagnostics.phase("enrollment_begin");
         anyhow::ensure!(
             proof.requested_scope == requested_scope,
             "pairing scope differs from daemon invite"
@@ -1341,21 +1353,30 @@ impl CompanionRuntime {
             reconnect.clone(),
             companion_now_unix_i64()?,
         )?;
+        diagnostics.phase("enrollment_authority_pending");
         self.complete_pending_audit(pending.clone()).await?;
+        diagnostics.phase("enrollment_audit_finalized");
         let grant = self.authority.device(&pending.device_id)?;
         if let Err(readiness_error) = self.spawn_active_listener(grant).await {
+            diagnostics.phase("active_listener_unready");
             // The enrollment receipt is already durable, so an unready active
             // descriptor must be withdrawn through the existing durable revoke
             // path before this caller can observe an accepted pairing result.
-            if let Err(revoke_error) = self.revoke_device(pending.device_id).await {
-                self.mark_degraded().await;
-                return Err(revoke_error).context(format!(
-                    "companion active listener readiness failed and durable rollback was not proven: {readiness_error:#}"
-                ));
+            match self.revoke_device(pending.device_id).await {
+                Ok(true) => diagnostics.phase("enrollment_rollback_proven"),
+                Ok(false) => diagnostics.phase("enrollment_rollback_noop"),
+                Err(revoke_error) => {
+                    diagnostics.phase("enrollment_rollback_unproven");
+                    self.mark_degraded().await;
+                    return Err(revoke_error).context(format!(
+                        "companion active listener readiness failed and durable rollback was not proven: {readiness_error:#}"
+                    ));
+                }
             }
             return Err(readiness_error)
                 .context("companion active listener was not ready before enrollment acceptance");
         }
+        diagnostics.phase("active_listener_ready");
         Ok(EnrollmentAccepted {
             schema_version: COMPANION_V3_SCHEMA_VERSION,
             device_id: pending.device_id,
@@ -1445,7 +1466,8 @@ const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
 /// under hostile repeated connections and never carries peer material.
 struct CompanionPairDiagnostics {
     enabled: bool,
-    emitted: u16,
+    emitted: u32,
+    last_phase: &'static str,
 }
 
 impl CompanionPairDiagnostics {
@@ -1453,6 +1475,7 @@ impl CompanionPairDiagnostics {
         Self {
             enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
             emitted: 0,
+            last_phase: "bootstrap_started",
         }
     }
 
@@ -1468,8 +1491,21 @@ impl CompanionPairDiagnostics {
             "response_written" => 7,
             "teardown_started" => 8,
             "teardown_completed" => 9,
+            "enrollment_begin" => 10,
+            "enrollment_authority_pending" => 11,
+            "enrollment_audit_finalized" => 12,
+            "active_listener_ready" => 13,
+            "active_listener_unready" => 14,
+            "enrollment_rollback_proven" => 15,
+            "enrollment_rollback_noop" => 16,
+            "enrollment_rollback_unproven" => 17,
+            "pair_rendezvous_leave_started" => 18,
+            "pair_rendezvous_left" => 19,
+            "enrollment_response_write_started" => 20,
+            "teardown_failed" => 21,
             _ => return,
         };
+        self.last_phase = phase;
         if self.enabled && self.emitted & (1 << bit) == 0 {
             self.emitted |= 1 << bit;
             eprintln!("NEOTH_COMPANION_PAIR_PHASE={phase}");
@@ -1481,7 +1517,12 @@ impl CompanionPairDiagnostics {
             eprintln!("NEOTH_COMPANION_PAIR_PHASE=failed.{last}");
         }
     }
+
+    fn last_phase(&self) -> &'static str {
+        self.last_phase
+    }
 }
+
 fn random_32() -> Result<[u8; 32]> {
     let mut value = [0u8; 32];
     getrandom::getrandom(&mut value)?;
@@ -1696,6 +1737,83 @@ mod tests {
             .expect("companion stop-race writer drains within bound")
             .expect("join companion stop-race writer")
             .expect("companion stop-race writer succeeds");
+    }
+
+    #[tokio::test]
+    async fn companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join() {
+        let home = tempfile::tempdir().expect("create companion drain home");
+        let config_path = home.path().join("freedom.yaml");
+        let crate::cli::serve_tasks::WalSetup {
+            segment_path,
+            writer,
+            writer_join,
+            ..
+        } = crate::cli::serve_tasks::prepare_wal(home.path(), None)
+            .await
+            .expect("prepare companion drain WAL");
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            config_path.clone(),
+        ));
+        let chat = Arc::new(DaemonChatRuntime::new(
+            home.path().to_path_buf(),
+            config_path,
+            segment_path,
+            controller,
+            writer.clone(),
+        ));
+        let runtime = CompanionRuntime::load(
+            home.path().to_path_buf(),
+            writer.clone(),
+            Arc::clone(&chat),
+            "testboot".into(),
+            1,
+        )
+        .expect("load companion runtime");
+
+        let (pair_stop_tx, _pair_stop_rx) = watch::channel(false);
+        runtime.pair_tasks.lock().await.insert(
+            "first-failure".to_owned(),
+            PairListenerOwner {
+                stop_tx: pair_stop_tx,
+                task: tokio::spawn(async { anyhow::bail!("simulated first pair listener failure") }),
+            },
+        );
+        let (device_stop_tx, mut device_stop_rx) = watch::channel(false);
+        let retained_writer = writer.clone();
+        let later_owner_joined = Arc::new(AtomicBool::new(false));
+        let later_owner_joined_task = Arc::clone(&later_owner_joined);
+        runtime.listener_tasks.lock().await.insert(
+            Uuid::nil(),
+            DeviceListenerOwner {
+                stop_tx: device_stop_tx,
+                task: Some(tokio::spawn(async move {
+                    device_stop_rx.changed().await.expect("owner stop signal");
+                    drop(retained_writer);
+                    later_owner_joined_task.store(true, Ordering::Release);
+                    Ok(())
+                })),
+            },
+        );
+
+        assert!(
+            runtime.shutdown_and_drain().await.is_err(),
+            "first listener error remains visible"
+        );
+        assert!(runtime.pair_tasks.lock().await.is_empty());
+        assert!(runtime.listener_tasks.lock().await.is_empty());
+        assert!(
+            later_owner_joined.load(Ordering::Acquire),
+            "later owner reached its successful terminal after the stop signal"
+        );
+        drop(runtime);
+        drop(chat);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), writer_join)
+            .await
+            .expect("later owner released its retained WAL sender")
+            .expect("join companion drain writer")
+            .expect("companion drain writer succeeds");
     }
 
     #[tokio::test]

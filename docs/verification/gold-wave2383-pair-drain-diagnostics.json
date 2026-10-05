@@ -1,0 +1,86 @@
+{
+  "schema": "neoth.wave2383.pair-drain-diagnostics.v1",
+  "base": "0a745c0044b3164d6e5bdc60c555c8ca4745c751",
+  "status": "reviewed-source-hosted-pending",
+  "localExecutableValidationRan": false,
+  "portableRegistrations": 2755,
+  "focusedCases": 528,
+  "requiredInteropExactCases": 15,
+  "priorInterop": {
+    "serveExit": 1,
+    "conclusion": "failure",
+    "originalArtifact": 11321401311,
+    "daemonPskVerified": true,
+    "zipSha256": "E23BBB3BD4C4945159681C02E566663543A37B3296FEACDF8AA4D0889012A902",
+    "daemonProofRead": true,
+    "productLifecycleAccepted": false,
+    "directNoiseUdxConnected": true,
+    "workspaceRestorationMarkers": 1,
+    "enrollmentResponseWritten": false,
+    "exactTestsPassed": 14,
+    "partialCustodySha256": "1EE7BC99D3CD5C96243CA53A50ECB343B6CB02492488F02C0E1E2403B1C9D406",
+    "walDrained": false,
+    "producer": "0a745c0044b3164d6e5bdc60c555c8ca4745c751",
+    "run": 37251514481
+  },
+  "repairs": [
+    "Defer companion shutdown error until all later owners and WAL drain, retaining the failure terminal.",
+    "Expose bounded post-proof protocol stage and independent carrier teardown outcome.",
+    "Register actual later-owner successful termination and WAL closure regression after first listener error.",
+    "Record test-only native macOS child exit/category and preserve dedicated completed compilation checkpoint."
+  ],
+  "admissionCorrection": {
+    "oldHelperChanged": false,
+    "reviewSha256": "D38D4DC15757EABD29902005A368D8A402FB0F14446E822A5FE28E390830BC19",
+    "basis": "Current protocol, bridge tests and UI explicitly preserve an unknown inventory.",
+    "activeTurnsKnown": false
+  },
+  "macosReviewSha256": "2A08A89B0D07A8DD2065046629B09CF81E4DA0B3B55A4BDABF7F35E89E4501C8",
+  "sources": [
+    {
+      "destination": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "candidate": "work/gold-20260906/wave2383-pair-transport/candidate/SRC/neothd/src/daemon/companion_runtime.rs",
+      "sha256": "1095A1D2CE1096BD62F4258E0D7EEF6BACCAAE238FB26003998F2D0AA9F60DFE",
+      "baseBlob": "dc2c0b190b6e1923aef5f3d5354615ab2fda774b"
+    },
+    {
+      "destination": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "candidate": "work/gold-20260906/wave2383-pair-transport/candidate/.github/scripts/mobile/hosted-mobile-interop.py",
+      "sha256": "E635C48A41DA2CE53BA029E76D16A933C90BC3D43F1C33D93A1014FF55DB3EE2",
+      "baseBlob": "6ca8468ade8925b335242353678d3d0a683cd65f"
+    },
+    {
+      "destination": "SRC/neothd/src/cli/serve_tasks.rs",
+      "candidate": "work/gold-20260906/wave2383-shutdown-repair/SRC/neothd/src/cli/serve_tasks.rs",
+      "sha256": "35D6AFABD3E9FF102B6469E6BE8E89C615DA371286A757FD1BCF3A832577F97E",
+      "baseBlob": "21c73541fdb784bc123f8fdd210d247157f6930b"
+    },
+    {
+      "destination": "SRC/neothd-gui/src/main.rs",
+      "candidate": "work/gold-20260906/wave2380-macos-exit/candidate-r2/main.rs",
+      "sha256": "7C82CBEF265990665A754AAB785F845128325A726EFE93CFA6B8EAEF235572AA",
+      "baseBlob": "4e40852f2c136f1e3e3fa04f4979120d2c1d1bcf"
+    },
+    {
+      "destination": ".github/workflows/cli-reference.yml",
+      "candidate": "work/gold-20260906/wave2380-macos-exit/candidate-r2/cli-reference.yml",
+      "sha256": "DDDE06D3EFE7B82BF509874CB4B2DA41844490A0164FD9AD798348F5F2CC96BD",
+      "baseBlob": "b9718ec77da0b4d4bee612d42599a26a9f1fe672"
+    },
+    {
+      "destination": ".github/workflows/mobile-companion-interop.yml",
+      "candidate": "work/gold-20260906/wave2383-publication/mobile-companion-interop.yml",
+      "sha256": "FC576628DA7DCE804DA2521216BF0417FCE269387CEBE910B74B049A8A3AB4BD",
+      "baseBlob": "eb3b052edc9c0571ad97f075a8e09a0ab4c1d5e4"
+    }
+  ],
+  "batchReviewSha256": "91C0D521C5387650C8821CE015B9DD58B199AB78A5B9BFCEC843F1DA700071B8",
+  "boundaries": [
+    "The exact post-proof pairing cause remains unresolved pending new hosted categories.",
+    "A shutdown error remains an error after the writer joins.",
+    "Native mobile artifact acceptance remains bound to a445937a, not this new producer.",
+    "Future V4 cancellation source remains isolated and uncompiled."
+  ],
+  "deviceAccepted": false,
+  "signedReleaseAccepted": false
+}

@@ -22538,6 +22538,36 @@ impl BuddyProviderFailureStage {
 }
 
 #[cfg(test)]
+fn buddy_provider_exit_cause(stderr: &[u8]) -> &'static str {
+    // Test-only fixed categories: raw stderr is never retained or emitted.
+    let text = String::from_utf8_lossy(stderr);
+    if text.contains("capture coherent freedom/credential generation before provider rebind") {
+        "config_snapshot"
+    } else if text.contains("parse freedom.yaml") {
+        "config_parse"
+    } else if text.contains("create WAL dir for hemispheres audit") {
+        "wal_directory"
+    } else if text.contains("spawn WAL writer for hemispheres rollback snapshot") {
+        "wal_writer_spawn"
+    } else if text.contains("emit pre-mutation snapshot for freedom.yaml rewrite") {
+        "wal_snapshot"
+    } else if text.contains("atomically update") {
+        "config_credentials_commit"
+    } else if text.contains("HEMISPHERE_REBOUND") || text.contains("hemisphere rebind") {
+        "rebind_audit"
+    } else {
+        "unclassified"
+    }
+}
+
+#[cfg(test)]
+fn buddy_provider_exit_diagnostic(stderr: &[u8], code: Option<i32>) {
+    let code = code.map_or("unknown".to_owned(), |value| value.to_string());
+    eprintln!("buddy_provider_exit_code={code}");
+    eprintln!("buddy_provider_exit_cause={}", buddy_provider_exit_cause(stderr));
+}
+
+#[cfg(test)]
 fn buddy_provider_stage_error(error: String, stage: BuddyProviderFailureStage) -> String {
     eprintln!("buddy_provider_failure_stage={}", stage.label());
     error
@@ -22619,6 +22649,10 @@ fn run_buddy_provider_command(
                 BuddyProviderFailureStage::BoundedExecution,
             )
         })?;
+    #[cfg(test)]
+    if !output.status.success() {
+        buddy_provider_exit_diagnostic(&output.stderr, output.status.code());
+    }
     validate_neothd_probe_exit(
         "provider command",
         output.status.success(),
