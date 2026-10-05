@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-04T23:38:40.1614800Z",
+  "capturedUtc": "2026-10-05T01:22:23.4958936Z",
   "validationStatus": "reviewed-source-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 10155,
-      "sha256": "2FE0628975948710F9F27067203B93F784373F785A0FD4228E3BA44B4E00918B"
+      "bytes": 12528,
+      "sha256": "CDE220F2AE41712420F4D551864A43E7D13DCD73817D175CB5C9A4E502377E0D"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3617,6 +3617,11 @@
       "sha256": "37DA3E96DB694AB6137EB2EC9540EE80B3D769B5727BECD37F114AC33459D2C3"
     },
     {
+      "path": "docs/verification/gold-wave2371-mesh-direct-route.json",
+      "bytes": 3537,
+      "sha256": "A9FFA336B824EB6FBC6693551B1055801A59761B5A8ED13C69B80BD55EF087EA"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4758,8 +4763,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2398606,
-      "sha256": "85354F652F75FF2473A2CB8B65E9E58E2691289C8EC818800618118915ADF801"
+      "bytes": 2401370,
+      "sha256": "5A46E1FA8B64D3AE8DA722578958531D739798904FF15518A89D064ED5721AE2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -10565,6 +10570,11 @@
       "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
       "bytes": 127413,
       "sha256": "75E73E8EF2B98BA77E670667065AF03DD2A6E5367D83D8EE7E356AA3F31D0280"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/router.rs",
+      "bytes": 42180,
+      "sha256": "51BBAFA939049ADAB841BFB1EAD69C4340C9BFA3AC6B24F0C1944B94A14BF875"
     },
     {
       "path": "SRC/vendor/peeroxide/src/error.rs",

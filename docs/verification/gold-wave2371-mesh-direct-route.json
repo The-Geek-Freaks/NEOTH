@@ -1,0 +1,72 @@
+{
+  "schema": "neoth.wave2371.mesh-direct-route.v1",
+  "base": "a445937a264f040cd7f2bf8e929b976fb26db9aa",
+  "status": "reviewed-source-hosted-pending",
+  "localExecutableValidationRan": false,
+  "portableRegistrations": 2754,
+  "focusedCases": 528,
+  "requiredInteropExactCases": 14,
+  "currentNativeEvidence": {
+    "iosXcframework": true,
+    "terminalProofSha256": "2F89CD402398D753B165C1D27929AB132650FCE30D3D36EBBDB1733BB374223E",
+    "bridgeTestsPerHost": 14,
+    "kotlinCodeQL": "success",
+    "rootAdmissionSha256": "A8B2AA2338E7FC3DA3E027987735DCB6040C457E5240339200C085C881C16668",
+    "producer": "a445937a264f040cd7f2bf8e929b976fb26db9aa",
+    "originalArchives": 4,
+    "flutterTests": 24,
+    "androidAbis": 3,
+    "iosBridgeSymbolWitnesses": 8,
+    "releaseApks": 3,
+    "run": 37246580569,
+    "status": "hosted-native-artifacts-admitted",
+    "flutterAnalyzer": "no issues",
+    "verifiedArchiveEntries": 155,
+    "iosRunner": true,
+    "rawGitSourceBindings": 40
+  },
+  "priorInterop": {
+    "producer": "a445937a264f040cd7f2bf8e929b976fb26db9aa",
+    "daemonExit": 0,
+    "exactTestsPassed": 12,
+    "walDrained": true,
+    "status": "failure",
+    "restorationMarkers": 1,
+    "run": 37244746740,
+    "partialProofSha256": "9C67CD2E8A40C44A17376D701B55BE47CC4986B3BA1400C4099DC8E46017AADA",
+    "readerClosed": true,
+    "observed": "Server key/topic announcements succeeded; bridge recorded authenticated Noise completion but no UDX start before pairing work deadline. Once-per-process markers do not identify one individual outer or nested connection attempt.",
+    "productLifecycleAccepted": false
+  },
+  "macosDiagnostic": {
+    "identity": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback",
+    "producer": "a445937a264f040cd7f2bf8e929b976fb26db9aa",
+    "failurePhase": "set_left_openai_api",
+    "cliBuild": "success",
+    "status": "failure",
+    "run": 37247938089,
+    "failureStage": "exit",
+    "guiHarnessCompile": "success",
+    "cause": "The retained stage proves a failed child command; its precise error is not established."
+  },
+  "repairs": [
+    "Classify an exact-source DHT-discovered handshake reply without forwarding metadata as direct at the previously selected request destination.",
+    "Keep peer metadata out of destination selection and retain the relayed guard for replies with forwarding metadata.",
+    "Extend the hosted locked test-only workspace overlay to peeroxide-dht, restoring and hash-checking all four temporary metadata files.",
+    "Run two exact DHT classification/hostile-metadata tests in addition to the existing twelve exact interop cases."
+  ],
+  "reviews": {
+    "workflowReviewSha256": "A37B9EE659CC652EC1E2EB558D4F908737C0E5F32685C556477329FC93DECE27",
+    "routerCandidateSha256": "51BBAFA939049ADAB841BFB1EAD69C4340C9BFA3AC6B24F0C1944B94A14BF875",
+    "routerReviewSha256": "FD51FBA34BC051FE45E3A4F5AE68CA9AFCD12230AB336458C8D61677A5148045",
+    "workflowCandidateSha256": "CDE220F2AE41712420F4D551864A43E7D13DCD73817D175CB5C9A4E502377E0D"
+  },
+  "boundaries": [
+    "Static route correction is not a hosted UDX or Pair/Status/Chat/Revoke pass.",
+    "Full multihop forwarding, physical devices and signed release remain unaccepted.",
+    "Native admission remains bound to a445937a; it is not automatically transferred to the new producer.",
+    "V3 wire protocol, timeouts, retries and egress endpoint selection remain unchanged."
+  ],
+  "deviceAccepted": false,
+  "signedReleaseAccepted": false
+}

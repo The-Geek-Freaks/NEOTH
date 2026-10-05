@@ -54,23 +54,29 @@ jobs:
           root_manifest=Cargo.toml
           root_lock=Cargo.lock
           vendor_manifest=vendor/peeroxide/Cargo.toml
+          dht_vendor_manifest=vendor/peeroxide-dht/Cargo.toml
           root_manifest_hash="$(sha256sum "$root_manifest" | awk '{print $1}')"
           root_lock_hash="$(sha256sum "$root_lock" | awk '{print $1}')"
           vendor_manifest_hash="$(sha256sum "$vendor_manifest" | awk '{print $1}')"
+          dht_vendor_manifest_hash="$(sha256sum "$dht_vendor_manifest" | awk '{print $1}')"
           root_manifest_backup="$RUNNER_TEMP/peeroxide-root-Cargo.toml"
           root_lock_backup="$RUNNER_TEMP/peeroxide-Cargo.lock"
           vendor_manifest_backup="$RUNNER_TEMP/peeroxide-vendor-Cargo.toml"
+          dht_vendor_manifest_backup="$RUNNER_TEMP/peeroxide-dht-vendor-Cargo.toml"
           cp "$root_manifest" "$root_manifest_backup"
           cp "$root_lock" "$root_lock_backup"
           cp "$vendor_manifest" "$vendor_manifest_backup"
+          cp "$dht_vendor_manifest" "$dht_vendor_manifest_backup"
           cleanup() {
             local status=$?
             cp "$root_manifest_backup" "$root_manifest"
             cp "$root_lock_backup" "$root_lock"
             cp "$vendor_manifest_backup" "$vendor_manifest"
+            cp "$dht_vendor_manifest_backup" "$dht_vendor_manifest"
             test "$(sha256sum "$root_manifest" | awk '{print $1}')" = "$root_manifest_hash"
             test "$(sha256sum "$root_lock" | awk '{print $1}')" = "$root_lock_hash"
             test "$(sha256sum "$vendor_manifest" | awk '{print $1}')" = "$vendor_manifest_hash"
+            test "$(sha256sum "$dht_vendor_manifest" | awk '{print $1}')" = "$dht_vendor_manifest_hash"
             printf '%s\n' 'PEEROXIDE_TEST_WORKSPACE_RESTORED=1' | tee "$proof_dir/restoration-success.marker"
             exit "$status"
           }
@@ -80,18 +86,22 @@ jobs:
           # Test its private lib tests inside a transient root-member overlay only.
           test "$(grep -Fxc '    "neoth-relay",' "$root_manifest")" -eq 1
           test "$(grep -Fxc '    "vendor/peeroxide",' "$root_manifest")" -eq 0
+          test "$(grep -Fxc '    "vendor/peeroxide-dht",' "$root_manifest")" -eq 0
           test "$(grep -Fxc 'exclude = [' "$root_manifest")" -eq 0
           test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 0
-          test "$(grep -Fxc '    "vendor/peeroxide-dht",' "$root_manifest")" -eq 0
           sed -i '/^    "neoth-relay",$/a\    "vendor/peeroxide",' "$root_manifest"
           test "$(grep -Fxc '    "vendor/peeroxide",' "$root_manifest")" -eq 1
-          sed -i '/^    "vendor\/peeroxide",$/a\]\nexclude = [\n    "vendor/libudx",\n    "vendor/peeroxide-dht",' "$root_manifest"
+          sed -i '/^    "vendor\/peeroxide",$/a\    "vendor/peeroxide-dht",' "$root_manifest"
+          test "$(grep -Fxc '    "vendor/peeroxide-dht",' "$root_manifest")" -eq 1
+          sed -i '/^    "vendor\/peeroxide-dht",$/a\]\nexclude = [\n    "vendor/libudx",' "$root_manifest"
           test "$(grep -Fxc 'exclude = [' "$root_manifest")" -eq 1
           test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 1
-          test "$(grep -Fxc '    "vendor/peeroxide-dht",' "$root_manifest")" -eq 1
           test "$(grep -Fxc '[workspace]' "$vendor_manifest")" -eq 1
           sed -i '/^\[workspace\]$/d' "$vendor_manifest"
           test "$(grep -Fxc '[workspace]' "$vendor_manifest")" -eq 0
+          test "$(grep -Fxc '[workspace]' "$dht_vendor_manifest")" -eq 1
+          sed -i '/^\[workspace\]$/d' "$dht_vendor_manifest"
+          test "$(grep -Fxc '[workspace]' "$dht_vendor_manifest")" -eq 0
 
           # The root lock already contains every package record and version for
           # Peeroxide's dev closure.  It only lacks this non-member package's
@@ -107,6 +117,16 @@ jobs:
           test "$(sed -n '/^name = "peeroxide"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "serde_json",')" -eq 1
           test "$(sed -n '/^name = "peeroxide"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "tracing-subscriber",')" -eq 1
 
+          test "$(grep -Fxc 'name = "peeroxide-dht"' "$root_lock")" -eq 1
+          test "$(grep -Fxc ' "serde",' "$root_lock")" -ge 1
+          sed -i '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/s/^ "libudx",$/ "hex",\n "libudx",/' "$root_lock"
+          sed -i '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/s/^ "sha2 0\.10\.9",$/ "serde",\n "serde_json",\n "sha2 0.10.9",/' "$root_lock"
+          sed -i '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/s/^ "tracing",$/ "tracing",\n "tracing-subscriber",/' "$root_lock"
+          test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "hex",')" -eq 1
+          test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "serde",')" -eq 1
+          test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "serde_json",')" -eq 1
+          test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "tracing-subscriber",')" -eq 1
+
           ordinal=0
           for identity in \
             swarm::tests::server_publication_requires_both_announcement_successes \
@@ -117,6 +137,16 @@ jobs:
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
           test "$ordinal" -eq 2
+          dht_ordinal=0
+          for identity in \
+            router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination \
+            router::tests::handshake_reply_peer_metadata_never_replaces_request_destination
+          do
+            dht_ordinal=$((dht_ordinal + 1))
+            cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
+          done
+          test "$dht_ordinal" -eq 2
       - name: Run exact no-cluster companion refusal regression
         timeout-minutes: 15
         working-directory: SRC

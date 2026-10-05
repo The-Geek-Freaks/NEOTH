@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 387468,
-    "sha256": "90D37E292BEB247F8D2A92F80A457F17D814A02A511A4C5285653195C5E514B1"
+    "bytes": 387831,
+    "sha256": "E98120C11D5862EC0E403A9F30EA69BECBAEAA0B146BA24AEB1307917BE84AD2"
   },
-  "sourceInputs": 2119,
+  "sourceInputs": 2121,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -74968,6 +74968,52 @@
       }
     ],
     "note": "Hosted Peeroxide exact lib tests use a reversible locked workspace overlay; actual 12-case interop pending. Local BSOD hold preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2371RequiredVendorTests": [
+    {
+      "crate": "peeroxide-dht",
+      "features": "temporary workspace locked dependency graph",
+      "identity": "router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination",
+      "sourcePath": "SRC/vendor/peeroxide-dht/src/router.rs"
+    },
+    {
+      "crate": "peeroxide-dht",
+      "features": "temporary workspace locked dependency graph",
+      "identity": "router::tests::handshake_reply_peer_metadata_never_replaces_request_destination",
+      "sourcePath": "SRC/vendor/peeroxide-dht/src/router.rs"
+    }
+  ],
+  "wave2371MeshDirectRoute": {
+    "base": "a445937a264f040cd7f2bf8e929b976fb26db9aa",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 12528,
+        "sha256": "CDE220F2AE41712420F4D551864A43E7D13DCD73817D175CB5C9A4E502377E0D",
+        "blob": "eb3b052edc9c0571ad97f075a8e09a0ab4c1d5e4"
+      },
+      {
+        "path": "docs/verification/gold-wave2371-mesh-direct-route.json",
+        "bytes": 3537,
+        "sha256": "A9FFA336B824EB6FBC6693551B1055801A59761B5A8ED13C69B80BD55EF087EA",
+        "blob": "9f24e5bfba45929e81534b8d4dc77d8e9c70c52f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2401370,
+        "sha256": "5A46E1FA8B64D3AE8DA722578958531D739798904FF15518A89D064ED5721AE2",
+        "blob": "c4e194081cc59f6e7ef419277981844a01716847"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/router.rs",
+        "bytes": 42180,
+        "sha256": "51BBAFA939049ADAB841BFB1EAD69C4340C9BFA3AC6B24F0C1944B94A14BF875",
+        "blob": "7ccc639d1340be36aafe140f46b098370cfa96f2"
+      }
+    ],
+    "note": "Narrow DHT direct-discovery classification and14-case locked hosted interop; native artifacts admitted at prior a445937a producer. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

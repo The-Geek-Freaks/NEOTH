@@ -153,7 +153,7 @@ impl Router {
 
         Ok(HandshakeResult {
             noise: hs.noise,
-            relayed,
+            relayed: relayed && hs.peer_address.is_some(),
             // Reply peer metadata is not endpoint authority. The caller's
             // chosen request destination is the only locally correlated
             // address available at this layer.
@@ -782,6 +782,23 @@ mod tests {
             .unwrap();
         assert!(relayed.relayed);
         assert_eq!(relayed.server_address, expected);
+    }
+
+    #[test]
+    fn discovered_reply_without_forward_metadata_is_direct_at_selected_destination() {
+        let expected = peer("198.51.100.10", 49737);
+        let reply_msg = HandshakeMessage {
+            mode: MODE_REPLY,
+            noise: vec![1, 2, 3],
+            peer_address: None,
+            relay_address: None,
+        };
+        let encoded = hyperdht_messages::encode_handshake_to_bytes(&reply_msg).unwrap();
+        let result = Router::new()
+            .validate_handshake_reply(&encoded, &expected, &expected, true)
+            .unwrap();
+        assert!(!result.relayed);
+        assert_eq!(result.server_address, expected);
     }
 
     #[test]
