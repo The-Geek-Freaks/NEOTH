@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T11:48:00.2194200Z",
-  "validationStatus": "reviewed-source-hosted-pending",
+  "capturedUtc": "2026-10-05T12:14:00.9046104Z",
+  "validationStatus": "reviewed-workflow-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -103,8 +103,8 @@
     },
     {
       "path": ".github/workflows/macos-contract-regressions.yml",
-      "bytes": 22108,
-      "sha256": "32E70D44E7B054879B1AA391FF3460B68BCC1E81D7A89E11190534D4969B58DD"
+      "bytes": 24254,
+      "sha256": "95C368C89B008D37A3E0D2100EDE86C9A0F42527BDE38D759E8911DAC31B319B"
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
@@ -3657,6 +3657,11 @@
       "sha256": "CBFA13ABB206DF3A6F79F1180930CD4226FC5602824B1742F43933262E1E4E9E"
     },
     {
+      "path": "docs/verification/gold-wave2402-macos-fixture-selection.json",
+      "bytes": 1947,
+      "sha256": "9BA6FC4A74EE312D1042E59236CE5658C4C79DC9F6BD367CA698AB02ACDA1036"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4798,8 +4803,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2413855,
-      "sha256": "33AE59148033D271DE2C2A39C7C8A5A6529F5144EEF11AEDC7D3BF2FE91B2326"
+      "bytes": 2414647,
+      "sha256": "4A90A0BFB8C87BF70B081B217E5833E9708B22D3B4CFAD0C5B00EF20245E0CCA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

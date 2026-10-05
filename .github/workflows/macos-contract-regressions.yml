@@ -2,6 +2,12 @@ name: macOS contract regressions
 
 on:
   workflow_dispatch:
+    inputs:
+      fixture_repairs_only:
+        description: Run only the seven W2400 macOS fixture-repair regressions
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -51,6 +57,18 @@ jobs:
           mkdir -p "$evidence/logs"
           git rev-parse HEAD > "$evidence/source-head.txt"
           test "$(cat "$evidence/source-head.txt")" = "$GITHUB_SHA"
+          if [[ "${{ inputs.fixture_repairs_only }}" == "true" ]]; then
+          cat > "$evidence/selection.tsv" <<'EOF'
+          cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit	SRC/neothd/src/cli/parity_drift.rs
+          cluster::membership::tests::v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment	SRC/neothd/src/cluster/membership.rs
+          cluster::membership::tests::v5_to_v6_migration_preserves_unscoped_assignment_and_keeps_scopes_absent	SRC/neothd/src/cluster/membership.rs
+          cluster::outbound_tests::clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_enqueueing	SRC/neothd/src/cluster/outbound_tests.rs
+          cluster::outbound_tests::deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable_prepare	SRC/neothd/src/cluster/outbound_tests.rs
+          cluster::outbound_tests::runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptance	SRC/neothd/src/cluster/outbound_tests.rs
+          cluster::outbound_tests::clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches	SRC/neothd/src/cluster/outbound_tests.rs
+          EOF
+          selected_total=7
+          else
           cat > "$evidence/selection.tsv" <<'EOF'
           cli::arxiv_ingest_task::tests::indexes_single_paper_without_provider	SRC/neothd/src/cli/arxiv_ingest_task.rs
           cli::arxiv_ingest_task::tests::falls_back_to_raw_abstract_when_provider_fails	SRC/neothd/src/cli/arxiv_ingest_task.rs
@@ -188,8 +206,14 @@ jobs:
           cli::slack::tests::slack_send_errors_with_actionable_message_when_bot_token_missing	SRC/neothd/src/cli/slack.rs
           updater::self_update::tests::owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback	SRC/neothd/src/updater/self_update.rs
           EOF
-          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq 135
-          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq 135
+            selected_total=135
+          fi
+          printf 'selected_total=%s\n' "$selected_total" > "$evidence/selected-total.txt"
+          test "$(wc -l < "$evidence/selection.tsv" | tr -d ' ')" -eq "$selected_total"
+          test "$(cut -f1 "$evidence/selection.tsv" | sort -u | wc -l | tr -d ' ')" -eq "$selected_total"
+          if [[ "$selected_total" -eq 7 ]]; then
+            test "$(cut -f2 "$evidence/selection.tsv" | sort -u | paste -sd ',' -)" = 'SRC/neothd/src/cli/parity_drift.rs,SRC/neothd/src/cluster/membership.rs,SRC/neothd/src/cluster/outbound_tests.rs'
+          fi
           cut -f2 "$evidence/selection.tsv" | sort -u | while IFS= read -r source; do
             shasum -a 256 "$source"
           done > "$evidence/source-sha256.txt"
@@ -202,7 +226,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p neoth --lib --locked -- --list > "$RUNNER_TEMP/macos-contract-regressions/discovery.txt" 2> "$RUNNER_TEMP/macos-contract-regressions/compile.log"
-      - name: Execute all 135 exact regressions without stopping at the first failure
+      - name: ${{ inputs.fixture_repairs_only && 'Execute all 7 exact fixture regressions without stopping at the first failure' || 'Execute all 135 exact regressions without stopping at the first failure' }}
         timeout-minutes: 10
         working-directory: SRC
         shell: bash
@@ -225,8 +249,10 @@ jobs:
               failed=$((failed + 1))
             fi
           done < "$evidence/selection.tsv"
-          printf 'selected=135\nvisited=%s\nfailed_or_missing=%s\n' "$index" "$failed" > "$evidence/final-counts.txt"
-          test "$index" -eq 135 && test "$failed" -eq 0
+          selected_total="$(sed -n 's/^selected_total=//p' "$evidence/selected-total.txt")"
+          test "$selected_total" = 7 || test "$selected_total" = 135
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=%s\n' "$selected_total" "$index" "$failed" > "$evidence/final-counts.txt"
+          test "$index" -eq "$selected_total" && test "$failed" -eq 0
       - name: Preserve completed core compilation
         if: ${{ always() && steps.compile.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

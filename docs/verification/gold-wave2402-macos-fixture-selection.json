@@ -1,0 +1,45 @@
+{
+  "schema": "neoth.gold.wave2402.macos-fixture-selection.v1",
+  "status": "reviewed-workflow-hosted-pending",
+  "base": "224cf74540dd10760f2af0ddf50fbf30d5ece755",
+  "workflow": ".github/workflows/macos-contract-regressions.yml",
+  "input": {
+    "name": "fixture_repairs_only",
+    "type": "boolean",
+    "default": false
+  },
+  "falseSelection": 135,
+  "trueSelection": 7,
+  "sourceFiles": [
+    "SRC/neothd/src/cli/parity_drift.rs",
+    "SRC/neothd/src/cluster/membership.rs",
+    "SRC/neothd/src/cluster/outbound_tests.rs"
+  ],
+  "fixedSelectionFrom": "docs/verification/gold-wave2400-macos-fixture-repairs.json",
+  "preserved": [
+    "Default 135 literal test identities and exact execution step label",
+    "Source-head and raw source SHA256 binding",
+    "Compile discovery must contain exactly one requested identity",
+    "Each exact case must emit one passing terminal",
+    "External final-counts.txt selected key, visited and failed_or_missing fields",
+    "Existing cache, platform, compiler, timeout and no-retry behavior"
+  ],
+  "reviewSha256": "784FEAB79AF358B7AA435EDDF0C0BB9792FCFCE73F2D8F793D1C97D41E077FCC",
+  "baseSha256": "32E70D44E7B054879B1AA391FF3460B68BCC1E81D7A89E11190534D4969B58DD",
+  "candidateSha256": "95C368C89B008D37A3E0D2100EDE86C9A0F42527BDE38D759E8911DAC31B319B",
+  "verification": {
+    "localExecutableValidationRan": false,
+    "newTestRegistrations": 0,
+    "defaultCaseCatalogChanged": false,
+    "hostedSelectionAcceptance": "pending",
+    "nativeGuiProviderAcceptance": "separate and still open"
+  },
+  "predecessorValidation": {
+    "producer": "224cf74540dd10760f2af0ddf50fbf30d5ece755",
+    "run": 37306028872,
+    "outcome": "success",
+    "scope": "strict slim Clippy, core-test type check, public CLI build and actual reference export",
+    "rootProofSha256": "2BD86BD8E30B768D7D06E3FC114E17F35364759B9D33FEE5723552CAF1E8B782",
+    "fixtureExecution": "not proved by that predecessor run"
+  }
+}
