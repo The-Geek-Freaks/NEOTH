@@ -280,7 +280,11 @@ fn dispatch_request(
         prompt: "summarize this exact authorized task".into(),
         model_hint: None,
         max_output_tokens: None,
-        deadline_unix: NOW + 60,
+        // Runtime dispatch validates against the production wall clock before
+        // the authority gate. This fixture must therefore derive its ordinary
+        // live deadline from that same clock; `NOW` is reserved for explicit
+        // historical deadline-state cases above.
+        deadline_unix: crate::time::now_unix_i64().saturating_add(60),
         scope,
     }
 }

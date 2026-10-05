@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.gold.wave2400.macos-fixture-repairs.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "30e018e74a08a671412d53747026ae16bac52042",
+  "observedProducer": "f641a3722aae657d048f256dd7b744a9e75f3470",
+  "observedRun": 37287774621,
+  "observedJob": 111690678556,
+  "observedMacos": {
+    "compiled": true,
+    "testsRun": 19279,
+    "passed": 19271,
+    "failed": 7,
+    "timedOut": 1,
+    "skipped": 29,
+    "rawLogSha256": "2C8F79E5B2D6C6F63034B4B25F0102F94DC193EAB31731747CFF37123E1A8E5C",
+    "originalJunitZipSha256": "1EE38820F70EFDA37C584E22B8F05D6E3D0C60F853A5ADC8EBB9F55C52C97592",
+    "xmlParsedLocally": false
+  },
+  "changes": [
+    "Keep all six already unwired Companion operations in the explicit expected GUI-gap inventory; no operation is promoted to verified.",
+    "Reconstruct actual historical v4/v5 database schemas by removing delegation tables introduced by later migrations before resetting fixture user_version; production migrations and row-preservation assertions remain unchanged.",
+    "Derive ordinary live outbound-dispatch fixture deadlines from the same current wall clock as production validation, preserving explicit historical deadline tests and the existing admission races."
+  ],
+  "affectedExistingCases": [
+    "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
+    "cluster::membership::tests::v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment",
+    "cluster::membership::tests::v5_to_v6_migration_preserves_unscoped_assignment_and_keeps_scopes_absent",
+    "cluster::outbound_tests::clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_enqueueing",
+    "cluster::outbound_tests::deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable_prepare",
+    "cluster::outbound_tests::runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptance",
+    "cluster::outbound_tests::clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches"
+  ],
+  "sourceCandidates": [
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "candidate": "work/gold-20260906/wave2400-parity-repair/candidate/SRC/neothd/src/cli/parity_drift.rs",
+      "baseSha256": "34884A5890AA4917A1C56A9659C89B95E6277D5FD0FB5B18B6A69B4CACB9E205",
+      "sha256": "BAC3801B33B5A2F6F90F1274DE4AE57DA7BB4B2EBB88207BC625EA51ADD7691F"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "candidate": "work/gold-20260906/wave2400-macos-membership/candidate/SRC/neothd/src/cluster/membership.rs",
+      "baseSha256": "B331F9F5CABF66619150B26320C2C4F77D0640CD4118F050BF85A52966295F20",
+      "sha256": "6B150A8B92DFAAAB597EC2345DE09F86B7F7CBD86AA987FA3071CD98B6D0D437"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "candidate": "work/gold-20260906/wave2400-macos-outbound/candidate/SRC/neothd/src/cluster/outbound_tests.rs",
+      "baseSha256": "A13B15D9071CD1C7BA0AEAFB2757C3E23588A97788A6EE02D122F184F695FA45",
+      "sha256": "09DE0A3B5C143A83BFED1BEB51DA0FE9D54D0D2D6764B851BB7036A8CCA3EA0B"
+    }
+  ],
+  "verification": {
+    "localExecutableValidationRan": false,
+    "newTestRegistrations": 0,
+    "portableRegistrations": 2758,
+    "hostedRepairAcceptance": "pending",
+    "releaseReady": false,
+    "remainingMacosFailure": "buddy_provider_gui_tests::w2263_buddy_provider_callbacks_execute_canonical_receipts_then_refresh_readback; config_credentials_commit cause still requires fixed detail"
+  }
+}

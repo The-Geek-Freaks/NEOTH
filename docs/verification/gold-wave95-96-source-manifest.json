@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T11:43:07.8715315Z",
-  "validationStatus": "exact-hosted-format-patch-applied",
+  "capturedUtc": "2026-10-05T11:48:00.2194200Z",
+  "validationStatus": "reviewed-source-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3652,6 +3652,11 @@
       "sha256": "E39BF7F391EB55CD42B51D16DAF3E2B04637FC9F547F7E3A7A6F8451A498D1A2"
     },
     {
+      "path": "docs/verification/gold-wave2400-macos-fixture-repairs.json",
+      "bytes": 3508,
+      "sha256": "CBFA13ABB206DF3A6F79F1180930CD4226FC5602824B1742F43933262E1E4E9E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4793,8 +4798,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2412877,
-      "sha256": "1D05989E40D87FA6E80AFD6677FAC7476C727F91090861A72A3D6718646EAD1D"
+      "bytes": 2413855,
+      "sha256": "33AE59148033D271DE2C2A39C7C8A5A6529F5144EEF11AEDC7D3BF2FE91B2326"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6013,8 +6018,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 93340,
-      "sha256": "34884A5890AA4917A1C56A9659C89B95E6277D5FD0FB5B18B6A69B4CACB9E205"
+      "bytes": 93540,
+      "sha256": "BAC3801B33B5A2F6F90F1274DE4AE57DA7BB4B2EBB88207BC625EA51ADD7691F"
     },
     {
       "path": "SRC/neothd/src/cli/privacy.rs",
@@ -6218,8 +6223,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 340759,
-      "sha256": "B331F9F5CABF66619150B26320C2C4F77D0640CD4118F050BF85A52966295F20"
+      "bytes": 341574,
+      "sha256": "6B150A8B92DFAAAB597EC2345DE09F86B7F7CBD86AA987FA3071CD98B6D0D437"
     },
     {
       "path": "SRC/neothd/src/cluster/mod.rs",
@@ -6228,8 +6233,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 58547,
-      "sha256": "A13B15D9071CD1C7BA0AEAFB2757C3E23588A97788A6EE02D122F184F695FA45"
+      "bytes": 58871,
+      "sha256": "09DE0A3B5C143A83BFED1BEB51DA0FE9D54D0D2D6764B851BB7036A8CCA3EA0B"
     },
     {
       "path": "SRC/neothd/src/cluster/peer_streams.rs",

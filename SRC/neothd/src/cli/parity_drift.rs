@@ -2390,6 +2390,12 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "buddy.embedding.list",
         "buddy.vault-mirror.status",
         "restore.archive",
+        "companion.pair-phone",
+        "companion.pair-mobile",
+        "companion.devices-list",
+        "companion.devices-status",
+        "companion.devices-revoke",
+        "companion.webchat",
     ]);
     #[cfg(feature = "cluster")]
     expected_unwired.extend([

@@ -6485,7 +6485,10 @@ mod tests {
         drop(store);
 
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE task_delegate_scoped_assignments; DROP TABLE task_delegate_assignments; PRAGMA user_version=4;")
+        // A v4 authority predates every delegation table. Drop the later
+        // tables as well as their v11 operation columns before lowering the
+        // version, so this fixture models an actual v4 database.
+        conn.execute_batch("DROP TABLE task_delegate_worker_reservations; DROP TABLE task_delegate_result_outbox; DROP TABLE task_delegate_outbound_results; DROP TABLE task_delegate_outbound_operations; DROP TABLE task_delegate_outbound_assignments; DROP TABLE task_delegate_scoped_assignments; DROP TABLE task_delegate_assignments; PRAGMA user_version=4;")
             .unwrap();
         drop(conn);
 
@@ -6541,7 +6544,9 @@ mod tests {
         let path = store.path().to_path_buf();
         drop(store);
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE task_delegate_scoped_assignments; PRAGMA user_version=5;")
+        // v5 retains only the unscoped assignments; every later delegation
+        // table must be absent before migration can replay the v6-v11 steps.
+        conn.execute_batch("DROP TABLE task_delegate_worker_reservations; DROP TABLE task_delegate_result_outbox; DROP TABLE task_delegate_outbound_results; DROP TABLE task_delegate_outbound_operations; DROP TABLE task_delegate_outbound_assignments; DROP TABLE task_delegate_scoped_assignments; PRAGMA user_version=5;")
             .unwrap();
         drop(conn);
         let scope = crate::cluster::heartbeat::TaskDelegateScope {
