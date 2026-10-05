@@ -2696,10 +2696,7 @@ inference:
             persisted.inference.left.provider,
             Some(InferenceProvider::OpenAi)
         );
-        assert_eq!(
-            persisted.inference.left.model.as_deref(),
-            Some("new-model")
-        );
+        assert_eq!(persisted.inference.left.model.as_deref(), Some("new-model"));
     }
     #[tokio::test]
     async fn emit_rebind_audit_writes_0x1f_frame_with_payload() {

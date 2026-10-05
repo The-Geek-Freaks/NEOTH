@@ -37,5 +37,15 @@
   "v3InteropAcceptance": "pending",
   "v4Integration": "held",
   "deviceAccepted": false,
-  "releaseReady": false
+  "releaseReady": false,
+  "hostedFormatCorrection": {
+    "run": 37342947362,
+    "producer": "1670034ec5f9fb18725ef79df7f26ed972d1b0f0",
+    "artifact": 11359073441,
+    "zipSha256": "72EB277D1DAD801522B19DEE4058E07F500A37B58DDBC536DF04002049A0498B",
+    "patchSha256": "AE0DD1A27086EE5409C23FA381D4216C208E528459FBEA872F9ED0ADF1103681",
+    "postimage": "dafb082c190cddaa74afc92886459fe8d91fce74",
+    "scope": "One assertion layout only",
+    "localFormatterExecuted": false
+  }
 }

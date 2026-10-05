@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T16:40:10.6522633Z",
-  "validationStatus": "W2419 named-to-inline Buddy rebind repaired; exact native and new regression execution pending",
+  "capturedUtc": "2026-10-05T16:44:15.4911867Z",
+  "validationStatus": "W2419 native Buddy repair and hosted formatting published; native acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3673,8 +3673,8 @@
     },
     {
       "path": "docs/verification/gold-wave2419-buddy-named-to-inline-rebind.json",
-      "bytes": 2032,
-      "sha256": "4EC3708CE3236A1BF5C7180BAC52249F8A84968383F28DB6F07F0B66F6A69DE2"
+      "bytes": 2491,
+      "sha256": "2F8B84D88F4EBBC79E2222FFE0F0DCB284DE09FF3DC7C5C78240E3415C1E4251"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4818,8 +4818,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2418160,
-      "sha256": "0A6A07D0A24571F8A00566A82F5B0BABA21DD7C34D7661C63CD2061DC2ACD16A"
+      "bytes": 2418508,
+      "sha256": "FD8B585CEA0A541FDA0E437CEE4DB11E54950465F9132162D6924E32EDFBBE3A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5903,8 +5903,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 112215,
-      "sha256": "BB417A7AF60BC5A7E79A8E2A29E358AE909EA6F026FD1BBECCA72E867796E2EB"
+      "bytes": 112181,
+      "sha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE"
     },
     {
       "path": "SRC/neothd/src/cli/identity.rs",
