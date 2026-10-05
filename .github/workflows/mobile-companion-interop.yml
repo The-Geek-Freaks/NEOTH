@@ -185,13 +185,15 @@ jobs:
             daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication \
             daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness \
             daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join \
-            cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown
+            cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown \
+            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht \
+            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 10
+          test "$ordinal" -eq 12
       - name: Run exact bridge public result regression
         id: exact_bridge_public_result
         timeout-minutes: 5

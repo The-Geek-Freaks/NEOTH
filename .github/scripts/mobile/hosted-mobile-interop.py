@@ -45,6 +45,7 @@ PAIR_PHASES = (
     "active_listener_ready", "active_listener_unready", "enrollment_rollback_proven",
     "enrollment_rollback_noop", "enrollment_rollback_unproven", "pair_rendezvous_leave_started",
     "pair_rendezvous_left", "enrollment_response_write_started", "teardown_failed",
+    "rendezvous_started", "initial_discovery_started",
 )
 PAIR_MARKERS = tuple(
     (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))
@@ -180,6 +181,9 @@ def pair_cli_failure_category(stderr: bytes) -> str:
     text=stderr.decode("utf-8",errors="replace")
     if "companion v3 daemon unavailable: stale audit-RPC sidecar" in text: return "daemon_rpc_stale_sidecar"
     if "companion v3 daemon unavailable: RPC exchange" in text: return "daemon_rpc_exchange_deadline"
+    if "companion v3 daemon unavailable: companion pair mint exchange with " in text and "exceeded the 20s deadline" in text: return "pair_mint_exchange_deadline"
+    if "companion v3 daemon unavailable: read: " in text: return "daemon_rpc_read_failed"
+    if "companion v3 daemon unavailable: malformed RPC response" in text: return "daemon_rpc_malformed_response"
     if "companion v3 daemon unavailable: connect " in text: return "daemon_rpc_transport_unavailable"
     if "companion v3 daemon unavailable:" in text: return "daemon_rpc_unavailable"
     if "companion v3 daemon refused request: HTTP 503" in text: return "companion_runtime_unavailable"

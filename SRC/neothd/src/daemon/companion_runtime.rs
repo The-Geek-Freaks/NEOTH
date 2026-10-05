@@ -579,6 +579,7 @@ impl CompanionRuntime {
             self.daemon_key.clone(),
             deadline,
             shutdown.clone(),
+            Some(&mut pair_stop),
         )
         .await
         {
@@ -589,10 +590,16 @@ impl CompanionRuntime {
                 return Err(error);
             }
         };
+        diagnostics.phase("rendezvous_started");
+        diagnostics.phase("initial_discovery_started");
 
         let readiness = if let Some(sender) = readiness_tx.as_mut() {
             wait_for_pair_readiness_or_caller_drop(
-                rendezvous.wait_for_initial_discovery(&mut shutdown, deadline),
+                rendezvous.wait_for_initial_discovery_until_stop(
+                    &mut shutdown,
+                    Some(&mut pair_stop),
+                    deadline,
+                ),
                 sender,
             )
             .await
@@ -896,6 +903,7 @@ impl CompanionRuntime {
                 self.daemon_key.clone(),
                 readiness_deadline,
                 shutdown.clone(),
+                None,
             )
             .await
             {
@@ -1503,6 +1511,8 @@ impl CompanionPairDiagnostics {
             "pair_rendezvous_left" => 19,
             "enrollment_response_write_started" => 20,
             "teardown_failed" => 21,
+            "rendezvous_started" => 22,
+            "initial_discovery_started" => 23,
             _ => return,
         };
         self.last_phase = phase;

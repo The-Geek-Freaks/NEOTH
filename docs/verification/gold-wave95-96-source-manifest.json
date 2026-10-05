@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T07:37:41.6481527Z",
-  "validationStatus": "reviewed-source-hosted-pending",
+  "capturedUtc": "2026-10-05T08:23:17.9443894Z",
+  "validationStatus": "reviewed-source-pending-hosted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 27760,
-      "sha256": "E635C48A41DA2CE53BA029E76D16A933C90BC3D43F1C33D93A1014FF55DB3EE2"
+      "bytes": 28181,
+      "sha256": "78883A00CEF440105DE27DB2C137C4B21C597A14DC9554EA2AF7057654547CFF"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 14419,
-      "sha256": "A0CF512B7C31C4CF7BFBF2FAEA95087AEA3AAE4ACADC7B6E86DFCCDC1F58DC02"
+      "bytes": 14668,
+      "sha256": "98935B69D911A1804C740F987D3087F30E78B5E56F959FC740E084C37C941EBA"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3637,6 +3637,11 @@
       "sha256": "7775EA120543A907A64350AF8259C2D8FD42D5B91F8D468709161083C25BD42F"
     },
     {
+      "path": "docs/verification/gold-wave2387-pair-startup-cancellation.json",
+      "bytes": 2122,
+      "sha256": "45B21F55EFC26EA6D7A7AAD85B995748409EAC840C40AB6ADAF36147D9846A7B"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4778,8 +4783,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2408104,
-      "sha256": "ED7F37E238DD5865F8D76CCFEE215282C47678AC91347AB2D669B848D80EAD3D"
+      "bytes": 2409110,
+      "sha256": "CC0D22E85E603F316A246DD2D5B870D24296AD708F68BDA0CC62870DBC421F06"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6198,8 +6203,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 170143,
-      "sha256": "55FDF64C67FA0319BA2421F5A8472EA3CC1C6D6B5E7C3DDC78DB22812342A22A"
+      "bytes": 174539,
+      "sha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
@@ -6683,8 +6688,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 79025,
-      "sha256": "862B00F60FE24DD046E36598478729E4B83DE77BD0AEDD46A6A32F44CA4CDBEF"
+      "bytes": 79385,
+      "sha256": "429BE10031C69141640D7193EB084B5F2CF68B7596B22F9E069BE7C6C9B3E0D2"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",

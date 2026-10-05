@@ -189,13 +189,34 @@ pub(crate) struct PublicRendezvous {
     connections: tokio::sync::mpsc::Receiver<peeroxide::SwarmConnection>,
 }
 
-async fn public_start_shutdown_requested(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
-    if *shutdown.borrow() {
+async fn public_start_shutdown_requested(
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    mut local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
+) {
+    if *shutdown.borrow()
+        || local_stop
+            .as_deref()
+            .is_some_and(|stop| *stop.borrow())
+    {
         return;
     }
     loop {
-        if shutdown.changed().await.is_err() || *shutdown.borrow() {
-            return;
+        match local_stop.as_deref_mut() {
+            Some(stop) => {
+                tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() { return; }
+                    }
+                    changed = stop.changed() => {
+                        if changed.is_err() || *stop.borrow() { return; }
+                    }
+                }
+            }
+            None => {
+                if shutdown.changed().await.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
         }
     }
 }
@@ -213,11 +234,12 @@ enum BootstrapWait<T, E> {
 async fn wait_for_bootstrap_or_stop<T, E>(
     bootstrap: impl std::future::Future<Output = std::result::Result<T, E>>,
     shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
     deadline: tokio::time::Instant,
 ) -> BootstrapWait<T, E> {
     tokio::select! {
         biased;
-        _ = public_start_shutdown_requested(shutdown) => BootstrapWait::CancelledOrExpired,
+        _ = public_start_shutdown_requested(shutdown, local_stop) => BootstrapWait::CancelledOrExpired,
         _ = tokio::time::sleep_until(deadline) => BootstrapWait::CancelledOrExpired,
         result = bootstrap => BootstrapWait::Ready(result),
     }
@@ -279,11 +301,29 @@ impl PublicRendezvous {
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
         deadline: tokio::time::Instant,
     ) -> Result<()> {
+        self.wait_for_initial_discovery_until_stop(shutdown, None, deadline)
+            .await
+    }
+
+    /// Wait for first publication while retaining the rendezvous owner until
+    /// either its caller-owned stop, daemon shutdown, or deadline selects a
+    /// checked terminal path.
+    pub(crate) async fn wait_for_initial_discovery_until_stop(
+        &self,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+        local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
         let handle = self
             .peer_handle
             .as_ref()
             .context("public rendezvous lost its peeroxide handle before discovery readiness")?;
-        match wait_for_bootstrap_or_stop(handle.server_publication(self.topic), shutdown, deadline)
+        match wait_for_bootstrap_or_stop(
+            handle.server_publication(self.topic),
+            shutdown,
+            local_stop,
+            deadline,
+        )
             .await
         {
             BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => {
@@ -414,6 +454,7 @@ pub(crate) async fn spawn_public_rendezvous(
         None,
         deadline,
         shutdown,
+        None,
     )
     .await
 }
@@ -429,6 +470,7 @@ pub(crate) async fn spawn_public_rendezvous_with_key(
     server_key_pair: peeroxide::KeyPair,
     deadline: tokio::time::Instant,
     shutdown: tokio::sync::watch::Receiver<bool>,
+    local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
 ) -> Result<PublicRendezvous> {
     spawn_public_rendezvous_with_optional_key(
         topic,
@@ -436,6 +478,7 @@ pub(crate) async fn spawn_public_rendezvous_with_key(
         Some(server_key_pair),
         deadline,
         shutdown,
+        local_stop,
     )
     .await
 }
@@ -446,10 +489,14 @@ async fn spawn_public_rendezvous_with_optional_key(
     server_key_pair: Option<peeroxide::KeyPair>,
     deadline: tokio::time::Instant,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    mut local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
 ) -> Result<PublicRendezvous> {
     // Reject persistent pre-cancellation / already-expired admission before
     // constructing the public-bootstrap config.
-    if *shutdown.borrow() || tokio::time::Instant::now() >= deadline {
+    if *shutdown.borrow()
+        || local_stop.as_deref().is_some_and(|stop| *stop.borrow())
+        || tokio::time::Instant::now() >= deadline
+    {
         anyhow::bail!("public rendezvous cancelled or expired before bootstrap spawn");
     }
     let config = public_rendezvous_config(expected_remote_static_key, server_key_pair);
@@ -457,7 +504,14 @@ async fn spawn_public_rendezvous_with_optional_key(
         .await
         .context("peeroxide begin public rendezvous startup")?;
 
-    match wait_for_bootstrap_or_stop(startup.bootstrapped(), &mut shutdown, deadline).await {
+    match wait_for_bootstrap_or_stop(
+        startup.bootstrapped(),
+        &mut shutdown,
+        local_stop.as_deref_mut(),
+        deadline,
+    )
+    .await
+    {
         BootstrapWait::Ready(Ok(())) => {}
         BootstrapWait::Ready(Err(error)) => {
             if let Err(cleanup_error) =
@@ -489,7 +543,7 @@ async fn spawn_public_rendezvous_with_optional_key(
 
     let join_result = tokio::select! {
         biased;
-        _ = public_start_shutdown_requested(&mut shutdown) => None,
+        _ = public_start_shutdown_requested(&mut shutdown, local_stop.as_deref_mut()) => None,
         _ = tokio::time::sleep_until(deadline) => None,
         result = peer_handle.join(topic, server_only_join_opts()) => Some(result),
     };
@@ -3135,6 +3189,7 @@ mod tests {
         let outcome = wait_for_bootstrap_or_stop(
             async { Ok::<_, &'static str>("bootstrapped") },
             &mut shutdown,
+            None,
             tokio::time::Instant::now() + std::time::Duration::from_secs(1),
         )
         .await;
@@ -3149,6 +3204,7 @@ mod tests {
         let outcome = wait_for_bootstrap_or_stop(
             std::future::pending::<std::result::Result<(), &'static str>>(),
             &mut shutdown,
+            None,
             tokio::time::Instant::now() + std::time::Duration::from_secs(1),
         )
         .await;
@@ -3162,11 +3218,72 @@ mod tests {
         let outcome = wait_for_bootstrap_or_stop(
             std::future::pending::<std::result::Result<(), &'static str>>(),
             &mut shutdown,
+            None,
             tokio::time::Instant::now() - std::time::Duration::from_millis(1),
         )
         .await;
 
         assert!(matches!(outcome, BootstrapWait::CancelledOrExpired));
+    }
+
+    #[tokio::test]
+    async fn public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht() {
+        let (_shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
+        let (pair_stop_tx, mut pair_stop) = tokio::sync::watch::channel(false);
+        pair_stop_tx
+            .send(true)
+            .expect("pair-stop receiver is live");
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            wait_for_bootstrap_or_stop(
+                std::future::pending::<std::result::Result<(), &'static str>>(),
+                &mut shutdown,
+                Some(&mut pair_stop),
+                tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+            ),
+        )
+        .await
+        .expect("owned pair cancellation must release pending bootstrap receipt wait");
+
+        assert!(matches!(outcome, BootstrapWait::CancelledOrExpired));
+    }
+
+    #[tokio::test]
+    async fn public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation() {
+        let (shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
+        let (pair_stop_tx, mut pair_stop) = tokio::sync::watch::channel(false);
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            let mut entered_tx = Some(entered_tx);
+            wait_for_bootstrap_or_stop(
+                std::future::poll_fn(move |_| {
+                    if let Some(sender) = entered_tx.take() {
+                        let _ = sender.send(());
+                    }
+                    std::task::Poll::Pending::<std::result::Result<(), &'static str>>
+                }),
+                &mut shutdown,
+                Some(&mut pair_stop),
+                tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+            )
+            .await
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), entered_rx)
+            .await
+            .expect("pending bootstrap receipt was never polled")
+            .expect("pending bootstrap receipt poll signal was dropped");
+        pair_stop_tx
+            .send(true)
+            .expect("owned pair-stop receiver is live");
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("late owned pair cancellation did not wake receipt wait")
+            .expect("late owned pair cancellation waiter panicked");
+
+        assert!(matches!(outcome, BootstrapWait::CancelledOrExpired));
+        drop(shutdown_tx);
     }
 
     #[tokio::test]

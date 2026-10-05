@@ -1,0 +1,43 @@
+{
+  "schema": "neoth.gold.wave2387.pair-startup-cancellation.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "af6872b3b1940bfc80d1046ac717bf4f89761140",
+  "observedRun": 37279245674,
+  "priorEvidence": {
+    "originalArtifact": 11332921042,
+    "partialOutcomesSha256": "3614E6EBE24DD2D454D5925D743998755DE1DC4F5EA4F93CF064BC509EC8FB61",
+    "pairResponseLifetimeExercised": false,
+    "exactCases": 16,
+    "walDrainAccepted": false,
+    "product": "failed",
+    "failureCategory": "daemon_rpc_unavailable",
+    "zipSha256": "9A1345C3B82CB664C8032E2834777FCD6F9C478130E1BE6298EE737F968F97E2",
+    "failureStage": "pair_status_read_mint"
+  },
+  "change": "Thread caller-owned pair cancellation through rendezvous bootstrap, topic join and initial publication wait while retaining existing checked cleanup paths.",
+  "diagnostics": [
+    "rendezvous_started and initial_discovery_started separate startup return from publication waiting.",
+    "Fixed categories distinguish pair-mint exchange deadline, read failure and malformed RPC response without persisting raw streams."
+  ],
+  "review": {
+    "reportSha256": "B81FE16029589572DE213A2B6CEBACB2FB3312FD3E6DBC935521358CE81BFC4A",
+    "status": "independent static R3 pass"
+  },
+  "regressions": {
+    "scope": "Persistent stop and late stop after an observed pending poll; no DHT owner-drain claim from these seam tests.",
+    "portableRegistrations": 2758,
+    "targetedInteropCases": 18,
+    "coreCases": 12
+  },
+  "limits": [
+    "Observed success announcement labels do not establish actor publication-receipt delivery.",
+    "bootstrap_ready was emitted after initial discovery; the prior artifact cannot localize the delay further.",
+    "Tokio select drops moved futures before handling output; no circular ready receiver wait is claimed.",
+    "Authentication, scope, readiness predicate, TTL, retries and production time budgets are unchanged.",
+    "V4 integration still waits for complete V3 interop acceptance."
+  ],
+  "localExecutableValidationRan": false,
+  "productAcceptance": "pending",
+  "deviceAccepted": false,
+  "releaseReady": false
+}
