@@ -1,0 +1,50 @@
+{
+  "schema": "neoth.gold.wave2385.pair-response-lifetime.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "057470667677c8334007656c3514d2c11e05d0bf",
+  "observedRun": 37274402328,
+  "originalArtifact": {
+    "sha256": "FDCD7C928780DFA4AE360335A1A1DED41242617000E9EE42663565ADD7B2125A",
+    "id": 11330906125
+  },
+  "priorProducerEvidence": {
+    "exactRegressions": 15,
+    "pairTeardownCompleted": true,
+    "allDaemonOwnersAndWalDrained": true,
+    "workspaceRestored": true,
+    "product": "failed",
+    "failureBoundary": "enrollment_response_write_started after pair_rendezvous_left",
+    "partialOutcomesSha256": "0EF14BC4543714797A6D73864A48105AB432896D31F3B36B44825A7D3861CEB1",
+    "serveExitCode": 1
+  },
+  "change": "Retain the private rendezvous control handle after leaving its topic, until the existing explicit checked actor shutdown. Keep de-advertisement before authenticated response write.",
+  "scope": [
+    "Current V3 pairing path",
+    "Both legacy Companion leave callsites already reach terminal shutdown"
+  ],
+  "limits": [
+    "Existing framed write includes stream flush.",
+    "Observed receipt does not establish the low-level delivered-stream closure mechanism.",
+    "No protocol, scope, key, readiness, retry or production timeout change."
+  ],
+  "review": {
+    "resolved": [
+      "Real actor startup, both commands and checked shutdown use five-second test bounds.",
+      "Leave preserves its existing two-second limit.",
+      "Publication claim is limited to retained actor lifetime."
+    ],
+    "status": "independent bounded static approval of R2",
+    "candidateSha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E"
+  },
+  "regression": {
+    "publicBootstrap": false,
+    "portableRegistrations": 2756,
+    "exactInteropCases": 16,
+    "focusedHistoricalCases": 528,
+    "realActor": true,
+    "identity": "cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown"
+  },
+  "localExecutableValidationRan": false,
+  "productAcceptance": "pending on new producer",
+  "nativeAndReleaseAcceptance": "not supplied by this batch"
+}

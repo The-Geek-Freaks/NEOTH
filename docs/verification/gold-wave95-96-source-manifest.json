@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T06:43:45.9441693Z",
+  "capturedUtc": "2026-10-05T07:33:56.2771187Z",
   "validationStatus": "reviewed-source-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 14309,
-      "sha256": "2853F7CE4968892FE91F4F1AA5B74DA0CFA70FF1A06420DF52A720D528E46666"
+      "bytes": 14419,
+      "sha256": "A0CF512B7C31C4CF7BFBF2FAEA95087AEA3AAE4ACADC7B6E86DFCCDC1F58DC02"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3632,6 +3632,11 @@
       "sha256": "62E2891E97AA24415FF628F01DE69A1068DB97EC1C6E63CE0DEDEE60AFCCDBBF"
     },
     {
+      "path": "docs/verification/gold-wave2385-pair-response-lifetime.json",
+      "bytes": 2140,
+      "sha256": "8BE43173A0D89B75D1E7A2DA00A90D440E196D3FE1027284ED27967BB4CA7251"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4773,8 +4778,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2406002,
-      "sha256": "139A89B8AD69EF60C68FD2B56055A746B621FE2CD502A1BD95870DDABA806565"
+      "bytes": 2407676,
+      "sha256": "DB06AAD1B42DEEC9BBA4380AEC15BD338089DD7C725EFD865468C8EDCDC8ECE5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6193,8 +6198,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 168186,
-      "sha256": "6488D5BB2DCA4B43C7698E4CCAE0A1F9D105B7B36A4F4335DCAD503016F6883E"
+      "bytes": 170210,
+      "sha256": "53141A6D50DD2720EDF29055A6F1E61FF79DF6A066E015990FEE9E5AC345C33E"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",

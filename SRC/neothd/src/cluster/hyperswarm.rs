@@ -302,11 +302,12 @@ impl PublicRendezvous {
             }
         }
     }
-    /// Stop advertising the topic, then release the control handle while a
-    /// caller consumes its authenticated Noise stream. No further dialing
-    /// authority remains once the invite reaches a terminal transition.
+    /// Stop advertising the topic while retaining the control handle until
+    /// `shutdown_checked` destroys and joins the actor. The authenticated
+    /// connection can therefore finish its terminal response after discovery
+    /// is withdrawn; `leave` itself does not grant the caller a dialing API.
     pub(crate) async fn leave(&mut self) -> Result<()> {
-        let Some(handle) = self.peer_handle.take() else {
+        let Some(handle) = self.peer_handle.as_ref() else {
             anyhow::bail!("public rendezvous was already shut down");
         };
         let result =
@@ -318,7 +319,6 @@ impl PublicRendezvous {
                     "peeroxide leave public rendezvous topic timed out"
                 )),
             };
-        drop(handle);
         result
     }
 
@@ -3050,6 +3050,58 @@ mod tests {
         let options = server_only_join_opts();
         assert!(options.server);
         assert!(!options.client);
+    }
+
+    #[tokio::test]
+    async fn public_rendezvous_leave_retains_actor_owner_until_checked_shutdown() {
+        let (swarm_task, peer_handle, connections) =
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                peeroxide::spawn(peeroxide::SwarmConfig::default()),
+            )
+            .await
+            .expect("real rendezvous actor startup exceeded test bound")
+            .expect("start real rendezvous actor");
+        let mut rendezvous = PublicRendezvous {
+            peer_handle: Some(peer_handle),
+            topic: [0x71; 32],
+            swarm_task: Some(swarm_task),
+            connections,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            rendezvous
+                .peer_handle
+                .as_ref()
+                .expect("new rendezvous owns its control handle")
+                .join(rendezvous.topic, server_only_join_opts()),
+        )
+        .await
+        .expect("initial test topic join exceeded test bound")
+        .expect("join test rendezvous topic");
+
+        rendezvous.leave().await.expect("unannounce test topic");
+        let retained = rendezvous
+            .peer_handle
+            .as_ref()
+            .expect(
+                "leave must retain the real actor owner for an in-flight response",
+            );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            retained.join([0x72; 32], server_only_join_opts()),
+        )
+        .await
+        .expect("retained owner command exceeded test bound")
+        .expect("retained owner keeps the actor available before checked shutdown");
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            rendezvous.shutdown_checked(),
+        )
+        .await
+        .expect("checked rendezvous shutdown exceeded test bound")
+        .expect("checked shutdown drains the retained actor owner");
     }
 
     #[test]
