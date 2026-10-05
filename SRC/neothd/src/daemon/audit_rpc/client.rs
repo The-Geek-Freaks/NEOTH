@@ -890,7 +890,8 @@ pub(crate) async fn conversation_attach(
                  + Send
          ),
 ) -> Result<(), ConversationClientError> {
-    let body = serde_json::to_string(request).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
+    let body =
+        serde_json::to_string(request).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
     let sidecar = read_sidecar(home).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
     if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
         return Err(ConversationClientError::PreWriteUnavailable);
@@ -907,9 +908,7 @@ pub(crate) async fn conversation_attach(
     )
     .await
     .map_err(|_| ConversationClientError::PreWriteUnavailable)
-    .and_then(|value| {
-        value.map_err(|_| ConversationClientError::PreWriteUnavailable)
-    })?;
+    .and_then(|value| value.map_err(|_| ConversationClientError::PreWriteUnavailable))?;
     tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(wire.as_bytes()))
         .await
         .map_err(|_| ConversationClientError::Indeterminate("attach write deadline".into()))?

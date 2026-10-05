@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2394-reviewed-source-hosted-pending",
+  "status": "exact-hosted-format-patch-applied",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 389003,
-    "sha256": "633508ACE7AA3C3BA5770D84DE1CAB7C9D041918B4DBA771EDDB1919DB8B82A9"
+    "bytes": 388997,
+    "sha256": "5C89B01FB38F114CC0065A943093C6EE48F93F80F76A738780A2D0749DCCD001"
   },
   "sourceInputs": 2127,
   "requiredNativeTests": [
@@ -16519,7 +16519,7 @@
     {
       "test": "daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "sourceSha256": "6ABD1D1143F474535043FA5C335F3AAE1060347130B8E0A93173233615013CDD",
+      "sourceSha256": "3D5AAFE86E6409BE36642FA32D0F108E3AAC38A62C5678403E1A98101EEE863B",
       "junitClass": "neoth"
     },
     {
@@ -75458,6 +75458,20 @@
       }
     ],
     "note": "Exact feature/test compilation boundaries, four mechanical Clippy repairs, live-audio Send/ownership/initialization repairs, same-file Windows DACL handle conversion, and test-only macOS commit-detail diagnostics. 2758 portable and 20 interop identities unchanged. No local executable validation; hosted repair acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2394HostedFormat": {
+    "base": "ce307e73c8d5fa0af2cea0a2eb3af2c761716b03",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "bytes": 69848,
+        "sha256": "3D5AAFE86E6409BE36642FA32D0F108E3AAC38A62C5678403E1A98101EEE863B",
+        "blob": "dbf5e066ce50113e3e647b1ccbf90eb3e288cc28"
+      }
+    ],
+    "note": "Two audit_rpc/client.rs layout hunks from Preflight37304666411 at ce307e73. Original archive, entry SHA256 and full Git pre/post blobs verified. No local formatter or behavioral change.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
