@@ -1740,7 +1740,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join() {
+    async fn companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join()
+    {
         let home = tempfile::tempdir().expect("create companion drain home");
         let config_path = home.path().join("freedom.yaml");
         let crate::cli::serve_tasks::WalSetup {
@@ -1776,7 +1777,9 @@ mod tests {
             "first-failure".to_owned(),
             PairListenerOwner {
                 stop_tx: pair_stop_tx,
-                task: tokio::spawn(async { anyhow::bail!("simulated first pair listener failure") }),
+                task: tokio::spawn(async {
+                    anyhow::bail!("simulated first pair listener failure")
+                }),
             },
         );
         let (device_stop_tx, mut device_stop_rx) = watch::channel(false);

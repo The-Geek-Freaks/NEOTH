@@ -82,5 +82,18 @@
     "Future V4 cancellation source remains isolated and uncompiled."
   ],
   "deviceAccepted": false,
-  "signedReleaseAccepted": false
+  "signedReleaseAccepted": false,
+  "hostedFormatting": {
+    "run": 37273179567,
+    "producer": "0dfc9a58d88d2837b27759045bd57d45ab66ee76",
+    "artifact": 11329411858,
+    "zipSha256": "4AD246AC389F96289B5A5B2E0084EC3C5FF5D56888BF9C0F1FBBC08EA5FFBACC",
+    "patchSha256": "04FA86CCAC4026DC187A5AF2EADF54EDF00F0BF750F7C7E7F2CDF9A582F9A46C",
+    "paths": [
+      "SRC/neothd-gui/src/main.rs",
+      "SRC/neothd/src/daemon/companion_runtime.rs"
+    ],
+    "localFormatterRan": false,
+    "freshPreflight": "pending"
+  }
 }

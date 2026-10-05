@@ -22564,7 +22564,10 @@ fn buddy_provider_exit_cause(stderr: &[u8]) -> &'static str {
 fn buddy_provider_exit_diagnostic(stderr: &[u8], code: Option<i32>) {
     let code = code.map_or("unknown".to_owned(), |value| value.to_string());
     eprintln!("buddy_provider_exit_code={code}");
-    eprintln!("buddy_provider_exit_cause={}", buddy_provider_exit_cause(stderr));
+    eprintln!(
+        "buddy_provider_exit_cause={}",
+        buddy_provider_exit_cause(stderr)
+    );
 }
 
 #[cfg(test)]
