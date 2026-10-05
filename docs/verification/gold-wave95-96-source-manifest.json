@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T12:24:14.8650911Z",
-  "validationStatus": "W2404 catalog bound; 52 exact live-audio fixtures pending hosted execution",
+  "capturedUtc": "2026-10-05T12:41:39.7110654Z",
+  "validationStatus": "W2406 callback ownership repaired; 52 live-audio cases pending hosted execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3078,8 +3078,8 @@
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
-      "bytes": 14544,
-      "sha256": "929C096A28CE2684CD2C86C8D082747C5D2E3DB4271778A8FD402C12B1BFC1E6"
+      "bytes": 14559,
+      "sha256": "D7654CF45D5294C6F270B5B051E67F655636AD45B08CA74F4F8274B23F47DC9E"
     },
     {
       "path": "docs/verification/gold-wave186-silero-specialization.json",
@@ -3665,6 +3665,11 @@
       "path": "docs/verification/gold-wave2404-live-audio-catalog.json",
       "bytes": 3272,
       "sha256": "D31ACB2E22B3413A55255C4C414F25D706EA2F12BCE379E7E275F577B48E6F17"
+    },
+    {
+      "path": "docs/verification/gold-wave2406-playback-callback-ownership.json",
+      "bytes": 1152,
+      "sha256": "9983EFF9BC751C0A79DB0D20AC4343C135874EC8BBE052C78F2EB5C25FB49D92"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4808,8 +4813,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2415442,
-      "sha256": "D894B7756E92C8ED0D5D326CDB1E80157484DE3E8D8F5A2CC2B9BC260D23C4A4"
+      "bytes": 2416564,
+      "sha256": "D2C1B224EA62712D05C7A589FB3E5641FB9FAEFE2973CB5A2957250CC2DD0FB8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7463,8 +7468,8 @@
     },
     {
       "path": "SRC/neothd/src/media/playback.rs",
-      "bytes": 31075,
-      "sha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "bytes": 31187,
+      "sha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "path": "SRC/neothd/src/media/resampler.rs",

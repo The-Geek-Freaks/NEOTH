@@ -1,0 +1,24 @@
+{
+  "schema": "neoth.gold.wave2406.playback-callback-ownership.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "ba987d742064d0bce49088fe24900569ec4340e8",
+  "failureRun": 37309793723,
+  "runConclusion": "cancelled",
+  "failureScope": "Linux and Windows compile failure; macOS cancelled after same two diagnostics, zero executed fixtures",
+  "failureProofSha256": "96DC6785C67BC7B2E3ADC9F8F6BF3867B181FD881B8F4BAAD95FA792D7563F71",
+  "reviewSha256": "1A934056696884F787AAF8DCBB338C23DDFE01BA356ECB13CCF00D4B6AA98271",
+  "source": "SRC/neothd/src/media/playback.rs",
+  "candidateSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E",
+  "candidateBlob": "aa0deb61177fa42435a412aa0429b211ff179930",
+  "catalogSha256": "D7654CF45D5294C6F270B5B051E67F655636AD45B08CA74F4F8274B23F47DC9E",
+  "exactCases": 52,
+  "reboundCatalogEntries": 6,
+  "newTestRegistrations": 0,
+  "preserved": [
+    "One shared AtomicBool terminal latch",
+    "One shared terminal event channel",
+    "Same callbacks, first-terminal gate, cancellation and error mapping"
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": "pending"
+}

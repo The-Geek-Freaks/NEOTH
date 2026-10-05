@@ -666,6 +666,8 @@ where
 {
     let callback_terminal_events = terminal_events.clone();
     let callback_terminal = terminal.clone();
+    let error_terminal_events = callback_terminal_events.clone();
+    let error_terminal = callback_terminal.clone();
     let mut state = CallbackState {
         commands,
         current: None,
@@ -707,8 +709,8 @@ where
             },
             move |error| {
                 raise_terminal(
-                    &callback_terminal_events,
-                    &callback_terminal,
+                    &error_terminal_events,
+                    &error_terminal,
                     PlaybackEvent::Error(PlaybackError::DeviceLost(error.to_string())),
                 );
             },

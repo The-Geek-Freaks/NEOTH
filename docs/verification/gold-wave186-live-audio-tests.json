@@ -1,7 +1,7 @@
 {
   "schema": "neoth-live-audio-tests/v1",
   "feature": "live-audio",
-  "status": "52 registered exact cases; source hashes rebound to reviewed W2394 repairs; hosted execution pending",
+  "status": "52 registered exact cases; source hashes rebound to W2406 shared terminal callback repair; hosted execution pending",
   "requiredTests": [
     {
       "test": "media::live_capture::tests::terminal_published_during_pcm_wait_survives_every_wait_result",
@@ -176,32 +176,32 @@
     {
       "test": "media::playback::tests::callback_drains_bounded_pcm_then_reports_completion_once",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "media::playback::tests::pcm_block_rejects_misaligned_or_unknown_metadata",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "media::playback::tests::stale_generation_is_rejected_before_ready_or_callback_render",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "media::playback::tests::callback_device_failure_publishes_exactly_one_terminal_error",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "media::playback::tests::join_releases_permit_slot_only_after_owner_has_ended",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "media::playback::tests::source_proven_mono_pcm_can_be_resampled_before_enqueue",
       "sourcePath": "SRC/neothd/src/media/playback.rs",
-      "sourceSha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+      "sourceSha256": "F23B1FEF39957E9460A04239BB825A5782BE8DA0A5A8247EB017141E4F25B55E"
     },
     {
       "test": "daemon::conversation_owner::tests::aborted_fake_stage_is_joined_before_stop_ack_and_leaves_no_active_slot",
