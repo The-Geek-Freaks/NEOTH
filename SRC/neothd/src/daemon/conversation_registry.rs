@@ -899,14 +899,14 @@ impl ConversationRuntime for ConversationRegistry {
                 "conversation_attach_binding_mismatch",
             ));
         }
-        if let Some(first) = state.frames.front() {
-            if request.after_sequence.saturating_add(1) < first.sequence {
-                return Err(ConversationError::new(
-                    ConversationErrorCode::ReplayGap,
-                    true,
-                    "conversation_replay_gap",
-                ));
-            }
+        if let Some(first) = state.frames.front()
+            && request.after_sequence.saturating_add(1) < first.sequence
+        {
+            return Err(ConversationError::new(
+                ConversationErrorCode::ReplayGap,
+                true,
+                "conversation_replay_gap",
+            ));
         }
         Ok(state
             .frames
@@ -915,8 +915,8 @@ impl ConversationRuntime for ConversationRegistry {
                 frame.subscription_id == request.subscription_id
                     && frame.sequence > request.after_sequence
             })
-            .cloned()
             .take(CONVERSATION_REPLAY_MAX_FRAMES)
+            .cloned()
             .collect())
     }
     async fn attach(

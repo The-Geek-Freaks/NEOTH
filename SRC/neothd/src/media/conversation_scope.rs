@@ -37,6 +37,7 @@ impl GenerationToken {
     /// Identity is deliberately narrower than value equality: two tokens are
     /// equal only when they came from the same cancellation allocation and
     /// carry the same issued generation.  No token constructor is exposed.
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn same_generation(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.scope, &other.scope) && self.generation == other.generation
     }

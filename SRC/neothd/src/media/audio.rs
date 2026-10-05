@@ -341,6 +341,7 @@ pub(crate) fn decode_file_to_pcm(
 
 /// Owned, decoder-proven PCM for a response already admitted under the
 /// caller's audio-work lease. The shared decoder always produces 16 kHz mono.
+#[cfg(any(test, feature = "live-audio"))]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct DecodedPcmS16le {
     pub(crate) audio_bytes: Vec<u8>,
@@ -354,6 +355,7 @@ pub(crate) struct DecodedPcmS16le {
 /// The caller supplies an already-held audio work permit; this helper never
 /// reacquires the global lease and never stages provider bytes to a file.
 /// Blocking — call from the existing audio owner thread or `spawn_blocking`.
+#[cfg(any(test, feature = "live-audio"))]
 pub(crate) fn decode_wav_bytes_to_pcm_s16le(
     bytes: Vec<u8>,
     _permit: &AudioWorkPermit,
@@ -378,6 +380,7 @@ pub(crate) fn decode_wav_bytes_to_pcm_s16le(
 }
 
 /// Convert the bounded, normalized decoder output to owned s16le frames.
+#[cfg(any(test, feature = "live-audio"))]
 fn normalized_samples_to_s16le(samples: Vec<f32>) -> anyhow::Result<Vec<u8>> {
     if samples.is_empty() {
         return Err(anyhow::anyhow!(
@@ -408,6 +411,7 @@ fn normalized_samples_to_s16le(samples: Vec<f32>) -> anyhow::Result<Vec<u8>> {
 /// decoder probes it. This keeps a declared WAV response from becoming an
 /// MP3/Opus auto-probe path and rejects an empty `data` chunk before a typed
 /// playback result can be made.
+#[cfg(any(test, feature = "live-audio"))]
 fn validate_pcm_s16le_wav_container(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err("expected a RIFF/WAVE container".to_string());

@@ -22561,13 +22561,62 @@ fn buddy_provider_exit_cause(stderr: &[u8]) -> &'static str {
 }
 
 #[cfg(test)]
+fn buddy_provider_config_credentials_commit_detail(stderr: &[u8]) -> &'static str {
+    // Test-only fixed detail. Do not retain or emit stderr, paths, or credentials.
+    let text = String::from_utf8_lossy(stderr);
+    if text.contains("freedom.yaml and credentials.yaml must be sibling files") {
+        "pair_layout"
+    } else if text.contains("freedom.yaml changed after its rollback snapshot") {
+        "snapshot_drift"
+    } else if text.contains("freedom.yaml root must be a YAML mapping") {
+        "root_shape"
+    } else if text.contains("freedom.yaml inference must be a YAML mapping") {
+        "inference_shape"
+    } else if text.contains("for lossless rebind") {
+        "lossless_parse"
+    } else if text.contains("parse config at") {
+        "typed_parse"
+    } else if text.contains("serialize losslessly rebound freedom.yaml") {
+        "serialization"
+    } else if text.contains("validate raw target for") {
+        "target_validation"
+    } else if text.contains("parse WAL target for") {
+        "wal_target_parse"
+    } else if text.contains("validate WAL target for") {
+        "wal_target_validation"
+    } else if text.contains("load ") && text.contains(" for raw update") {
+        "credential_load"
+    } else if text.contains("serialize dual-file PREPARED journal") {
+        "journal_serialize"
+    } else if text.contains("durably write private journal") {
+        "journal_persist"
+    } else if text.contains("credential phase failed") {
+        "credential_publish"
+    } else if text.contains("freedom config phase failed") {
+        "freedom_publish"
+    } else if text.contains("dual-file publication verification failed") {
+        "pair_verification"
+    } else if text.contains("fsync transaction directory") {
+        "directory_sync"
+    } else if text.contains("durably remove committed journal") {
+        "journal_cleanup"
+    } else {
+        "other"
+    }
+}
+
+#[cfg(test)]
 fn buddy_provider_exit_diagnostic(stderr: &[u8], code: Option<i32>) {
     let code = code.map_or("unknown".to_owned(), |value| value.to_string());
+    let cause = buddy_provider_exit_cause(stderr);
     eprintln!("buddy_provider_exit_code={code}");
-    eprintln!(
-        "buddy_provider_exit_cause={}",
-        buddy_provider_exit_cause(stderr)
-    );
+    eprintln!("buddy_provider_exit_cause={cause}");
+    if cause == "config_credentials_commit" {
+        eprintln!(
+            "buddy_provider_commit_detail={}",
+            buddy_provider_config_credentials_commit_detail(stderr)
+        );
+    }
 }
 
 #[cfg(test)]

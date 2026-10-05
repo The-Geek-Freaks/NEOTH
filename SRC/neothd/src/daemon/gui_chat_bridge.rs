@@ -283,6 +283,7 @@ impl GuiChatBridgePreflightReceipt {
         }
     }
 
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
         self.sealed
             .live_bytes()
@@ -296,6 +297,7 @@ impl GuiChatBridgeDecisionReceipt {
         }
     }
 
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
         self.sealed
             .live_bytes()
@@ -310,6 +312,7 @@ impl GuiChatBridgeTurn {
         }
     }
 
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
         self.sealed
             .live_bytes()
@@ -324,6 +327,7 @@ impl GuiChatBridgeSubscription {
         }
     }
 
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn sealed_bytes_for_daemon(&self) -> GuiChatBridgeResult<&[u8]> {
         self.sealed
             .live_bytes()
@@ -493,6 +497,7 @@ impl GuiChatBridgeError {
         }
     }
 
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) const fn unavailable_for_daemon(detail: &'static str) -> Self {
         Self {
             code: GuiChatBridgeErrorCode::Unavailable,

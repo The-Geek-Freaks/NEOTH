@@ -356,7 +356,12 @@ impl MicConsentStore {
                 )
                 .map_err(|_| MicError::Persistence)?;
                 #[cfg(windows)]
-                crate::wal::win_native::verify_private_file_handle(&file)
+                let private_file = file
+                    .try_clone()
+                    .map_err(|_| MicError::Persistence)?
+                    .into_std();
+                #[cfg(windows)]
+                crate::wal::win_native::verify_private_file_handle(&private_file)
                     .map_err(|_| MicError::Persistence)?;
                 if !binding
                     .matches_regular_file_child_readonly(

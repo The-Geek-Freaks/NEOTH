@@ -890,10 +890,20 @@ impl RetainedConversationOwner for LiveConversationOwner {
             }
             active.control.clone()
         };
+        let provider_request_id = crate::daemon::gui_chat_bridge::GuiChatRequestId::parse(
+            &request.provider_request_id.0.to_string(),
+        )
+        .map_err(|_| {
+            ConversationError::new(
+                ConversationErrorCode::Forbidden,
+                false,
+                "provider_decision_binding_mismatch",
+            )
+        })?;
         control
             .send(
                 crate::media::conversation_loop::A2Control::ProviderDecision(
-                    crate::daemon::gui_chat_bridge::GuiChatRequestId(request.provider_request_id.0),
+                    provider_request_id,
                     Self::map_provider(request.decision),
                 ),
             )

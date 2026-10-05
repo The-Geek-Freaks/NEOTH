@@ -98,6 +98,7 @@ enum AdmissionError {
     ProviderConfigChanged,
 }
 
+#[cfg(any(test, feature = "cluster"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompanionChatTurnError {
     Denied,
@@ -113,6 +114,7 @@ impl DaemonChatRuntime {
     /// Mobile companion entrypoint. It reuses the daemon's only admission,
     /// provider snapshot, durable-consent, WAL and close/drain path; callers
     /// receive no bearer, AuditStream, provider constructor or retry handle.
+    #[cfg(any(test, feature = "cluster"))]
     pub(crate) async fn execute_companion_chat_turn(
         &self,
         request: DaemonPlainChatRequest,

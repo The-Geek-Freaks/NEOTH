@@ -205,6 +205,7 @@ impl StatusLease {
     /// represented by this non-copy delivery lease. The caller passes this
     /// opaque gate through the existing daemon chat pipeline; it has no
     /// provider construction, retry, or transport authority of its own.
+    #[cfg(any(test, feature = "cluster"))]
     pub(crate) fn chat_effect_gate(&self) -> Arc<dyn crate::providers::ChatTurnEffectGate> {
         Arc::new(CompanionChatEffectGate {
             shared: Arc::clone(&self.shared),
@@ -215,6 +216,7 @@ impl StatusLease {
     }
 }
 
+#[cfg(any(test, feature = "cluster"))]
 struct CompanionChatEffectGate {
     shared: Arc<Shared>,
     device_id: Uuid,
@@ -222,6 +224,7 @@ struct CompanionChatEffectGate {
     revision: u64,
 }
 
+#[cfg(any(test, feature = "cluster"))]
 struct CompanionChatPreparingEffect {
     shared: Arc<Shared>,
     device_id: Uuid,
@@ -229,6 +232,7 @@ struct CompanionChatPreparingEffect {
     revision: u64,
 }
 
+#[cfg(any(test, feature = "cluster"))]
 struct CompanionChatEffectLease {
     /// Retain the owned mutex until the existing concrete adapter proves a
     /// response head, a known pre-start abort, or an indeterminate outcome.
@@ -237,6 +241,7 @@ struct CompanionChatEffectLease {
     admission: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
+#[cfg(any(test, feature = "cluster"))]
 fn check_chat_effect_authority(
     shared: &Shared,
     device_id: Uuid,
@@ -268,6 +273,7 @@ fn check_chat_effect_authority(
     Ok(())
 }
 
+#[cfg(any(test, feature = "cluster"))]
 #[async_trait::async_trait]
 impl crate::providers::ChatTurnEffectGate for CompanionChatEffectGate {
     async fn intent(
@@ -307,6 +313,7 @@ impl crate::providers::ChatTurnEffectGate for CompanionChatEffectGate {
     }
 }
 
+#[cfg(any(test, feature = "cluster"))]
 #[async_trait::async_trait]
 impl crate::providers::PreparingEffectLifecycle for CompanionChatPreparingEffect {
     async fn begin_start(
@@ -336,6 +343,7 @@ impl crate::providers::PreparingEffectLifecycle for CompanionChatPreparingEffect
     }
 }
 
+#[cfg(any(test, feature = "cluster"))]
 #[async_trait::async_trait]
 impl crate::providers::EffectStartLeaseLifecycle for CompanionChatEffectLease {
     fn deadline(&self) -> tokio::time::Instant {
@@ -898,11 +906,11 @@ impl DeviceAuthority {
     }
     pub fn device(&self, id: &CompanionDeviceId) -> Result<DeviceGrant> {
         let c = self.core()?;
-        Ok(c.state
+        c.state
             .devices
             .get(&id.0)
             .cloned()
-            .context("unknown device")?)
+            .context("unknown device")
     }
     pub fn list(&self) -> Result<Vec<DeviceGrant>> {
         let c = self.core()?;

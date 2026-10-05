@@ -60,6 +60,7 @@ impl CompanionMutationReceiptDescriptor {
         serde_json::to_vec(self).context("encode companion mutation receipt")
     }
 
+    #[cfg(any(test, feature = "cluster"))]
     pub(crate) fn header(&self, payload: &[u8]) -> crate::wal::EventHeaderV2 {
         crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, payload)
             .event_subtype(ExtendedSubtype::CompanionMutationReceipt as u8)

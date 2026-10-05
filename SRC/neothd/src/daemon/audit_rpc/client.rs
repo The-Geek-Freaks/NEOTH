@@ -827,29 +827,21 @@ pub(crate) async fn gui_chat_attach(
 
 #[derive(Debug)]
 pub(crate) enum ConversationClientError {
-    PreWriteUnavailable(String),
+    PreWriteUnavailable,
     Indeterminate(String),
-    Refused(u16, String),
+    Refused,
 }
 fn map_conversation_client_error(error: GuiChatClientError) -> ConversationClientError {
     match error {
-        GuiChatClientError::PreWriteUnavailable(value) => {
-            ConversationClientError::PreWriteUnavailable(value)
-        }
+        GuiChatClientError::PreWriteUnavailable(_) => ConversationClientError::PreWriteUnavailable,
         GuiChatClientError::Indeterminate(value) => ConversationClientError::Indeterminate(value),
-        GuiChatClientError::Refused(status, value) => {
-            ConversationClientError::Refused(status, value)
-        }
+        GuiChatClientError::Refused(_, _) => ConversationClientError::Refused,
     }
 }
 pub(crate) fn attested_conversation_boot_id(
     home: &Path,
 ) -> Result<String, ConversationClientError> {
-    attested_gui_chat_boot_id(home).map_err(|error| {
-        ConversationClientError::PreWriteUnavailable(format!(
-            "attest conversation instance: {error}"
-        ))
-    })
+    attested_gui_chat_boot_id(home).map_err(|_| ConversationClientError::PreWriteUnavailable)
 }
 pub(crate) async fn conversation_post<T, R>(
     home: &Path,
@@ -879,8 +871,8 @@ where
 {
     match conversation_post(home, path, request).await {
         Ok(response) => Ok(response),
-        Err(error @ ConversationClientError::PreWriteUnavailable(_)) => Err(error),
-        Err(error @ ConversationClientError::Refused(_, _)) => Err(error),
+        Err(error @ ConversationClientError::PreWriteUnavailable) => Err(error),
+        Err(error @ ConversationClientError::Refused) => Err(error),
         Err(ConversationClientError::Indeterminate(detail)) => {
             let _: crate::daemon::conversation_protocol::ConversationProgressResponse = conversation_post(home, crate::daemon::conversation_protocol::CONVERSATION_V1_ABORT_START_PATH, abort).await.map_err(|abort_error| ConversationClientError::Indeterminate(format!("start outcome indeterminate ({detail}); abort settlement unconfirmed: {abort_error:?}")))?;
             Err(ConversationClientError::Indeterminate(detail))
@@ -898,19 +890,12 @@ pub(crate) async fn conversation_attach(
                  + Send
          ),
 ) -> Result<(), ConversationClientError> {
-    let body = serde_json::to_string(request).map_err(|error| {
-        ConversationClientError::PreWriteUnavailable(format!("serialize attach: {error}"))
-    })?;
-    let sidecar = read_sidecar(home).map_err(|error| {
-        ConversationClientError::PreWriteUnavailable(format!("sidecar: {error}"))
-    })?;
+    let body = serde_json::to_string(request).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
+    let sidecar = read_sidecar(home).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
     if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
-        return Err(ConversationClientError::PreWriteUnavailable(
-            "stale audit-RPC sidecar".into(),
-        ));
+        return Err(ConversationClientError::PreWriteUnavailable);
     }
-    let token = read_rpc_token(home)
-        .map_err(|error| ConversationClientError::PreWriteUnavailable(format!("token: {error}")))?;
+    let token = read_rpc_token(home).map_err(|_| ConversationClientError::PreWriteUnavailable)?;
     let wire = format!(
         "POST {} HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         crate::daemon::conversation_protocol::CONVERSATION_V1_ATTACH_PATH,
@@ -921,11 +906,9 @@ pub(crate) async fn conversation_attach(
         super::transport::connect(&sidecar.endpoint),
     )
     .await
-    .map_err(|_| ConversationClientError::PreWriteUnavailable("attach connect deadline".into()))
+    .map_err(|_| ConversationClientError::PreWriteUnavailable)
     .and_then(|value| {
-        value.map_err(|error| {
-            ConversationClientError::PreWriteUnavailable(format!("attach connect: {error}"))
-        })
+        value.map_err(|_| ConversationClientError::PreWriteUnavailable)
     })?;
     tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(wire.as_bytes()))
         .await

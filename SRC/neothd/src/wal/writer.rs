@@ -2031,6 +2031,7 @@ impl WalWriterHandle {
     /// Writer-owned companion mutation receipt transaction.  Dropping the
     /// caller future cannot free its descriptor; a restart must reconcile the
     /// same mutation id against authenticated WAL before any second append.
+    #[cfg(any(test, feature = "cluster"))]
     pub(crate) async fn append_companion_mutation_receipt_once(
         &self,
         home: &Path,
@@ -2527,6 +2528,7 @@ impl WalWriterHandle {
             .unwrap_or(Err(TrustDecisionOnceError::Indeterminate))
     }
 
+    #[cfg(any(test, feature = "cluster"))]
     fn append_companion_mutation_receipt_once_blocking(
         &self,
         home: &Path,

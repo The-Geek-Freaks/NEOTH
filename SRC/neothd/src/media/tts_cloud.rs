@@ -606,6 +606,7 @@ pub(crate) struct ConfiguredTtsResponse {
     /// Present only when the selected provider's raw-PCM wire contract proves
     /// the returned interleaved s16le rate and channel count. This is separate
     /// from `TtsRequest::sample_rate_hz`, which providers may ignore.
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) pcm_s16le: Option<VerifiedPcmS16leFormat>,
 }
 
@@ -613,6 +614,7 @@ pub(crate) struct ConfiguredTtsResponse {
 ///
 /// This intentionally does not describe a device output format. The concrete
 /// playback owner must either convert this source format or reject its device.
+#[cfg(any(test, feature = "live-audio"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct VerifiedPcmS16leFormat {
     pub(crate) sample_rate_hz: u32,
@@ -620,6 +622,7 @@ pub(crate) struct VerifiedPcmS16leFormat {
 }
 
 /// Complete raw PCM handoff for the later native playback owner.
+#[cfg(any(test, feature = "live-audio"))]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct VerifiedPcmS16leResponse {
     pub(crate) audio_bytes: Vec<u8>,
@@ -650,6 +653,7 @@ impl ConfiguredTtsResponse {
     /// under the caller's existing audio-work lease; no provider bytes are
     /// staged to disk and no lease is reacquired. Encoded responses stay
     /// rejected until a separately owned decoder path is introduced.
+    #[cfg(any(test, feature = "live-audio"))]
     pub(crate) fn into_verified_pcm_s16le(
         self,
         permit: &crate::media::audio::AudioWorkPermit,
@@ -700,6 +704,7 @@ impl ConfiguredTtsResponse {
 /// `azure_output_format`. ViitorVoice currently only echoes the requested
 /// container and the other providers return WAV or MP3, so none of them may be
 /// represented as playback-ready raw PCM without a separate verified decoder.
+#[cfg(any(test, feature = "live-audio"))]
 fn verified_pcm_s16le_format(
     provider: TtsProviderKind,
     response: &TtsResponse,
@@ -720,6 +725,7 @@ fn verified_pcm_s16le_format(
 /// configured transaction. Azure and ViitorVoice also declare WAV support.
 /// Edge and ElevenLabs remain encoded-only, so a configuration with neither a
 /// WAV-capable primary nor fallback has no truthful initial playback request.
+#[cfg(any(test, feature = "live-audio"))]
 pub(crate) fn configured_playback_request_format(
     primary: TtsProviderKind,
     fallback: Option<TtsProviderKind>,
@@ -865,6 +871,7 @@ pub(crate) async fn synthesize_configured_response(
     Ok(ConfiguredTtsResponse {
         provider,
         voice: request.voice_id,
+        #[cfg(any(test, feature = "live-audio"))]
         pcm_s16le: verified_pcm_s16le_format(provider, &response),
         response,
     })

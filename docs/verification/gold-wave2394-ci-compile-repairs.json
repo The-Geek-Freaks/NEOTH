@@ -1,0 +1,78 @@
+{
+  "schema": "neoth.gold.wave2394.ci-compile-repairs.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "1ae5460c0d4af58b23aee3a595e2dc9a10e7750d",
+  "observedProducer": "f641a3722aae657d048f256dd7b744a9e75f3470",
+  "observedRun": 37287774621,
+  "observedCompletedJobs": [
+    {
+      "contract": "Linux slim no-default Clippy",
+      "outcome": "failure",
+      "mechanicalClippyDiagnostics": 4,
+      "id": 111690678316,
+      "logSha256": "4B42E6ABA8FE48E79AAFC4B041F34DFEF22C4C95E9FD275EF3464338E7A7B96E",
+      "deadCodeDiagnostics": 25
+    },
+    {
+      "contract": "Windows workspace test compilation",
+      "outcome": "failure",
+      "id": 111690678413,
+      "compilerErrors": 1,
+      "logSha256": "ED2D9DDECE05B6436C2F5EA13280B4AB22E36CCBB48C0B7797F17360348888BC",
+      "error": "E0308 cap_std handle passed to std handle verification"
+    },
+    {
+      "fixtureExecutionProven": false,
+      "id": 111690703540,
+      "contract": "Windows live-audio",
+      "outcome": "compile failure"
+    },
+    {
+      "fixtureExecutionProven": false,
+      "id": 111690703683,
+      "contract": "Linux live-audio",
+      "outcome": "compile failure"
+    },
+    {
+      "fixtureExecutionProven": false,
+      "id": 111690703768,
+      "contract": "macOS live-audio",
+      "outcome": "compile failure"
+    }
+  ],
+  "changes": [
+    "Gate genuinely cluster-only and live-audio-only internal helpers, types and constructors with their exact feature or test availability; retain the slim no-default Clippy gate.",
+    "Remove internal conversation client payloads discarded by every consumer, preserving error classification and Indeterminate detail; apply four reported Clippy rewrites.",
+    "Use validated v7 GUI request construction, a diverging failure macro, retained generation ownership and complete playback state initialization.",
+    "Select an audio batch synchronously and transfer only owned TTS inputs into the awaited stage; preserve registration-before-owner ordering without requiring the resampler to be Sync.",
+    "Clone and convert the already opened Windows capability file for DACL verification; retain the original capability file for binding and reads."
+  ],
+  "macosDiagnostic": {
+    "run": 37287463049,
+    "exactCallback": "failure",
+    "rootCauseIdentified": false,
+    "cliAndGuiCompile": "success",
+    "exitCause": "config_credentials_commit",
+    "change": "Test-only fixed transaction-stage whitelist; no raw stderr, path or credential output.",
+    "proofSha256": "FB5C0D24968B09F5FB7D89C2391BE2C232CE9278FF6084707781582D18EB2063",
+    "originalZipSha256": "6D1488D85308FFC3D31A231FE32C84BE9F54A0291FE219CEFC4201BD3316E7D3"
+  },
+  "verification": {
+    "currentInteropSelection": 20,
+    "localExecutableValidationRan": false,
+    "portableRegistrations": 2758,
+    "importInputsSha256": "8DBD7E1D32C7B7326D00E3C06932977DEAB5EC3C93E120C5C81F5D72913E31AD",
+    "releaseReady": false,
+    "sourceFiles": 16,
+    "linuxReportSha256": "C9074D9ECE0F11E06CC6F96B80D12E6E45822FCFFF623592AB33FBD5E39450AE",
+    "compileReviewSha256": "BEE6740EF763FCD30380E25A6F71646C889C7C47DB8FC9D43FD8304CD8E8122A",
+    "hostedRepairValidation": "pending",
+    "deviceAccepted": false,
+    "newTestRegistrations": 0
+  },
+  "evidenceLimits": [
+    "Completed job logs prove the old producer failures; independent source review does not prove that repaired feature combinations compile.",
+    "macOS fixed detail is diagnostic only; the underlying transaction failure remains unresolved.",
+    "Full current V3 interop, complete V4 integration, actual-device acceptance and signed release remain open."
+  ]
+}

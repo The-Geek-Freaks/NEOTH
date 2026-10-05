@@ -245,12 +245,12 @@ fn client<T>(
 ) -> ConversationBridgeResult<T> {
     use crate::daemon::audit_rpc::ConversationClientError;
     result.map_err(|error| match error {
-        ConversationClientError::PreWriteUnavailable(_) => ConversationBridgeError::unavailable(),
+        ConversationClientError::PreWriteUnavailable => ConversationBridgeError::unavailable(),
         ConversationClientError::Indeterminate(_) => ConversationBridgeError {
             code: ConversationBridgeErrorCode::Indeterminate,
             retryable: false,
         },
-        ConversationClientError::Refused(_, _) => ConversationBridgeError {
+        ConversationClientError::Refused => ConversationBridgeError {
             code: ConversationBridgeErrorCode::Refused,
             retryable: false,
         },
@@ -394,13 +394,12 @@ fn map_progress(
             return Err(ConversationBridgeError::invalid());
         }
     }
-    if let Some(expected) = expected {
-        if response.subscription_id.as_ref().map(|id| id.0.as_str()) != Some(expected.id.as_str())
+    if let Some(expected) = expected
+        && (response.subscription_id.as_ref().map(|id| id.0.as_str()) != Some(expected.id.as_str())
             || response.generation != expected.generation
-            || session_id != expected.session_id
-        {
-            return Err(ConversationBridgeError::invalid());
-        }
+            || session_id != expected.session_id)
+    {
+        return Err(ConversationBridgeError::invalid());
     }
     Ok(ConversationProgress {
         subscription: response

@@ -161,7 +161,7 @@ impl ConversationSession {
     ) -> Result<Self, (&'static str, AuthorizedTextTurnSupervisor)> {
         macro_rules! fail {
             ($reason:expr) => {
-                return Err(($reason, supervisor));
+                return Err(($reason, supervisor))
             };
         }
         if dependencies.min_fragment_ms < DEFAULT_MIN_FRAGMENT_MS
@@ -485,6 +485,26 @@ pub(crate) struct A2SessionDependencies {
     pub(crate) min_fragment_ms: u64,
 }
 
+#[cfg(feature = "live-audio")]
+struct TtsStageInputs {
+    home: PathBuf,
+    freedom: crate::config::FreedomConfig,
+    credentials: crate::config::credentials::Credentials,
+    permit: AudioWorkPermit,
+}
+
+#[cfg(feature = "live-audio")]
+impl From<&A2SessionDependencies> for TtsStageInputs {
+    fn from(dependencies: &A2SessionDependencies) -> Self {
+        Self {
+            home: dependencies.home.clone(),
+            freedom: dependencies.freedom.clone(),
+            credentials: dependencies.credentials.clone(),
+            permit: dependencies.permit.clone(),
+        }
+    }
+}
+
 /// The operative retained session loop.  Capture continues while every
 /// configured STT/TTS/CPAL stage is awaited through the daemon registry.
 /// Every worker sends a bounded fact to `stage_rx`; a stale generation is
@@ -683,19 +703,67 @@ pub(crate) async fn run_a2_session(
                     while let Some(sentence_batch) = output.next_batch() {
                         if pending_audio.len() == 8 { return Err("a2_audio_lane_full"); }
                         pending_audio.push_back((generation.clone(), sentence_batch));
-                        if start_next_audio_stage(&registry, stage_tx.clone(), &dependencies, response_scope.clone(), &mut pending_audio, &mut audio_owner).await? { outstanding_stages = outstanding_stages.saturating_add(1); }
+                        if let Some((generation, batch)) = take_next_audio_stage(
+                            response_scope.clone(),
+                            &mut pending_audio,
+                            &mut audio_owner,
+                        ) {
+                            let inputs = TtsStageInputs::from(&dependencies);
+                            spawn_tts_stage(
+                                &registry,
+                                stage_tx.clone(),
+                                inputs,
+                                batch,
+                                generation.clone(),
+                            )
+                            .await?;
+                            audio_owner = Some(generation);
+                            outstanding_stages = outstanding_stages.saturating_add(1);
+                        }
                     }
                 }
                 A2MailboxEvent::VisibleTerminal { generation } => { if response_scope.is_stale(&generation) { continue; } output.flush_terminal()?; while let Some(batch) = output.next_batch() {
                     if pending_audio.len() == 8 { return Err("a2_audio_lane_full"); }
                     pending_audio.push_back((generation.clone(), batch));
-                    if start_next_audio_stage(&registry, stage_tx.clone(), &dependencies, response_scope.clone(), &mut pending_audio, &mut audio_owner).await? { outstanding_stages = outstanding_stages.saturating_add(1); }
+                    if let Some((generation, batch)) = take_next_audio_stage(
+                        response_scope.clone(),
+                        &mut pending_audio,
+                        &mut audio_owner,
+                    ) {
+                        let inputs = TtsStageInputs::from(&dependencies);
+                        spawn_tts_stage(
+                            &registry,
+                            stage_tx.clone(),
+                            inputs,
+                            batch,
+                            generation.clone(),
+                        )
+                        .await?;
+                        audio_owner = Some(generation);
+                        outstanding_stages = outstanding_stages.saturating_add(1);
+                    }
                 } }
                 A2MailboxEvent::TtsComplete { generation, pcm } => {
                     if !audio_owner.as_ref().is_some_and(|owner| owner.same_generation(&generation)) { continue; }
                     if response_scope.is_stale(&generation) {
                         release_audio_owner(&mut audio_owner, &generation);
-                        if start_next_audio_stage(&registry, stage_tx.clone(), &dependencies, response_scope.clone(), &mut pending_audio, &mut audio_owner).await? { outstanding_stages = outstanding_stages.saturating_add(1); }
+                        if let Some((generation, batch)) = take_next_audio_stage(
+                            response_scope.clone(),
+                            &mut pending_audio,
+                            &mut audio_owner,
+                        ) {
+                            let inputs = TtsStageInputs::from(&dependencies);
+                            spawn_tts_stage(
+                                &registry,
+                                stage_tx.clone(),
+                                inputs,
+                                batch,
+                                generation.clone(),
+                            )
+                            .await?;
+                            audio_owner = Some(generation);
+                            outstanding_stages = outstanding_stages.saturating_add(1);
+                        }
                     } else {
                         spawn_playback_stage(&registry, stage_tx.clone(), dependencies.playback.clone(), response_scope.clone(), dependencies.permit.clone(), generation, pcm?).await?;
                         outstanding_stages = outstanding_stages.saturating_add(1);
@@ -705,7 +773,23 @@ pub(crate) async fn run_a2_session(
                     if !audio_owner.as_ref().is_some_and(|owner| owner.same_generation(&generation)) { continue; }
                     release_audio_owner(&mut audio_owner, &generation);
                     result?;
-                    if start_next_audio_stage(&registry, stage_tx.clone(), &dependencies, response_scope.clone(), &mut pending_audio, &mut audio_owner).await? { outstanding_stages = outstanding_stages.saturating_add(1); }
+                    if let Some((generation, batch)) = take_next_audio_stage(
+                        response_scope.clone(),
+                        &mut pending_audio,
+                        &mut audio_owner,
+                    ) {
+                        let inputs = TtsStageInputs::from(&dependencies);
+                        spawn_tts_stage(
+                            &registry,
+                            stage_tx.clone(),
+                            inputs,
+                            batch,
+                            generation.clone(),
+                        )
+                        .await?;
+                        audio_owner = Some(generation);
+                        outstanding_stages = outstanding_stages.saturating_add(1);
+                    }
                 },
                 A2MailboxEvent::VisibleSettled { generation, terminal } => {
                     if active_visible_generation.as_ref().is_some_and(|active| active.same_generation(&generation)) {
@@ -819,7 +903,7 @@ async fn start_visible_stage(
         if tx.send(A2MailboxEvent::VisibleTerminal { generation: generation.clone() }).await.is_err() {
             return if response_scope.is_stale(&generation) { Ok(()) } else { Err("a2_stage_queue_closed") };
         }
-        if tx.send(A2MailboxEvent::VisibleSettled { generation, terminal }).await.is_err() {
+        if tx.send(A2MailboxEvent::VisibleSettled { generation: generation.clone(), terminal }).await.is_err() {
             return if response_scope.is_stale(&generation) { Ok(()) } else { Err("a2_stage_queue_closed") };
         }
         Ok(())
@@ -853,14 +937,16 @@ impl AuthorizedTextTurnSink for StageVisibleSink {
 async fn spawn_tts_stage(
     registry: &crate::daemon::conversation_session::ConversationTaskRegistry,
     tx: tokio::sync::mpsc::Sender<A2MailboxEvent>,
-    deps: &A2SessionDependencies,
+    inputs: TtsStageInputs,
     text: String,
     generation: GenerationToken,
 ) -> Result<(), &'static str> {
-    let home = deps.home.clone();
-    let freedom = deps.freedom.clone();
-    let credentials = deps.credentials.clone();
-    let permit = deps.permit.clone();
+    let TtsStageInputs {
+        home,
+        freedom,
+        credentials,
+        permit,
+    } = inputs;
     let format = super::tts_cloud::configured_playback_request_format(
         freedom.media.tts.primary,
         freedom.media.tts.fallback,
@@ -892,26 +978,21 @@ async fn spawn_tts_stage(
 }
 
 #[cfg(feature = "live-audio")]
-async fn start_next_audio_stage(
-    registry: &crate::daemon::conversation_session::ConversationTaskRegistry,
-    tx: tokio::sync::mpsc::Sender<A2MailboxEvent>,
-    deps: &A2SessionDependencies,
+fn take_next_audio_stage(
     response_scope: CancelScope,
     pending_audio: &mut VecDeque<(GenerationToken, String)>,
     audio_owner: &mut Option<GenerationToken>,
-) -> Result<bool, &'static str> {
+) -> Option<(GenerationToken, String)> {
     if audio_owner.is_some() {
-        return Ok(false);
+        return None;
     }
     while let Some((generation, batch)) = pending_audio.pop_front() {
         if response_scope.is_stale(&generation) {
             continue;
         }
-        spawn_tts_stage(registry, tx.clone(), deps, batch, generation.clone()).await?;
-        *audio_owner = Some(generation);
-        return Ok(true);
+        return Some((generation, batch));
     }
-    Ok(false)
+    None
 }
 
 #[cfg(feature = "live-audio")]

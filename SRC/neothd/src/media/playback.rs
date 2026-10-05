@@ -672,6 +672,7 @@ where
         frame_offset: 0,
         complete_requested: false,
         drained_reported: false,
+        format_mismatch: false,
     };
     device
         .build_output_stream(
