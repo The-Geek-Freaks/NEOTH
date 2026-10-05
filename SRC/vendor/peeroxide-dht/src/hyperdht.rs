@@ -48,28 +48,61 @@ use crate::socket_pool::SocketPool;
 static NEXT_STREAM_ID: AtomicU32 = AtomicU32::new(1);
 
 const COMPANION_DIAGNOSTICS_ENV: &str = "NEOTH_COMPANION_DIAGNOSTICS";
-static COMPANION_CONNECT_DIAGNOSTICS: AtomicU16 = AtomicU16::new(0);
+static COMPANION_INCOMING_DIAGNOSTICS: AtomicU16 = AtomicU16::new(0);
 
-/// Emits each fixed, secret-free HyperDHT connection phase once per process
-/// when the explicit companion diagnostic mode is enabled. No peer key,
-/// endpoint, payload, count, or error text is included.
-fn companion_connect_phase(phase: &str) {
+/// Fixed, secret-free diagnostics owned by one outgoing connect operation.
+/// A second pairing/reconnect attempt in the same process starts with a fresh
+/// bit set, while concurrent attempts cannot suppress one another.
+struct OutgoingConnectDiagnostics {
+    enabled: bool,
+    emitted: u16,
+}
+
+impl OutgoingConnectDiagnostics {
+    fn from_environment() -> Self {
+        Self {
+            enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
+            emitted: 0,
+        }
+    }
+
+    fn phase(&mut self, phase: &'static str) {
+        let bit = match phase {
+            "route_lookup_started" => 1 << 0,
+            "route_lookup_completed" => 1 << 1,
+            "route_lookup_empty" => 1 << 2,
+            "find_peer_fallback_started" => 1 << 3,
+            "find_peer_fallback_completed" => 1 << 4,
+            "handshake_request_started" => 1 << 5,
+            "handshake_reply_received" => 1 << 6,
+            "noise_completed" => 1 << 7,
+            "udx_establishment_started" => 1 << 8,
+            "udx_establishment_completed" => 1 << 9,
+            "path_direct" => 1 << 10,
+            "path_relay" => 1 << 11,
+            _ => return,
+        };
+        if self.enabled && self.emitted & bit == 0 {
+            self.emitted |= bit;
+            eprintln!("NEOTH_COMPANION_CONNECT_PHASE={phase}");
+        }
+    }
+
+    #[cfg(test)]
+    fn emitted(&self) -> u16 {
+        self.emitted
+    }
+}
+
+/// Incoming request diagnostics remain process-bounded: inbound requests have
+/// no trusted operation owner and must not create unbounded diagnostic output.
+fn companion_incoming_phase(phase: &'static str) {
     let bit = match phase {
-        "route_lookup_started" => 1 << 0,
-        "route_lookup_completed" => 1 << 1,
-        "route_lookup_empty" => 1 << 2,
-        "handshake_request_started" => 1 << 3,
-        "handshake_reply_received" => 1 << 4,
-        "noise_completed" => 1 << 5,
-        "udx_establishment_started" => 1 << 6,
-        "udx_establishment_completed" => 1 << 7,
-        "path_direct" => 1 << 8,
-        "path_relay" => 1 << 9,
-        "handshake_dispatch_received" => 1 << 10,
+        "handshake_dispatch_received" => 1,
         _ => return,
     };
     if std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1")
-        && COMPANION_CONNECT_DIAGNOSTICS.fetch_or(bit, Ordering::Relaxed) & bit == 0
+        && COMPANION_INCOMING_DIAGNOSTICS.fetch_or(bit, Ordering::Relaxed) & bit == 0
     {
         eprintln!("NEOTH_COMPANION_CONNECT_PHASE={phase}");
     }
@@ -1084,6 +1117,25 @@ impl HyperDhtHandle {
         relay_addresses: &[Ipv4Peer],
         runtime: &UdxRuntime,
     ) -> Result<PeerConnection, HyperDhtError> {
+        let mut diagnostics = OutgoingConnectDiagnostics::from_environment();
+        self.connect_with_nodes_diagnostics(
+            key_pair,
+            remote_public_key,
+            relay_addresses,
+            runtime,
+            &mut diagnostics,
+        )
+        .await
+    }
+
+    async fn connect_with_nodes_diagnostics(
+        &self,
+        key_pair: &KeyPair,
+        remote_public_key: [u8; 32],
+        relay_addresses: &[Ipv4Peer],
+        runtime: &UdxRuntime,
+        diagnostics: &mut OutgoingConnectDiagnostics,
+    ) -> Result<PeerConnection, HyperDhtError> {
         let mut last_err = HyperDhtError::NoRelayNodes;
         let mut tried: Vec<(String, u16)> = Vec::new();
 
@@ -1091,7 +1143,14 @@ impl HyperDhtHandle {
         for relay in relay_addresses {
             tried.push((relay.host.clone(), relay.port));
             match self
-                .connect_through_node(key_pair, &remote_public_key, relay, false, runtime)
+                .connect_through_node(
+                    key_pair,
+                    &remote_public_key,
+                    relay,
+                    false,
+                    runtime,
+                    diagnostics,
+                )
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -1112,15 +1171,15 @@ impl HyperDhtHandle {
             table_size,
             "connect_with_nodes: routing table size before FIND_NODE"
         );
-        companion_connect_phase("route_lookup_started");
+        diagnostics.phase("route_lookup_started");
         let node_replies = self
             .dht
             .find_node(target)
             .await
             .map_err(HyperDhtError::Dht)?;
-        companion_connect_phase("route_lookup_completed");
+        diagnostics.phase("route_lookup_completed");
         if node_replies.is_empty() {
-            companion_connect_phase("route_lookup_empty");
+            diagnostics.phase("route_lookup_empty");
         }
         tracing::debug!(
             reply_count = node_replies.len(),
@@ -1165,7 +1224,14 @@ impl HyperDhtHandle {
             tried.push((candidate.host.clone(), candidate.port));
             tracing::debug!(candidate = %format!("{}:{}", candidate.host, candidate.port), "connect_with_nodes: trying node candidate");
             match self
-                .connect_through_node(key_pair, &remote_public_key, candidate, false, runtime)
+                .connect_through_node(
+                    key_pair,
+                    &remote_public_key,
+                    candidate,
+                    false,
+                    runtime,
+                    diagnostics,
+                )
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -1177,7 +1243,9 @@ impl HyperDhtHandle {
         }
 
         // Phase 3: Also try relay addresses from a FIND_PEER query (peer records).
+        diagnostics.phase("find_peer_fallback_started");
         let peer_replies = self.query_find_peer(target).await?;
+        diagnostics.phase("find_peer_fallback_completed");
         for reply in &peer_replies {
             if let Some(value) = &reply.value {
                 if let Ok(peer) = decode_hyper_peer_from_bytes(value) {
@@ -1196,6 +1264,7 @@ impl HyperDhtHandle {
                                 relay,
                                 false,
                                 runtime,
+                                diagnostics,
                             )
                             .await
                         {
@@ -1230,8 +1299,16 @@ impl HyperDhtHandle {
             host: target_addr.ip().to_string(),
             port: target_addr.port(),
         };
-        self.connect_through_node(key_pair, &remote_public_key, &relay, true, runtime)
-            .await
+        let mut diagnostics = OutgoingConnectDiagnostics::from_environment();
+        self.connect_through_node(
+            key_pair,
+            &remote_public_key,
+            &relay,
+            true,
+            runtime,
+            &mut diagnostics,
+        )
+        .await
     }
 
     async fn connect_through_node(
@@ -1241,6 +1318,7 @@ impl HyperDhtHandle {
         relay: &Ipv4Peer,
         direct_target: bool,
         runtime: &UdxRuntime,
+        diagnostics: &mut OutgoingConnectDiagnostics,
     ) -> Result<PeerConnection, HyperDhtError> {
         let target = hash(remote_public_key);
 
@@ -1270,7 +1348,7 @@ impl HyperDhtHandle {
         let noise_bytes = nw.send(&local_payload)?;
         let handshake_value = Router::encode_client_handshake(noise_bytes, None, None)?;
 
-        companion_connect_phase("handshake_request_started");
+        diagnostics.phase("handshake_request_started");
         let resp = self
             .dht
             .request(
@@ -1284,7 +1362,7 @@ impl HyperDhtHandle {
                 relay.port,
             )
             .await?;
-        companion_connect_phase("handshake_reply_received");
+        diagnostics.phase("handshake_reply_received");
 
         if resp.error != 0 {
             return Err(HyperDhtError::HandshakeFailed(format!(
@@ -1307,7 +1385,7 @@ impl HyperDhtHandle {
 
         let remote_payload = nw.recv(&hs_result.noise)?;
         let nw_result = nw.finalize()?;
-        companion_connect_phase("noise_completed");
+        diagnostics.phase("noise_completed");
 
         if remote_payload.error != 0 {
             return Err(HyperDhtError::FirewallRejected);
@@ -1329,6 +1407,7 @@ impl HyperDhtHandle {
                 false,
                 true,
                 runtime,
+                diagnostics,
             ))
             .await;
         }
@@ -1374,8 +1453,9 @@ impl HyperDhtHandle {
                 remote_udx: remote_payload.udx.clone(),
             };
             let shared = self.server_socket().await?;
-            let connection = establish_stream_with_socket(&direct, runtime, shared).await?;
-            companion_connect_phase("path_direct");
+            let connection =
+                establish_stream_with_socket_diagnostics(&direct, runtime, shared, diagnostics).await?;
+            diagnostics.phase("path_direct");
             return Ok(connection);
         }
 
@@ -1393,8 +1473,9 @@ impl HyperDhtHandle {
             )
             .await?;
         let shared = self.server_socket().await?;
-        let connection = establish_stream_with_socket(&hp_result, runtime, shared).await?;
-        companion_connect_phase("path_direct");
+        let connection =
+            establish_stream_with_socket_diagnostics(&hp_result, runtime, shared, diagnostics).await?;
+        diagnostics.phase("path_direct");
         Ok(connection)
     }
 
@@ -1593,16 +1674,18 @@ impl HyperDhtHandle {
         relay_is_initiator: bool,
         noise_is_initiator: bool,
         runtime: &UdxRuntime,
+        diagnostics: &mut OutgoingConnectDiagnostics,
     ) -> Result<PeerConnection, HyperDhtError> {
         // 1. HyperDHT connection to the relay node.
         // Try known addresses first (pre-connect), then fall back to DHT routing.
         // Node.js does `dht.connect(publicKey)` — we enhance with address hints.
         let relay_conn = self
-            .connect_with_nodes(
+            .connect_with_nodes_diagnostics(
                 key_pair,
                 relay_through.public_key,
                 relay_addr_hints,
                 runtime,
+                diagnostics,
             )
             .await?;
 
@@ -1636,7 +1719,7 @@ impl HyperDhtHandle {
 
         // 4. Connect data UDX stream through the relay, reusing the control
         //    channel's socket so the relay sees traffic from the same source address.
-        companion_connect_phase("udx_establishment_started");
+        diagnostics.phase("udx_establishment_started");
         let data_stream = runtime.create_stream(data_stream_id).await?;
         data_stream
             .connect(&relay_conn.socket, remote_id, relay_addr)
@@ -1662,8 +1745,8 @@ impl HyperDhtHandle {
             socket: relay_conn.socket,
             _relay_task: Some(mux_task),
         };
-        companion_connect_phase("udx_establishment_completed");
-        companion_connect_phase("path_relay");
+        diagnostics.phase("udx_establishment_completed");
+        diagnostics.phase("path_relay");
         Ok(connection)
     }
 }
@@ -1695,6 +1778,16 @@ pub async fn establish_stream_with_socket(
     runtime: &UdxRuntime,
     shared_socket: Option<UdxSocket>,
 ) -> Result<PeerConnection, HyperDhtError> {
+    let mut diagnostics = OutgoingConnectDiagnostics::from_environment();
+    establish_stream_with_socket_diagnostics(result, runtime, shared_socket, &mut diagnostics).await
+}
+
+async fn establish_stream_with_socket_diagnostics(
+    result: &ConnectResult,
+    runtime: &UdxRuntime,
+    shared_socket: Option<UdxSocket>,
+    diagnostics: &mut OutgoingConnectDiagnostics,
+) -> Result<PeerConnection, HyperDhtError> {
     let remote_udx = result
         .remote_udx
         .as_ref()
@@ -1713,7 +1806,7 @@ pub async fn establish_stream_with_socket(
     );
 
     tracing::debug!(local_id = result.local_stream_id, remote_id, %addr, "establishing UDX stream");
-    companion_connect_phase("udx_establishment_started");
+    diagnostics.phase("udx_establishment_started");
     let socket = if let Some(s) = shared_socket {
         s
     } else {
@@ -1743,7 +1836,7 @@ pub async fn establish_stream_with_socket(
         socket,
         _relay_task: None,
     };
-    companion_connect_phase("udx_establishment_completed");
+    diagnostics.phase("udx_establishment_completed");
     Ok(connection)
 }
 
@@ -2445,7 +2538,7 @@ async fn run_request_handler(
         }
         match req.command {
             PEER_HANDSHAKE => {
-                companion_connect_phase("handshake_dispatch_received");
+                companion_incoming_phase("handshake_dispatch_received");
                 tracing::debug!(from = %format!("{}:{}", req.from.host, req.from.port), "request: PEER_HANDSHAKE");
                 handle_peer_handshake(req, &dht, &router, &server_tx);
                 continue;
@@ -2752,6 +2845,26 @@ fn to_hex(bytes: impl AsRef<[u8]>) -> String {
 mod tests {
     use super::*;
     use crate::hyperdht_messages::{FIREWALL_CONSISTENT, FIREWALL_RANDOM};
+
+    #[test]
+    fn outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase() {
+        let mut first = OutgoingConnectDiagnostics {
+            enabled: true,
+            emitted: 0,
+        };
+        first.phase("handshake_request_started");
+        first.phase("handshake_request_started");
+        assert_eq!(first.emitted(), 1 << 5);
+
+        let mut second = OutgoingConnectDiagnostics {
+            enabled: true,
+            emitted: 0,
+        };
+        second.phase("handshake_request_started");
+        second.phase("find_peer_fallback_started");
+        assert_eq!(second.emitted(), (1 << 5) | (1 << 3));
+        assert_eq!(first.emitted(), 1 << 5);
+    }
 
     fn test_peer() -> Ipv4Peer {
         Ipv4Peer {

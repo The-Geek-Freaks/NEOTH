@@ -51,6 +51,7 @@ impl CompanionDiscoveryDiagnostics {
     const CONNECT_ATTEMPT_FAILED: u8 = 1 << 2;
     const CONNECT_ATTEMPT_TIMED_OUT: u8 = 1 << 3;
     const RESPONDER_NOISE_STARTED: u8 = 1 << 4;
+    const CANDIDATE_REJECTED: u8 = 1 << 5;
 
     fn from_environment() -> Self {
         Self {
@@ -68,6 +69,7 @@ impl CompanionDiscoveryDiagnostics {
             "connect_attempt_failed" => Self::CONNECT_ATTEMPT_FAILED,
             "connect_attempt_timed_out" => Self::CONNECT_ATTEMPT_TIMED_OUT,
             "responder_noise_started" => Self::RESPONDER_NOISE_STARTED,
+            "candidate_rejected" => Self::CANDIDATE_REJECTED,
             _ => return,
         };
         if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
@@ -179,6 +181,12 @@ pub struct SwarmConfig {
     /// A mismatch is rejected before the server sends a handshake reply or
     /// creates connection, stream, or secret-stream state.
     pub server_expected_remote_static_key: Option<[u8; 32]>,
+    /// When set, ignore discovered outbound candidates whose public key does
+    /// not match this expected remote Noise static public key.
+    ///
+    /// The gate runs before the candidate receives peer state, a work-queue
+    /// entry, or an outbound connection-attempt slot.
+    pub outbound_expected_remote_static_key: Option<[u8; 32]>,
     /// Public key of a relay node to force all server connections through.
     /// When set, server handshake replies include `relay_through` info directing
     /// clients to connect via the specified relay using the blind-relay protocol.
@@ -197,6 +205,7 @@ impl Default for SwarmConfig {
             max_parallel: DEFAULT_MAX_PARALLEL,
             firewall: 0,
             server_expected_remote_static_key: None,
+            outbound_expected_remote_static_key: None,
             relay_through: None,
             relay_address: None,
         }
@@ -595,6 +604,7 @@ struct ActorConfig {
     max_parallel: usize,
     firewall: u64,
     server_expected_remote_static_key: Option<[u8; 32]>,
+    outbound_expected_remote_static_key: Option<[u8; 32]>,
     relay_through: Option<[u8; 32]>,
     relay_address: Option<std::net::SocketAddr>,
 }
@@ -840,6 +850,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
         max_parallel,
         firewall,
         server_expected_remote_static_key,
+        outbound_expected_remote_static_key,
         relay_through,
         relay_address,
     } = config;
@@ -861,6 +872,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
             max_parallel: max_parallel.min(MAX_PARALLEL_CONNECTS),
             firewall,
             server_expected_remote_static_key,
+            outbound_expected_remote_static_key,
             relay_through,
             relay_address,
         },
@@ -1235,6 +1247,14 @@ impl SwarmActor {
                     return;
                 }
                 if public_key == self.key_pair.public_key {
+                    return;
+                }
+                if self
+                    .config
+                    .outbound_expected_remote_static_key
+                    .is_some_and(|expected| expected != public_key)
+                {
+                    self.discovery_diagnostics.phase("candidate_rejected");
                     return;
                 }
                 if self.connections.has(&public_key) {
@@ -2019,6 +2039,134 @@ mod tests {
         assert_eq!(c.max_parallel, 3);
         assert_eq!(c.firewall, 0);
         assert_eq!(c.server_expected_remote_static_key, None);
+        assert_eq!(c.outbound_expected_remote_static_key, None);
+    }
+
+    struct LocalDiscoveryActor {
+        actor: SwarmActor,
+        dht_task: JoinHandle<Result<(), hyperdht::HyperDhtError>>,
+        runtime: UdxRuntime,
+    }
+
+    impl LocalDiscoveryActor {
+        async fn new(expected_remote_static_key: Option<[u8; 32]>, topic: [u8; 32]) -> Self {
+            let runtime = UdxRuntime::new().expect("local UDX runtime");
+            let config = HyperDhtConfig::default();
+            assert!(config.dht.bootstrap.is_empty(), "local fixture must not bootstrap publicly");
+            let (dht_task, dht, _server_rx) = tokio::time::timeout(
+                Duration::from_secs(5),
+                hyperdht::spawn(&runtime, config),
+            )
+            .await
+            .expect("local no-bootstrap DHT startup must stay bounded")
+            .expect("local no-bootstrap DHT must start");
+            let (discovery_event_tx, _discovery_event_rx) =
+                mpsc::channel(DISCOVERY_EVENT_CHANNEL_CAPACITY);
+            let (conn_tx, _conn_rx) = mpsc::channel(1);
+            let (connection_lifecycle_tx, _connection_lifecycle_rx) = mpsc::unbounded_channel();
+            let mut topics = HashMap::new();
+            topics.insert(
+                topic,
+                TopicState {
+                    is_server: false,
+                    is_client: true,
+                    cancel_tx: None,
+                    refreshed: false,
+                    initial_server_publication: None,
+                    server_publication_waiters: Vec::new(),
+                },
+            );
+            Self {
+                actor: SwarmActor {
+                    key_pair: KeyPair::from_seed([0x11; 32]),
+                    dht,
+                    config: ActorConfig {
+                        max_peers: DEFAULT_MAX_PEERS,
+                        max_parallel: 0,
+                        firewall: 0,
+                        server_expected_remote_static_key: None,
+                        outbound_expected_remote_static_key: expected_remote_static_key,
+                        relay_through: None,
+                        relay_address: None,
+                    },
+                    runtime_handle: runtime.handle(),
+                    topics,
+                    discovery_event_tx,
+                    peers: HashMap::new(),
+                    peer_last_seen: HashMap::new(),
+                    connections: ConnectionSet::new(),
+                    queue: Vec::new(),
+                    retries: Vec::new(),
+                    next_peer_gc: Instant::now() + PEER_GC_INTERVAL,
+                    conn_tx,
+                    connection_lifecycle_tx,
+                    next_connection_registration_id: 1,
+                    establishment_tasks: ConnectionEstablishmentTasks::default(),
+                    outbound_connect_tasks: OutboundConnectTasks::default(),
+                    discovery_diagnostics: Arc::new(CompanionDiscoveryDiagnostics {
+                        enabled: false,
+                        emitted: AtomicU8::new(0),
+                    }),
+                    server_registered: false,
+                    relay_address: None,
+                    active_connects: 0,
+                    flush_waiters: Vec::new(),
+                },
+                dht_task,
+                runtime,
+            }
+        }
+
+        async fn shutdown(self) {
+            tokio::time::timeout(Duration::from_secs(5), self.actor.dht.destroy())
+                .await
+                .expect("local DHT destroy must stay bounded")
+                .expect("local DHT destroy must succeed");
+            tokio::time::timeout(Duration::from_secs(5), self.dht_task)
+                .await
+                .expect("local DHT owner join must stay bounded")
+                .expect("local DHT owner task must join")
+                .expect("local DHT owner must complete cleanly");
+            drop(self.runtime);
+        }
+    }
+
+    #[tokio::test]
+    async fn outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot() {
+        let topic = [0x21; 32];
+        let expected_key = [0xA1; 32];
+        let foreign_key = [0xB2; 32];
+        let mut pinned = LocalDiscoveryActor::new(Some(expected_key), topic).await;
+
+        pinned.actor.handle_discovery_event(DiscoveryEvent::PeerFound {
+            public_key: foreign_key,
+            relay_addresses: Vec::new(),
+            topic,
+        });
+        assert!(pinned.actor.peers.is_empty());
+        assert!(pinned.actor.queue.is_empty());
+        assert_eq!(pinned.actor.active_connects, 0);
+
+        pinned.actor.handle_discovery_event(DiscoveryEvent::PeerFound {
+            public_key: expected_key,
+            relay_addresses: Vec::new(),
+            topic,
+        });
+        assert!(pinned.actor.peers.contains_key(&expected_key));
+        assert_eq!(pinned.actor.queue, vec![expected_key]);
+        assert_eq!(pinned.actor.active_connects, 0);
+        pinned.shutdown().await;
+
+        let mut unpinned = LocalDiscoveryActor::new(None, topic).await;
+        unpinned.actor.handle_discovery_event(DiscoveryEvent::PeerFound {
+            public_key: foreign_key,
+            relay_addresses: Vec::new(),
+            topic,
+        });
+        assert!(unpinned.actor.peers.contains_key(&foreign_key));
+        assert_eq!(unpinned.actor.queue, vec![foreign_key]);
+        assert_eq!(unpinned.actor.active_connects, 0);
+        unpinned.shutdown().await;
     }
 
     #[test]

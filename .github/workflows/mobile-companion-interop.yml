@@ -135,23 +135,25 @@ jobs:
           ordinal=0
           for identity in \
             swarm::tests::server_publication_requires_both_announcement_successes \
-            swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation
+            swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation \
+            swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot
           do
             ordinal=$((ordinal + 1))
             cargo test -p peeroxide --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 2
+          test "$ordinal" -eq 3
           dht_ordinal=0
           for identity in \
             router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination \
-            router::tests::handshake_reply_peer_metadata_never_replaces_request_destination
+            router::tests::handshake_reply_peer_metadata_never_replaces_request_destination \
+            hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase
           do
             dht_ordinal=$((dht_ordinal + 1))
             cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
-          test "$dht_ordinal" -eq 2
+          test "$dht_ordinal" -eq 3
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         timeout-minutes: 15

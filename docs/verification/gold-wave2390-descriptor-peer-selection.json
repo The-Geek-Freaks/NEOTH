@@ -1,0 +1,51 @@
+{
+  "schema": "neoth.gold.wave2390.descriptor-peer-selection.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "f641a3722aae657d048f256dd7b744a9e75f3470",
+  "observedRun": 37284348710,
+  "observed": {
+    "exactTestCases": 18,
+    "workspaceRestored": true,
+    "pairEnrollmentAccepted": true,
+    "pairDescriptorValidated": true,
+    "pairResponseWritten": true,
+    "daemonAllOwnersAndWalDrained": true,
+    "daemonExitCode": 0,
+    "productAcceptance": false,
+    "failureOperation": "neoth_companion_reconnect_start",
+    "failure": "work deadline exhausted",
+    "zipSha256": "396FD12688C6E9D59E20048E7F5B18608FE2B26381595DC824FC08DEDC241EA9",
+    "partialProofSha256": "03B0C27AB7D6F58F849AA0911BD09D6B0742C07956EDDCFB6BFD5DBC894DB775"
+  },
+  "changes": [
+    "Reject discovered foreign outbound peers before peer state, queueing or attempt capacity when an expected static key is configured. Default generic swarms retain None behavior.",
+    "V3 status reconnect and chat use the daemon key from their already validated descriptor; completed Noise-key checks remain. Pairing, wire, routing, scopes and time budgets are unchanged.",
+    "Outgoing fixed diagnostics use an owner per connect operation; repeated pairing/reconnect attempts no longer suppress one another. Incoming request marker stays process-bounded.",
+    "The hosted receipt stage follows actual pair, reconnect, chat, revoke and readback operations; two safe pair-success fields follow validated paired terminals."
+  ],
+  "regressions": {
+    "portableRegistrationsUnchanged": 2758,
+    "targetedInteropCases": 20,
+    "vendorCases": 3,
+    "dhtCases": 3,
+    "coreCases": 12,
+    "noClusterCases": 1,
+    "bridgeCases": 1,
+    "coverage": "Actual actor PeerFound event rejects foreign candidate before actual peer map/queue/slot; matching and default None paths enqueue with max_parallel zero. Local no-bootstrap fixture startup/destroy/join bounded. Diagnostic owners keep separate once-per-phase state."
+  },
+  "evidenceLimits": [
+    "Selection weakness is source-proven; it is not established as the cause of the observed run timeout.",
+    "Missing repeated handshake labels were inconclusive because old process-global bits were consumed by pairing.",
+    "Server actor leave does not call remote unannounce; no publication-deletion repair is asserted.",
+    "New source has not been compiled or run. Complete V3 status/chat/revoke acceptance remains pending; whole V4 integration stays isolated."
+  ],
+  "localExecutableValidationRan": false,
+  "productAcceptance": "pending",
+  "deviceAccepted": false,
+  "releaseReady": false,
+  "review": {
+    "status": "independent static R3 approval",
+    "reportSha256": "25866E766B35D42495EA9381B7B4F5FCC48F3C56A21E6895A3DCC36184D8F1CF",
+    "harnessRootReviewSha256": "29812A0095C78D21BB7CEC7A02D258F11691420BD81740DCC1B8BC92D6F558A8"
+  }
+}

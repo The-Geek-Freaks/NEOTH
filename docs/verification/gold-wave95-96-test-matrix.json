@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "reviewed-source-pending-hosted",
+  "status": "wave2390-reviewed-source-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 388607,
-    "sha256": "2D1F727582A3DE3CBF3DDF82E232CBB3FD0C14C6D96218A3B42FFA901F9D824D"
+    "bytes": 388813,
+    "sha256": "D70D0933FF09CA61191B312AC057406BB2C7EF74658022E48D9C1C320CF1C9DE"
   },
-  "sourceInputs": 2125,
+  "sourceInputs": 2126,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75280,6 +75280,68 @@
       }
     ],
     "note": "Verified original hosted format patch only;18 targeted cases and current product still pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2390RequiredVendorTests": [
+    {
+      "crate": "peeroxide",
+      "identity": "swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot",
+      "sourcePath": "SRC/vendor/peeroxide/src/swarm.rs"
+    },
+    {
+      "crate": "peeroxide-dht",
+      "identity": "hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase",
+      "sourcePath": "SRC/vendor/peeroxide-dht/src/hyperdht.rs"
+    }
+  ],
+  "wave2390DescriptorPeerSelection": {
+    "base": "f641a3722aae657d048f256dd7b744a9e75f3470",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 28891,
+        "sha256": "C5E377E4502A60FD9D760CD34680E0D42E4459CA4FE96DD76E1AFCD27F308241",
+        "blob": "7d20df5c37593957ebbe38d73e7f431fcdbed7f2"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 14864,
+        "sha256": "B9601B2025B71D3C01D84394EB1903C84A176A1345BA64C8CB84E6D1ADB8A01D",
+        "blob": "653ff2008354b3e99cd5ba266d942eb84207714c"
+      },
+      {
+        "path": "bridges/companion-native/src/lib.rs",
+        "bytes": 46683,
+        "sha256": "F9DC7ED166B36FEB3960FA2DC50F6A1838D5B1133070166B7D4B2992BD308DD5",
+        "blob": "398f2db986943290f22fd7024ee03dc9d42a577a"
+      },
+      {
+        "path": "docs/verification/gold-wave2390-descriptor-peer-selection.json",
+        "bytes": 2877,
+        "sha256": "CFFA732F68BA403EAE33B9FDE04CD98AF04AE7C3D946709F2222567542F597C6",
+        "blob": "c978ae1ba404f828cb2b43d64f5b4374f59fd730"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2411055,
+        "sha256": "BA20CF3ED07A43CDF3C2B9E33B2C6A484BD6D448994FFB29491A8E86C80E9F46",
+        "blob": "33b6759ec956a2b8b8c7d0c8ccab0d0a1f2b89c9"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 130889,
+        "sha256": "01AE0C85943A2F85CAC288F557A7BBB4273C6B28B693487B6BC8A90632736B97",
+        "blob": "b8337209dcc7dde7ff4543cadc6d3a0047a036d7"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 90623,
+        "sha256": "67C6F5712E96564C58D91D257EBC1D8C759A65923ABF3E7C979AAEFA6DBF12AE",
+        "blob": "bc1b0ef4bcf73261f3781a128c8c86b1f3df8549"
+      }
+    ],
+    "note": "Validated descriptor key gates native status/chat candidates before actual actor state/queue/attempt capacity; per-connect fixed diagnostics and corrected product receipt stages.20targeted cases planned,2758portable unchanged. Source selection weakness not asserted as prior runtime timeout cause. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

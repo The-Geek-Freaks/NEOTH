@@ -401,6 +401,7 @@ async fn reconnect(
     config.key_pair = Some(noise_key);
     config.max_peers = 1;
     config.max_parallel = 1;
+    config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(MAX_TTL_SECS)).await {
         Ok(value) => value,
         Err(result) => return result,
@@ -493,7 +494,7 @@ async fn chat(
     if descriptor.validate().is_err() { return PublicResult::Failed { code: "invalid_reconnect_descriptor" }; }
     let noise_key = match derive_peeroxide_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
     let signing_key = match derive_signing_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
-    let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1;
+    let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1; config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS)).await { Ok(value) => value, Err(result) => return result };
     let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, &signing_key, &mut cancel).await;
     // Cancellation must not detach a rendezvous worker. Destroy the carrier
