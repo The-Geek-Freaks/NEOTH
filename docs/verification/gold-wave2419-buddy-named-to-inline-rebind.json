@@ -1,0 +1,41 @@
+{
+  "schema": "neoth.gold.wave2419.buddy-named-to-inline-rebind.v1",
+  "status": "reviewed-source-hosted-pending",
+  "base": "50231f6d232c06c9493004fc2e2b30eb405dd684",
+  "failureRun": 37324908514,
+  "failureArtifact": 11356617861,
+  "failureZipSha256": "548CF1E2767D26BAF35AE4E7DE8AC52FBE945AE91E90EDC33CAA5FD0F5B920A9",
+  "failureProofSha256": "199A90CC2CE91BEB384321863AD00CF3889C1FF6D4C30742DB788FCC01B69D5C",
+  "observedDetail": "target_validation",
+  "cause": "Lossless rebind merged inline provider fields while retaining the old mutually exclusive provider_instance_id.",
+  "repair": "Remove only the old named-role selector before the existing inline mapping merge.",
+  "source": "SRC/neothd/src/cli/hemispheres.rs",
+  "candidateSha256": "BB417A7AF60BC5A7E79A8E2A29E358AE909EA6F026FD1BBECCA72E867796E2EB",
+  "reviewSha256": "0C3B5A715F16DE3657D54741D89552AF2E914F453120A3E3D01339791C8AA21E",
+  "diagnosisReportSha256": "9457F19219FA4B2D5C4AEBC9AD6921946F86E6D25C73F6A3F1B8F5C67CB6930F",
+  "regression": "cli::hemispheres::tests::rebind_replaces_named_role_selector_with_inline_authority",
+  "newPortableRegistrations": 1,
+  "portableRegistrations": 2759,
+  "preserved": [
+    "Unknown role YAML fields and neighboring configuration",
+    "Strict named-versus-inline validation",
+    "Credential and public-config pair transaction",
+    "WAL snapshot and audit ordering"
+  ],
+  "priorProducerAccepted": {
+    "producer": "50231f6d232c06c9493004fc2e2b30eb405dd684",
+    "liveAudioRun": 37311832170,
+    "liveAudioExactCasesPerOs": 52,
+    "liveAudioOsCount": 3,
+    "liveAudioProofSha256": "8E7BE38E4412935E2F44CFE4C48F9AFEECB8F069ECAE40F90AEDE5FED7448FFE",
+    "macosFixtureRun": 37317950040,
+    "macosFixtureExactCases": 7,
+    "macosFixtureProofSha256": "EE22790F8380368A63189D6913CA0C7A61E23426C9C7E75CA2031D8A5A450FA7"
+  },
+  "localExecutableValidationRan": false,
+  "nativeBuddyAcceptance": "pending",
+  "v3InteropAcceptance": "pending",
+  "v4Integration": "held",
+  "deviceAccepted": false,
+  "releaseReady": false
+}

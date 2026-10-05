@@ -1271,6 +1271,12 @@ pub(crate) async fn rebind_at(
                     (inference.get_mut(&role_key), &new_slot_value)
                     && let Some(current) = current.as_mapping_mut()
                 {
+                    // Rebinding a named selection creates an inline slot. The
+                    // selector is mutually exclusive with every inline field,
+                    // so it cannot survive the lossless field merge.
+                    current.remove(&serde_yaml::Value::String(
+                        "provider_instance_id".to_string(),
+                    ));
                     for (key, value) in new_fields {
                         current.insert(key.clone(), value.clone());
                     }
@@ -2639,6 +2645,62 @@ inference:
         );
     }
 
+    #[tokio::test]
+    async fn rebind_replaces_named_role_selector_with_inline_authority() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(
+            &freedom,
+            r#"inference:
+  mode: custom
+  provider_instances:
+    - id: route_a
+      descriptor: openai_api
+      model: old-model
+  left:
+    provider_instance_id: route_a
+    future_slot_field: preserve-me
+"#,
+        )
+        .unwrap();
+
+        rebind_at(
+            home.path(),
+            "left",
+            "openai_api",
+            Some("new-model".to_string()),
+            None,
+            None,
+        )
+        .await
+        .expect("named role can become an inline Buddy selection");
+
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom).unwrap()).unwrap();
+        let selector = serde_yaml::Value::String("provider_instance_id".to_string());
+        assert!(
+            !raw["inference"]["left"]
+                .as_mapping()
+                .expect("rebound role remains a mapping")
+                .contains_key(&selector),
+            "the named selector must not coexist with rebound inline authority"
+        );
+        assert_eq!(
+            raw["inference"]["left"]["future_slot_field"].as_str(),
+            Some("preserve-me"),
+            "lossless rebind retains unrelated role extensions"
+        );
+        let persisted = FreedomConfig::load_from_path(&freedom)
+            .expect("rebound target satisfies the public configuration schema");
+        assert_eq!(
+            persisted.inference.left.provider,
+            Some(InferenceProvider::OpenAi)
+        );
+        assert_eq!(
+            persisted.inference.left.model.as_deref(),
+            Some("new-model")
+        );
+    }
     #[tokio::test]
     async fn emit_rebind_audit_writes_0x1f_frame_with_payload() {
         use crate::config::inference::HemisphereSlot;
