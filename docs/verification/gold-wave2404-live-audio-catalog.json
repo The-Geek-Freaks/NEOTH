@@ -1,0 +1,77 @@
+{
+  "schema": "neoth.gold.wave2404.live-audio-catalog.v1",
+  "status": "reviewed-source-binding-hosted-pending",
+  "base": "b2b5ecd5132fa521a89801c5b3e61cb191bb83fc",
+  "failedRun": 37309026737,
+  "failedRunScope": "All three live-audio hosts failed source binding before compilation; zero fixtures executed and no artifacts uploaded.",
+  "failureProofSha256": "0B17B19F959EEB73DD0F8C401DC8874CCCE01B11FEFDE6E4B687243C13818B17",
+  "catalog": "docs/verification/gold-wave186-live-audio-tests.json",
+  "caseCount": 52,
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/dictate.rs",
+      "blob": "525d2f4096e37b716f1ef309e5a3f35e82c5ea94",
+      "sha256": "1ED5F40C5032ACD22B87D1BF7C392F45DF6BF0FAEE3625A8C057C004AC012CE0"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_owner.rs",
+      "blob": "49fc83d65ef3a1780b2f40b1246c256e1aa2a395",
+      "sha256": "4529DB1424817D988D9D00CB5DA4FA9DBE4FF3A6A8C736724EC277CAD833B3A6"
+    },
+    {
+      "path": "SRC/neothd/src/media/conversation_loop.rs",
+      "blob": "4c43341c2cf479d68a77037c0bcaa13fc1a8e562",
+      "sha256": "1C0223E7E5D4BED3921EBFB14798C0F78AE83CDEB1FE5339BE0B2299A9B852A3"
+    },
+    {
+      "path": "SRC/neothd/src/media/dictation.rs",
+      "blob": "3b60ba85542e9c026c0e1290fef56b4cade46f48",
+      "sha256": "161691D2784D806D50422315FB4E9238616B0B597F26C82B3E32E0558A477B19"
+    },
+    {
+      "path": "SRC/neothd/src/media/live_capture.rs",
+      "blob": "64135ab9977dcd0da9b713ea2837c88b109dfff1",
+      "sha256": "088E6026D737460F43D8D2D58F4FF6F93B787B64B13BFA4A5FF8DD8E233F4BB6"
+    },
+    {
+      "path": "SRC/neothd/src/media/lm_output_processor.rs",
+      "blob": "3ce7a5301361f72ae7529304f065e398ea70b517",
+      "sha256": "04408A16DAC3C97C7CBE81BE59D58328F63D6AE309890DAD514CAF9CBC69DF85"
+    },
+    {
+      "path": "SRC/neothd/src/media/playback.rs",
+      "blob": "2a95cbb5f09cdff58689a964f34fea86bcf9588f",
+      "sha256": "78B3528F499EB93D2FD473B1BFDB15E4793E63B7441C8C9CFEB66F179B0B898D"
+    },
+    {
+      "path": "SRC/neothd/src/media/resampler.rs",
+      "blob": "9793047c9ece00e5c86f456aa6911fa31dc4e82c",
+      "sha256": "6AF24DCD472FDA87F6855588C88BABAAEA0273BFC0F8E8428487E6CF25FB1832"
+    },
+    {
+      "path": "SRC/neothd/src/media/turn_tracker.rs",
+      "blob": "bbc6307118bc17c3ff39fe173f6fa4c015017bcd",
+      "sha256": "E7AF710F5AA76216840614DDF4969E91B3F4D0295DA9F07E32035E68DDE2035D"
+    },
+    {
+      "path": "SRC/neothd/src/media/vad/silero.rs",
+      "blob": "459e8c148f9ad1d6714f521c20478c69558ed75c",
+      "sha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
+    }
+  ],
+  "changedSources": [
+    "SRC/neothd/src/daemon/conversation_owner.rs",
+    "SRC/neothd/src/media/conversation_loop.rs",
+    "SRC/neothd/src/media/playback.rs"
+  ],
+  "changedHashEntries": 25,
+  "candidateSha256": "929C096A28CE2684CD2C86C8D082747C5D2E3DB4271778A8FD402C12B1BFC1E6",
+  "preserved": [
+    "Same ordered 52 exact case identities and source paths",
+    "Strict catalog hash check before Cargo",
+    "Production source and fixture assertions unchanged"
+  ],
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": "pending after publication",
+  "reviewSha256": "B48E6C5EC82EFBD4753246C554CD61477177332FF8F9F6A918EEE6760FD6C4C8"
+}
