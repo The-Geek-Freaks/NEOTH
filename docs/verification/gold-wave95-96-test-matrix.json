@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 388607,
-    "sha256": "FE125FF188E6D2322221673398DB7C74CE80A2D9DA0CA1FF27DD6D5A4AD9CB17"
+    "sha256": "2D1F727582A3DE3CBF3DDF82E232CBB3FD0C14C6D96218A3B42FFA901F9D824D"
   },
   "sourceInputs": 2125,
   "requiredNativeTests": [
@@ -4950,37 +4950,37 @@
     {
       "test": "cluster::hyperswarm::tests::delegated_task_gate_authenticates_allow_before_queue_effect",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_default_assignment_deny_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_assignment_revoked_after_gate_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_missing_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::delegated_task_dead_required_writer_never_queues",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::task_delegate_rejects_grant_bound_to_another_authenticated_noise_key",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
@@ -15642,7 +15642,7 @@
     {
       "test": "cluster::hyperswarm::tests::invalid_output_ceiling_rejects_before_gate_or_executor_enqueue",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
@@ -15943,7 +15943,7 @@
     {
       "test": "cluster::hyperswarm::tests::standard_task_admission_uses_the_authenticated_noise_key_for_its_lease",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
@@ -16561,19 +16561,19 @@
     {
       "test": "cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation",
       "sourcePath": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "sourceSha256": "5BEDB624C595264A4BFBF521132AF3C71E9DFA6876EC2083B2D54C4A1104F87A",
+      "sourceSha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
       "junitClass": "neoth"
     }
   ],
@@ -75254,6 +75254,32 @@
       }
     ],
     "note": "Prior af6872 completed run: exact16 pass, mint startup failure; local stop reaches bootstrap/join/publication wait; persistent+late stop registered, targeted18 pending. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2387HostedFormat": {
+    "base": "e22aa71eb83ca61a4bb119070f93aa7f7ea52dfd",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2387-pair-startup-cancellation.json",
+        "bytes": 2540,
+        "sha256": "4EE0F3D87F1260076E0BDDDF5452C8F27F2886C2B934FB38E02B6ACB09624E55",
+        "blob": "4f339fc30d7ef5ce667f418e435c5069e5751120"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2409466,
+        "sha256": "3C3C427A5627591A7A90191500CEA84A25540758ADA870BF5AE544001F8D07BD",
+        "blob": "8c2b54e498c47201fa27adc7896f3e614a88e5da"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+        "bytes": 174476,
+        "sha256": "7456F4C6CAE86F2D70B6D80D5497322B9533E3911C9EB6A0E191F6EE9F92A913",
+        "blob": "ca8b7df653ceeff3eabb85e9397055ec299601ea"
+      }
+    ],
+    "note": "Verified original hosted format patch only;18 targeted cases and current product still pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

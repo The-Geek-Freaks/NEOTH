@@ -39,5 +39,15 @@
   "localExecutableValidationRan": false,
   "productAcceptance": "pending",
   "deviceAccepted": false,
-  "releaseReady": false
+  "releaseReady": false,
+  "hostedFormat": {
+    "zipSha256": "201A5AC6C3F07C6A21B459D9A41427362C4C743F8DA8EA8E858BA1FCEC14F8E9",
+    "scope": "Three formatting hunks only",
+    "patchSha256": "39F151EF8BE9165176A6F0D34986E339A52E0A10D0DAB19D26DBECEF805CBFAF",
+    "codeQuality": "success",
+    "run": 37283615696,
+    "artifact": 11333651140,
+    "producer": "e22aa71eb83ca61a4bb119070f93aa7f7ea52dfd",
+    "codeQualityRun": 37283615109
+  }
 }

@@ -193,11 +193,7 @@ async fn public_start_shutdown_requested(
     shutdown: &mut tokio::sync::watch::Receiver<bool>,
     mut local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
 ) {
-    if *shutdown.borrow()
-        || local_stop
-            .as_deref()
-            .is_some_and(|stop| *stop.borrow())
-    {
+    if *shutdown.borrow() || local_stop.as_deref().is_some_and(|stop| *stop.borrow()) {
         return;
     }
     loop {
@@ -324,7 +320,7 @@ impl PublicRendezvous {
             local_stop,
             deadline,
         )
-            .await
+        .await
         {
             BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => {
                 Ok(())
@@ -3227,12 +3223,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht() {
+    async fn public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht()
+     {
         let (_shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
         let (pair_stop_tx, mut pair_stop) = tokio::sync::watch::channel(false);
-        pair_stop_tx
-            .send(true)
-            .expect("pair-stop receiver is live");
+        pair_stop_tx.send(true).expect("pair-stop receiver is live");
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(1),
