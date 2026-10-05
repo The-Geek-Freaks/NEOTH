@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 388025,
-    "sha256": "58B303236922711B495617B409F8B0D99D1DF49145B9FEFF2C92C3E4996E78F0"
+    "bytes": 388216,
+    "sha256": "76A8E17CA0ECBA9082376B9FFE61AFCBDD9A823B6A1B892A86D0936E32860FAC"
   },
-  "sourceInputs": 2122,
+  "sourceInputs": 2123,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75108,6 +75108,32 @@
       }
     ],
     "note": "Imported exact two-file hosted rustfmt patch from37273179567 on0dfc9a58; no local formatter; new producer gates pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2384InteropCountCache": {
+    "base": "330ce346e9019c16ad1dcd8adf938cbdebe45744",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 14309,
+        "sha256": "2853F7CE4968892FE91F4F1AA5B74DA0CFA70FF1A06420DF52A720D528E46666",
+        "blob": "751409c9fa1221c6fe57bd4f0428c5ae9c4e4879"
+      },
+      {
+        "path": "docs/verification/gold-wave2384-interop-count-cache.json",
+        "bytes": 1338,
+        "sha256": "62E2891E97AA24415FF628F01DE69A1068DB97EC1C6E63CE0DEDEE60AFCCDBBF",
+        "blob": "cfd2bec6de8c79ae6388579ecab363a085bd9808"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2406002,
+        "sha256": "139A89B8AD69EF60C68FD2B56055A746B621FE2CD502A1BD95870DDABA806565",
+        "blob": "255e5c354372532075c9e6e9e0b75f824c4dad36"
+      }
+    ],
+    "note": "Nine selected Core cases now require nine terminals; dedicated optional post-product cache preserves successful hosted compilation only.15exact cases unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,32 @@
+{
+  "schema": "neoth.wave2384.interop-count-cache.v1",
+  "base": "330ce346e9019c16ad1dcd8adf938cbdebe45744",
+  "status": "reviewed-source-hosted-pending",
+  "localExecutableValidationRan": false,
+  "requiredInteropExactCases": 15,
+  "coreStepCases": 9,
+  "cancelledTargetedRun": 37273634558,
+  "cancelReason": "Root added the ninth exact core identity but missed the old completion-count guard of eight; cancelled before repeating a known workflow failure.",
+  "candidateSha256": "2853F7CE4968892FE91F4F1AA5B74DA0CFA70FF1A06420DF52A720D528E46666",
+  "observedPriorRun": 37251514481,
+  "priorNoClusterCompileSeconds": 363,
+  "priorDefaultCoreCompileSeconds": 403,
+  "cache": {
+    "scope": "mobile-interop/toolchain/lock/producer",
+    "requiresExactRestorationMarker": true,
+    "existingCliReferenceFallbacksRetained": true,
+    "optionalSaveLimitMinutes": 10,
+    "testBudgetsChanged": false,
+    "artifactScopeChanged": false,
+    "requiresAllExactStepsSuccessful": true,
+    "pathsUnchanged": true,
+    "saveAfterProduct": true,
+    "continueOnCacheError": true,
+    "cacheIsAcceptanceEvidence": false
+  },
+  "boundaries": [
+    "Actual pair/status/chat/revoke remains pending a fresh exact-producer run.",
+    "Published V3 diagnostics and all15tests stay selected.",
+    "No local formatter, compiler or product runtime ran."
+  ]
+}

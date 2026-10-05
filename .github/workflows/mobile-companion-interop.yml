@@ -27,7 +27,8 @@ jobs:
         with: { fetch-depth: 1, persist-credentials: false }
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with: { toolchain: 1.91.0 }
-      - name: Restore CLI-reference Cargo checkpoint
+      - name: Restore mobile-interop Cargo checkpoint
+        id: mobile_interop_cache_restore
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
@@ -35,13 +36,17 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-cli-reference-rust-1.91-cargo-
       - name: Build exact host debug CLI and cdylib
+        id: exact_host_build
         timeout-minutes: 25
         run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
       - name: Run exact locked server publication regressions
+        id: exact_server_publication
         timeout-minutes: 10
         working-directory: SRC
         env:
@@ -148,6 +153,7 @@ jobs:
           done
           test "$dht_ordinal" -eq 2
       - name: Run exact no-cluster companion refusal regression
+        id: exact_no_cluster
         timeout-minutes: 15
         working-directory: SRC
         env:
@@ -158,6 +164,7 @@ jobs:
           cargo test -p neoth --no-default-features --lib --locked daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-no-cluster-regression.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-no-cluster-regression.log"
       - name: Run exact companion RPC and shutdown regressions
+        id: exact_companion_rpc_shutdown
         timeout-minutes: 15
         working-directory: SRC
         env:
@@ -183,8 +190,9 @@ jobs:
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 8
+          test "$ordinal" -eq 9
       - name: Run exact bridge public result regression
+        id: exact_bridge_public_result
         timeout-minutes: 5
         env:
           CARGO_TERM_COLOR: never
@@ -193,6 +201,13 @@ jobs:
           set -euo pipefail
           cargo test --manifest-path bridges/companion-native/Cargo.toml --locked tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-result-regression.log"
+      - name: Prove restored overlay eligible for cache
+        id: overlay_restored
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fqx 'PEEROXIDE_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/companion-publication-regressions/restoration-success.marker"
+          echo 'restored=true' >> "$GITHUB_OUTPUT"
       - name: Run fixed isolated-home pair/status/chat/revoke
         timeout-minutes: 10
         run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
@@ -200,6 +215,18 @@ jobs:
         run: |
           test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
           test -s "$RUNNER_TEMP/w2328-receipt.json"
+      - name: Save mobile-interop Cargo checkpoint
+        if: ${{ always() && !cancelled() && steps.mobile_interop_cache_restore.outputs.cache-hit != 'true' && steps.exact_host_build.outcome == 'success' && steps.exact_server_publication.outcome == 'success' && steps.exact_no_cluster.outcome == 'success' && steps.exact_companion_rpc_shutdown.outcome == 'success' && steps.exact_bridge_public_result.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ always() }}
         with:
