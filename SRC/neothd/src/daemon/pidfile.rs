@@ -1111,8 +1111,8 @@ mod tests {
             String::from_utf8_lossy(&child.stderr)
         );
         drop(lease);
-        let daemon = acquire(&path)
-            .expect("daemon startup succeeds after agents fan-out lease release");
+        let daemon =
+            acquire(&path).expect("daemon startup succeeds after agents fan-out lease release");
         assert!(
             acquire_offline_agents_fan_out_interlock(&path)
                 .unwrap()

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "status": "HOSTED-FORMAT-IMPORTED-EXECUTABLE-VALIDATION-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398394,
-    "sha256": "8D45B56DE47E5BAB45AECB0ED5A64BDB2A5CA85AFFF0CF92D453523012402F39"
+    "bytes": 398416,
+    "sha256": "01A7880A3E93FCF82C43FB17F91F3532BF5B0153CD0644D3035C034D19F23150"
   },
   "sourceInputs": 2177,
   "requiredNativeTests": [
@@ -4800,7 +4800,7 @@
     {
       "test": "cli::agents::tests::fan_out_registry_admits_only_enabled_skills_and_suppresses_eval",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
@@ -15925,19 +15925,19 @@
     {
       "test": "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
@@ -16699,7 +16699,7 @@
     {
       "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
       "junitClass": "neoth"
     },
     {
@@ -16729,49 +16729,49 @@
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "sourceSha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
       "junitClass": "neoth"
     }
   ],
@@ -77431,6 +77431,44 @@
       }
     ],
     "note": "W2464 owner supervisor and five portable regressions; W2465 bounded panic location with canonical61Rust16collector41sources. Prior38a CLI41cases independently admitted; fullMobile61/14/40 partial failure before pairing. Local BSOD hold; no runtime acceptance claimed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2465-hosted-format": {
+    "base": "3cfd32b4513ed42cec4bf5e8df70eeee7a98dcc9",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2464-agents-fan-out-owner.json",
+        "bytes": 3303,
+        "sha256": "073298CCA7E6FEE229558E37BC33797C8668DF5070E91BA8C88D5484B178C965",
+        "blob": "6c937888f451b0c13484fccaaf8a13087557d922"
+      },
+      {
+        "path": "docs/verification/gold-wave2465-panic-site-diagnostic.json",
+        "bytes": 2665,
+        "sha256": "E86EFF2D0AEC68741849167FC8A6BFBF27A7C496BA0DBF9BE273EA043034A819",
+        "blob": "52fc4a524264f7a5afcdc30f507c4a8e018dedcc"
+      },
+      {
+        "path": "SRC/neothd/src/cli/agents.rs",
+        "bytes": 57149,
+        "sha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2",
+        "blob": "677dbc3d0577ab39be1f9fd4a53abce254bbd4de"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/pidfile.rs",
+        "bytes": 45932,
+        "sha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
+        "blob": "e07cf4a1095647ac479091ec94047a63dbbb36bf"
+      },
+      {
+        "path": "SRC/neothd/src/lib.rs",
+        "bytes": 25292,
+        "sha256": "A883FDEE23A93E19FB7A97CDC74D6851AD6CDDEC1528C5B3F39812CC2A19C11E",
+        "blob": "5bca1e0c49cc3e0fdc89ede5a02c3aed5afe7556"
+      }
+    ],
+    "note": "Exact three-file hosted rustfmt artifact verified against original API/ZIP hashes and raw producer before/after Git object IDs. No local formatter or runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

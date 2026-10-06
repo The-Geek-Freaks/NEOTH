@@ -583,9 +583,7 @@ pub fn install_panic_handler() {
                 && file_name.len() <= 96
                 && file_name
                     .bytes()
-                    .all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-                    })
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
                 && location.line() > 0
             {
                 eprintln!("NEOTH_PANIC_SITE={file_name}:{}", location.line());

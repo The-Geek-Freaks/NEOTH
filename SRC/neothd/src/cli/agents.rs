@@ -192,11 +192,7 @@ async fn run_fan_out_with_provider_factory<F, Fut>(
     provider_factory: F,
 ) -> Result<()>
 where
-    F: FnOnce(
-            FreedomConfig,
-            std::path::PathBuf,
-            crate::wal::writer::WalWriterHandle,
-        ) -> Fut
+    F: FnOnce(FreedomConfig, std::path::PathBuf, crate::wal::writer::WalWriterHandle) -> Fut
         + Send
         + 'static,
     Fut: std::future::Future<Output = Result<Box<dyn crate::providers::Provider>>> + Send + 'static,
@@ -268,9 +264,8 @@ where
     // future is cancelled, the receiver may disappear but the supervisor still
     // drops every writer owner and boundedly aborts/reaps the real writer before
     // releasing the daemon-startup lock.
-    let (mut result_tx, result_rx) = tokio::sync::oneshot::channel::<
-        Result<(SubAgentRunRecord, std::path::PathBuf)>,
-    >();
+    let (mut result_tx, result_rx) =
+        tokio::sync::oneshot::channel::<Result<(SubAgentRunRecord, std::path::PathBuf)>>();
     tokio::spawn(async move {
         let _fan_out_lease = fan_out_lease;
         let transaction_result: Result<(SubAgentRunRecord, std::path::PathBuf)> = tokio::select! {
@@ -1103,7 +1098,9 @@ mod tests {
         .await
         .expect_err("live daemon must reject the real fan-out consumer");
         assert!(
-            error.to_string().contains("`neoth serve` owns or is acquiring this home"),
+            error
+                .to_string()
+                .contains("`neoth serve` owns or is acquiring this home"),
             "unexpected owner refusal: {error:#}"
         );
         assert!(
@@ -1192,7 +1189,8 @@ mod tests {
                         entered: task_entered,
                         release: task_release,
                         blocked_once: std::sync::atomic::AtomicBool::new(false),
-                    }) as Box<dyn crate::providers::Provider>)
+                    })
+                        as Box<dyn crate::providers::Provider>)
                 },
             )
             .await
@@ -1205,7 +1203,10 @@ mod tests {
             .arg("--ignored")
             .arg("--exact")
             .arg("daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start")
-            .env("NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE", home.path().join("neothd.pid"))
+            .env(
+                "NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE",
+                home.path().join("neothd.pid"),
+            )
             .output()
             .expect("cross-process daemon contender");
         assert!(
@@ -1263,7 +1264,8 @@ mod tests {
                     async move {
                         Ok(Box::new(W2464CancellationProvider {
                             entered: task_entered,
-                        }) as Box<dyn crate::providers::Provider>)
+                        })
+                            as Box<dyn crate::providers::Provider>)
                     }
                 },
             )
@@ -1283,7 +1285,10 @@ mod tests {
             .arg("--ignored")
             .arg("--exact")
             .arg("daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start")
-            .env("NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE", home.path().join("neothd.pid"))
+            .env(
+                "NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE",
+                home.path().join("neothd.pid"),
+            )
             .output()
             .expect("cross-process contender after caller cancellation");
         assert!(

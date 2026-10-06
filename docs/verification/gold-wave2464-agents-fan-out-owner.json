@@ -61,5 +61,12 @@
     "archiveEntries": 57,
     "proofSha256": "61036B1F76DAEBC3FD17BAC29479E125F027D9AA2EA85815F5AABDA8875180C2",
     "coversNewFanOutChange": false
+  },
+  "hostedFormatting": {
+    "run": "37525288643",
+    "producer": "3cfd32b4513ed42cec4bf5e8df70eeee7a98dcc9",
+    "artifact": "11441722654",
+    "custodySha256": "C23FE9DFCADA41679AC86688593E5D8CD22A418A30553A7DC3137551FD4583F1",
+    "localFormatterRan": false
   }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T20:14:35.7157809Z",
-  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T20:18:27.3732538Z",
+  "validationStatus": "HOSTED-FORMAT-IMPORTED-EXECUTABLE-VALIDATION-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3833,13 +3833,13 @@
     },
     {
       "path": "docs/verification/gold-wave2464-agents-fan-out-owner.json",
-      "bytes": 3037,
-      "sha256": "CAD4B89CF26741731BE9F51D9E40FF5B65A9CB33B4F7A69E1C367B2C93E0C5A4"
+      "bytes": 3303,
+      "sha256": "073298CCA7E6FEE229558E37BC33797C8668DF5070E91BA8C88D5484B178C965"
     },
     {
       "path": "docs/verification/gold-wave2465-panic-site-diagnostic.json",
-      "bytes": 2399,
-      "sha256": "5C68E3F9233AEC7169EF62E0BD704D232733D0BE28BEBEAF9789322C73BB47C5"
+      "bytes": 2665,
+      "sha256": "E86EFF2D0AEC68741849167FC8A6BFBF27A7C496BA0DBF9BE273EA043034A819"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5813,8 +5813,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 57023,
-      "sha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3"
+      "bytes": 57149,
+      "sha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
@@ -7053,8 +7053,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/pidfile.rs",
-      "bytes": 45933,
-      "sha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4"
+      "bytes": 45932,
+      "sha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318"
     },
     {
       "path": "SRC/neothd/src/daemon/post_init_cron.rs",
@@ -7548,8 +7548,8 @@
     },
     {
       "path": "SRC/neothd/src/lib.rs",
-      "bytes": 25340,
-      "sha256": "0468D47C4218B18F07C6000CEC47F4544B99D33DB1EA95D0FD2567631BEFD133"
+      "bytes": 25292,
+      "sha256": "A883FDEE23A93E19FB7A97CDC74D6851AD6CDDEC1528C5B3F39812CC2A19C11E"
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
