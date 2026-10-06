@@ -35,4 +35,16 @@ pub enum SwarmError {
     /// The bounded initial-publication waiter set is full.
     #[error("server publication waiter capacity exhausted")]
     ServerPublicationWaiterCapacity,
+
+    /// An authenticated remote static key is already assigned to another topic.
+    #[error("authenticated remote static key is already admitted for a different topic")]
+    AuthenticatedRemoteTopicConflict,
+
+    /// The bounded authenticated remote topic admission table is full.
+    #[error("authenticated remote topic admission capacity exhausted")]
+    AuthenticatedRemoteTopicCapacity,
+
+    /// Authenticated remote topic admission requires an already-joined server topic.
+    #[error("authenticated remote topic admission requires a joined server topic")]
+    AuthenticatedRemoteTopicNotServerTopic,
 }

@@ -500,6 +500,149 @@ fn probe_webchat_status_from_oneshot_child(home: &std::path::Path, expected: &st
     );
 }
 
+const UPDATER_STATUS_PROBE_CHILD_HOME_ENV: &str = "NEOTH_TEST_UPDATER_STATUS_HOME";
+const UPDATER_STATUS_PROBE_EXPECTED_CHAIN_ENV: &str = "NEOTH_TEST_UPDATER_STATUS_CHAIN";
+
+/// A separate child is required because the parent intentionally owns the
+/// daemon PID lock. This proves the public one-shot client verifies the same
+/// sidecar/owner boundary as production instead of accepting an in-process
+/// shortcut.
+#[test]
+#[ignore = "helper invoked by updater_status_client_round_trips_live_listener"]
+fn updater_status_probe_child_checks_live_listener() {
+    let Some(home) = std::env::var_os(UPDATER_STATUS_PROBE_CHILD_HOME_ENV) else {
+        return;
+    };
+    let expected = std::env::var(UPDATER_STATUS_PROBE_EXPECTED_CHAIN_ENV)
+        .expect("parent supplies expected canonical chain name");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create updater-status child runtime");
+    let binding = runtime
+        .block_on(super::updater_status_binding(std::path::Path::new(&home)))
+        .expect("authenticated one-shot child accepts exact updater status binding");
+    assert_eq!(binding.chain_base_name, expected);
+
+    // Exercise the ordinary user-facing consumer exactly as production does:
+    // config determines home and every explicit WAL override remains absent.
+    let args = crate::cli::updater::UpdaterArgs {
+        action: crate::cli::updater::UpdaterAction::Status {
+            config: Some(std::path::Path::new(&home).join("freedom.yaml")),
+            wal_chain_base: None,
+            wal_segment: None,
+            from_jsonl: None,
+        },
+    };
+    runtime
+        .block_on(crate::cli::updater::run_updater(
+            args,
+            crate::cli::OutputFormat::Table,
+        ))
+        .expect("default updater status must consume the authenticated live daemon chain");
+    // Parent captures this child stdout beside the CLI-rendered terminal line:
+    // both appear only after the same default invocation succeeded.
+    println!("UPDATER_STATUS_LIVE_CHAIN={expected}");
+}
+
+fn probe_updater_status_from_oneshot_child(home: &std::path::Path, expected_chain: &str) {
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("locate the audit-RPC test binary"),
+    )
+    .arg("--ignored")
+    .arg("--exact")
+    .arg("--nocapture")
+    .arg("daemon::audit_rpc::tests::updater_status_probe_child_checks_live_listener")
+    .env(UPDATER_STATUS_PROBE_CHILD_HOME_ENV, home)
+    .env(UPDATER_STATUS_PROBE_EXPECTED_CHAIN_ENV, expected_chain)
+    .output()
+    .expect("launch one-shot updater-status child");
+    assert!(
+        output.status.success(),
+        "default one-shot updater status must consume only the live bound chain; stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("no updater pass on record yet."),
+        "default updater status must render the custom live-chain projection; stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("UPDATER_STATUS_LIVE_CHAIN={expected_chain}")),
+        "child must bind the successful default CLI terminal to the custom live chain; stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn updater_status_client_round_trips_live_listener_and_refuses_invalid_requests() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "custom-daemon");
+    let (writer, wal_join, ready) =
+        crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+            .unwrap();
+    ready.wait().await.unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let binding = daemon_updater_status_binding(home.path(), &segment, &nonce).unwrap();
+    let expected_chain = binding.chain_base_name.clone();
+    // If default status ignored the authenticated binding, it would scan this
+    // legacy name and fail. The custom daemon segment remains the only valid
+    // direct-child chain for the child process below.
+    std::fs::write(home.path().join("wal").join("000001.wal"), b"corrupt legacy WAL").unwrap();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        conversation_runtime: None,
+        companion_runtime: None,
+        webchat: None,
+        updater_status: Some(binding),
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+
+    assert_eq!(
+        raw_post_path(&endpoint, "/updater/status", None, "{}").await.0,
+        401,
+        "unauthenticated callers receive no chain disclosure"
+    );
+    assert_eq!(
+        raw_post_path(&endpoint, "/updater/status", Some(&token), "{\"extra\":true}")
+            .await
+            .0,
+        422,
+        "the sealed status route accepts only its empty typed request"
+    );
+    probe_updater_status_from_oneshot_child(home.path(), &expected_chain);
+
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap();
+}
+
+#[test]
+fn updater_status_binding_rejects_noncanonical_or_foreign_chain_bases() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "custom-daemon");
+    assert!(daemon_updater_status_binding(home.path(), &segment, "a".repeat(32).as_str()).is_ok());
+    assert!(daemon_updater_status_binding(home.path(), &home.path().join("wal/../000001.wal"), "a").is_err());
+    assert!(daemon_updater_status_binding(home.path(), &home.path().join("foreign-000001.wal"), "a").is_err());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn webchat_runtime_status_round_trips_live_listener_states() {
     let home = tempdir().unwrap();
@@ -529,6 +672,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: Some(Arc::clone(&webchat)),
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -563,6 +707,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (absent_endpoint, absent_listener) =
         bind_and_serve(absent_home.path(), &absent_nonce, absent_state)
@@ -652,6 +797,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -739,6 +885,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"4".repeat(64), &"5".repeat(64)).await;
@@ -826,6 +973,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"6".repeat(64), &"7".repeat(64)).await;
@@ -1257,6 +1405,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1305,6 +1454,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1370,6 +1520,7 @@ async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -1494,6 +1645,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2053,6 +2205,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2119,6 +2272,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let unavailable_nonce = test_endpoint_nonce();
     let (unavailable_endpoint, unavailable_listener) =
@@ -2168,6 +2322,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2242,6 +2397,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2316,6 +2472,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2417,6 +2574,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2838,6 +2996,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2885,6 +3044,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2925,6 +3085,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2968,6 +3129,7 @@ async fn client_round_trips_against_a_live_listener() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -3021,6 +3183,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -3086,6 +3249,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -3125,6 +3289,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -3203,6 +3368,7 @@ async fn listener_serves_more_than_one_connection() {
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -3252,6 +3418,7 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         conversation_runtime: None,
         companion_runtime: None,
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -3809,6 +3976,7 @@ async fn companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audi
         conversation_runtime: None,
         companion_runtime: Some(Arc::clone(&fixture.runtime)),
         webchat: None,
+    updater_status: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state)
         .await
@@ -3881,6 +4049,7 @@ async fn companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_li
         conversation_runtime: None,
         companion_runtime: Some(Arc::clone(&fixture.runtime)),
         webchat: None,
+    updater_status: None,
     };
     let (_endpoint, listener) = bind_and_serve(home.path(), &nonce, state)
         .await

@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.wave2451.live-updater-status.v1",
+  "baseProducer": "0cd0f54fa0f8020bf4044419af28ba341314f2de",
+  "behavior": "Default updater status discovers the live daemon-owned canonical WAL chain over authenticated same-user IPC; explicit source flags retain their existing selection.",
+  "changes": [
+    "Bind only canonical direct-child sequence-one basename and exact daemon incarnation.",
+    "Permit offline fallback only for genuine missing discovery or typed connection refusal before request write.",
+    "Use one absolute five-second deadline for connect, request write and response read; post-connect failures remain hard.",
+    "Exercise the real default CLI against a live custom chain with corrupt legacy WAL, plus an absent-daemon offline consumer and an authenticated connected-stall regression."
+  ],
+  "hostedTests": [
+    "daemon::audit_rpc::tests::updater_status_client_round_trips_live_listener_and_refuses_invalid_requests",
+    "daemon::audit_rpc::tests::updater_status_binding_rejects_noncanonical_or_foreign_chain_bases",
+    "cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child",
+    "cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent",
+    "daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback",
+    "daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics"
+  ],
+  "candidateManifestSha256": "4758FE6DF271C053C13C2AED55BC3489D3AC6614CFF55765A20A8FF32F02C1D3",
+  "sourceCandidateBindings": [
+    {
+      "repository_path": "SRC/neothd/src/cli/serve.rs",
+      "candidate_file": "SRC_neothd_src_cli_serve.rs",
+      "sha256": "CB130A645C543A916AD641DF8A96AE17CF92E96707B045D3DAC248B1C9792B72"
+    },
+    {
+      "repository_path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "candidate_file": "SRC_neothd_src_cli_serve_tasks.rs",
+      "sha256": "F95D7DA36BA6E655E33EAFFCF949AADA130F56FA294E1052B7CB08652F8BF41E"
+    },
+    {
+      "repository_path": "SRC/neothd/src/cli/updater.rs",
+      "candidate_file": "SRC_neothd_src_cli_updater.rs",
+      "sha256": "AA3694E5A73FE350D87336E3FB76CA39454CF1F7FCB16BD3C2BC3EE08B955A57"
+    },
+    {
+      "repository_path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_server.rs",
+      "sha256": "0230E8CC382C1892EACF1064112DA5BAE45F58058F009BE412A7B6423164EC1D"
+    },
+    {
+      "repository_path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_client.rs",
+      "sha256": "4CD7CEE9C956BE42821BABB22940F2021CC6045DBC87FBA6D0E1C6D9D5DAF638"
+    },
+    {
+      "repository_path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_mod.rs",
+      "sha256": "96C44747A06D034693E16C92AB1DFD96703F8BD9E2656F92E9087B9E59BBD144"
+    },
+    {
+      "repository_path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_tests.rs",
+      "sha256": "9887DBFBF7A36A00B333EF1D3DB588DE9E66908862958F5380281A67D8489F1D"
+    }
+  ],
+  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "localExecutableValidationRan": false,
+  "nativeWindowsMacAcceptance": "pending",
+  "productNativeDeviceReleaseAccepted": false
+}

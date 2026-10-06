@@ -685,6 +685,40 @@ pub struct AuditRpcState {
     /// same-user RPC exposes only daemon-owned mint/list/revoke verbs; a CLI
     /// can never construct a listener, writer, key or authority store.
     pub(crate) companion_runtime: Option<Arc<crate::daemon::companion_runtime::CompanionRuntime>>,
+    /// Immutable-at-startup updater projection binding.  `None` keeps focused
+    /// audit fixtures fail-closed for the status route.
+    pub(crate) updater_status: Option<super::DaemonUpdaterStatusBinding>,
+}
+
+/// Construct the only updater-status value the daemon may disclose.  The WAL
+/// setup has already validated the selected namespace; repeat the containment
+/// proof here so a future caller cannot turn this RPC into arbitrary-path
+/// disclosure.
+pub(crate) fn daemon_updater_status_binding(
+    home: &Path,
+    segment_chain_base_path: &Path,
+    endpoint_nonce: &str,
+) -> Result<super::DaemonUpdaterStatusBinding> {
+    let wal_dir = std::fs::canonicalize(home.join("wal"))
+        .context("canonicalize daemon WAL directory for updater status")?;
+    let parent = segment_chain_base_path
+        .parent()
+        .context("daemon updater chain base has no parent")?;
+    anyhow::ensure!(
+        std::fs::canonicalize(parent).context("canonicalize daemon updater chain parent")? == wal_dir,
+        "daemon updater chain base is not a direct child of the instance WAL directory"
+    );
+    let name = segment_chain_base_path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .context("daemon updater chain base has no UTF-8 file name")?
+        .to_owned();
+    super::validate_daemon_updater_chain_base_name(&name)?;
+    Ok(super::DaemonUpdaterStatusBinding {
+        schema_version: super::DAEMON_UPDATER_STATUS_SCHEMA_VERSION,
+        chain_base_name: name,
+        instance_commitment: super::instance_commitment_for_nonce(endpoint_nonce).0,
+    })
 }
 
 /// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
@@ -1271,6 +1305,7 @@ async fn handle_one_pre_admission(
             | "/companion/v3/pair/mint"
             | "/companion/v3/devices"
             | "/companion/v3/device/revoke"
+            | "/updater/status"
     );
     let webchat_mint_route = req.path == "/webchat/handoff/mint";
     let webchat_resume_route = req.path == "/webchat/handoff/resume";
@@ -1363,6 +1398,19 @@ async fn handle_one_pre_admission(
         let _ = stream
             .write_all(http_response_json(200, "{\"ok\":true}").as_bytes())
             .await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    }
+
+    if req_path == "/updater/status" {
+        let response = match (state.updater_status.as_ref(), req.body.as_slice()) {
+            (Some(binding), b"{}") => serde_json::to_string(binding)
+                .map(|body| http_response_json(200, &body))
+                .unwrap_or_else(|_| http_response(500, "updater status encoding failed")),
+            (Some(_), _) => http_response(422, "invalid_updater_status_request"),
+            (None, _) => http_response(503, "updater status unavailable"),
+        };
+        let _ = stream.write_all(response.as_bytes()).await;
         let _ = stream.shutdown().await;
         return Ok(ConnectionOutcome::Complete);
     }

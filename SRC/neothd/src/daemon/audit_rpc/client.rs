@@ -37,6 +37,18 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
+/// `updater status` may use the legacy offline chain only when the daemon is
+/// genuinely unavailable. Once the authenticated request reached a live
+/// incarnation, every refusal or malformed response is a hard failure: it
+/// must not silently select a different namespace.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UpdaterStatusClientError {
+    #[error("updater status daemon unavailable: {0}")]
+    Unavailable(String),
+    #[error("authenticated updater status response rejected: {0}")]
+    AuthenticatedInvalid(String),
+}
+
 /// Typed daemon-owner errors for the v3 companion CLI façade.  A failed
 /// response is never retried by minting an in-process invitation: only the
 /// running daemon knows the persistent responder key advertised in a QR.
@@ -1046,6 +1058,152 @@ async fn post_rpc(
     exchange_rpc(sidecar.endpoint, req).await
 }
 
+/// Fetch the daemon-selected updater chain only after proving the sidecar,
+/// PID-lock owner and same-user endpoint. A returned name is accepted only
+/// when its incarnation commitment matches that exact sidecar nonce.
+pub(crate) async fn updater_status_binding(
+    home: &Path,
+) -> std::result::Result<super::DaemonUpdaterStatusBinding, UpdaterStatusClientError> {
+    let sidecar = read_sidecar(home).map_err(|error| {
+        if updater_status_missing_discovery(&error) {
+            UpdaterStatusClientError::Unavailable("daemon discovery is absent".into())
+        } else {
+            UpdaterStatusClientError::AuthenticatedInvalid(format!(
+                "daemon discovery rejected: {error:#}"
+            ))
+        }
+    })?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(UpdaterStatusClientError::AuthenticatedInvalid(
+            "stale audit-RPC sidecar for updater status".into(),
+        ));
+    }
+    let expected = instance_commitment_for_nonce(&sidecar.endpoint_nonce);
+    let token = read_rpc_token(home).map_err(|error| {
+        UpdaterStatusClientError::AuthenticatedInvalid(format!(
+            "read daemon audit token: {error:#}"
+        ))
+    })?;
+    let body = "{}";
+    let request = format!(
+        "POST /updater/status HTTP/1.1\r\n\
+         Host: neoth-local\r\n\
+         Authorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        len = body.len(),
+    );
+    let (status, response) = updater_status_exchange(sidecar.endpoint, request).await?;
+    if status != 200 {
+        return Err(UpdaterStatusClientError::AuthenticatedInvalid(format!(
+            "daemon returned HTTP {status}"
+        )));
+    }
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .ok_or_else(|| {
+            UpdaterStatusClientError::AuthenticatedInvalid(
+                "response lost validated header boundary".into(),
+            )
+        })?;
+    let binding: super::DaemonUpdaterStatusBinding = serde_json::from_str(body).map_err(|error| {
+        UpdaterStatusClientError::AuthenticatedInvalid(format!("invalid response JSON: {error}"))
+    })?;
+    if binding.schema_version != super::DAEMON_UPDATER_STATUS_SCHEMA_VERSION
+        || binding.instance_commitment != expected.0
+    {
+        return Err(UpdaterStatusClientError::AuthenticatedInvalid(
+            "updater status response is not bound to the authenticated daemon incarnation".into(),
+        ));
+    }
+    super::validate_daemon_updater_chain_base_name(&binding.chain_base_name)
+        .map_err(|error| {
+            UpdaterStatusClientError::AuthenticatedInvalid(format!(
+                "invalid updater chain base: {error:#}"
+            ))
+        })?;
+    Ok(binding)
+}
+
+/// The updater-status path has stricter fallback semantics than the generic
+/// audit RPC: only a refused local connect *before the request is written* is
+/// an offline daemon. One absolute five-second deadline covers connect, write,
+/// and read; every expiry or post-connect failure is deliberately hard.
+async fn updater_status_exchange(
+    endpoint: super::transport::AuditEndpointV2,
+    request: String,
+) -> std::result::Result<(u16, String), UpdaterStatusClientError> {
+    updater_status_exchange_until(
+        endpoint,
+        request,
+        tokio::time::Instant::now() + RPC_EXCHANGE_TIMEOUT,
+    )
+    .await
+}
+
+/// Internal deadline form keeps the production exchange on one absolute
+/// five-second budget and admits a short controlled deadline for its liveness
+/// regression. The deadline is fixed before the same-user connect begins.
+async fn updater_status_exchange_until(
+    endpoint: super::transport::AuditEndpointV2,
+    request: String,
+    deadline: tokio::time::Instant,
+) -> std::result::Result<(u16, String), UpdaterStatusClientError> {
+    let mut stream = match tokio::time::timeout_at(deadline, super::transport::connect(&endpoint)).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) if updater_status_connection_refused(&error) => {
+            return Err(UpdaterStatusClientError::Unavailable(
+                "daemon listener refused connection".into(),
+            ));
+        }
+        Ok(Err(error)) => {
+            return Err(UpdaterStatusClientError::AuthenticatedInvalid(format!(
+                "connect authenticated daemon endpoint: {error:#}"
+            )));
+        }
+        Err(_) => {
+            return Err(UpdaterStatusClientError::AuthenticatedInvalid(
+                "connect authenticated daemon endpoint exceeded absolute deadline".into(),
+            ));
+        }
+    };
+    tokio::time::timeout_at(deadline, async {
+        stream.write_all(request.as_bytes()).await.map_err(|error| {
+            format!("write authenticated updater-status request: {error}")
+        })?;
+        read_rpc_response(&mut stream)
+            .await
+            .map_err(|error| format!("read authenticated updater-status response: {error}"))
+    })
+    .await
+    .map_err(|_| {
+        UpdaterStatusClientError::AuthenticatedInvalid(
+            "authenticated updater-status exchange exceeded absolute deadline".into(),
+        )
+    })?
+    .map_err(UpdaterStatusClientError::AuthenticatedInvalid)
+}
+
+fn updater_status_missing_discovery(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
+fn updater_status_connection_refused(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+    })
+}
+
 pub(crate) async fn companion_v3_mint_pair(
     home: &Path,
     requested_scope: crate::daemon::companion_protocol::CompanionScope,
@@ -1645,6 +1803,64 @@ mod tests {
         ] {
             assert!(parse_rpc_response(malformed).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn updater_status_connected_stall_expires_hard_without_offline_fallback() {
+        let home = tempfile::tempdir().expect("create updater-status stall home");
+        let nonce = "a".repeat(32);
+        let (mut listener, endpoint) = super::super::transport::bind(home.path(), &nonce)
+            .await
+            .expect("bind authenticated same-user stall listener");
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let mut stream = listener
+                .accept()
+                .await
+                .expect("accept same-user updater-status client");
+            let mut byte = [0_u8; 1];
+            stream
+                .read(&mut byte)
+                .await
+                .expect("observe request write before stalling response");
+            let _ = entered_tx.send(());
+            std::future::pending::<()>().await;
+        });
+
+        let result = updater_status_exchange_until(
+            endpoint,
+            "POST /updater/status HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".into(),
+            tokio::time::Instant::now() + std::time::Duration::from_millis(250),
+        )
+        .await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), entered_rx)
+            .await
+            .expect("authenticated peer must receive a request")
+            .expect("authenticated peer received request before deadline expiry");
+        assert!(
+            matches!(result, Err(UpdaterStatusClientError::AuthenticatedInvalid(_))),
+            "a connected peer that stalls after request admission must fail hard: {result:?}"
+        );
+        peer.abort();
+        let _ = peer.await;
+    }
+
+    #[test]
+    fn updater_status_offline_classification_uses_io_kind_never_diagnostics() {
+        let missing = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let refused =
+            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+        assert!(updater_status_missing_discovery(&missing));
+        assert!(updater_status_connection_refused(&refused));
+        assert!(!updater_status_missing_discovery(&refused));
+        assert!(!updater_status_connection_refused(&missing));
+
+        // A lookalike message must never obtain offline fallback rights.
+        let lookalike = anyhow::anyhow!(
+            "not found / connection refused / connect local endpoint refused"
+        );
+        assert!(!updater_status_missing_discovery(&lookalike));
+        assert!(!updater_status_connection_refused(&lookalike));
     }
 
     #[test]

@@ -25,7 +25,12 @@
         "swarm::tests::pending_responder_cache_expires_and_stale_generation_cleanup_preserves_replacement",
         "swarm::tests::relay_mux_guard_aborts_a_started_pre_handoff_driver",
         "swarm::tests::raw_loopback_handshake_replays_exact_noise_once_and_rejects_fresh_noise_same_key",
-        "swarm::tests::raw_loopback_handshake_timeout_releases_generation_and_stale_close_cannot_remove_reconnect"
+        "swarm::tests::raw_loopback_handshake_timeout_releases_generation_and_stale_close_cannot_remove_reconnect",
+        "swarm::tests::raw_loopback_authenticated_topic_leases_isolate_active_keys_and_retire_exactly",
+        "swarm::tests::authenticated_remote_topics_are_exact_idempotent_and_lease_scoped",
+        "swarm::tests::authenticated_remote_topic_admission_is_legacy_open_until_explicitly_enabled",
+        "swarm::tests::authenticated_remote_topic_registration_requires_joined_server_topic",
+        "swarm::tests::authenticated_remote_topic_admission_capacity_is_bounded"
       ]
     },
     "dht": {
@@ -69,7 +74,10 @@
         "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
         "daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live",
         "daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener",
-        "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle"
+        "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle",
+        "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",
+        "cluster::hyperswarm::tests::shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains",
+        "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls"
       ]
     },
     "no_cluster": {

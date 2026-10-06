@@ -137,7 +137,7 @@ impl StatusDelivery {
         lease: StatusLease,
         snapshot: CompanionStatusSnapshot,
         mut connection: peeroxide::SwarmConnection,
-        rendezvous: crate::cluster::hyperswarm::PublicRendezvous,
+        rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
         shutdown: watch::Receiver<bool>,
         readiness: Arc<RwLock<CompanionReadiness>>,
     ) -> Self {
@@ -306,6 +306,7 @@ pub(crate) struct CompanionRuntime {
     listener_generation: u64,
     readiness: Arc<RwLock<CompanionReadiness>>,
     shutdown_tx: watch::Sender<bool>,
+    public_carrier: Arc<Mutex<Option<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>>>>,
     pair_tasks: Arc<Mutex<BTreeMap<String, PairListenerOwner>>>,
     listener_tasks: Arc<Mutex<BTreeMap<Uuid, DeviceListenerOwner>>>,
     #[cfg(test)]
@@ -340,6 +341,7 @@ impl CompanionRuntime {
             listener_generation,
             readiness: Arc::new(RwLock::new(CompanionReadiness::Starting)),
             shutdown_tx,
+            public_carrier: Arc::new(Mutex::new(None)),
             pair_tasks: Arc::new(Mutex::new(BTreeMap::new())),
             listener_tasks: Arc::new(Mutex::new(BTreeMap::new())),
             #[cfg(test)]
@@ -393,11 +395,28 @@ impl CompanionRuntime {
                 ));
             }
         }
+        if let Some(carrier) = self.public_carrier.lock().await.take()
+            && let Err(error) = carrier.shutdown_checked().await
+        {
+            first_error.get_or_insert(error);
+        }
         if let Some(error) = first_error {
             self.mark_degraded().await;
             return Err(error);
         }
         Ok(())
+    }
+
+    async fn shared_public_carrier(&self) -> Result<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>> {
+        let mut carrier = self.public_carrier.lock().await;
+        if let Some(carrier) = carrier.as_ref() { return Ok(Arc::clone(carrier)); }
+        let started = crate::cluster::hyperswarm::spawn_shared_public_rendezvous_carrier(
+            self.daemon_key.clone(),
+            tokio::time::Instant::now() + ACTIVE_LISTENER_READINESS_TIMEOUT,
+            self.shutdown_tx.subscribe(),
+        ).await?;
+        *carrier = Some(Arc::clone(&started));
+        Ok(started)
     }
 
     pub(crate) async fn prepare_pair_invite_for_audit_rpc(
@@ -644,16 +663,10 @@ impl CompanionRuntime {
         }
         let mut diagnostics = CompanionPairDiagnostics::from_environment();
         diagnostics.phase("bootstrap_started");
-        let mut rendezvous = match crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
-            topic,
-            expected_client_noise,
-            self.daemon_key.clone(),
-            peeroxide::CompanionDiagnosticScope::Pair,
-            deadline,
-            shutdown.clone(),
-            Some(&mut pair_stop),
-        )
-        .await
+        let carrier = self.shared_public_carrier().await?;
+        let mut rendezvous = match carrier.open_route(
+            topic, expected_client_noise, deadline, shutdown.clone(), Some(&mut pair_stop),
+        ).await
         {
             Ok(value) => value,
             Err(error) => {
@@ -754,9 +767,11 @@ impl CompanionRuntime {
                         return Err(error);
                     }
                 };
-                diagnostics.phase("pair_rendezvous_leave_started");
-                rendezvous.leave().await?;
-                diagnostics.phase("pair_rendezvous_left");
+                // Keep this exact Pair admission live through the terminal
+                // EnrollmentAccepted frame.  A mobile retry can legitimately
+                // replay the authenticated DHT handshake while this response
+                // owner still owns the reply; withdrawing the topic here
+                // would turn that retry into an un-routable terminal loss.
                 diagnostics.phase("enrollment_response_write_started");
                 write_frame(&mut connection, &ServerFrame::EnrollmentAccepted(accepted)).await?;
                 diagnostics.phase("response_written");
@@ -978,16 +993,10 @@ impl CompanionRuntime {
             }
             let readiness_deadline =
                 tokio::time::Instant::now() + ACTIVE_LISTENER_READINESS_TIMEOUT;
-            let mut rendezvous = match crate::cluster::hyperswarm::spawn_public_rendezvous_with_key(
-                topic,
-                grant.client_noise_key,
-                self.daemon_key.clone(),
-                peeroxide::CompanionDiagnosticScope::Active,
-                readiness_deadline,
-                shutdown.clone(),
-                None,
-            )
-            .await
+            let carrier = self.shared_public_carrier().await?;
+            let mut rendezvous = match carrier.open_route(
+                topic, grant.client_noise_key, readiness_deadline, shutdown.clone(), None,
+            ).await
             {
                 Ok(rendezvous) => rendezvous,
                 Err(error) => {
@@ -1148,7 +1157,7 @@ impl CompanionRuntime {
         &self,
         grant: &DeviceGrant,
         mut connection: peeroxide::SwarmConnection,
-        rendezvous: crate::cluster::hyperswarm::PublicRendezvous,
+        rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
         shutdown: watch::Receiver<bool>,
         device_stop: watch::Receiver<bool>,
     ) -> Result<()> {
@@ -1381,7 +1390,7 @@ impl CompanionRuntime {
     async fn close_unaccepted_chat_connection(
         &self,
         connection: peeroxide::SwarmConnection,
-        rendezvous: crate::cluster::hyperswarm::PublicRendezvous,
+        rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
         reason: anyhow::Error,
     ) -> Result<()> {
         drop(connection);

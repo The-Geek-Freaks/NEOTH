@@ -58,6 +58,8 @@
 //! Every public item keeps its previous `crate::daemon::audit_rpc::<name>` path
 //! via the re-exports below, so the split is internal-only.
 
+use anyhow::Result;
+
 mod client;
 mod fullauto_token;
 mod server;
@@ -82,6 +84,7 @@ pub(crate) use client::{
     ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
     conversation_post_cancellable,
 };
+pub(crate) use client::{UpdaterStatusClientError, updater_status_binding};
 pub(crate) use client::{
     DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,
     instance_commitment_for_nonce,
@@ -107,6 +110,7 @@ pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState,
     is_allowed_client_event, is_allowed_client_event_pair,
 };
+pub(crate) use server::daemon_updater_status_binding;
 #[cfg(test)]
 pub(crate) use sidecar::read_sidecar;
 pub(crate) use sidecar::write_sidecar;
@@ -125,6 +129,31 @@ pub(crate) use transport::probe_unix_socket_refused;
 /// ordinary plaintext message; all configuration, provider, consent, WAL and
 /// parser custody remains daemon-owned.
 pub(crate) const DAEMON_PLAIN_CHAT_SCHEMA_VERSION: u8 = 1;
+
+/// Sealed response from the daemon-owned updater-status route.  It contains
+/// only a canonical *file name*, never a caller-selected path or WAL content.
+/// The commitment binds that name to the exact PID-lock/sidecar incarnation
+/// the client authenticated before it projects the chain locally.
+pub(crate) const DAEMON_UPDATER_STATUS_SCHEMA_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonUpdaterStatusBinding {
+    pub(crate) schema_version: u8,
+    pub(crate) chain_base_name: String,
+    pub(crate) instance_commitment: String,
+}
+
+pub(crate) fn validate_daemon_updater_chain_base_name(name: &str) -> Result<()> {
+    let path = std::path::Path::new(name);
+    anyhow::ensure!(
+        path.components().count() == 1
+            && path.file_name().and_then(std::ffi::OsStr::to_str) == Some(name)
+            && crate::wal::scan::canonical_chain_base_segment_name(std::ffi::OsStr::new(name)),
+        "daemon updater-status chain base is not a canonical direct-child segment"
+    );
+    Ok(())
+}
 /// Each byte may need a six-byte JSON escape.  Keep the UTF-8 message cap
 /// inside the inherited 4-KiB body cap even for an all-control-byte message.
 pub(crate) const DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES: usize = 640;

@@ -76,7 +76,7 @@ mod swarm;
 pub use error::SwarmError;
 pub use peer_info::{PeerInfo, Priority};
 pub use swarm::{
-    JoinOpts, ServerPublication, SwarmConfig, SwarmConnection, SwarmHandle, SwarmStartup, spawn,
+    JoinOpts, ServerAuthenticatedTopicLease, ServerPublication, SwarmConfig, SwarmConnection, SwarmHandle, SwarmStartup, spawn,
     spawn_starting,
 };
 

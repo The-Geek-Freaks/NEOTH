@@ -46,7 +46,7 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 9, "dht": 15, "core": 19, "no_cluster": 1, "bridge": 1}
+        expected_groups = {"libudx": 8, "peeroxide": 14, "dht": 15, "core": 22, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
             "collector": 12,
@@ -56,6 +56,18 @@ class SelectionContractTests(unittest.TestCase):
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
             "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
         ))
+        self.assertEqual(custody["groups"]["peeroxide"]["identities"][-5:], [
+            "swarm::tests::raw_loopback_authenticated_topic_leases_isolate_active_keys_and_retire_exactly",
+            "swarm::tests::authenticated_remote_topics_are_exact_idempotent_and_lease_scoped",
+            "swarm::tests::authenticated_remote_topic_admission_is_legacy_open_until_explicitly_enabled",
+            "swarm::tests::authenticated_remote_topic_registration_requires_joined_server_topic",
+            "swarm::tests::authenticated_remote_topic_admission_capacity_is_bounded",
+        ])
+        self.assertEqual(custody["groups"]["core"]["identities"][-3:], [
+            "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",
+            "cluster::hyperswarm::tests::shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains",
+            "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls",
+        ])
         self.assertEqual(custody["collector"]["identities"], [
             "test_chunk_boundaries_do_not_duplicate_or_merge_pair_and_active_markers",
             "test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody",

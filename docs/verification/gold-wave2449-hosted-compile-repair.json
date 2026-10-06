@@ -21,7 +21,7 @@
     "Expect dead_code only for the deliberately unconstructible no-cluster Prepared variant required by the shared RPC match; verify with hosted slim Clippy.",
     "Extend the existing optional CLI-reference companion selection with all four new W2449 cases, retaining the original authority and revoke cases; combine with three Codegraph contracts in one hosted build."
   ],
-  "validationStatus": "STATIC-REPAIRED-HOSTED-VALIDATION-PENDING",
+  "validationStatus": "HOSTED-EXACT-CLIPPY-AND-NINE-CONTRACTS-PASS-AT-0cd0f54f",
   "localExecutableValidationRan": false,
   "productNativeDeviceReleaseAccepted": false,
   "clippyFollowup": {
@@ -37,5 +37,22 @@
     "generatedReferenceExported": false,
     "rootFailureProofSha256": "015FA5DB39037F9B561C5E651CEADA2394D573078294F602D07F87F19C4EAE45",
     "status": "MINIMAL-CORRECTION-HOSTED-PENDING"
+  },
+  "hostedClosure": {
+    "producer": "0cd0f54fa0f8020bf4044419af28ba341314f2de",
+    "run": "37490842321",
+    "job": "112362853658",
+    "attempt": 1,
+    "exactCompanionCases": 6,
+    "exactCodegraphCases": 3,
+    "sourceBindings": 13,
+    "originalArtifacts": 3,
+    "verifiedArchiveEntries": 25,
+    "generatedDocsByteEqual": true,
+    "slimClippyPassed": true,
+    "coreTestTypeCheckPassed": true,
+    "publicCliBuilt": true,
+    "rootAdmissionSha256": "7FF2A70B9B77D7BBE95F097D0A9B3C884B6D0D38CBE2458789FFEA599E38C677",
+    "broaderProductNativeDeviceReleaseAccepted": false
   }
 }

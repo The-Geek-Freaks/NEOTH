@@ -4372,6 +4372,8 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) config: &'a FreedomConfig,
     pub(crate) home: &'a std::path::Path,
     pub(crate) writer: &'a WalWriterHandle,
+    /// Exact sequence-one chain selected by the daemon-owned WAL setup.
+    pub(crate) segment_chain_base_path: &'a std::path::Path,
     pub(crate) chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
     pub(crate) gui_chat_runtime:
         std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
@@ -4409,6 +4411,7 @@ pub(crate) async fn spawn_audit_rpc(
         config,
         home,
         writer,
+        segment_chain_base_path,
         chat_runtime,
         gui_chat_runtime,
         conversation_runtime,
@@ -4437,6 +4440,11 @@ pub(crate) async fn spawn_audit_rpc(
         conversation_runtime: Some(conversation_runtime),
         webchat,
         companion_runtime,
+        updater_status: Some(crate::daemon::audit_rpc::daemon_updater_status_binding(
+            &home,
+            segment_chain_base_path,
+            endpoint_nonce,
+        )?),
         cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
         // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
         fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),

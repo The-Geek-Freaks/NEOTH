@@ -1,0 +1,62 @@
+{
+  "schema": "neoth.wave2450.shared-companion-carrier.v1",
+  "baseProducer": "0cd0f54fa0f8020bf4044419af28ba341314f2de",
+  "behavior": "Pair and Active listeners share one daemon-keyed DHT/UDX carrier. Incoming authenticated remote-key/topic tuples select bounded route receivers.",
+  "changes": [
+    "Actor-owned admission binds the exact authenticated remote key to its topic before reply, reservation, stream, task or delivery; default legacy mode remains unchanged.",
+    "Pair and its Active successor may share the same topic while their distinct authenticated keys retain independent receivers and leases.",
+    "Serialize route creation and retirement; leave a shared topic only after its last route is gone.",
+    "Keep Pair ownership through EnrollmentAccepted; share the carrier across CompanionRuntime clones.",
+    "Observe bounded overload refusal before application delivery; retain identical combined actor/destroy/dispatcher failure across repeated shutdown calls."
+  ],
+  "review": "R8 independent static approval plus Root caller-sequence and exact manifest verification",
+  "candidateManifestSha256": "E7D533ED75CEC8498D8874E28A750805320C0C86705029E56AC94130424297EF",
+  "candidateSourceBindings": [
+    {
+      "path": "SRC/vendor/peeroxide/src/swarm.rs",
+      "baseSha256": "BABE9C1E535787FB44A8FEE77F4147AF6F613A5B7D3374234387ED4CDF602170",
+      "candidateSha256": "548470E0A825BEA094CFC071D5252C3E86DFCD700E5DEDA97CAE3B46E8E0BE41"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/error.rs",
+      "baseSha256": "9DB35E36EF543E5B6989957BEE8A98DB9B9A182430C762251DE731D40F7A792E",
+      "candidateSha256": "84B79AADCCE771897CA5686FADC5F755B81F0308FE7754815F96F778348531B4"
+    },
+    {
+      "path": "SRC/vendor/peeroxide/src/lib.rs",
+      "baseSha256": "FA87B123CF80BD23FA80559C55ECEA8D21F69D5D3BC2E40BDCC4D61D877D1436",
+      "candidateSha256": "CF4E6821A087F43E849FD4E349295EEEEEE2DA70E5036A25CF8A2F1F7714F586"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "baseSha256": "C8DF80D18C2CFA21A7C693564D81D7E89950A52ACA837C2B84AAD288CE5F080F",
+      "candidateSha256": "E2BBF72A203BC5ED607D3B3A84D3D5138453AA54BF0AD0C283805745AFC2A220"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "baseSha256": "BC50B2DD5F6489EB8A639D6DC12BAC28708B305313ED896A4B63D6E358BFE4B0",
+      "candidateSha256": "23A29D5771B90C73D1B226C8F50E3E91ABB219170B4F43CD5FA0FBD353EAFB65"
+    }
+  ],
+  "focusedTests": [
+    "peeroxide::swarm::tests::raw_loopback_authenticated_topic_leases_isolate_active_keys_and_retire_exactly",
+    "peeroxide::swarm::tests::authenticated_remote_topics_are_exact_idempotent_and_lease_scoped",
+    "peeroxide::swarm::tests::authenticated_remote_topic_admission_is_legacy_open_until_explicitly_enabled",
+    "peeroxide::swarm::tests::authenticated_remote_topic_registration_requires_joined_server_topic",
+    "peeroxide::swarm::tests::authenticated_remote_topic_admission_capacity_is_bounded",
+    "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",
+    "cluster::hyperswarm::tests::shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains",
+    "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls"
+  ],
+  "mobileSelection": {
+    "newCoreCases": 3,
+    "rawSources": 40,
+    "rust": 61,
+    "collector": 12,
+    "newVendorCases": 5
+  },
+  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "proofBoundary": "Vendor test exercises real UDP/DHT/Noise/UDX/SecretStream delivery. Core tests exercise production dispatch policy, real actor drain/late-open fencing and sticky terminal errors. Tests are source-only until hosted execution.",
+  "localExecutableValidationRan": false,
+  "productNativeDeviceReleaseAccepted": false
+}

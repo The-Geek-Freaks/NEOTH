@@ -115,6 +115,7 @@ const PEER_GC_INTERVAL: Duration = Duration::from_secs(60);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_SERVER_PUBLICATION_WAITERS: usize = 16;
 const MAX_PENDING_RESPONDER_NOISE_BYTES: usize = 65_507;
+const MAX_AUTHENTICATED_REMOTE_TOPICS: usize = 64;
 
 /// Secret-free terminal receipt for one server topic's initial publication.
 ///
@@ -129,6 +130,17 @@ pub struct ServerPublication {
     pub topic_announce_succeeded: bool,
     /// Whether publication under `hash(server_public_key)` completed.
     pub key_announce_succeeded: bool,
+}
+
+/// Opaque generation lease for one authenticated remote-to-topic admission.
+///
+/// Pass this exact lease to [`SwarmHandle::remove_server_authenticated_topic`].
+/// A lease from an earlier registration cannot remove a later replacement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServerAuthenticatedTopicLease {
+    remote_static_key: [u8; 32],
+    topic: [u8; 32],
+    generation: u64,
 }
 
 impl ServerPublication {
@@ -203,6 +215,10 @@ pub struct SwarmConfig {
     /// A mismatch is rejected before the server sends a handshake reply or
     /// creates connection, stream, or secret-stream state.
     pub server_expected_remote_static_key: Option<[u8; 32]>,
+    /// Require inbound responders to have a registered authenticated
+    /// remote-to-topic lease. Disabled by default to preserve legacy inbound
+    /// behavior when the admission table is empty.
+    pub server_authenticated_topic_admission: bool,
     /// When set, ignore discovered outbound candidates whose public key does
     /// not match this expected remote Noise static public key.
     ///
@@ -228,6 +244,7 @@ impl Default for SwarmConfig {
             max_parallel: DEFAULT_MAX_PARALLEL,
             firewall: 0,
             server_expected_remote_static_key: None,
+            server_authenticated_topic_admission: false,
             outbound_expected_remote_static_key: None,
             relay_through: None,
             relay_address: None,
@@ -425,6 +442,7 @@ impl SwarmStartup {
             config,
             runtime_handle: runtime.handle(),
             topics: HashMap::new(),
+            authenticated_remote_topics: AuthenticatedRemoteTopics::default(),
             discovery_event_tx,
             peers: HashMap::new(),
             peer_last_seen: HashMap::new(),
@@ -554,6 +572,47 @@ impl SwarmHandle {
         reply_rx.await.map_err(|_| SwarmError::ChannelClosed)?
     }
 
+    /// Admit one authenticated inbound Noise static key for one topic.
+    ///
+    /// Re-registering the exact `(remote_static_key, topic)` pair is
+    /// idempotent. Registering an already-admitted remote key for a different
+    /// topic returns [`SwarmError::AuthenticatedRemoteTopicConflict`].
+    pub async fn register_server_authenticated_topic(
+        &self,
+        remote_static_key: [u8; 32],
+        topic: [u8; 32],
+    ) -> Result<ServerAuthenticatedTopicLease, SwarmError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SwarmCommand::RegisterServerAuthenticatedTopic {
+                remote_static_key,
+                topic,
+                reply_tx,
+            })
+            .await
+            .map_err(|_| SwarmError::Destroyed)?;
+        reply_rx.await.map_err(|_| SwarmError::ChannelClosed)?
+    }
+
+    /// Remove one exact authenticated inbound remote-to-topic admission lease.
+    ///
+    /// Removing a stale lease is idempotent and leaves a replacement admission
+    /// intact.
+    pub async fn remove_server_authenticated_topic(
+        &self,
+        lease: ServerAuthenticatedTopicLease,
+    ) -> Result<(), SwarmError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SwarmCommand::RemoveServerAuthenticatedTopic {
+                lease,
+                reply_tx,
+            })
+            .await
+            .map_err(|_| SwarmError::Destroyed)?;
+        reply_rx.await.map_err(|_| SwarmError::ChannelClosed)?
+    }
+
     /// Wait until all joined topics have completed their initial discovery.
     pub async fn flush(&self) -> Result<(), SwarmError> {
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -603,6 +662,15 @@ enum SwarmCommand {
         topic: [u8; 32],
         reply_tx: oneshot::Sender<Result<(), SwarmError>>,
     },
+    RegisterServerAuthenticatedTopic {
+        remote_static_key: [u8; 32],
+        topic: [u8; 32],
+        reply_tx: oneshot::Sender<Result<ServerAuthenticatedTopicLease, SwarmError>>,
+    },
+    RemoveServerAuthenticatedTopic {
+        lease: ServerAuthenticatedTopicLease,
+        reply_tx: oneshot::Sender<Result<(), SwarmError>>,
+    },
     Flush {
         reply_tx: oneshot::Sender<Result<(), SwarmError>>,
     },
@@ -631,6 +699,7 @@ struct ActorConfig {
     max_parallel: usize,
     firewall: u64,
     server_expected_remote_static_key: Option<[u8; 32]>,
+    server_authenticated_topic_admission: bool,
     outbound_expected_remote_static_key: Option<[u8; 32]>,
     relay_through: Option<[u8; 32]>,
     relay_address: Option<std::net::SocketAddr>,
@@ -674,6 +743,105 @@ fn after_server_handshake_admission<T>(
     }
 }
 
+/// Actor-owned admissions from an authenticated remote Noise static key to the
+/// single topic delivered with that responder connection.
+///
+/// A remote may have exactly one topic. Exact re-registration is safe for
+/// retries; changing a remote's topic requires an explicit remove first.
+struct AuthenticatedRemoteTopics {
+    entries: HashMap<[u8; 32], ServerAuthenticatedTopicLease>,
+    next_generation: u64,
+}
+
+impl Default for AuthenticatedRemoteTopics {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            next_generation: 1,
+        }
+    }
+}
+
+impl AuthenticatedRemoteTopics {
+    fn register(
+        &mut self,
+        remote_static_key: [u8; 32],
+        topic: [u8; 32],
+    ) -> Result<ServerAuthenticatedTopicLease, SwarmError> {
+        match self.entries.get(&remote_static_key) {
+            Some(existing) if existing.topic != topic => {
+                Err(SwarmError::AuthenticatedRemoteTopicConflict)
+            }
+            Some(existing) => Ok(*existing),
+            None => {
+                if self.entries.len() >= MAX_AUTHENTICATED_REMOTE_TOPICS {
+                    return Err(SwarmError::AuthenticatedRemoteTopicCapacity);
+                }
+                let lease = ServerAuthenticatedTopicLease {
+                    remote_static_key,
+                    topic,
+                    generation: self.next_generation,
+                };
+                self.next_generation = self
+                    .next_generation
+                    .checked_add(1)
+                    .expect("authenticated remote topic generation exhausted");
+                self.entries.insert(remote_static_key, lease);
+                Ok(lease)
+            }
+        }
+    }
+
+    fn remove_exact(&mut self, lease: ServerAuthenticatedTopicLease) -> bool {
+        if self.entries.get(&lease.remote_static_key) == Some(&lease) {
+            self.entries.remove(&lease.remote_static_key);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn topic(&self, remote_static_key: &[u8; 32]) -> Option<[u8; 32]> {
+        self.entries.get(remote_static_key).map(|lease| lease.topic)
+    }
+
+    fn remove_topic(&mut self, topic: [u8; 32]) {
+        self.entries.retain(|_, lease| lease.topic != topic);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServerAuthenticatedTopicAdmission {
+    AcceptLegacy,
+    AcceptMapped([u8; 32]),
+    RejectUnmapped,
+}
+
+fn server_authenticated_topic_admission(
+    enabled: bool,
+    admissions: &AuthenticatedRemoteTopics,
+    remote_static_key: &[u8; 32],
+) -> ServerAuthenticatedTopicAdmission {
+    if !enabled {
+        ServerAuthenticatedTopicAdmission::AcceptLegacy
+    } else if let Some(topic) = admissions.topic(remote_static_key) {
+        ServerAuthenticatedTopicAdmission::AcceptMapped(topic)
+    } else {
+        ServerAuthenticatedTopicAdmission::RejectUnmapped
+    }
+}
+
+fn require_joined_server_topic(
+    topics: &HashMap<[u8; 32], TopicState>,
+    topic: &[u8; 32],
+) -> Result<(), SwarmError> {
+    if matches!(topics.get(topic), Some(state) if state.is_server) {
+        Ok(())
+    } else {
+        Err(SwarmError::AuthenticatedRemoteTopicNotServerTopic)
+    }
+}
+
 struct SwarmActor {
     key_pair: KeyPair,
     dht: HyperDhtHandle,
@@ -681,6 +849,7 @@ struct SwarmActor {
     runtime_handle: Arc<RuntimeHandle>,
 
     topics: HashMap<[u8; 32], TopicState>,
+    authenticated_remote_topics: AuthenticatedRemoteTopics,
     discovery_event_tx: mpsc::Sender<DiscoveryEvent>,
 
     // Only unconnected peers are retained here.  Delivered connections own
@@ -980,6 +1149,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
         max_parallel,
         firewall,
         server_expected_remote_static_key,
+        server_authenticated_topic_admission,
         outbound_expected_remote_static_key,
         relay_through,
         relay_address,
@@ -1003,6 +1173,7 @@ pub async fn spawn_starting(config: SwarmConfig) -> Result<SwarmStartup, SwarmEr
             max_parallel: max_parallel.min(MAX_PARALLEL_CONNECTS),
             firewall,
             server_expected_remote_static_key,
+            server_authenticated_topic_admission,
             outbound_expected_remote_static_key,
             relay_through,
             relay_address,
@@ -1180,6 +1351,20 @@ impl SwarmActor {
                 let _ = reply_tx.send(result);
                 false
             }
+            SwarmCommand::RegisterServerAuthenticatedTopic {
+                remote_static_key,
+                topic,
+                reply_tx,
+            } => {
+                let result = self.register_server_authenticated_topic(remote_static_key, topic);
+                let _ = reply_tx.send(result);
+                false
+            }
+            SwarmCommand::RemoveServerAuthenticatedTopic { lease, reply_tx } => {
+                self.authenticated_remote_topics.remove_exact(lease);
+                let _ = reply_tx.send(Ok(()));
+                false
+            }
             SwarmCommand::Flush { reply_tx } => {
                 if self.all_topics_refreshed() {
                     let _ = reply_tx.send(Ok(()));
@@ -1261,7 +1446,19 @@ impl SwarmActor {
         Ok(())
     }
 
+    fn register_server_authenticated_topic(
+        &mut self,
+        remote_static_key: [u8; 32],
+        topic: [u8; 32],
+    ) -> Result<ServerAuthenticatedTopicLease, SwarmError> {
+        require_joined_server_topic(&self.topics, &topic)?;
+        self.authenticated_remote_topics.register(remote_static_key, topic)
+    }
+
     fn do_leave(&mut self, topic: [u8; 32]) -> Result<(), SwarmError> {
+        // Admission is scoped to the public topic lifecycle, even if the
+        // topic was already absent from discovery state.
+        self.authenticated_remote_topics.remove_topic(topic);
         if let Some(state) = self.topics.remove(&topic) {
             if let Some(cancel) = state.cancel_tx {
                 let _ = cancel.send(());
@@ -1704,6 +1901,28 @@ impl SwarmActor {
             return;
         }
 
+        // Noise authenticated the remote identity above.  When explicitly
+        // enabled, this actor-owned map is the final admission decision before
+        // replay, reply, reservation, stream id, or connection state can be
+        // created. The disabled default retains the historic unrestricted
+        // inbound responder behavior.
+        let admitted_topic = match server_authenticated_topic_admission(
+            self.config.server_authenticated_topic_admission,
+            &self.authenticated_remote_topics,
+            &remote_static_key,
+        ) {
+            ServerAuthenticatedTopicAdmission::AcceptLegacy => None,
+            ServerAuthenticatedTopicAdmission::AcceptMapped(topic) => Some(topic),
+            ServerAuthenticatedTopicAdmission::RejectUnmapped => {
+                tracing::debug!(
+                    actual = %short_hex(&remote_static_key),
+                    "server handshake: authenticated remote has no admitted topic"
+                );
+                let _ = reply_tx.send(None);
+                return;
+            }
+        };
+
         let remote_pk = remote_static_key;
         let Some(replay_key) = PendingResponderReplies::key(remote_pk, &msg.noise, &from) else {
             let _ = reply_tx.send(None);
@@ -1861,7 +2080,7 @@ impl SwarmActor {
                         let swarm_conn = SwarmConnection {
                             peer: conn,
                             is_initiator: false,
-                            topics: vec![],
+                            topics: admitted_topic.map_or_else(Vec::new, |topic| vec![topic]),
                             _runtime: runtime,
                             _registration: registration,
                         };
@@ -1901,7 +2120,7 @@ impl SwarmActor {
                         let swarm_conn = SwarmConnection {
                             peer: conn,
                             is_initiator: false,
-                            topics: vec![],
+                            topics: admitted_topic.map_or_else(Vec::new, |topic| vec![topic]),
                             _runtime: runtime,
                             _registration: registration,
                         };
@@ -2094,6 +2313,7 @@ async fn create_server_relay_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libudx::UdxSocket;
     use peeroxide_dht::{
         hyperdht_messages::{decode_handshake_from_bytes, FIREWALL_UNKNOWN, PEER_HANDSHAKE},
         messages::{self, Message, Request},
@@ -2360,11 +2580,25 @@ mod tests {
         dht_task: JoinHandle<Result<(), hyperdht::HyperDhtError>>,
         runtime: UdxRuntime,
         server_rx: mpsc::Receiver<ServerEvent>,
+        conn_rx: mpsc::Receiver<SwarmConnection>,
         connection_lifecycle_rx: mpsc::UnboundedReceiver<ConnectionLifecycleEvent>,
     }
 
     impl LocalDiscoveryActor {
         async fn new(expected_remote_static_key: Option<[u8; 32]>, topic: [u8; 32]) -> Self {
+            Self::new_with_topic_mode(expected_remote_static_key, topic, false, false).await
+        }
+
+        async fn new_authenticated_server(topic: [u8; 32]) -> Self {
+            Self::new_with_topic_mode(None, topic, true, true).await
+        }
+
+        async fn new_with_topic_mode(
+            expected_remote_static_key: Option<[u8; 32]>,
+            topic: [u8; 32],
+            is_server: bool,
+            server_authenticated_topic_admission: bool,
+        ) -> Self {
             let runtime = UdxRuntime::new().expect("local UDX runtime");
             let mut config = HyperDhtConfig::default();
             assert!(config.dht.bootstrap.is_empty(), "local fixture must not bootstrap publicly");
@@ -2378,14 +2612,14 @@ mod tests {
             .expect("local no-bootstrap DHT must start");
             let (discovery_event_tx, _discovery_event_rx) =
                 mpsc::channel(DISCOVERY_EVENT_CHANNEL_CAPACITY);
-            let (conn_tx, _conn_rx) = mpsc::channel(1);
+            let (conn_tx, conn_rx) = mpsc::channel(8);
             let (connection_lifecycle_tx, connection_lifecycle_rx) = mpsc::unbounded_channel();
             let mut topics = HashMap::new();
             topics.insert(
                 topic,
                 TopicState {
-                    is_server: false,
-                    is_client: true,
+                    is_server,
+                    is_client: !is_server,
                     cancel_tx: None,
                     refreshed: false,
                     initial_server_publication: None,
@@ -2401,6 +2635,7 @@ mod tests {
                         max_parallel: 0,
                         firewall: 0,
                         server_expected_remote_static_key: None,
+                        server_authenticated_topic_admission,
                         outbound_expected_remote_static_key: expected_remote_static_key,
                         relay_through: None,
                         relay_address: None,
@@ -2408,6 +2643,7 @@ mod tests {
                     },
                     runtime_handle: runtime.handle(),
                     topics,
+                    authenticated_remote_topics: AuthenticatedRemoteTopics::default(),
                     discovery_event_tx,
                     peers: HashMap::new(),
                     peer_last_seen: HashMap::new(),
@@ -2434,8 +2670,23 @@ mod tests {
                 dht_task,
                 runtime,
                 server_rx,
+                conn_rx,
                 connection_lifecycle_rx,
             }
+        }
+
+        fn add_server_topic(&mut self, topic: [u8; 32]) {
+            self.actor.topics.insert(
+                topic,
+                TopicState {
+                    is_server: true,
+                    is_client: false,
+                    cancel_tx: None,
+                    refreshed: false,
+                    initial_server_publication: None,
+                    server_publication_waiters: Vec::new(),
+                },
+            );
         }
 
         async fn shutdown(self) {
@@ -2549,6 +2800,115 @@ mod tests {
             .expect("raw DHT request must reach the server event queue")
             .expect("local DHT server event channel must stay open");
         local.actor.handle_server_event(event);
+    }
+
+    async fn recv_loopback_udx_dht_response(
+        raw_rx: &mut mpsc::Receiver<libudx::Datagram>,
+        expected_source: std::net::SocketAddr,
+        expected_tid: u16,
+    ) -> messages::Response {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let datagram = raw_rx
+                    .recv()
+                    .await
+                    .expect("UDX socket raw receiver remains connected");
+                if datagram.addr != expected_source {
+                    continue;
+                }
+                let Ok(Message::Response(response)) = messages::decode_message(&datagram.data)
+                else {
+                    continue;
+                };
+                if response.tid == expected_tid {
+                    return response;
+                }
+            }
+        })
+        .await
+        .expect("one total five-second budget must contain the loopback DHT reply")
+    }
+
+    async fn establish_authenticated_loopback_connection(
+        local: &mut LocalDiscoveryActor,
+        server_addr: std::net::SocketAddr,
+        client_key: &KeyPair,
+        tid: u16,
+        client_stream_id: u32,
+    ) -> SwarmConnection {
+        let client_runtime = UdxRuntime::new().expect("client UDX runtime");
+        let client_socket: UdxSocket = client_runtime
+            .create_socket()
+            .await
+            .expect("client UDX socket");
+        client_socket
+            .bind("127.0.0.1:0".parse().expect("loopback bind address"))
+            .await
+            .expect("client UDX socket binds");
+        let mut raw_rx = client_socket
+            .recv_start()
+            .expect("client UDX socket starts raw DHT receive");
+        let server_public_key = local.actor.key_pair.public_key;
+        let target = hash(&server_public_key);
+        let (mut initiator, noise) =
+            loopback_client_noise(client_key, server_public_key, client_stream_id);
+        let request = raw_handshake_request(tid, server_addr, target, noise);
+        client_socket
+            .send_to(&request, server_addr)
+            .expect("client UDX socket sends raw DHT handshake");
+        recv_and_handle_loopback_server_event(local).await;
+        let response = recv_loopback_udx_dht_response(&mut raw_rx, server_addr, tid).await;
+        let reply = response
+            .value
+            .expect("admitted authenticated remote receives a responder reply");
+        let reply_handshake = decode_handshake_from_bytes(&reply)
+            .expect("accepted responder reply remains a handshake envelope");
+        let reply_payload = initiator
+            .recv(&reply_handshake.noise)
+            .expect("client authenticates responder Noise reply");
+        let server_stream_id = u32::try_from(
+            reply_payload
+                .udx
+                .as_ref()
+                .expect("accepted responder reply carries UDX metadata")
+                .id,
+        )
+        .expect("server UDX stream id is u32");
+        let noise_result = initiator
+            .finalize()
+            .expect("client finalizes authenticated Noise session");
+        let client_stream = client_runtime
+            .create_stream(client_stream_id)
+            .await
+            .expect("client creates matching UDX stream");
+        client_stream
+            .connect(&client_socket, server_stream_id, server_addr)
+            .await
+            .expect("client connects matching UDX stream");
+        let _client_secret_stream = SecretStream::from_session(
+            true,
+            client_stream.into_async_stream(),
+            noise_result.tx,
+            noise_result.rx,
+            noise_result.handshake_hash,
+            noise_result.remote_public_key,
+        )
+        .await
+        .expect("client completes secret-stream setup");
+
+        tokio::time::timeout(Duration::from_secs(5), local.conn_rx.recv())
+            .await
+            .expect("server delivers admitted connection within five seconds")
+            .expect("local connection receiver remains connected")
+    }
+
+    fn release_loopback_connection(local: &mut LocalDiscoveryActor, connection: SwarmConnection) {
+        drop(connection);
+        let lifecycle = local
+            .connection_lifecycle_rx
+            .try_recv()
+            .expect("dropped delivered connection releases its actor reservation");
+        local.actor.handle_connection_lifecycle(lifecycle);
     }
 
     #[tokio::test]
@@ -2693,6 +3053,177 @@ mod tests {
             local.actor.pending_responder_replies.entries.is_empty(),
             "cleanup removes the replay entry for the released generation"
         );
+        local.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn raw_loopback_authenticated_topic_leases_isolate_active_keys_and_retire_exactly() {
+        let topic_a = [0xA1; 32];
+        let topic_b = [0xB2; 32];
+        let mut local = LocalDiscoveryActor::new_authenticated_server(topic_a).await;
+        local.add_server_topic(topic_b);
+        let server_public_key = local.actor.key_pair.public_key;
+        let target = hash(&server_public_key);
+        assert!(
+            local.actor.dht.register_server(&target),
+            "the local server route must be admitted before raw requests"
+        );
+        let server_addr = local
+            .actor
+            .dht
+            .listen_socket()
+            .await
+            .expect("local DHT exposes its listen socket")
+            .expect("local DHT binds a listen socket")
+            .local_addr()
+            .await
+            .expect("local DHT listen socket has an address");
+
+        let key_a = KeyPair::from_seed([0xA4; 32]);
+        let key_b = KeyPair::from_seed([0xB5; 32]);
+        let key_pair = KeyPair::from_seed([0xC6; 32]);
+        let unknown_key = KeyPair::from_seed([0xD7; 32]);
+        let lease_a = local
+            .actor
+            .register_server_authenticated_topic(key_a.public_key, topic_a)
+            .expect("joined server topic admits active key A");
+        let _lease_b = local
+            .actor
+            .register_server_authenticated_topic(key_b.public_key, topic_b)
+            .expect("joined server topic admits active key B");
+        let pair_lease = local
+            .actor
+            .register_server_authenticated_topic(key_pair.public_key, topic_a)
+            .expect("the same joined server topic admits a distinct pair key");
+
+        let connection_a = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_a,
+            0xA401,
+            0xA401,
+        )
+        .await;
+        assert_eq!(connection_a.remote_public_key(), &key_a.public_key);
+        assert_eq!(connection_a.topics, vec![topic_a]);
+        release_loopback_connection(&mut local, connection_a);
+
+        let connection_b = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_b,
+            0xB501,
+            0xB501,
+        )
+        .await;
+        assert_eq!(connection_b.remote_public_key(), &key_b.public_key);
+        assert_eq!(connection_b.topics, vec![topic_b]);
+        release_loopback_connection(&mut local, connection_b);
+
+        let pair_connection = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_pair,
+            0xC601,
+            0xC601,
+        )
+        .await;
+        assert_eq!(pair_connection.remote_public_key(), &key_pair.public_key);
+        assert_eq!(pair_connection.topics, vec![topic_a]);
+        release_loopback_connection(&mut local, pair_connection);
+
+        assert!(
+            local.actor.authenticated_remote_topics.remove_exact(pair_lease),
+            "retiring the pair lease removes only its exact generation"
+        );
+        let retired_pair_client = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("retired pair raw client binds");
+        let (_retired_pair_initiator, retired_pair_noise) =
+            loopback_client_noise(&key_pair, server_public_key, 0xC602);
+        let retired_pair_request =
+            raw_handshake_request(0xC602, server_addr, target, retired_pair_noise);
+        let tasks_before_retired_pair = local.actor.establishment_tasks.tasks.len();
+        retired_pair_client
+            .send_to(&retired_pair_request, server_addr)
+            .await
+            .expect("retired pair raw request sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_, retired_pair_response) =
+            recv_loopback_dht_response(&retired_pair_client, server_addr, 0xC602).await;
+        assert!(
+            retired_pair_response.value.is_none(),
+            "a retired pair lease no longer receives a responder reply"
+        );
+        assert_eq!(local.actor.establishment_tasks.tasks.len(), tasks_before_retired_pair);
+        let reconnected_a = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_a,
+            0xA402,
+            0xA402,
+        )
+        .await;
+        assert_eq!(reconnected_a.topics, vec![topic_a]);
+        release_loopback_connection(&mut local, reconnected_a);
+        let reconnected_b = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_b,
+            0xB502,
+            0xB502,
+        )
+        .await;
+        assert_eq!(reconnected_b.topics, vec![topic_b]);
+        release_loopback_connection(&mut local, reconnected_b);
+
+        assert!(
+            local.actor.authenticated_remote_topics.remove_exact(lease_a),
+            "retiring key A removes only A's exact generation"
+        );
+        let b_after_a_retirement = establish_authenticated_loopback_connection(
+            &mut local,
+            server_addr,
+            &key_b,
+            0xB503,
+            0xB503,
+        )
+        .await;
+        assert_eq!(b_after_a_retirement.topics, vec![topic_b]);
+        release_loopback_connection(&mut local, b_after_a_retirement);
+
+        let unknown_client = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("unknown raw client binds");
+        let (_unknown_initiator, unknown_noise) =
+            loopback_client_noise(&unknown_key, server_public_key, 0xD701);
+        let unknown_request =
+            raw_handshake_request(0xD701, server_addr, target, unknown_noise);
+        let tasks_before_unknown = local.actor.establishment_tasks.tasks.len();
+        unknown_client
+            .send_to(&unknown_request, server_addr)
+            .await
+            .expect("unknown raw request sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_, unknown_response) =
+            recv_loopback_dht_response(&unknown_client, server_addr, 0xD701).await;
+        assert!(
+            unknown_response.value.is_none(),
+            "an unmapped authenticated key receives no responder reply"
+        );
+        assert_eq!(local.actor.connections.len(), 0);
+        assert_eq!(local.actor.establishment_tasks.tasks.len(), tasks_before_unknown);
+        assert!(matches!(
+            local.conn_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            local.actor.establishment_tasks.shutdown(),
+        )
+        .await
+        .expect("all delivered loopback establishment tasks drain before teardown");
         local.shutdown().await;
     }
 
@@ -2869,6 +3400,121 @@ mod tests {
             server_handshake_admission(Some(remote_key), remote_key),
             ServerHandshakeAdmission::Accept
         );
+    }
+
+    #[test]
+    fn authenticated_remote_topics_are_exact_idempotent_and_lease_scoped() {
+        let remote_a = [0xA1; 32];
+        let remote_b = [0xB2; 32];
+        let topic_one = [0x11; 32];
+        let topic_two = [0x22; 32];
+        let mut admissions = AuthenticatedRemoteTopics::default();
+
+        let first_lease = admissions.register(remote_a, topic_one).unwrap();
+        assert_eq!(
+            admissions.register(remote_a, topic_one).unwrap(),
+            first_lease,
+            "only the exact remote-to-topic retry is idempotent"
+        );
+        assert!(matches!(
+            admissions.register(remote_a, topic_two),
+            Err(SwarmError::AuthenticatedRemoteTopicConflict)
+        ));
+        assert_eq!(admissions.topic(&remote_a), Some(topic_one));
+
+        assert!(admissions.remove_exact(first_lease));
+        let replacement_lease = admissions.register(remote_a, topic_one).unwrap();
+        assert_ne!(replacement_lease, first_lease);
+        assert!(
+            !admissions.remove_exact(first_lease),
+            "a stale same-key/topic lease cannot revoke its replacement"
+        );
+        assert_eq!(
+            admissions.topic(&remote_a),
+            Some(topic_one),
+            "the replacement admission survives stale removal"
+        );
+        assert!(admissions.register(remote_b, topic_one).is_ok());
+        admissions.remove_topic(topic_one);
+        assert_eq!(admissions.topic(&remote_a), None);
+        assert_eq!(admissions.topic(&remote_b), None);
+        assert!(!admissions.remove_exact(replacement_lease));
+        assert_eq!(admissions.topic(&remote_a), None);
+    }
+
+    #[test]
+    fn authenticated_remote_topic_admission_is_legacy_open_until_explicitly_enabled() {
+        let admissions = AuthenticatedRemoteTopics::default();
+        let remote = [0xA3; 32];
+        let legacy_config = SwarmConfig::default();
+
+        assert!(!legacy_config.server_authenticated_topic_admission);
+
+        assert_eq!(
+            server_authenticated_topic_admission(
+                legacy_config.server_authenticated_topic_admission,
+                &admissions,
+                &remote
+            ),
+            ServerAuthenticatedTopicAdmission::AcceptLegacy
+        );
+        assert_eq!(
+            server_authenticated_topic_admission(true, &admissions, &remote),
+            ServerAuthenticatedTopicAdmission::RejectUnmapped
+        );
+    }
+
+    #[test]
+    fn authenticated_remote_topic_registration_requires_joined_server_topic() {
+        let server_topic = [0x31; 32];
+        let client_topic = [0x32; 32];
+        let unknown_topic = [0x33; 32];
+        let mut topics = HashMap::new();
+        topics.insert(
+            server_topic,
+            TopicState {
+                is_server: true,
+                is_client: false,
+                cancel_tx: None,
+                refreshed: false,
+                initial_server_publication: None,
+                server_publication_waiters: Vec::new(),
+            },
+        );
+        topics.insert(
+            client_topic,
+            TopicState {
+                is_server: false,
+                is_client: true,
+                cancel_tx: None,
+                refreshed: false,
+                initial_server_publication: None,
+                server_publication_waiters: Vec::new(),
+            },
+        );
+
+        assert!(require_joined_server_topic(&topics, &server_topic).is_ok());
+        assert!(matches!(
+            require_joined_server_topic(&topics, &client_topic),
+            Err(SwarmError::AuthenticatedRemoteTopicNotServerTopic)
+        ));
+        assert!(matches!(
+            require_joined_server_topic(&topics, &unknown_topic),
+            Err(SwarmError::AuthenticatedRemoteTopicNotServerTopic)
+        ));
+    }
+
+    #[test]
+    fn authenticated_remote_topic_admission_capacity_is_bounded() {
+        let topic = [0x41; 32];
+        let mut admissions = AuthenticatedRemoteTopics::default();
+        for index in 0..MAX_AUTHENTICATED_REMOTE_TOPICS {
+            admissions.register([index as u8; 32], topic).unwrap();
+        }
+        assert!(matches!(
+            admissions.register([0xFF; 32], topic),
+            Err(SwarmError::AuthenticatedRemoteTopicCapacity)
+        ));
     }
 
     #[test]

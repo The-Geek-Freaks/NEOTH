@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       companion_regressions:
-        description: 'Also run the two real-authority mobile scope and revoke regressions'
+        description: 'Also run the six exact companion authority, lifecycle, and revoke regressions'
         type: boolean
         default: false
       codegraph_contract_regressions:
         description: 'Also run the exact Codegraph catalog, stdio, and descriptor contract regressions'
+        type: boolean
+        default: false
+      updater_status_regressions:
+        description: 'Also run the exact updater-status live-binding and offline-boundary regressions'
         type: boolean
         default: false
       macos_provider_regression:
@@ -41,7 +45,7 @@ jobs:
     name: Export exact-source CLI reference
     if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.companion_regressions || inputs.codegraph_contract_regressions) && 75 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.companion_regressions || inputs.codegraph_contract_regressions || inputs.updater_status_regressions) && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -231,6 +235,70 @@ jobs:
         with:
           name: companion-regressions-${{ github.sha }}
           path: ${{ runner.temp }}/neoth-companion-regressions/
+          if-no-files-found: error
+          retention-days: 14
+
+      # This optional batch shares the already-built default-feature neoth
+      # library. It executes only the six updater-status identities below,
+      # once each, and retains source-bound logs for their narrow admission.
+      - name: Run exact updater-status regressions
+        if: ${{ inputs.updater_status_regressions }}
+        timeout-minutes: 20
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-updater-status-regressions"
+          mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          printf '%s\n' \
+            'daemon::audit_rpc::tests::updater_status_client_round_trips_live_listener_and_refuses_invalid_requests' \
+            'daemon::audit_rpc::tests::updater_status_binding_rejects_noncanonical_or_foreign_chain_bases' \
+            'cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child' \
+            'cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent' \
+            'daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback' \
+            'daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics' > "$proof_dir/selection.txt"
+          printf '%s\n' \
+            'SRC/neothd/src/cli/serve.rs' \
+            'SRC/neothd/src/cli/serve_tasks.rs' \
+            'SRC/neothd/src/cli/updater.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/server.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/client.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/mod.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/tests.rs' > "$proof_dir/source-paths.txt"
+          sha256sum \
+            neothd/src/cli/serve.rs \
+            neothd/src/cli/serve_tasks.rs \
+            neothd/src/cli/updater.rs \
+            neothd/src/daemon/audit_rpc/server.rs \
+            neothd/src/daemon/audit_rpc/client.rs \
+            neothd/src/daemon/audit_rpc/mod.rs \
+            neothd/src/daemon/audit_rpc/tests.rs > "$proof_dir/SHA256SUMS.txt"
+          ordinal=0
+          for identity in \
+            daemon::audit_rpc::tests::updater_status_client_round_trips_live_listener_and_refuses_invalid_requests \
+            daemon::audit_rpc::tests::updater_status_binding_rejects_noncanonical_or_foreign_chain_bases \
+            cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child \
+            cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent \
+            daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback \
+            daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics
+          do
+            ordinal=$((ordinal + 1))
+            cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$ordinal.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log")" -eq 1
+          done
+          test "$ordinal" -eq 6
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$ordinal" "$ordinal" > "$proof_dir/final-counts.txt"
+
+      - name: Upload updater-status regression evidence
+        if: ${{ always() && inputs.updater_status_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: updater-status-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-updater-status-regressions/
           if-no-files-found: error
           retention-days: 14
 

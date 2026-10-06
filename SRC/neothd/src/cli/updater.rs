@@ -198,7 +198,30 @@ pub async fn run_updater(args: UpdaterArgs, output: OutputFormat) -> Result<()> 
                         ": updater WAL chain could not be verified"
                     ))?
                 } else {
-                    project_updater_status_from_home(&home).context(concat!(
+                    // Live discovery is permitted only in normal status mode.
+                    // The authenticated client returns a sealed direct-child
+                    // name. Only missing discovery or a refused connect before
+                    // request write may use the canonical offline chain; every
+                    // stale, authenticated-invalid or post-write failure stays hard.
+                    let projection = match crate::daemon::audit_rpc::updater_status_binding(&home)
+                        .await
+                    {
+                        Ok(binding) => {
+                            let base = live_updater_status_chain_base(&home, &binding).context(
+                                "UPDATER_AUDIT_UNAVAILABLE: refuse invalid live daemon chain",
+                            )?;
+                            project_updater_status_from_home_chain(&home, &base)
+                        }
+                        Err(crate::daemon::audit_rpc::UpdaterStatusClientError::Unavailable(_)) => {
+                            project_updater_status_from_home(&home)
+                        }
+                        Err(crate::daemon::audit_rpc::UpdaterStatusClientError::AuthenticatedInvalid(error)) => {
+                            anyhow::bail!(
+                                "UPDATER_AUDIT_UNAVAILABLE: authenticated daemon updater-status rejected: {error}"
+                            );
+                        }
+                    };
+                    projection.context(concat!(
                         "UPDATER_AUDIT_UNAVAILABLE",
                         ": canonical updater WAL chain could not be verified"
                     ))?
@@ -209,6 +232,15 @@ pub async fn run_updater(args: UpdaterArgs, output: OutputFormat) -> Result<()> 
         }
         UpdaterAction::Check => crate::cli::update::run_update(canonical_check_args(output)).await,
     }
+}
+
+fn live_updater_status_chain_base(
+    home: &Path,
+    binding: &crate::daemon::audit_rpc::DaemonUpdaterStatusBinding,
+) -> Result<PathBuf> {
+    crate::daemon::audit_rpc::validate_daemon_updater_chain_base_name(&binding.chain_base_name)
+        .context("refuse noncanonical daemon updater chain base")?;
+    Ok(home.join("wal").join(&binding.chain_base_name))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1788,6 +1820,51 @@ mod tests {
         let projection = project_updater_status_from_home(home.path()).unwrap();
         assert!(projection.latest.is_empty());
         assert!(projection.open_runs.is_empty());
+    }
+
+    #[test]
+    fn live_daemon_binding_selects_only_a_canonical_direct_child() {
+        let home = tempfile::tempdir().unwrap();
+        let binding = crate::daemon::audit_rpc::DaemonUpdaterStatusBinding {
+            schema_version: crate::daemon::audit_rpc::DAEMON_UPDATER_STATUS_SCHEMA_VERSION,
+            chain_base_name: "custom-daemon-000001.wal".to_owned(),
+            instance_commitment: "a".repeat(64),
+        };
+        assert_eq!(
+            live_updater_status_chain_base(home.path(), &binding).unwrap(),
+            home.path().join("wal/custom-daemon-000001.wal")
+        );
+        let foreign = crate::daemon::audit_rpc::DaemonUpdaterStatusBinding {
+            chain_base_name: "../foreign-000001.wal".to_owned(),
+            ..binding
+        };
+        assert!(live_updater_status_chain_base(home.path(), &foreign).is_err());
+    }
+
+    #[tokio::test]
+    async fn default_status_uses_offline_canonical_chain_when_daemon_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("wal").join("000001.wal");
+        // This is the explicit offline fixture; production does not create a
+        // default chain when the daemon is absent.
+        let (writer, wal_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        drop(writer);
+        wal_join.await.unwrap();
+
+        let args = UpdaterArgs {
+            action: UpdaterAction::Status {
+                config: Some(home.path().join("freedom.yaml")),
+                wal_chain_base: None,
+                wal_segment: None,
+                from_jsonl: None,
+            },
+        };
+        run_updater(args, OutputFormat::Table)
+            .await
+            .expect("absent daemon must retain the canonical offline status consumer");
     }
 
     #[tokio::test]
