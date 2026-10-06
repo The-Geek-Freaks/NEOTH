@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2445-static-reviewed-hosted-pending",
+  "status": "W2445 corrected selection expectations; hosted acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 395188,
-    "sha256": "54210B600BCB191DA371C86C209488F0CC27EDB76043AD1183F22EBA4AD62EFF"
+    "bytes": 395214,
+    "sha256": "FE9C4B58E05CB6B4748A197A7381F8098C359613261D603B20EA0910FB854AF8"
   },
   "sourceInputs": 2160,
   "requiredNativeTests": [
@@ -76285,6 +76285,32 @@
       }
     ],
     "note": "Request-bound responder replay, generation-safe timeout cleanup and pre-handoff mux guard; source-bound46Rust/9collector/39paths, all prior product/restoration gates retained. No local execution; V3/V4/device/release remain open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2445SelectionFixture": {
+    "base": "1286b2c8ba1d5442a78be341dc04560597b86ddf",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 7210,
+        "sha256": "4C1CE10670A2A6917CE4E6ECB5B80EE71F5924A4158F7979D686C9088B84C1EE",
+        "blob": "31a156ec82721223633e2957b8fb33e49cb88454"
+      },
+      {
+        "path": "docs/verification/gold-wave2445-responder-replay.json",
+        "bytes": 3250,
+        "sha256": "466548779C6E3E1022FD42EEFC46A218B3AE56B9964C6FD1A7D24A81F4898895",
+        "blob": "a8448e09a9573a0092519e129b0f74b812733614"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2439522,
+        "sha256": "5A6D6C8DB64E123CD061B3DF683D99FEA72E7965B1B8EFA249492062B0FF79F6",
+        "blob": "44f28259305418fb1c1a9f15b95774d790747530"
+      }
+    ],
+    "note": "Preflight37467721070 retained all gates and caught stale independently specified fixture expectations; manifest/product unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

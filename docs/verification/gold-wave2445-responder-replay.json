@@ -40,7 +40,15 @@
     "localExecutableValidationRan": false,
     "productAccepted": false,
     "deviceAccepted": false,
-    "releaseReady": false
+    "releaseReady": false,
+    "preflightFollowUp": {
+      "run": 37467721070,
+      "producer": "1286b2c8ba1d5442a78be341dc04560597b86ddf",
+      "result": "failed stale independent selection expectations",
+      "formatAndMetadata": "passed",
+      "repair": "Explicit group counts, stable bounded-read position, nine exact collector identities; manifest and product unchanged",
+      "hosted": "pending corrected producer"
+    }
   },
   "upstreamReference": "https://github.com/holepunchto/hyperdht/blob/fdcda937d8cf3ca2e494396c430218e2996e6b29/lib/server.js#L469-L486",
   "constraints": {

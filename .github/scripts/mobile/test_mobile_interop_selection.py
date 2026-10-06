@@ -50,9 +50,9 @@ class SelectionContractTests(unittest.TestCase):
             "rust": 46,
             "collector": 9,
             "sources": 39,
-            "groups": {"libudx": 5, "peeroxide": 3, "dht": 11, "core": 15, "no_cluster": 1, "bridge": 1},
+            "groups": {"libudx": 8, "peeroxide": 9, "dht": 12, "core": 15, "no_cluster": 1, "bridge": 1},
         })
-        self.assertEqual(custody["groups"]["libudx"]["identities"][-2], (
+        self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
             "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
         ))
         self.assertEqual(custody["collector"]["identities"], [
@@ -60,6 +60,11 @@ class SelectionContractTests(unittest.TestCase):
             "test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody",
             "test_os_send_completion_markers_keep_pair_active_scope_and_drop_boundaries",
             "test_cursor_retains_prior_pair_evidence_without_counting_it_as_active",
+            "test_udx_route_markers_preserve_scope_role_and_terminal_outcome",
+            "test_udx_route_markers_ignore_unscoped_response_and_bound_duplicates",
+            "test_udx_route_cursor_keeps_pair_only_outcomes_out_of_active_delta",
+            "test_client_route_phase_whitelist_captures_fixed_markers_only",
+            "test_client_route_phase_whitelist_rejects_suffix_only_marker",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (
