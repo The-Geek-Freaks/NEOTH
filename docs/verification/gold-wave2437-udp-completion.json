@@ -1,0 +1,111 @@
+{
+  "schema": "neoth.wave2437.udp-completion.v1",
+  "base": "fd705b55d98cf9f822f711fc8eb2ddaca8f08a8d",
+  "status": "independent-static-review-approved-hosted-pending",
+  "priorHostedEvidence": {
+    "run": "37433802979",
+    "result": "failure",
+    "exactRustPassed": 29,
+    "collectorPassed": 3,
+    "rawSourceBindings": 27,
+    "productAccepted": false
+  },
+  "reason": "The prior V3 diagnostic route remained unaccepted. Queue acceptance only proves admission to a local raw UDP writer queue; it does not prove an OS send outcome, remote receipt, or peer success. W2437 adds bounded local OS-completion observation and role-qualified raw-fallback queue lifecycle markers without changing protocol behavior.",
+  "observedFailureCauseEstablished": false,
+  "scope": {
+    "diagnosticsOnly": true,
+    "optInExistingEnvironment": true,
+    "server": "Three fixed listener-scoped OS-send outcome phases are emitted only for the existing deferred handshake reply tag: succeeded, failed, or dropped. OS send success is not remote delivery or handshake success.",
+    "client": "Raw-fallback lifecycle markers are per-Io role-qualified queue lifecycle evidence only. They are not a handshake correlation, packet delivery proof, endpoint record, or request count.",
+    "rawAddressesIdsKeysPayloadsErrorsLogged": false,
+    "protocolOrKeyPinsChanged": false,
+    "timeoutOrRetryPolicyChanged": false,
+    "actorPhaseCountsAreRequestCounts": false,
+    "collectorCursorIsEmissionTime": false
+  },
+  "selection": {
+    "exactRustCases": 33,
+    "collectorCases": 3,
+    "portableBefore": 2760,
+    "portableAfter": 2760,
+    "sourceBindingCount": 32
+  },
+  "lockCustody": {
+    "oldCommittedLockSha256": "8C51757F1E0CF49885A7EF653237C49C6E3D72E3CA2544E869F094AFF9EA2B20",
+    "newCommittedLockBlob": "0bd5778da51e83d97b18548759fcb2a3ddb96dc9",
+    "newCommittedLockSha256": "C5A501434048FAD98C6B4476CF55073C67BA93A2E499BD45AB49C2A3E8F2E498",
+    "physicalDirtyLockUsedAsInput": false,
+    "runtimeCompatibility": "pending hosted validation"
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedRun": "not-dispatched",
+    "v3Accepted": false,
+    "v4Held": true,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "review": {
+    "status": "APPROVED-FOR-NARROW-INTEGRATION-AND-HOSTED-VALIDATION",
+    "approvalClaim": true,
+    "path": "work/gold-20260906/wave2437-udp-completion/review/FINAL_COMBINED_STATIC_REVIEW.md",
+    "sha256": "E1C5433634C50E58F512FB816F3A710F4387753FF0AC9E159C22A344B45FF669"
+  },
+  "knownCandidateGap": {
+    "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+    "status": "resolved by statically reviewed R2; hosted execution pending",
+    "reason": "R2 confirms each actual raw queue outcome before the next send, fills exactly 128 entries, then observes the 129th QueueFull and ReceiverClosed after receiver drop. Actual role diagnostics remain in the callback path."
+  },
+  "candidateBindings": [
+    {
+      "path": "SRC/vendor/libudx/src/lib.rs",
+      "baseBlob": "d0bd8d650aafc713f9e129f37727dfe0cb573377",
+      "baseSha256": "6F7E69A77AFCE803C392D0D780EACF62E958CB3A652F4E0B38DB6D7F49445FF0",
+      "candidateSha256": "F9E944D3405D36831226AB7F4CC6B275BF3227D763A8F049B7E2BD6B832A9E9B",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/server/candidate-r1/SRC/vendor/libudx/src/lib.rs"
+    },
+    {
+      "path": "SRC/vendor/libudx/src/native/socket.rs",
+      "baseBlob": "f69a52233de0dc79fe4c94a759945f114049ae9c",
+      "baseSha256": "5D82271ECB80D68A18BBDFACC5C5861ADA2127735913C824C5A0BBC7BE715FFA",
+      "candidateSha256": "B4456893B283DDEB62CBC9F0D8DB4C9D25895505CA005363E41B7964328227C7",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/server/candidate-r1/SRC/vendor/libudx/src/native/socket.rs"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+      "baseBlob": "d465c11b342446dbc1509afbadda8bcdec085bf9",
+      "baseSha256": "F07239ED9370C0487A3B3A290328D6EA575598767B2D26F8130CC5DDA30F77CA",
+      "candidateSha256": "77C51E1CB5D6CC47D12C463C838820A78E9DFDC2B3D0419D337224BFC1BB66BA",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/server/candidate-r1/SRC/vendor/peeroxide-dht/src/hyperdht.rs"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+      "baseBlob": "e945cbf45ed149a8e6ffc7e11a9a70457022fba9",
+      "baseSha256": "4AB8727518A56B663460604CC69FDBED38487E06E84751A473CE5D4324669ADE",
+      "candidateSha256": "4E4D22EF827A3D296D7D17C3B219DCA3738EA719FC4F4FE7D47985427AB39C93",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/client/candidate-r2/SRC/vendor/peeroxide-dht/src/io.rs",
+      "candidateCustody": "R2 test-only successor independently reviewed; exact physical candidate hash bound"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "baseBlob": "f6337122f61936b148e744fa0ef3e898ded94dd2",
+      "baseSha256": "7D863DE8B98D4D7858A1C8A34A7F73C7CD0D8656AB5950C6FDE386660CE934B0",
+      "candidateSha256": "8D56BCC2055D55ED0E05D7A14875FFA0A40171F8AD2A03254584E6677836C431",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/harness/candidate/mobile-companion-interop.yml"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseBlob": "f34f150ad1bda7f9ec7e88115b7c0fa3b64372be",
+      "baseSha256": "CD997F37FB7858C9455A729B45850C00C9D1B785FE455EC838C328E26AA78C2D",
+      "candidateSha256": "F9F7BACCC880C67FFE82BC5BF3430C428F40888568AC9BE39AD9A665E650FCEC",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/harness/candidate/hosted-mobile-interop.py"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseBlob": "dc07f0664b0bb3c8ff9202514d75eae16fe5be21",
+      "baseSha256": "0F0F88C2D925703F8D48FB22D7086A065AA9B1E62D86609E75A9E46D36B25CB8",
+      "candidateSha256": "9203DEEFAB42DC3B5C6D51222BE16E353ED56607290A783134F78656FDF311A2",
+      "candidate": "work/gold-20260906/wave2437-udp-completion/harness/candidate/test_hosted_mobile_interop_diagnostics.py"
+    }
+  ]
+}

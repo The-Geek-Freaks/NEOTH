@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -215,7 +215,7 @@ impl Drop for OutgoingConnectDiagnostics {
 pub(crate) struct IncomingConnectDiagnostics {
     enabled: bool,
     scope: CompanionDiagnosticScope,
-    emitted: AtomicU16,
+    emitted: AtomicU32,
 }
 
 impl IncomingConnectDiagnostics {
@@ -223,7 +223,7 @@ impl IncomingConnectDiagnostics {
         Self {
             enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
             scope,
-            emitted: AtomicU16::new(0),
+            emitted: AtomicU32::new(0),
         }
     }
 
@@ -245,6 +245,9 @@ impl IncomingConnectDiagnostics {
             "handshake_reply_udp_terminal_error" => 1 << 13,
             "handshake_reply_prepare_failed" => 1 << 14,
             "handshake_reply_expired" => 1 << 15,
+            "handshake_reply_udp_os_send_succeeded" => 1 << 16,
+            "handshake_reply_udp_os_send_failed" => 1 << 17,
+            "handshake_reply_udp_os_send_dropped" => 1 << 18,
             _ => return,
         };
         if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
@@ -267,12 +270,12 @@ impl IncomingConnectDiagnostics {
         Self {
             enabled: true,
             scope,
-            emitted: AtomicU16::new(0),
+            emitted: AtomicU32::new(0),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn emitted(&self) -> u16 {
+    pub(crate) fn emitted(&self) -> u32 {
         self.emitted.load(Ordering::Relaxed)
     }
 }

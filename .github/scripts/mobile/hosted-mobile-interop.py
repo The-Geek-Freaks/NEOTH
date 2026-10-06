@@ -85,6 +85,9 @@ SCOPED_CONNECT_PHASES = (
     "handshake_reply_udp_accepted", "handshake_reply_udp_queued",
     "handshake_reply_udp_queue_dropped", "handshake_reply_udp_terminal_error",
     "handshake_reply_prepare_failed", "handshake_reply_expired",
+    "handshake_reply_udp_os_send_succeeded",
+    "handshake_reply_udp_os_send_failed",
+    "handshake_reply_udp_os_send_dropped",
 )
 SCOPED_CONNECT_MARKERS = tuple(
     (f"{scope}_{phase}", f"NEOTH_COMPANION_CONNECT_PHASE={scope}_{phase}\n".encode("ascii"))

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2439-hosted-lock-admitted-platform-compatibility-pending",
+  "status": "wave2437-static-reviewed-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 392637,
-    "sha256": "76627BB55B22F01A36FD7571829C6F4ED55AEBF56211E133AD4A3DE3EB6E3898"
+    "bytes": 392965,
+    "sha256": "4AD6CDEA7BC8B78D094C6BCDDE1ECFBC370E86AEF2E9E5F5E6CABBD725FC8E2E"
   },
-  "sourceInputs": 2146,
+  "sourceInputs": 2148,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75929,6 +75929,68 @@
       }
     ],
     "note": "Exact reviewed lock admitted from fresh hosted37439820097 and index-only imported. Physical dirty lock preserved; cross-platform compilation/tests and actualV3/V4 remain pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2437UdpCompletion": {
+    "base": "fd705b55d98cf9f822f711fc8eb2ddaca8f08a8d",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 32629,
+        "sha256": "F9F7BACCC880C67FFE82BC5BF3430C428F40888568AC9BE39AD9A665E650FCEC",
+        "blob": "8b476f1e353e940cb07db3d59d05e732cab7cf46"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 6897,
+        "sha256": "9203DEEFAB42DC3B5C6D51222BE16E353ED56607290A783134F78656FDF311A2",
+        "blob": "3d184fbfa9ae8094212e8dbbdf4e6673a449de4d"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 20300,
+        "sha256": "ABCDC45C7F4C72F41D16F4D659FA00D4AD70CCD1B7EFAB1D2621A560DAAC21CF",
+        "blob": "890d2b0134813be19c24dec47b610424c738e6b6"
+      },
+      {
+        "path": "docs/verification/gold-wave2437-udp-completion.json",
+        "bytes": 6114,
+        "sha256": "85A0786394FBB718459974F767258878D655CA82094669E89E2312AB0A75BFF4",
+        "blob": "f7a1cc4e212980ed1e29e6c17c9f07b9d79407ad"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2428809,
+        "sha256": "567B3AE92EC8842D58379987E51B1B303784C357706D428C921367E20C018E77",
+        "blob": "b377b59191a55b16cb5a25eca20a00dc40adf6d5"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/lib.rs",
+        "bytes": 2878,
+        "sha256": "7FAB73522E6E59F4CE7B659155DBF584319C8B680DEA3D7B7DC7FB0BB5A68CA6",
+        "blob": "c2953bd1c305f3dedb9fa4d14cefe60ed0c649dd"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/socket.rs",
+        "bytes": 35348,
+        "sha256": "401FF80A3228B8BA37137EFF9CAA87DEE879B3CD167EF3FE7BC89C3CEFC550F5",
+        "blob": "b1bd8a109b92588ef325afc45be2d32a30d6f32f"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 142206,
+        "sha256": "77C51E1CB5D6CC47D12C463C838820A78E9DFDC2B3D0419D337224BFC1BB66BA",
+        "blob": "ff96a667f157efeb4382dab7fdf1d28284890f4b"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+        "bytes": 78018,
+        "sha256": "B5D94378E8EABB9693ACC3C5A89FE670A3298164CF2ECBE9B2D8FB26D9EC71E3",
+        "blob": "c50443ec84a8e86105cf759b21c03f766983cd98"
+      }
+    ],
+    "note": "Opt-in UDP OS completion and raw queue lifecycle diagnostics; 33 focused Rust/3collector/32sources planned, V3 and current compatibility still pending; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

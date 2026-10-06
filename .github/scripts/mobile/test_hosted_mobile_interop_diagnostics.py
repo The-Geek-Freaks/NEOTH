@@ -18,6 +18,9 @@ PAIR = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_dispatch_received\n"
 ACTIVE = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_dispatch_received\n"
 ACTIVE_REPLY_ACCEPTED = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_reply_udp_accepted\n"
 PAIR_REPLY_QUEUED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_queued\n"
+PAIR_OS_SEND_SUCCEEDED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_os_send_succeeded\n"
+ACTIVE_OS_SEND_FAILED = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_reply_udp_os_send_failed\n"
+PAIR_OS_SEND_DROPPED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_os_send_dropped\n"
 
 
 class ChunkStream:
@@ -77,6 +80,28 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertEqual(counts["active_handshake_reply_udp_accepted"], 1)
         self.assertEqual(counts["pair_handshake_reply_udp_accepted"], 0)
         self.assertEqual(counts["active_handshake_reply_udp_queued"], 0)
+        self.assertFalse(result["scoped_connect_saturated"])
+        self.assertTrue(result["reader_closed"])
+        self.assertFalse(result["reader_error"])
+        self.assertNotIn(private_canary.decode(), repr(result))
+
+    def test_os_send_completion_markers_keep_pair_active_scope_and_drop_boundaries(self) -> None:
+        private_canary = b"private-os-send-detail-must-not-persist"
+        nonmatching_suffix = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_os_send_succeeded_extra\n"
+        stream = ChunkStream([
+            private_canary + PAIR_OS_SEND_SUCCEEDED[:33],
+            PAIR_OS_SEND_SUCCEEDED[33:] + ACTIVE_OS_SEND_FAILED[:31],
+            ACTIVE_OS_SEND_FAILED[31:] + PAIR_OS_SEND_DROPPED + nonmatching_suffix,
+        ])
+        collector = INTEROP.ShutdownMarkerCollector(stream)
+        result = collector.snapshot(5)
+        counts = result["scoped_connect_counts"]
+        self.assertEqual(counts["pair_handshake_reply_udp_os_send_succeeded"], 1)
+        self.assertEqual(counts["active_handshake_reply_udp_os_send_failed"], 1)
+        self.assertEqual(counts["pair_handshake_reply_udp_os_send_dropped"], 1)
+        self.assertEqual(counts["active_handshake_reply_udp_os_send_succeeded"], 0)
+        self.assertEqual(counts["pair_handshake_reply_udp_os_send_failed"], 0)
+        self.assertEqual(counts["active_handshake_reply_udp_os_send_dropped"], 0)
         self.assertFalse(result["scoped_connect_saturated"])
         self.assertTrue(result["reader_closed"])
         self.assertFalse(result["reader_error"])

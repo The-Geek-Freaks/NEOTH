@@ -61,11 +61,53 @@ pub struct Datagram {
 ///
 /// This is crate-private so reliable stream paths can use the same bounded,
 /// owned writer instead of creating a task for each wire packet.
-#[derive(Debug)]
 pub(crate) struct OutboundDatagram {
     pub(crate) data: Vec<u8>,
     pub(crate) addr: SocketAddr,
     _egress_byte_permit: Option<OwnedSemaphorePermit>,
+    completion: Option<RawDatagramCompletionObserver>,
+}
+
+/// Terminal result for an optional raw-datagram completion observer.
+///
+/// `Sent` means the socket-owned writer received an OS-level success from
+/// `UdpSocket::send_to`. It does not assert remote delivery. `SendFailed`
+/// records an OS-level write failure without exposing its details. A queued
+/// envelope discarded during writer or socket teardown reports
+/// `DroppedBeforeSend` from its owner drop path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawDatagramCompletion {
+    Sent,
+    SendFailed,
+    DroppedBeforeSend,
+}
+
+/// One optional observer owned by an already-enqueued raw datagram.
+///
+/// The socket invokes it exactly once from its existing writer task or from
+/// the envelope's drop path. A failed admission never owns this observer.
+pub type RawDatagramCompletionObserver =
+    Box<dyn FnOnce(RawDatagramCompletion) + Send + 'static>;
+
+impl Drop for OutboundDatagram {
+    fn drop(&mut self) {
+        if let Some(observer) = self.completion.take() {
+            observer(RawDatagramCompletion::DroppedBeforeSend);
+        }
+    }
+}
+
+fn finish_outbound_datagram(
+    datagram: &mut OutboundDatagram,
+    result: std::io::Result<usize>,
+) {
+    let completion = match result {
+        Ok(_) => RawDatagramCompletion::Sent,
+        Err(_) => RawDatagramCompletion::SendFailed,
+    };
+    if let Some(observer) = datagram.completion.take() {
+        observer(completion);
+    }
 }
 
 /// Socket-owned admission handle for every outbound path.
@@ -79,6 +121,24 @@ pub(crate) struct OutboundSender {
     egress_bytes: Arc<Semaphore>,
 }
 
+/// Fixed raw-fallback receiver observations, without packet metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawFallbackOutcome {
+    Observed,
+    Enqueued,
+    QueueFull,
+    ReceiverClosed,
+}
+
+/// Optional observer for a socket's raw fallback receiver.
+pub type RawFallbackObserver =
+    Arc<dyn Fn(RawFallbackOutcome) + Send + Sync + 'static>;
+
+struct RawFallbackSlot {
+    tx: mpsc::Sender<Datagram>,
+    observer: Option<RawFallbackObserver>,
+}
+
 #[derive(Default)]
 struct SocketTasks {
     recv: Option<tokio::task::JoinHandle<()>>,
@@ -89,7 +149,7 @@ struct UdxSocketInner {
     udp: OnceLock<Arc<tokio::net::UdpSocket>>,
     tasks: Mutex<SocketTasks>,
     streams: super::stream::StreamMap,
-    fallback_tx: Arc<Mutex<Option<mpsc::Sender<Datagram>>>>,
+    fallback_tx: Arc<Mutex<Option<RawFallbackSlot>>>,
     outbound_tx: OnceLock<OutboundSender>,
     egress_bytes: Arc<Semaphore>,
     closed: AtomicBool,
@@ -139,10 +199,11 @@ impl UdxSocketInner {
             })
             .map_err(|_| UdxError::RuntimeGone)?;
         tasks.writer = Some(tokio::spawn(async move {
-            while let Some(datagram) = rx.recv().await {
+            while let Some(mut datagram) = rx.recv().await {
                 // UDP send errors are per-datagram and not actionable here.
                 // Deliberately do not emit one warning per bad/overloaded peer.
-                let _ = udp.send_to(&datagram.data, datagram.addr).await;
+                let result = udp.send_to(&datagram.data, datagram.addr).await;
+                finish_outbound_datagram(&mut datagram, result);
                 // Dropping `datagram` here releases its socket-wide byte
                 // reservation, whether it came from raw or reliable egress.
             }
@@ -153,6 +214,51 @@ impl UdxSocketInner {
     fn outbound_sender(&self) -> Result<OutboundSender> {
         self.ensure_writer_loop()?;
         self.outbound_tx.get().cloned().ok_or(UdxError::RuntimeGone)
+    }
+
+    fn dispatch_raw_fallback(
+        fallback_tx: &Arc<Mutex<Option<RawFallbackSlot>>>,
+        packet: Vec<u8>,
+        addr: SocketAddr,
+    ) {
+        let (tx, observer) = {
+            let guard = fallback_tx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(slot) = guard.as_ref() else {
+                return;
+            };
+            (slot.tx.clone(), slot.observer.clone())
+        };
+        if let Some(observer) = &observer {
+            observer(RawFallbackOutcome::Observed);
+        }
+        match tx.try_send(Datagram { data: packet, addr }) {
+            Ok(()) => {
+                if let Some(observer) = observer {
+                    observer(RawFallbackOutcome::Enqueued);
+                }
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if let Some(observer) = observer {
+                    observer(RawFallbackOutcome::QueueFull);
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                if let Some(observer) = observer {
+                    observer(RawFallbackOutcome::ReceiverClosed);
+                }
+                let mut guard = fallback_tx
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if guard
+                    .as_ref()
+                    .is_some_and(|current| current.tx.same_channel(&tx))
+                {
+                    *guard = None;
+                }
+            }
+        }
     }
 
     fn ensure_recv_loop(&self) -> Result<()> {
@@ -203,21 +309,11 @@ impl UdxSocketInner {
                                 // otherwise valid, MTU-bounded UDX-looking datagram.
                                 None => {
                                     drop(guard);
-                                    let packet = buf[..len].to_vec();
-                                    let raw_tx = fallback_tx
-                                        .lock()
-                                        .unwrap_or_else(|e| e.into_inner())
-                                        .clone();
-                                    if let Some(tx) = raw_tx {
-                                        match tx.try_send(Datagram { data: packet, addr }) {
-                                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                                *fallback_tx
-                                                    .lock()
-                                                    .unwrap_or_else(|e| e.into_inner()) = None;
-                                            }
-                                        }
-                                    }
+                                    UdxSocketInner::dispatch_raw_fallback(
+                                        &fallback_tx,
+                                        buf[..len].to_vec(),
+                                        addr,
+                                    );
                                     continue;
                                 }
                             }
@@ -256,27 +352,9 @@ impl UdxSocketInner {
                     }
                 }
 
-                let packet = buf[..len].to_vec();
-                let raw_tx = fallback_tx
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                if let Some(tx) = raw_tx {
-                    // Raw datagrams are unreliable. A full queue drops only this
-                    // packet, preserving reader progress for every other route.
-                    match tx.try_send(Datagram { data: packet, addr }) {
-                        Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            let mut guard = fallback_tx.lock().unwrap_or_else(|e| e.into_inner());
-                            if guard
-                                .as_ref()
-                                .is_some_and(|current| current.same_channel(&tx))
-                            {
-                                *guard = None;
-                            }
-                        }
-                    }
-                }
+                // Raw datagrams are unreliable. A full queue drops only this
+                // packet, preserving reader progress for every other route.
+                UdxSocketInner::dispatch_raw_fallback(&fallback_tx, buf[..len].to_vec(), addr);
             }
         }));
         Ok(())
@@ -400,7 +478,22 @@ impl UdxSocket {
     /// when the socket's finite raw egress queue is saturated; callers may drop,
     /// retry, or apply their own rate limit.
     pub fn send_to(&self, data: &[u8], addr: SocketAddr) -> Result<()> {
-        self.inner.outbound_sender()?.try_send_raw(data, addr)
+        self.inner.outbound_sender()?.try_send_raw(data, addr, None)
+    }
+
+    /// Queue an unreliable datagram with a completion observer after admission.
+    ///
+    /// An observer is owned only after the existing raw-egress admission has
+    /// succeeded. It records the writer's OS-send outcome, not remote delivery.
+    pub fn send_to_observed(
+        &self,
+        data: &[u8],
+        addr: SocketAddr,
+        observer: RawDatagramCompletionObserver,
+    ) -> Result<()> {
+        self.inner
+            .outbound_sender()?
+            .try_send_raw(data, addr, Some(observer))
     }
 
     /// Begin receiving non-stream datagrams on this socket.
@@ -409,6 +502,17 @@ impl UdxSocket {
     /// preserves the historical one-consumer API while making its memory bound
     /// explicit.
     pub fn recv_start(&self) -> Result<mpsc::Receiver<Datagram>> {
+        self.recv_start_with_observer(None)
+    }
+
+    /// Begin receiving non-stream datagrams with an optional fixed observer.
+    ///
+    /// The observer follows only raw-fallback queue lifecycle. It does not run
+    /// for stream-routed packets and receives no packet metadata.
+    pub fn recv_start_with_observer(
+        &self,
+        observer: Option<RawFallbackObserver>,
+    ) -> Result<mpsc::Receiver<Datagram>> {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(UdxError::RuntimeGone);
         }
@@ -417,7 +521,7 @@ impl UdxSocket {
             .inner
             .fallback_tx
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(tx);
+            .unwrap_or_else(|e| e.into_inner()) = Some(RawFallbackSlot { tx, observer });
         self.inner.ensure_recv_loop()?;
         Ok(rx)
     }
@@ -453,7 +557,12 @@ pub(crate) async fn send_reliable(
 
 impl OutboundSender {
     /// Reserve raw egress capacity before copying a caller-owned slice.
-    fn try_send_raw(&self, data: &[u8], addr: SocketAddr) -> Result<()> {
+    fn try_send_raw(
+        &self,
+        data: &[u8],
+        addr: SocketAddr,
+        completion: Option<RawDatagramCompletionObserver>,
+    ) -> Result<()> {
         if data.len() > MAX_UDP_PAYLOAD {
             return Err(UdxError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -479,6 +588,7 @@ impl OutboundSender {
             data: data.to_vec(),
             addr,
             _egress_byte_permit: byte_permit,
+            completion,
         });
         Ok(())
     }
@@ -506,6 +616,7 @@ impl OutboundSender {
             data,
             addr,
             _egress_byte_permit: byte_permit,
+            completion: None,
         });
         Ok(())
     }
@@ -549,6 +660,78 @@ mod tests {
 
     fn loopback() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+    }
+
+    #[test]
+    fn observed_raw_datagram_writer_reports_success_failure_and_teardown_once() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let make_datagram = |observed: Arc<Mutex<Vec<RawDatagramCompletion>>>| {
+            OutboundDatagram {
+                data: vec![0xA5],
+                addr: loopback(),
+                _egress_byte_permit: None,
+                completion: Some(Box::new(move |outcome| {
+                    observed.lock().expect("completion lock").push(outcome);
+                })),
+            }
+        };
+
+        let mut sent = make_datagram(Arc::clone(&observed));
+        finish_outbound_datagram(&mut sent, Ok(1));
+        drop(sent);
+
+        let mut failed = make_datagram(Arc::clone(&observed));
+        finish_outbound_datagram(
+            &mut failed,
+            Err(io::Error::other("fixed test write failure")),
+        );
+        drop(failed);
+
+        drop(make_datagram(Arc::clone(&observed)));
+        assert_eq!(
+            *observed.lock().expect("completion lock"),
+            vec![
+                RawDatagramCompletion::Sent,
+                RawDatagramCompletion::SendFailed,
+                RawDatagramCompletion::DroppedBeforeSend,
+            ],
+            "the writer policy must preserve exactly one terminal outcome per admitted envelope"
+        );
+    }
+
+    #[test]
+    fn raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observer_events = Arc::clone(&observed);
+        let (tx, rx) = mpsc::channel(1);
+        let fallback = Arc::new(Mutex::new(Some(RawFallbackSlot {
+            tx,
+            observer: Some(Arc::new(move |outcome| {
+                observer_events.lock().expect("observer lock").push(outcome);
+            })),
+        })));
+
+        UdxSocketInner::dispatch_raw_fallback(&fallback, vec![0xA1], loopback());
+        UdxSocketInner::dispatch_raw_fallback(&fallback, vec![0xB2], loopback());
+        drop(rx);
+        UdxSocketInner::dispatch_raw_fallback(&fallback, vec![0xC3], loopback());
+
+        assert_eq!(
+            *observed.lock().expect("observer lock"),
+            vec![
+                RawFallbackOutcome::Observed,
+                RawFallbackOutcome::Enqueued,
+                RawFallbackOutcome::Observed,
+                RawFallbackOutcome::QueueFull,
+                RawFallbackOutcome::Observed,
+                RawFallbackOutcome::ReceiverClosed,
+            ],
+            "the coupled raw receiver and observer must classify the actual fallback path"
+        );
+        assert!(
+            fallback.lock().expect("fallback lock").is_none(),
+            "a closed receiver clears its coupled observer slot"
+        );
     }
 
     #[test]
@@ -706,7 +889,7 @@ mod tests {
             .await
             .expect("reliable packet reserves the common budget");
         let error = sender
-            .try_send_raw(&[0x5A], addr)
+            .try_send_raw(&[0x5A], addr, None)
             .expect_err("raw egress cannot bypass reliable byte reservation");
         assert!(matches!(
             error,
@@ -715,7 +898,7 @@ mod tests {
 
         drop(rx.recv().await.expect("reliable packet is queued"));
         sender
-            .try_send_raw(&[0x5A], addr)
+            .try_send_raw(&[0x5A], addr, None)
             .expect("byte reservation returns when reliable writer item drops");
     }
 

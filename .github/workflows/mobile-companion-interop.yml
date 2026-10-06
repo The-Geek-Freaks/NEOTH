@@ -156,13 +156,91 @@ jobs:
             io::tests::reply_egress_queue_is_bounded_and_expired_reply_is_terminal \
             rpc::tests::deferred_handshake_reply_diagnostics_ignore_non_handshake_replies \
             io::tests::deferred_handshake_reply_diagnostics_cover_queue_retry_and_expiry \
-            io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses
+            io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses \
+            io::tests::deferred_handshake_reply_os_completion_preserves_the_listener_tag \
+            io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle
           do
             dht_ordinal=$((dht_ordinal + 1))
             cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
-          test "$dht_ordinal" -eq 9
+          test "$dht_ordinal" -eq 11
+      - name: Run exact locked libudx OS-send completion regression
+        id: exact_libudx_os_completion
+        timeout-minutes: 10
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/libudx-os-completion-regressions"
+          mkdir -p "$proof_dir"
+          root_manifest=Cargo.toml
+          root_lock=Cargo.lock
+          libudx_manifest=vendor/libudx/Cargo.toml
+          root_manifest_hash="$(sha256sum "$root_manifest" | awk '{print $1}')"
+          root_lock_hash="$(sha256sum "$root_lock" | awk '{print $1}')"
+          libudx_manifest_hash="$(sha256sum "$libudx_manifest" | awk '{print $1}')"
+          root_manifest_backup="$RUNNER_TEMP/libudx-root-Cargo.toml"
+          root_lock_backup="$RUNNER_TEMP/libudx-Cargo.lock"
+          libudx_manifest_backup="$RUNNER_TEMP/libudx-vendor-Cargo.toml"
+          cp "$root_manifest" "$root_manifest_backup"
+          cp "$root_lock" "$root_lock_backup"
+          cp "$libudx_manifest" "$libudx_manifest_backup"
+          cleanup() {
+            local status=$?
+            cp "$root_manifest_backup" "$root_manifest"
+            cp "$root_lock_backup" "$root_lock"
+            cp "$libudx_manifest_backup" "$libudx_manifest"
+            test "$(sha256sum "$root_manifest" | awk '{print $1}')" = "$root_manifest_hash"
+            test "$(sha256sum "$root_lock" | awk '{print $1}')" = "$root_lock_hash"
+            test "$(sha256sum "$libudx_manifest" | awk '{print $1}')" = "$libudx_manifest_hash"
+            printf '%s\n' 'LIBUDX_TEST_WORKSPACE_RESTORED=1' | tee "$proof_dir/restoration-success.marker"
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          # The vendored crate is intentionally standalone. Admit it only into
+          # this runner-local root overlay and retain the committed root lock.
+          test "$(grep -Fxc '    "neoth-relay",' "$root_manifest")" -eq 1
+          test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 0
+          sed -i '/^    "neoth-relay",$/a\    "vendor/libudx",' "$root_manifest"
+          test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 1
+          test "$(grep -Fxc '[workspace]' "$libudx_manifest")" -eq 1
+          sed -i '/^\[workspace\]$/d' "$libudx_manifest"
+          test "$(grep -Fxc '[workspace]' "$libudx_manifest")" -eq 0
+
+          # The root lock already pins every package record. Add only libudx's
+          # four declared dev-dependency edges temporarily for --locked tests.
+          test "$(grep -Fxc 'name = "libudx"' "$root_lock")" -eq 1
+          for dependency in ' "rand 0.9.4",' ' "serde_json",' ' "sha2 0.10.9",' ' "tracing-subscriber",'; do
+            test "$(grep -Fxc "$dependency" "$root_lock")" -ge 1
+          done
+          sed -i '/^name = "libudx"$/,/^\[\[package\]\]$/s/^ "thiserror 2\.0\.18",$/ "rand 0.9.4",\n "serde_json",\n "sha2 0.10.9",\n "thiserror 2.0.18",/' "$root_lock"
+          sed -i '/^name = "libudx"$/,/^\[\[package\]\]$/s/^ "tracing",$/ "tracing",\n "tracing-subscriber",/' "$root_lock"
+          for dependency in ' "rand 0.9.4",' ' "serde_json",' ' "sha2 0.10.9",' ' "tracing-subscriber",'; do
+            test "$(sed -n '/^name = "libudx"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc "$dependency")" -eq 1
+          done
+
+          ordinal=0
+          for identity in \
+            native::socket::tests::observed_raw_datagram_writer_reports_success_failure_and_teardown_once \
+            native::socket::tests::raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata
+          do
+            ordinal=$((ordinal + 1))
+            cargo test -p libudx --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
+          done
+          test "$ordinal" -eq 2
+      - name: Prove both transient test overlays restored before cache admission
+        id: overlay_restored
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fqx 'PEEROXIDE_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/companion-publication-regressions/restoration-success.marker"
+          grep -Fqx 'LIBUDX_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/libudx-os-completion-regressions/restoration-success.marker"
+          echo 'restored=true' >> "$GITHUB_OUTPUT"
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         timeout-minutes: 15
@@ -218,13 +296,6 @@ jobs:
           set -euo pipefail
           cargo test --manifest-path bridges/companion-native/Cargo.toml --locked tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-result-regression.log"
-      - name: Prove restored overlay eligible for cache
-        id: overlay_restored
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -Fqx 'PEEROXIDE_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/companion-publication-regressions/restoration-success.marker"
-          echo 'restored=true' >> "$GITHUB_OUTPUT"
       - name: Run fixed isolated-home pair/status/chat/revoke
         timeout-minutes: 10
         run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
@@ -233,7 +304,7 @@ jobs:
           test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
           test -s "$RUNNER_TEMP/w2328-receipt.json"
       - name: Save mobile-interop Cargo checkpoint
-        if: ${{ always() && !cancelled() && steps.mobile_interop_cache_restore.outputs.cache-hit != 'true' && steps.exact_host_build.outcome == 'success' && steps.exact_server_publication.outcome == 'success' && steps.exact_no_cluster.outcome == 'success' && steps.exact_companion_rpc_shutdown.outcome == 'success' && steps.exact_bridge_public_result.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
+        if: ${{ always() && !cancelled() && steps.mobile_interop_cache_restore.outputs.cache-hit != 'true' && steps.exact_host_build.outcome == 'success' && steps.exact_server_publication.outcome == 'success' && steps.exact_libudx_os_completion.outcome == 'success' && steps.exact_no_cluster.outcome == 'success' && steps.exact_companion_rpc_shutdown.outcome == 'success' && steps.exact_bridge_public_result.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830

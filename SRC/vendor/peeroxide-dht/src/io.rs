@@ -5,7 +5,7 @@
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,7 +14,10 @@ use blake2::digest::Mac;
 use blake2::Blake2bMac;
 use tokio::time::Instant;
 
-use libudx::{Datagram, UdxRuntime, UdxSocket};
+use libudx::{
+    Datagram, RawDatagramCompletion, RawFallbackObserver, RawFallbackOutcome, UdxRuntime,
+    UdxSocket,
+};
 
 use crate::hyperdht_messages::PEER_HANDSHAKE;
 use crate::messages::{self, Ipv4Peer, Response};
@@ -148,6 +151,65 @@ impl ClientResponseDiagnostics {
     }
 }
 
+/// Fixed, secret-free raw-fallback queue evidence for one `Io` socket role.
+///
+/// This callback runs before DHT decoding. It reports only raw queue lifecycle,
+/// never packet identity, endpoint, payload, or response/request correlation.
+#[derive(Clone)]
+struct RawFallbackDiagnostics {
+    enabled: bool,
+    socket_kind: SocketKind,
+    emitted: Arc<AtomicU8>,
+}
+
+impl RawFallbackDiagnostics {
+    fn from_environment(socket_kind: SocketKind) -> Self {
+        Self {
+            enabled: std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1"),
+            socket_kind,
+            emitted: Arc::new(AtomicU8::new(0)),
+        }
+    }
+
+    fn observer(&self) -> Option<RawFallbackObserver> {
+        if !self.enabled {
+            return None;
+        }
+        let diagnostics = self.clone();
+        Some(Arc::new(move |outcome| diagnostics.phase(outcome)))
+    }
+
+    fn phase(&self, outcome: RawFallbackOutcome) {
+        let (bit, suffix) = match outcome {
+            RawFallbackOutcome::Observed => (1, "observed"),
+            RawFallbackOutcome::Enqueued => (1 << 1, "enqueued"),
+            RawFallbackOutcome::QueueFull => (1 << 2, "queue_full"),
+            RawFallbackOutcome::ReceiverClosed => (1 << 3, "receiver_closed"),
+        };
+        if self.emitted.fetch_or(bit, Ordering::Relaxed) & bit != 0 {
+            return;
+        }
+        let role = match self.socket_kind {
+            SocketKind::Client => "client",
+            SocketKind::Server => "server",
+        };
+        eprintln!("NEOTH_COMPANION_CLIENT_RESPONSE_PHASE={role}_raw_fallback_{suffix}");
+    }
+
+    #[cfg(test)]
+    fn for_test(socket_kind: SocketKind) -> Self {
+        Self {
+            enabled: true,
+            socket_kind,
+            emitted: Arc::new(AtomicU8::new(0)),
+        }
+    }
+
+    #[cfg(test)]
+    fn emitted(&self) -> u8 {
+        self.emitted.load(Ordering::Relaxed)
+    }
+}
 /// Wire-byte counters shared between the IO layer and consumers (e.g. progress
 /// reporters in `peeroxide-cli`). Increments are `Relaxed` — these are
 /// observability metrics, not synchronization primitives.
@@ -399,13 +461,20 @@ impl Io {
             .parse()
             .map_err(IoError::AddrParse)?;
 
+        let server_raw_fallback_diagnostics =
+            RawFallbackDiagnostics::from_environment(SocketKind::Server);
+        let client_raw_fallback_diagnostics =
+            RawFallbackDiagnostics::from_environment(SocketKind::Client);
+
         let server_socket = runtime.create_socket().await?;
         server_socket.bind(server_addr).await?;
-        let server_rx = server_socket.recv_start()?;
+        let server_rx = server_socket
+            .recv_start_with_observer(server_raw_fallback_diagnostics.observer())?;
 
         let client_socket = runtime.create_socket().await?;
         client_socket.bind(client_addr).await?;
-        let client_rx = client_socket.recv_start()?;
+        let client_rx = client_socket
+            .recv_start_with_observer(client_raw_fallback_diagnostics.observer())?;
 
         let tid: u16 = rand::random();
 
@@ -506,7 +575,7 @@ impl Io {
                 SocketKind::Client => &client_socket,
                 SocketKind::Server => &server_socket,
             };
-            socket.send_to(&reply.buffer, reply.addr)
+            Self::send_pending_reply(socket, reply)
         });
 
         self.drain_pending_requests();
@@ -978,7 +1047,7 @@ impl Io {
                 SocketKind::Client => &self.client_socket,
                 SocketKind::Server => &self.server_socket,
             };
-            socket.send_to(&reply.buffer, reply.addr)
+            Self::send_pending_reply(socket, &reply)
         };
         self.finish_pending_reply(reply, result);
     }
@@ -994,6 +1063,35 @@ impl Io {
 
     fn phase_pending_reply(reply: &PendingReply, phase: &'static str) {
         Self::phase_diagnostics(&reply.diagnostics, phase);
+    }
+
+    fn phase_reply_os_completion(
+        diagnostics: Arc<crate::hyperdht::IncomingConnectDiagnostics>,
+        completion: RawDatagramCompletion,
+    ) {
+        diagnostics.phase(match completion {
+            RawDatagramCompletion::Sent => "handshake_reply_udp_os_send_succeeded",
+            RawDatagramCompletion::SendFailed => "handshake_reply_udp_os_send_failed",
+            RawDatagramCompletion::DroppedBeforeSend => "handshake_reply_udp_os_send_dropped",
+        });
+    }
+
+    fn send_pending_reply(
+        socket: &UdxSocket,
+        reply: &PendingReply,
+    ) -> Result<(), libudx::UdxError> {
+        if let Some(diagnostics) = &reply.diagnostics {
+            let diagnostics = Arc::clone(diagnostics);
+            socket.send_to_observed(
+                &reply.buffer,
+                reply.addr,
+                Box::new(move |completion| {
+                    Self::phase_reply_os_completion(diagnostics, completion);
+                }),
+            )
+        } else {
+            socket.send_to(&reply.buffer, reply.addr)
+        }
     }
 
     /// Account for one reply egress attempt. A raw queue rejection retains the
@@ -1484,6 +1582,27 @@ mod tests {
         io.destroy().await.expect("io destroy");
     }
 
+    #[test]
+    fn deferred_handshake_reply_os_completion_preserves_the_listener_tag() {
+        let diagnostics = Arc::new(
+            crate::hyperdht::IncomingConnectDiagnostics::for_test(
+                crate::hyperdht::CompanionDiagnosticScope::Active,
+            ),
+        );
+        for completion in [
+            RawDatagramCompletion::Sent,
+            RawDatagramCompletion::SendFailed,
+            RawDatagramCompletion::DroppedBeforeSend,
+        ] {
+            Io::phase_reply_os_completion(Arc::clone(&diagnostics), completion);
+        }
+        assert_eq!(
+            diagnostics.emitted(),
+            (1 << 16) | (1 << 17) | (1 << 18),
+            "only the tagged deferred reply maps writer completion into active-listener phases"
+        );
+    }
+
     #[tokio::test]
     async fn would_block_reply_egress_retains_owned_bytes_until_retry_succeeds() {
         let runtime = UdxRuntime::new().expect("runtime");
@@ -1744,6 +1863,176 @@ mod tests {
         io.destroy().await.expect("io destroy");
     }
 
+    async fn expect_raw_fallback_pair(
+        events: &mut tokio::sync::mpsc::UnboundedReceiver<RawFallbackOutcome>,
+        terminal: RawFallbackOutcome,
+        context: &str,
+    ) {
+        let observed = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{context}: observed outcome timed out"))
+            .unwrap_or_else(|| panic!("{context}: observer channel closed"));
+        assert_eq!(
+            observed,
+            RawFallbackOutcome::Observed,
+            "{context}: each raw packet begins with observed"
+        );
+        let terminal_observation = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("{context}: terminal outcome timed out"))
+            .unwrap_or_else(|| panic!("{context}: observer channel closed"));
+        assert_eq!(
+            terminal_observation, terminal,
+            "{context}: observed packet receives its exact queue lifecycle outcome"
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let table = Arc::new(Mutex::new(RoutingTable::new([0u8; 32])));
+        let mut io = Io::bind(&runtime, table, IoConfig::default())
+            .await
+            .expect("io bind");
+        io.client_response_diagnostics = ClientResponseDiagnostics::for_test();
+
+        let sender = runtime.create_socket().await.expect("sender socket");
+        sender
+            .bind("127.0.0.1:0".parse().expect("sender bind address"))
+            .await
+            .expect("sender bind");
+
+        let client_diagnostics = RawFallbackDiagnostics::for_test(SocketKind::Client);
+        let client_diagnostic_observer = client_diagnostics
+            .observer()
+            .expect("test diagnostics observer is enabled");
+        let (client_events_tx, mut client_events) = tokio::sync::mpsc::unbounded_channel();
+        let client_observer: RawFallbackObserver = Arc::new(move |outcome| {
+            client_diagnostic_observer(outcome);
+            let _ = client_events_tx.send(outcome);
+        });
+        let mut client_rx = io
+            .client_socket
+            .recv_start_with_observer(Some(client_observer))
+            .expect("replace client raw receiver with observer");
+        let client_addr = io.client_socket.local_addr().await.expect("client address");
+        sender
+            .send_to(&[0xa5], client_addr)
+            .expect("send client passthrough datagram");
+        let received = tokio::time::timeout(Duration::from_secs(1), client_rx.recv())
+            .await
+            .expect("client raw passthrough is bounded")
+            .expect("client receiver stays open");
+        assert_eq!(received.data, vec![0xa5]);
+        expect_raw_fallback_pair(
+            &mut client_events,
+            RawFallbackOutcome::Enqueued,
+            "first client raw packet",
+        )
+        .await;
+        assert_eq!(
+            client_diagnostics.emitted(),
+            (1 << 0) | (1 << 1),
+            "the actual client diagnostics observer retains observed and enqueued bits"
+        );
+        assert_eq!(
+            io.client_response_diagnostics.emitted(),
+            0,
+            "pre-Io raw lifecycle must not claim a DHT response classification"
+        );
+
+        // Fill the existing raw receiver one observed packet at a time. Waiting
+        // for every terminal callback avoids relying on sender writer-queue
+        // admission or executor timing while leaving the bounded raw queue full.
+        for byte in 0..128u16 {
+            sender
+                .send_to(&[(byte & 0xff) as u8], client_addr)
+                .expect("send client raw queue fill packet");
+            expect_raw_fallback_pair(
+                &mut client_events,
+                RawFallbackOutcome::Enqueued,
+                "client raw queue fill packet",
+            )
+            .await;
+        }
+
+        sender
+            .send_to(&[0xb2], client_addr)
+            .expect("send client raw queue full packet");
+        expect_raw_fallback_pair(
+            &mut client_events,
+            RawFallbackOutcome::QueueFull,
+            "client raw queue full packet",
+        )
+        .await;
+        assert_ne!(
+            client_diagnostics.emitted() & (1 << 2),
+            0,
+            "the actual client diagnostics observer records queue-full"
+        );
+
+        drop(client_rx);
+        sender
+            .send_to(&[0xc3], client_addr)
+            .expect("send after client receiver close");
+        expect_raw_fallback_pair(
+            &mut client_events,
+            RawFallbackOutcome::ReceiverClosed,
+            "client raw receiver close packet",
+        )
+        .await;
+        assert_ne!(
+            client_diagnostics.emitted() & (1 << 3),
+            0,
+            "the actual client diagnostics observer records receiver-closed"
+        );
+
+        let server_diagnostics = RawFallbackDiagnostics::for_test(SocketKind::Server);
+        let server_diagnostic_observer = server_diagnostics
+            .observer()
+            .expect("test diagnostics observer is enabled");
+        let (server_events_tx, mut server_events) = tokio::sync::mpsc::unbounded_channel();
+        let server_observer: RawFallbackObserver = Arc::new(move |outcome| {
+            server_diagnostic_observer(outcome);
+            let _ = server_events_tx.send(outcome);
+        });
+        let mut server_rx = io
+            .server_socket
+            .recv_start_with_observer(Some(server_observer))
+            .expect("replace server raw receiver with observer");
+        let server_addr = io.server_socket.local_addr().await.expect("server address");
+        sender
+            .send_to(&[0x5a], server_addr)
+            .expect("send server passthrough datagram");
+        let received = tokio::time::timeout(Duration::from_secs(1), server_rx.recv())
+            .await
+            .expect("server raw passthrough is bounded")
+            .expect("server receiver stays open");
+        assert_eq!(received.data, vec![0x5a]);
+        expect_raw_fallback_pair(
+            &mut server_events,
+            RawFallbackOutcome::Enqueued,
+            "first server raw packet",
+        )
+        .await;
+        assert_eq!(
+            server_diagnostics.emitted(),
+            (1 << 0) | (1 << 1),
+            "the actual server diagnostics observer remains role-local"
+        );
+        assert!(
+            client_events.try_recv().is_err(),
+            "server raw packet has no client observer outcome"
+        );
+        assert_eq!(
+            io.client_response_diagnostics.emitted(),
+            0,
+            "server raw lifecycle cannot consume client handshake diagnostics"
+        );
+
+        sender.close().await.expect("sender close");
+        io.destroy().await.expect("io destroy");
+    }
     #[tokio::test]
     async fn client_handshake_response_diagnostics_distinguish_handshake_from_other_responses() {
         let runtime = UdxRuntime::new().expect("runtime");
