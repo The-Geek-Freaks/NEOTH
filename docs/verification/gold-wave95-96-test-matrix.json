@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2457-W2462-HOSTED-FORMATTED-EXECUTABLE-PENDING",
+  "status": "W2463-POSITIVE-CRON-FIXTURE-CONSENT-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398026,
-    "sha256": "F52A8F7589EBABF1ABD0F4DDDC031FA277607EED01E607A58A26F894C316A0C3"
+    "bytes": 398029,
+    "sha256": "C35F19B3131A16F40BC2AB5BF5604241139F240972BFEBC3E41D85771DA176B6"
   },
   "sourceInputs": 2175,
   "requiredNativeTests": [
@@ -5898,7 +5898,7 @@
     {
       "test": "cli::cron::tests::w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
@@ -15708,13 +15708,13 @@
     {
       "test": "cli::cron::tests::edit_updates_name_and_timeout",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
@@ -16711,19 +16711,19 @@
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_runs_real_job_and_drains_writer_once",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_refuses_live_daemon_before_work_factory",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+      "sourceSha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
       "junitClass": "neoth"
     },
     {
@@ -77295,6 +77295,44 @@
       }
     ],
     "note": "Only original authenticated hosted formatting patch applied to two owned Rust files; no local formatter.41case focused/product pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2463CronFixtureConsent": {
+    "base": "49344693833158a19d5affd408d2da872843101b",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 26053,
+        "sha256": "68D544B5CF6015CAF53F1D11AF1E01AB95A0AAF35EA563D7EBDC77CAB2385737",
+        "blob": "6f59668a4e8aa49eb05f82036ca78553c3c51dae"
+      },
+      {
+        "path": "docs/verification/gold-wave2457-manual-cron-owner.json",
+        "bytes": 3418,
+        "sha256": "63699C7FCD66B7E55E3D87EC9FF4B5808FC3A58D5C260C8EEEB9C9F48A5AB763",
+        "blob": "692b6f7dcd9d007a512e1f8cd8c4b9ab3f0a0207"
+      },
+      {
+        "path": "docs/verification/gold-wave2462-authenticated-rotation.json",
+        "bytes": 2057,
+        "sha256": "E6F9F97B9054B9C9228A3942A06D64748D3D039BF040E640DEC2874A263646F5",
+        "blob": "a6ba7c7533d15e202098b76708580206f8ae8ffe"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2456096,
+        "sha256": "3BD65457B8072121B2EFA13AE22722742EC6D325BF852AC2733052D01D40AF9F",
+        "blob": "665822b8557b0ae67d68b48f67d0479a3cf03206"
+      },
+      {
+        "path": "SRC/neothd/src/cli/cron.rs",
+        "bytes": 64761,
+        "sha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC",
+        "blob": "ea623eb64a385909c05bea19bc160d110fbb9d3e"
+      }
+    ],
+    "note": "Isolated positive Cron fixture grants its actual configured routes before the real runner gate; no production consent change.41case selection unchanged,16owner source bindings.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

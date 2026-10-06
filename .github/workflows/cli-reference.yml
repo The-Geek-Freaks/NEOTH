@@ -313,6 +313,7 @@ jobs:
             'SRC/neothd/src/cli/cron.rs' \
             'SRC/neothd/src/cron/runner.rs' \
             'SRC/neothd/src/config/mod.rs' \
+            'SRC/neothd/src/consent.rs' \
             'SRC/neothd/src/providers/cost_authorization.rs' > "$proof_dir/source-paths.txt"
           while IFS= read -r source_path; do
             sha256sum "${source_path#SRC/}"

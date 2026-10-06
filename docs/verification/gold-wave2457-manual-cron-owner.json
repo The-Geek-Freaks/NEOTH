@@ -67,5 +67,14 @@
     "artifact": "11436788769",
     "custodySha256": "CA32F2BA527BCF2F0E770AAA8B23D0C35B71003B1E2A4ABCF1F9BA70849802AD",
     "localFormatterRan": false
+  },
+  "positiveFixtureConsent": {
+    "baseProducer": "49344693833158a19d5affd408d2da872843101b",
+    "discoveredBy": "Root static consumer call-chain review before expensive hosted dispatch",
+    "reviewSha256": "854F8FE2E666DBF30858D13A587282FF6FE62E901D2E7776FA1DB8A1262ADB8E",
+    "change": "Grant only the actual canonical configured routes inside the isolated test home before invoking real run_job_at.",
+    "productionConsentGateChanged": false,
+    "localExecutionRan": false,
+    "hostedAcceptance": "pending"
   }
 }

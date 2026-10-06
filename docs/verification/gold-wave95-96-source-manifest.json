@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T19:02:39.0806598Z",
-  "validationStatus": "W2457-W2462-HOSTED-FORMATTED-EXECUTABLE-PENDING",
+  "capturedUtc": "2026-10-06T19:07:01.6553868Z",
+  "validationStatus": "W2463-POSITIVE-CRON-FIXTURE-CONSENT-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 26011,
-      "sha256": "72103CDF2C9238C3BDD40E46C01F96748110CC814576EA73CFFA6B97505DF7FB"
+      "bytes": 26053,
+      "sha256": "68D544B5CF6015CAF53F1D11AF1E01AB95A0AAF35EA563D7EBDC77CAB2385737"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3823,13 +3823,13 @@
     },
     {
       "path": "docs/verification/gold-wave2457-manual-cron-owner.json",
-      "bytes": 2897,
-      "sha256": "BFB3708F75F2D59146BAD05A18057EC1CB7FE0701216FDF43AA2E59DAE63209C"
+      "bytes": 3418,
+      "sha256": "63699C7FCD66B7E55E3D87EC9FF4B5808FC3A58D5C260C8EEEB9C9F48A5AB763"
     },
     {
       "path": "docs/verification/gold-wave2462-authenticated-rotation.json",
       "bytes": 2057,
-      "sha256": "D1062F1005D9BF09F06A7193177709F65F6A39B859EE10711A05D9051A76714E"
+      "sha256": "E6F9F97B9054B9C9228A3942A06D64748D3D039BF040E640DEC2874A263646F5"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4983,8 +4983,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2455555,
-      "sha256": "17B189ABD82B30C165359B552AAE85E236E267AE8CE5A861810C6F2F91F28D84"
+      "bytes": 2456096,
+      "sha256": "3BD65457B8072121B2EFA13AE22722742EC6D325BF852AC2733052D01D40AF9F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5983,8 +5983,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cron.rs",
-      "bytes": 64599,
-      "sha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33"
+      "bytes": 64761,
+      "sha256": "8E081CC6A03FAFD9FEFC7B7C5BCF816DB13AE0FECEF046B765034147ADF651FC"
     },
     {
       "path": "SRC/neothd/src/cli/dictate.rs",

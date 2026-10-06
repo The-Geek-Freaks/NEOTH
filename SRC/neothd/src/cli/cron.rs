@@ -1429,6 +1429,9 @@ mod tests {
             config.public_yaml().unwrap(),
         )
         .unwrap();
+        for route in crate::consent::required_consent_routes(&config).unwrap() {
+            crate::consent::grant_route(home.path(), &route).unwrap();
+        }
 
         let mut job = jobs_fixture().jobs.remove(0);
         job.name = "owner transaction".into();

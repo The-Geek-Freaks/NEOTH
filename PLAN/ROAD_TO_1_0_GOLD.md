@@ -18477,3 +18477,11 @@ The fixture now uses one real rotating writer and preserves its prior base bytes
 production authentication is unchanged. The next focused lane contains24 Companion
 and17 Updater/owner cases. Full mobile, native, device and release acceptance remain
 open. All original PLAN bytes remain preserved; local BSOD hold and no-.slint apply.
+
+**W2463 positive Cron fixture consent precondition (2026-10-06):**
+Before dispatch, Root traced the new real Cron fixture through the production
+route-consent gate. The isolated OpenAI-configured test home lacked its required
+marker. The fixture now grants its exact canonical configured routes; production
+consent is unchanged. Independent static review confirmed this precondition.
+The focused lane remains41cases and now binds16Updater/owner sources, including
+consent.rs. Hosted execution remains pending; no local runtime was started.
