@@ -274,6 +274,41 @@ pub(crate) fn acquire_offline_manual_cron_interlock(
     Ok(Some(OfflineManualCronInterlock { _lock: lock }))
 }
 
+/// Holds the daemon PID-file OS lock for one offline `agents run` fan-out.
+/// This deliberately stays separate from the self-update and ManualCron
+/// interlocks: a fan-out keeps its writer and provider lifetime mutually
+/// exclusive with daemon startup without widening either other owner scope.
+pub(crate) struct OfflineAgentsFanOutInterlock {
+    _lock: File,
+}
+
+/// Acquire the offline `agents run` owner before any home WAL or provider
+/// effect. A live daemon or an ambiguous ownership probe fails closed; after
+/// the exclusive startup lock is acquired, no daemon can start until the
+/// fan-out has drained its writer and dropped this lease. PID/nonce bytes are
+/// never modified.
+pub(crate) fn acquire_offline_agents_fan_out_interlock(
+    pidfile: &Path,
+) -> Result<Option<OfflineAgentsFanOutInterlock>> {
+    if let Some(parent) = pidfile.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create agents fan-out PID directory {}", parent.display()))?;
+    }
+    if live_daemon_pid(pidfile)?.is_some() {
+        return Ok(None);
+    }
+    let Some(lock) = open_exclusive(pidfile)
+        .with_context(|| format!("acquire agents fan-out interlock {}", pidfile.display()))?
+    else {
+        return Ok(None);
+    };
+    // This lock is the final absence proof. Re-probing live_daemon_pid while
+    // it is held would misclassify this read-only lease as a daemon owner.
+    let _ = std::fs::metadata(pidfile)
+        .with_context(|| format!("recheck agents fan-out interlock {}", pidfile.display()))?;
+    Ok(Some(OfflineAgentsFanOutInterlock { _lock: lock }))
+}
+
 enum ExistingLockState {
     Missing,
     Held,
@@ -1038,6 +1073,52 @@ mod tests {
         drop(lease);
         let daemon =
             acquire(&path).expect("daemon startup succeeds after ManualCron lease release");
+        drop(daemon);
+    }
+
+    const W2464_AGENTS_FAN_OUT_CHILD_PIDFILE: &str = "NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE";
+
+    #[test]
+    #[ignore = "helper launched by the W2464 agents fan-out interlock parent"]
+    fn w2464_agents_fan_out_interlock_child_daemon_start() {
+        let Some(path) = std::env::var_os(W2464_AGENTS_FAN_OUT_CHILD_PIDFILE) else {
+            return;
+        };
+        assert!(
+            acquire(std::path::Path::new(&path)).is_err(),
+            "child daemon start must lose agents fan-out lease"
+        );
+    }
+
+    #[test]
+    fn w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let lease = acquire_offline_agents_fan_out_interlock(&path)
+            .unwrap()
+            .expect("offline agents fan-out lease");
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start")
+            .env(W2464_AGENTS_FAN_OUT_CHILD_PIDFILE, &path)
+            .output()
+            .expect("child contender");
+        assert!(
+            child.status.success(),
+            "cross-process daemon start must lose agents fan-out lease; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        drop(lease);
+        let daemon = acquire(&path)
+            .expect("daemon startup succeeds after agents fan-out lease release");
+        assert!(
+            acquire_offline_agents_fan_out_interlock(&path)
+                .unwrap()
+                .is_none(),
+            "a live daemon must deny a second offline agents fan-out owner"
+        );
         drop(daemon);
     }
 }

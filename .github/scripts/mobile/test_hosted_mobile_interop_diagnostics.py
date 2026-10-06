@@ -137,6 +137,38 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertNotIn("private-path-not-retained", repr(result))
         self.assertNotIn("secret-payload", repr(result))
 
+    def test_panic_site_accepts_only_bounded_basename_and_positive_line(self) -> None:
+        secret = b"panic-payload-must-not-persist"
+        stream = ChunkStream([
+            b"[neoth panic] ts_unix=1 at discarded-path: " + secret + b"\n",
+            b"NEOTH_PANIC_SITE=companion_runtime.rs:",
+            b"2337\n",
+        ])
+        result = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)
+        self.assertTrue(result["rust_panic_observed"])
+        self.assertEqual(result["rust_panic_site"], "companion_runtime.rs:2337")
+        self.assertNotIn(secret.decode("ascii"), repr(result))
+        self.assertNotIn("discarded-path", repr(result))
+
+    def test_panic_site_rejects_paths_payloads_zero_and_suffixes(self) -> None:
+        secret = b"panic-site-secret-must-not-persist"
+        invalid = INTEROP.ShutdownMarkerCollector(ChunkStream([
+            b"NEOTH_PANIC_SITE=/home/runner/src/lib.rs:17\n",
+            b"NEOTH_PANIC_SITE=lib.rs:0\n",
+            b"NEOTH_PANIC_SITE=lib.rs:17:" + secret + b"\n",
+            b"NEOTH_PANIC_SITE=lib.rs:17 extra\n",
+        ])).snapshot(5)
+        self.assertIsNone(invalid["rust_panic_site"])
+        self.assertNotIn(secret.decode("ascii"), repr(invalid))
+        self.assertNotIn("/home/runner", repr(invalid))
+        for stream in (
+            ChunkStream([b"NEOTH_PANIC_SITE=before.rs:19\n[neoth panic]\n"]),
+            ChunkStream([b"NEOTH_PANIC_SITE=overlap.rs:23\n", b"[neoth panic]\n"]),
+        ):
+            result = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)
+            self.assertTrue(result["rust_panic_observed"])
+            self.assertIsNone(result["rust_panic_site"])
+
     def test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody(self) -> None:
         private_canary = b"private-reply-diagnostic-must-not-persist"
         unknown_scope = b"NEOTH_COMPANION_CONNECT_PHASE=inactive_handshake_reply_udp_accepted\n"

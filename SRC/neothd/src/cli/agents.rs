@@ -163,11 +163,51 @@ async fn run_fan_out(
     retry_failed: bool,
     output: &OutputFormat,
 ) -> Result<()> {
+    run_fan_out_with_provider_factory(
+        home,
+        agent_dir,
+        agent_names,
+        prompt,
+        max_concurrent,
+        timeout_secs,
+        retry_failed,
+        output,
+        |config, home, writer| async move {
+            crate::providers::fallback_chain_from_config(&config, &home, Some(writer)).await
+        },
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_fan_out_with_provider_factory<F, Fut>(
+    home: &std::path::Path,
+    agent_dir: &std::path::Path,
+    agent_names: Vec<String>,
+    prompt: String,
+    max_concurrent: usize,
+    timeout_secs: u64,
+    retry_failed: bool,
+    output: &OutputFormat,
+    provider_factory: F,
+) -> Result<()>
+where
+    F: FnOnce(
+            FreedomConfig,
+            std::path::PathBuf,
+            crate::wal::writer::WalWriterHandle,
+        ) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = Result<Box<dyn crate::providers::Provider>>> + Send + 'static,
+{
     use crate::sub_agents::parallel::dispatch_parallel;
     use crate::sub_agents::runtime::{
         MAX_CONCURRENT, MAX_FAN_OUT, MAX_PROMPT_BYTES, ProviderSubAgentWorker, SubAgentRunRecord,
     };
     use crate::sub_agents::schema::{HandoffPriority, SubAgentRequest};
+
+    let home = home.to_path_buf();
 
     if !(2..=MAX_FAN_OUT).contains(&agent_names.len()) {
         anyhow::bail!("fan-out requires 2..={MAX_FAN_OUT} --agent values");
@@ -204,89 +244,134 @@ async fn run_fan_out(
     let config = FreedomConfig::load_from_path(&config_path)
         .context("load freedom.yaml — run `neoth init` first")?;
     let left_binding = fan_out_left_role_binding(Arc::new(config.clone()))?;
-    let skill_registry_context = fan_out_skill_registry_context(home, &config_path, &config)
+    let skill_registry_context = fan_out_skill_registry_context(&home, &config_path, &config)
         .await
         .context("capture authority-bound Skill registry for this fan-out run")?;
+    // A standalone fan-out can own this home only while no daemon owns its
+    // startup lock. Acquire before the first WAL/provider effect and retain the
+    // lease until the writer has reached a terminal join on every path.
+    let fan_out_lease = crate::daemon::pidfile::acquire_offline_agents_fan_out_interlock(
+        &home.join("neothd.pid"),
+    )?
+    .ok_or_else(|| anyhow::anyhow!(
+        "`neoth serve` owns or is acquiring this home — `agents run` cannot construct a concurrent provider or WAL writer; stop the daemon and retry"
+    ))?;
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "sub-agents");
-    let (writer, writer_join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
-        .context("spawn sub-agent audit WAL writer")?;
+    let (writer, writer_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.clone())
+            .context("spawn sub-agent audit WAL writer")?;
 
-    let raw_provider =
-        crate::providers::fallback_chain_from_config(&config, home, Some(writer.clone()))
-            .await
-            .context("build sub-agent provider")?;
-    canonicalize_agent_models(&config, raw_provider.as_ref(), &mut selected)?;
-    let default_model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
-    let authorizer = bind_fan_out_left_authorizer(
-        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            config.autonomy_policy(),
-            Some(writer.clone()),
-            config.tokens.max_per_request,
-        ),
-        &left_binding,
-    );
-    let provider = Arc::new(
-        crate::providers::cost_authorization::AuthorizedProvider::from_box(
-            raw_provider,
-            authorizer,
-            default_model,
-            "sub_agents.fan_out",
-        ),
-    );
-    let worker = Arc::new(ProviderSubAgentWorker::new(
-        provider,
-        selected,
-        retry_failed,
-        writer.clone(),
-        skill_registry_context,
-    ));
+    // The supervisor owns both the lease and writer completion. If this CLI
+    // future is cancelled, the receiver may disappear but the supervisor still
+    // drops every writer owner and boundedly aborts/reaps the real writer before
+    // releasing the daemon-startup lock.
+    let (mut result_tx, result_rx) = tokio::sync::oneshot::channel::<
+        Result<(SubAgentRunRecord, std::path::PathBuf)>,
+    >();
+    tokio::spawn(async move {
+        let _fan_out_lease = fan_out_lease;
+        let transaction_result: Result<(SubAgentRunRecord, std::path::PathBuf)> = tokio::select! {
+            transaction_result = async {
+                let raw_provider =
+                    provider_factory(config.clone(), home.clone(), writer.clone())
+                        .await
+                        .context("build sub-agent provider")?;
+                canonicalize_agent_models(&config, raw_provider.as_ref(), &mut selected)?;
+                let default_model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
+                let authorizer = bind_fan_out_left_authorizer(
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                        config.autonomy_policy(),
+                        Some(writer.clone()),
+                        config.tokens.max_per_request,
+                    ),
+                    &left_binding,
+                );
+                let provider = Arc::new(
+                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                        raw_provider,
+                        authorizer,
+                        default_model,
+                        "sub_agents.fan_out",
+                    ),
+                );
+                let worker = Arc::new(ProviderSubAgentWorker::new(
+                    provider,
+                    selected,
+                    retry_failed,
+                    writer.clone(),
+                    skill_registry_context,
+                ));
 
-    let now_ns = crate::time::now_unix_ns();
-    let run_id = format!("run-{now_ns}-{}", std::process::id());
-    let requests = agent_names
-        .iter()
-        .enumerate()
-        .map(|(index, name)| SubAgentRequest {
-            from: "cli".into(),
-            to: name.clone(),
-            phase: "fan_out".into(),
-            task_id: format!("{run_id}-{index}"),
-            priority: HandoffPriority::Normal,
-            context: prompt.clone(),
-            deliverable: "A complete, self-contained answer within the named agent's role.".into(),
-            success_criteria: vec![
-                "Addresses the operator task without inventing tool or external-state evidence."
-                    .into(),
-                "States missing evidence explicitly instead of fabricating it.".into(),
-            ],
-            evidence_required: vec![],
-            ts_unix: crate::time::now_unix_i64(),
-        })
-        .collect();
+                let now_ns = crate::time::now_unix_ns();
+                let run_id = format!("run-{now_ns}-{}", std::process::id());
+                let requests = agent_names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| SubAgentRequest {
+                        from: "cli".into(),
+                        to: name.clone(),
+                        phase: "fan_out".into(),
+                        task_id: format!("{run_id}-{index}"),
+                        priority: HandoffPriority::Normal,
+                        context: prompt.clone(),
+                        deliverable: "A complete, self-contained answer within the named agent's role."
+                            .into(),
+                        success_criteria: vec![
+                            "Addresses the operator task without inventing tool or external-state evidence."
+                                .into(),
+                            "States missing evidence explicitly instead of fabricating it.".into(),
+                        ],
+                        evidence_required: vec![],
+                        ts_unix: crate::time::now_unix_i64(),
+                    })
+                    .collect();
 
-    let dispatch = dispatch_parallel(
-        worker,
-        requests,
-        Some(max_concurrent),
-        Some(Duration::from_secs(timeout_secs)),
-    )
-    .await;
-    let record_result = dispatch.and_then(|report| {
-        let record = SubAgentRunRecord {
-            schema_version: 1,
-            run_id: run_id.clone(),
-            ts_unix: crate::time::now_unix_i64(),
-            prompt_hash_xxh3: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
-            results: report.results,
+                let dispatch = dispatch_parallel(
+                    worker,
+                    requests,
+                    Some(max_concurrent),
+                    Some(Duration::from_secs(timeout_secs)),
+                )
+                .await;
+                dispatch.and_then(|report| {
+                    let record = SubAgentRunRecord {
+                        schema_version: 1,
+                        run_id,
+                        ts_unix: crate::time::now_unix_i64(),
+                        prompt_hash_xxh3: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+                        results: report.results,
+                    };
+                    crate::sub_agents::runtime::persist_run(home, &record).map(|path| (record, path))
+                })
+            } => transaction_result,
+            _ = result_tx.closed() => Err(anyhow::anyhow!(
+                "sub-agent fan-out caller cancelled; abort work before WAL owner cleanup"
+            )),
         };
-        crate::sub_agents::runtime::persist_run(home, &record).map(|path| (record, path))
+        drop(writer);
+        let writer_result = writer_completion
+            .wait_bounded(Duration::from_secs(30))
+            .await
+            .context("finalize sub-agent audit WAL writer");
+        let result = match (transaction_result, writer_result) {
+            (Ok(record), Ok(())) => Ok(record),
+            (Err(transaction_error), Ok(())) => Err(transaction_error),
+            (Ok(_), Err(writer_error)) => Err(writer_error),
+            (Err(transaction_error), Err(writer_error)) => Err(transaction_error).context(format!(
+                "sub-agent fan-out failed and audit WAL finalization also failed: {writer_error:#}"
+            )),
+        };
+        // Make response delivery observe the completed ownership transition:
+        // callers cannot receive a terminal result while this lease is held.
+        drop(_fan_out_lease);
+        let _ = result_tx.send(result);
     });
-    drop(writer);
-    let _ = writer_join.await;
-    let (record, path) = record_result?;
+    let (record, path) = result_rx
+        .await
+        .context("sub-agent fan-out owner supervisor ended before terminal cleanup")??;
     render_run(&record, &path, output)
 }
 
@@ -755,6 +840,73 @@ mod tests {
         }
     }
 
+    struct W2464ControlledProvider {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        blocked_once: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for W2464ControlledProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w2464-controlled-model")
+        }
+
+        async fn complete_raw(
+            &self,
+            request: crate::providers::Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+        ) -> Result<crate::providers::Completion> {
+            if !self
+                .blocked_once
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+            let is_qa = request
+                .system
+                .as_deref()
+                .is_some_and(|system| system.contains("strict QA verifier"));
+            Ok(crate::providers::Completion {
+                text: if is_qa {
+                    r#"{"kind":"pass","evidence":["controlled fixture"]}"#.into()
+                } else {
+                    "controlled fan-out answer".into()
+                },
+                model: "w2464-controlled-model".into(),
+                ..Default::default()
+            })
+        }
+    }
+    struct W2464CancellationProvider {
+        entered: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for W2464CancellationProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w2464-cancellation-model")
+        }
+
+        async fn complete_raw(
+            &self,
+            _request: crate::providers::Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+        ) -> Result<crate::providers::Completion> {
+            self.entered.notify_one();
+            std::future::pending::<()>().await;
+            unreachable!("pending cancellation provider must be cancelled by owner supervisor")
+        }
+    }
     fn fake(name: &str, desc: &str) -> SubAgent {
         SubAgent {
             name: name.into(),
@@ -921,6 +1073,241 @@ mod tests {
         run_agents(args).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal() {
+        let home = tempfile::tempdir().expect("fan-out home");
+        let agent_dir = home.path().join("agents");
+        std::fs::create_dir(&agent_dir).expect("agent directory");
+        let config = FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::LocalOllama),
+            ..Default::default()
+        };
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize fan-out config"),
+        )
+        .expect("write fan-out config");
+        let daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("live daemon owner");
+
+        let error = run_fan_out(
+            home.path(),
+            &agent_dir,
+            vec!["planner".into(), "critic".into()],
+            "bounded fan-out ownership fixture".into(),
+            2,
+            1,
+            false,
+            &OutputFormat::Json,
+        )
+        .await
+        .expect_err("live daemon must reject the real fan-out consumer");
+        assert!(
+            error.to_string().contains("`neoth serve` owns or is acquiring this home"),
+            "unexpected owner refusal: {error:#}"
+        );
+        assert!(
+            !home.path().join("wal").exists(),
+            "live-owner refusal must happen before any fan-out WAL mutation"
+        );
+        assert!(
+            !home.path().join("sub-agent-runs").exists(),
+            "live-owner refusal must happen before fan-out persistence"
+        );
+        drop(daemon);
+    }
+    #[tokio::test]
+    async fn w2464_offline_real_fan_out_finalizes_writer_before_owner_release() {
+        let home = tempfile::tempdir().expect("fan-out home");
+        let agent_dir = home.path().join("agents");
+        std::fs::create_dir(&agent_dir).expect("agent directory");
+        let config = FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::ClaudeCli),
+            provider_binary: Some("neoth-w2464-intentionally-missing-provider".into()),
+            ..Default::default()
+        };
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize fan-out config"),
+        )
+        .expect("write fan-out config");
+
+        let error = run_fan_out(
+            home.path(),
+            &agent_dir,
+            vec!["planner".into(), "critic".into()],
+            "bounded fan-out writer-finalization fixture".into(),
+            2,
+            1,
+            false,
+            &OutputFormat::Json,
+        )
+        .await
+        .expect_err("missing fixture provider must terminally fail the real fan-out");
+        assert!(
+            !home.path().join("sub-agent-runs").exists(),
+            "failed fan-out must not persist a successful run record: {error:#}"
+        );
+        assert!(
+            home.path().join("wal").exists(),
+            "offline fan-out must have opened its real isolated WAL writer"
+        );
+        let daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("fan-out return must wait for writer join before releasing owner");
+        drop(daemon);
+    }
+    #[tokio::test]
+    async fn w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup() {
+        let home = tempfile::tempdir().expect("fan-out home");
+        let agent_dir = home.path().join("agents");
+        std::fs::create_dir(&agent_dir).expect("agent directory");
+        let config = FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::LocalOllama),
+            ..Default::default()
+        };
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize controlled config"),
+        )
+        .expect("write controlled config");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let task_home = home.path().to_path_buf();
+        let task_agents = agent_dir.clone();
+        let task_entered = Arc::clone(&entered);
+        let task_release = Arc::clone(&release);
+        let task = tokio::spawn(async move {
+            let output = OutputFormat::Json;
+            run_fan_out_with_provider_factory(
+                &task_home,
+                &task_agents,
+                vec!["planner".into(), "critic".into()],
+                "controlled successful fan-out".into(),
+                2,
+                30,
+                false,
+                &output,
+                move |_, _, _| async move {
+                    Ok(Box::new(W2464ControlledProvider {
+                        entered: task_entered,
+                        release: task_release,
+                        blocked_once: std::sync::atomic::AtomicBool::new(false),
+                    }) as Box<dyn crate::providers::Provider>)
+                },
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("real fan-out must reach controlled provider before contender probe");
+
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start")
+            .env("NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE", home.path().join("neothd.pid"))
+            .output()
+            .expect("cross-process daemon contender");
+        assert!(
+            child.status.success(),
+            "running fan-out must retain its real lease; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        release.notify_waiters();
+        task.await
+            .expect("controlled real fan-out task join")
+            .expect("controlled real fan-out success");
+        assert!(
+            home.path().join("sub-agent-runs").exists(),
+            "successful controlled fan-out must persist its run only after dispatch"
+        );
+        let daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("daemon may acquire only after terminal writer cleanup");
+        drop(daemon);
+    }
+    #[tokio::test]
+    async fn w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases() {
+        let home = tempfile::tempdir().expect("fan-out home");
+        let agent_dir = home.path().join("agents");
+        std::fs::create_dir(&agent_dir).expect("agent directory");
+        let config = FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::LocalOllama),
+            ..Default::default()
+        };
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize cancellation config"),
+        )
+        .expect("write cancellation config");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let task_entered = Arc::clone(&entered);
+        let (writer_tx, writer_rx) = tokio::sync::oneshot::channel();
+        let task_home = home.path().to_path_buf();
+        let task_agents = agent_dir.clone();
+        let task = tokio::spawn(async move {
+            let output = OutputFormat::Json;
+            run_fan_out_with_provider_factory(
+                &task_home,
+                &task_agents,
+                vec!["planner".into(), "critic".into()],
+                "controlled cancellation fan-out".into(),
+                2,
+                30,
+                false,
+                &output,
+                move |_, _, writer| {
+                    writer_tx
+                        .send(writer)
+                        .expect("hand real writer clone to cancellation fixture");
+                    async move {
+                        Ok(Box::new(W2464CancellationProvider {
+                            entered: task_entered,
+                        }) as Box<dyn crate::providers::Provider>)
+                    }
+                },
+            )
+            .await
+        });
+        let retained_writer = tokio::time::timeout(Duration::from_secs(5), writer_rx)
+            .await
+            .expect("factory must receive real writer clone")
+            .expect("factory must retain real writer clone");
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("real fan-out must reach cancellation provider");
+        task.abort();
+        let _ = task.await;
+
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start")
+            .env("NEOTH_W2464_AGENTS_FAN_OUT_PIDFILE", home.path().join("neothd.pid"))
+            .output()
+            .expect("cross-process contender after caller cancellation");
+        assert!(
+            child.status.success(),
+            "retained writer clone must keep the actual fan-out lease through caller cancellation; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        drop(retained_writer);
+        let pidfile = home.path().join("neothd.pid");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match crate::daemon::pidfile::acquire(&pidfile) {
+                    Ok(daemon) => {
+                        drop(daemon);
+                        break;
+                    }
+                    Err(_) => tokio::task::yield_now().await,
+                }
+            }
+        })
+        .await
+        .expect("writer completion must release daemon startup only after retained clone drops");
+    }
     fn write_nct_observation_source_run(home: &Path, run_id: &str) {
         let dir = home.join("sub-agent-runs");
         std::fs::create_dir_all(&dir).unwrap();

@@ -1,0 +1,65 @@
+{
+  "schema": "neoth.gold-wave2464-agents-fan-out-owner.v1",
+  "status": "IMPLEMENTED-STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "38a0091cdaa2ed048b3a109ec970462fffe53408",
+  "candidateManifestSha256": "E4F5A851951E8B0295AB8AE69D05B54F18CD49CF2280B692615DBA448B10A1B5",
+  "reviewSha256": "64AF54D64E89F735B508F291CD83D702198FB540E34861BCB21D1EA148EE5AF6",
+  "changes": [
+    "Acquire the daemon startup OS lock before standalone fan-out WAL or provider work; refuse live and ambiguous ownership.",
+    "An owned supervisor retains the lease through success, failure and caller cancellation; observe actual writer finalization, bounded abort and reap.",
+    "Release the lease after writer completion and before delivering the caller result; propagate writer failures."
+  ],
+  "sources": [
+    {
+      "repo_path": "SRC/neothd/src/cli/agents.rs",
+      "base_file": "base/SRC_neothd_src_cli_agents.rs",
+      "base_sha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "candidate_file": "candidate/SRC_neothd_src_cli_agents.rs",
+      "candidate_sha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/pidfile.rs",
+      "base_file": "base/SRC_neothd_src_daemon_pidfile.rs",
+      "base_sha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "candidate_file": "candidate/SRC_neothd_src_daemon_pidfile.rs",
+      "candidate_sha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4"
+    }
+  ],
+  "portableRegressions": [
+    {
+      "id": "cli::agents::tests::w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal",
+      "path": "SRC/neothd/src/cli/agents.rs"
+    },
+    {
+      "id": "cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release",
+      "path": "SRC/neothd/src/cli/agents.rs"
+    },
+    {
+      "id": "cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup",
+      "path": "SRC/neothd/src/cli/agents.rs"
+    },
+    {
+      "id": "cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases",
+      "path": "SRC/neothd/src/cli/agents.rs"
+    },
+    {
+      "id": "daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases",
+      "path": "SRC/neothd/src/daemon/pidfile.rs"
+    }
+  ],
+  "ignoredChildHelper": "daemon::pidfile::tests::w2464_agents_fan_out_interlock_child_daemon_start",
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "durableDeliveryAcceptance": false,
+  "allStandaloneWalCallersMigrated": false,
+  "nativeDeviceReleaseAccepted": false,
+  "priorIndependentCliAdmission": {
+    "run": "37517130774",
+    "producer": "38a0091cdaa2ed048b3a109ec970462fffe53408",
+    "updaterOwnerCases": 17,
+    "companionCases": 24,
+    "archiveEntries": 57,
+    "proofSha256": "61036B1F76DAEBC3FD17BAC29479E125F027D9AA2EA85815F5AABDA8875180C2",
+    "coversNewFanOutChange": false
+  }
+}

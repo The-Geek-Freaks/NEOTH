@@ -1,0 +1,54 @@
+{
+  "schema": "neoth.gold-wave2465-panic-site-diagnostic.v1",
+  "status": "IMPLEMENTED-STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "38a0091cdaa2ed048b3a109ec970462fffe53408",
+  "candidateManifestSha256": "2A1177DAB5DB8DB9FA9F08FF99336ACDE6EAEA9293612F07D3AF104D0B7A463D",
+  "reviewSha256": "DAE1FC9B9A81C58836FC9092E1331594014B2A8011EC99116C921999EF0AFA24",
+  "observedFailure": {
+    "run": "37520223935",
+    "producer": "38a0091cdaa2ed048b3a109ec970462fffe53408",
+    "proofSha256": "276FD75624EEE6D8518B6F67BFABCBAA7F0E32C42C2421533C1ED473FE1477F0",
+    "rustPassed": 61,
+    "collectorPassed": 14,
+    "sourceBindings": 40,
+    "originalZipSha256": "849FCD4A1096F932C782A207FB19C8D7507E348A99F0EE6C1595F0BA78552ED0",
+    "stage": "pair_status_read_mint",
+    "parseSubtype": "delimiter",
+    "panicObserved": true,
+    "panicLocationKnown": false,
+    "serveExitCode": 1,
+    "walDrained": false,
+    "productAccepted": false
+  },
+  "change": "Emit a bounded basename and line marker; admit only a site after the first recognized panic marker in the absolute byte stream, including split chunks. Retain no raw panic message or path in the hosted receipt.",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/lib.rs",
+      "base_sha256": "1FA2D4E960AC7C1A460FC09AAB4CBE0FCBA470FD0B9CC56FAF64C63694139055",
+      "candidate_sha256": "0468D47C4218B18F07C6000CEC47F4544B99D33DB1EA95D0FD2567631BEFD133"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "base_sha256": "D623ECBD096F4D3B4384FB43DB49CB6510A82508D32FF0F6E2D0C8E1527A9466",
+      "candidate_sha256": "6D37DF01ED71C0B9130196598FF9A53579420FB5EB65029002CC23FEB29411DD"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "base_sha256": "A2F3743BD3AA1F33F5185CD06FACF5B50A2A41C4CC42DAC5A21754731F6BDEB9",
+      "candidate_sha256": "AFD2E316BCF9A9002C29E7EA551D9F2E41D876A57FC27609C9A1771E6B6AB2AA"
+    }
+  ],
+  "collectorRegressions": [
+    "ScopedCollectorTests.test_panic_site_accepts_only_bounded_basename_and_positive_line",
+    "ScopedCollectorTests.test_panic_site_rejects_paths_payloads_zero_and_suffixes"
+  ],
+  "nextCanonicalSelection": {
+    "rust": 61,
+    "collector": 16,
+    "sources": 41
+  },
+  "runtimeCauseFixed": false,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeDeviceReleaseAccepted": false
+}

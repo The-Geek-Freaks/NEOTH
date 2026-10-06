@@ -49,8 +49,8 @@ class SelectionContractTests(unittest.TestCase):
         expected_groups = {"libudx": 8, "peeroxide": 14, "dht": 15, "core": 22, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 14,
-            "sources": 40,
+            "collector": 16,
+            "sources": 41,
             "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
@@ -83,6 +83,8 @@ class SelectionContractTests(unittest.TestCase):
             "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning",
             "test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat",
             "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures",
+            "test_panic_site_accepts_only_bounded_basename_and_positive_line",
+            "test_panic_site_rejects_paths_payloads_zero_and_suffixes",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

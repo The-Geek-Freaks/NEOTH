@@ -18485,3 +18485,32 @@ marker. The fixture now grants its exact canonical configured routes; production
 consent is unchanged. Independent static review confirmed this precondition.
 The focused lane remains41cases and now binds16Updater/owner sources, including
 consent.rs. Hosted execution remains pending; no local runtime was started.
+
+## W2464 / W2465 - Fan-out WAL owner and bounded pairing panic location (2026-10-06)
+
+The exact producer 38a0091c passed CLI run37517130774. Root independently admitted
+17 Updater/owner and24 Companion cases,57 original archive entries and generated
+CLI byte equality (proof61036B1F76DAEBC3FD17BAC29479E125F027D9AA2EA85815F5AABDA8875180C2).
+Mobile run37520223935 then passed61 Rust and14 collector cases with40 raw-source
+bindings and both test-overlay restorations. Its actual first pair mint failed:
+malformed RPC delimiter, observed Rust panic, exit1 and no WAL drain. Root bound
+all four original artifact entries; proof276FD75624EEE6D8518B6F67BFABCBAA7F0E32C42C2421533C1ED473FE1477F0
+admits this partial boundary only. Neither pairing nor later product legs passed.
+
+W2464 closes the independently confirmed agents-run standalone-writer race. A
+no-PID-mutation startup lease precedes WAL/provider effects, remains owned through
+success, failure and caller cancellation, and is released after actual bounded
+writer completion before returning the result. Five portable regressions cover
+live-owner refusal, failure finalization, controlled real fan-out success, a
+cross-process contender and cancellation with a retained real writer clone.
+Independent static review passed; hosted compilation and behavior remain pending.
+Other standalone callers and durable-delivery acceptance remain open.
+
+W2465 adds only bounded panic-site diagnostics: a normalized basename and positive
+line, accepted strictly after an observed panic marker even across chunk overlap.
+It records no raw panic message, absolute path or connection material in the
+receipt. Two collector regressions cover accepted framing and rejected order,
+paths, payloads and suffixes. The canonical mobile selection is61 Rust/16 collector/
+41 source bindings. No panic root cause or transport fix is claimed. Full mobile,
+native/device and release acceptance remain open. The existing PLAN prefix is
+preserved; no local runtime/compiler/parser/test/formatter or .slint change ran.

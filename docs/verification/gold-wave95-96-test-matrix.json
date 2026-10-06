@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2463-POSITIVE-CRON-FIXTURE-CONSENT-HOSTED-PENDING",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398029,
-    "sha256": "C35F19B3131A16F40BC2AB5BF5604241139F240972BFEBC3E41D85771DA176B6"
+    "bytes": 398394,
+    "sha256": "8D45B56DE47E5BAB45AECB0ED5A64BDB2A5CA85AFFF0CF92D453523012402F39"
   },
-  "sourceInputs": 2175,
+  "sourceInputs": 2177,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4800,7 +4800,7 @@
     {
       "test": "cli::agents::tests::fan_out_registry_admits_only_enabled_skills_and_suppresses_eval",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
       "junitClass": "neoth"
     },
     {
@@ -15925,19 +15925,19 @@
     {
       "test": "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
       "junitClass": "neoth"
     },
     {
@@ -16699,7 +16699,7 @@
     {
       "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
       "junitClass": "neoth"
     },
     {
@@ -16729,19 +16729,49 @@
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases",
+      "sourcePath": "SRC/neothd/src/cli/agents.rs",
+      "sourceSha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases",
+      "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
+      "sourceSha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
       "junitClass": "neoth"
     }
   ],
@@ -77333,6 +77363,74 @@
       }
     ],
     "note": "Isolated positive Cron fixture grants its actual configured routes before the real runner gate; no production consent change.41case selection unchanged,16owner source bindings.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2464-2465-agents-owner-panic-site": {
+    "base": "38a0091cdaa2ed048b3a109ec970462fffe53408",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 37325,
+        "sha256": "A62C1AB5A1F0F741CC42D534966C84D69867A7C74EC9AD7D9FC63CDDF1B19B72",
+        "blob": "902cce246baa0e0e514e910574f71b16d1c6901c"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 10632,
+        "sha256": "E3572FC7D6AE3408AF0A26F595F10594E3E58A9E9F83A54F56FA9F229DC5D5CF",
+        "blob": "8da69afd7df4d2c1c684131951177fbdcfc9bc3e"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 20134,
+        "sha256": "DDF31389B1D9E7F442041ED26C5A6570810D701FB70E7AEECA3A50118BF51418",
+        "blob": "e10898d8e593949956b02f2c4646df049449c0d4"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 8862,
+        "sha256": "F79BE2EA6B536E09B7F45A0B72DE912A3232A6A9775654D012DA0A97B0E7579C",
+        "blob": "f3b6ca1235a6e3c48e82f2d23e4204129f44bd59"
+      },
+      {
+        "path": "docs/verification/gold-wave2464-agents-fan-out-owner.json",
+        "bytes": 3037,
+        "sha256": "CAD4B89CF26741731BE9F51D9E40FF5B65A9CB33B4F7A69E1C367B2C93E0C5A4",
+        "blob": "257dc9e4aa20c7ba4084c168dc6d2f803529590e"
+      },
+      {
+        "path": "docs/verification/gold-wave2465-panic-site-diagnostic.json",
+        "bytes": 2399,
+        "sha256": "5C68E3F9233AEC7169EF62E0BD704D232733D0BE28BEBEAF9789322C73BB47C5",
+        "blob": "138e628e18fa0d8b271d7c8bd6119513d20307f9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2458140,
+        "sha256": "D29B6F078EC882E19DC4F69B04A1D6C1F82E4993B04E5B858BAB88418933D909",
+        "blob": "0e2fa8d98c374ce1f3a2082498a28f7f8107d78e"
+      },
+      {
+        "path": "SRC/neothd/src/cli/agents.rs",
+        "bytes": 57023,
+        "sha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3",
+        "blob": "f35ba18a3a4766c13bc05bd12936583d143ed199"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/pidfile.rs",
+        "bytes": 45933,
+        "sha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4",
+        "blob": "c9f472d5ae14c5b70977e538127e33df26ed01d2"
+      },
+      {
+        "path": "SRC/neothd/src/lib.rs",
+        "bytes": 25340,
+        "sha256": "0468D47C4218B18F07C6000CEC47F4544B99D33DB1EA95D0FD2567631BEFD133",
+        "blob": "1c50c06a624c65eb521defabbf432ea3e161fcf6"
+      }
+    ],
+    "note": "W2464 owner supervisor and five portable regressions; W2465 bounded panic location with canonical61Rust16collector41sources. Prior38a CLI41cases independently admitted; fullMobile61/14/40 partial failure before pairing. Local BSOD hold; no runtime acceptance claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

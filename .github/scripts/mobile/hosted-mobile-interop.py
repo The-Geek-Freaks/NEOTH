@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """W2328 R8 hosted real-CLI/cdylib interop runner; never run under local hold."""
 from __future__ import annotations
-import argparse, ctypes, hashlib, http.server, json, os, pathlib, secrets
+import argparse, ctypes, hashlib, http.server, json, os, pathlib, re, secrets
 import signal, socket, socketserver, subprocess, sys, tempfile, threading, time
 import urllib.request
 from typing import Any, Callable
@@ -39,6 +39,9 @@ SHUTDOWN_MARKERS = (
     ("wal_drained", b"WAL writer task drained cleanly"),
 )
 RUST_PANIC_MARKERS = (b"[neoth panic]", b"panicked at")
+RUST_PANIC_SITE_RE = re.compile(
+    rb"(?:^|\n)NEOTH_PANIC_SITE=([A-Za-z0-9_.-]{1,96}:[1-9][0-9]{0,6})\n"
+)
 PAIR_PHASES = (
     "bootstrap_started", "bootstrap_ready", "topic_joined", "awaiting_connection",
     "connection_received", "psk_verified", "proof_read", "response_written",
@@ -115,6 +118,8 @@ class ShutdownMarkerCollector:
         self.stream, self.lock = stream, threading.Lock()
         self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
         self.rust_panic_observed = False
+        self.rust_panic_site: str | None = None
+        self.rust_panic_floor: int | None = None
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.connect_observed = {name: False for name, _ in CONNECT_MARKERS}
@@ -122,23 +127,40 @@ class ShutdownMarkerCollector:
         self.scoped_connect_saturated = False
         self.reader_error = False
         self.overlap = max(
-            len(marker)
-            for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS, *DISCOVERY_MARKERS, *CONNECT_MARKERS, *SCOPED_CONNECT_MARKERS)
+            max(
+                len(marker)
+                for _, marker in (*SHUTDOWN_MARKERS, *PAIR_MARKERS, *DISCOVERY_MARKERS, *CONNECT_MARKERS, *SCOPED_CONNECT_MARKERS)
+            ),
+            128,
         ) - 1
         self.thread = threading.Thread(target=self._drain, daemon=True)
         self.thread.start()
 
     def _drain(self) -> None:
         tail = b""
+        stream_offset = 0
         try:
             while chunk := self.stream.read(4096):
                 window = tail + chunk
+                window_start = stream_offset - len(tail)
                 with self.lock:
                     for name, marker in SHUTDOWN_MARKERS:
                         if marker in window:
                             self.observed[name] = True
-                    if any(marker in window for marker in RUST_PANIC_MARKERS):
-                        self.rust_panic_observed = True
+                    if self.rust_panic_floor is None:
+                        panic_ends = [
+                            offset + len(marker)
+                            for marker in RUST_PANIC_MARKERS
+                            if (offset := window.find(marker)) >= 0
+                        ]
+                        if panic_ends:
+                            self.rust_panic_observed = True
+                            self.rust_panic_floor = window_start + min(panic_ends)
+                    if self.rust_panic_floor is not None and self.rust_panic_site is None:
+                        for site in RUST_PANIC_SITE_RE.finditer(window):
+                            if window_start + site.start() >= self.rust_panic_floor:
+                                self.rust_panic_site = site.group(1).decode("ascii")
+                                break
                     for name, marker in PAIR_MARKERS:
                         if marker in window:
                             self.pair_observed[name] = True
@@ -159,6 +181,7 @@ class ShutdownMarkerCollector:
                                 else:
                                     self.scoped_connect_saturated = True
                             at = window.find(marker, at + len(marker))
+                stream_offset += len(chunk)
                 tail = window[-self.overlap:]
         except Exception:
             with self.lock:
@@ -195,6 +218,7 @@ class ShutdownMarkerCollector:
             return {
                 "markers": dict(self.observed),
                 "rust_panic_observed": self.rust_panic_observed,
+                "rust_panic_site": self.rust_panic_site,
                 "pair_markers": dict(self.pair_observed),
                 "discovery_markers": dict(self.discovery_observed),
                 "connect_markers": dict(self.connect_observed),
@@ -549,7 +573,7 @@ def main() -> int:
                 receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
             else:
                 if serve.stdout is not None: serve.stdout.close()
-                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"rust_panic_observed":False,"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"scoped_connect_counts":{name:0 for name,_ in SCOPED_CONNECT_MARKERS},"scoped_connect_saturated":False,"reader_closed":True,"reader_error":True}
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"rust_panic_observed":False,"rust_panic_site":None,"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"scoped_connect_counts":{name:0 for name,_ in SCOPED_CONNECT_MARKERS},"scoped_connect_saturated":False,"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else

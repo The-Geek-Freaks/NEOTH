@@ -573,6 +573,24 @@ pub fn install_panic_handler() {
             env!("CARGO_PKG_VERSION"),
         );
         eprintln!("{}", line.trim_end());
+        if let Some(location) = info.location() {
+            let file_name = location
+                .file()
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or_default();
+            if !file_name.is_empty()
+                && file_name.len() <= 96
+                && file_name
+                    .bytes()
+                    .all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                    })
+                && location.line() > 0
+            {
+                eprintln!("NEOTH_PANIC_SITE={file_name}:{}", location.line());
+            }
+        }
         // Best-effort persistence — never panic from inside the handler.
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))

@@ -110,7 +110,9 @@
       "test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes",
       "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning",
       "test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat",
-      "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures"
+      "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures",
+      "test_panic_site_accepts_only_bounded_basename_and_positive_line",
+      "test_panic_site_rejects_paths_payloads_zero_and_suffixes"
     ]
   },
   "sourcePaths": [
@@ -153,7 +155,8 @@
     ".github/scripts/mobile/test_mobile_interop_selection.py",
     ".github/workflows/udx-transport-regressions.yml",
     "SRC/vendor/libudx/src/native/async_stream.rs",
-    "SRC/vendor/peeroxide/src/connection_set.rs"
+    "SRC/vendor/peeroxide/src/connection_set.rs",
+    "SRC/neothd/src/lib.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

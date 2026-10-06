@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T19:07:01.6553868Z",
-  "validationStatus": "W2463-POSITIVE-CRON-FIXTURE-CONSENT-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T20:14:35.7157809Z",
+  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 36135,
-      "sha256": "F3963F98721CE572EC92DF600B699C7909B25D4D3BD2537B81582A7A821BD4BB"
+      "bytes": 37325,
+      "sha256": "A62C1AB5A1F0F741CC42D534966C84D69867A7C74EC9AD7D9FC63CDDF1B19B72"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -53,18 +53,18 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 10464,
-      "sha256": "C199BDDAA7094F142487783E8C8F4567AACD01EF36ADEF5D75430BD84E7AB32F"
+      "bytes": 10632,
+      "sha256": "E3572FC7D6AE3408AF0A26F595F10594E3E58A9E9F83A54F56FA9F229DC5D5CF"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 18471,
-      "sha256": "F30EF0B659F29BE9F9C0DC5A0CAF68C1AF6DAD5ED331A77DA2BCDE0BE623778B"
+      "bytes": 20134,
+      "sha256": "DDF31389B1D9E7F442041ED26C5A6570810D701FB70E7AEECA3A50118BF51418"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 8711,
-      "sha256": "88FDD4C23F9EB9DF26864917CCC933D96519FE31E85D298BC92417F83CEE2D3D"
+      "bytes": 8862,
+      "sha256": "F79BE2EA6B536E09B7F45A0B72DE912A3232A6A9775654D012DA0A97B0E7579C"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -3832,6 +3832,16 @@
       "sha256": "E6F9F97B9054B9C9228A3942A06D64748D3D039BF040E640DEC2874A263646F5"
     },
     {
+      "path": "docs/verification/gold-wave2464-agents-fan-out-owner.json",
+      "bytes": 3037,
+      "sha256": "CAD4B89CF26741731BE9F51D9E40FF5B65A9CB33B4F7A69E1C367B2C93E0C5A4"
+    },
+    {
+      "path": "docs/verification/gold-wave2465-panic-site-diagnostic.json",
+      "bytes": 2399,
+      "sha256": "5C68E3F9233AEC7169EF62E0BD704D232733D0BE28BEBEAF9789322C73BB47C5"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4983,8 +4993,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2456096,
-      "sha256": "3BD65457B8072121B2EFA13AE22722742EC6D325BF852AC2733052D01D40AF9F"
+      "bytes": 2458140,
+      "sha256": "D29B6F078EC882E19DC4F69B04A1D6C1F82E4993B04E5B858BAB88418933D909"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5803,8 +5813,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 40587,
-      "sha256": "7DF8CDD81008AE4FAA4B80CAC08E4A83A31828BD21A197662A11CF163BC40B90"
+      "bytes": 57023,
+      "sha256": "03BF5965CB42E8DACDD06963FAB5B105DBD4405DD496631E0017C019C1AA80F3"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
@@ -7043,8 +7053,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/pidfile.rs",
-      "bytes": 42446,
-      "sha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C"
+      "bytes": 45933,
+      "sha256": "8C2EA2EB999730229C928C2D7C20B63A27913F3A1A8836E7C41150C09A965EE4"
     },
     {
       "path": "SRC/neothd/src/daemon/post_init_cron.rs",
@@ -7538,8 +7548,8 @@
     },
     {
       "path": "SRC/neothd/src/lib.rs",
-      "bytes": 24690,
-      "sha256": "1FA2D4E960AC7C1A460FC09AAB4CBE0FCBA470FD0B9CC56FAF64C63694139055"
+      "bytes": 25340,
+      "sha256": "0468D47C4218B18F07C6000CEC47F4544B99D33DB1EA95D0FD2567631BEFD133"
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
