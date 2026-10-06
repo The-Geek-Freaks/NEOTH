@@ -1991,13 +1991,40 @@ mod bounded_transport_tests {
             .await
             .expect("first framed write is admitted")
             .expect("first framed write succeeds");
-        let observed = timeout(Duration::from_secs(5), raw_before_route.recv())
-            .await
-            .expect("first framed DATA must reach the raw pre-route observer")
-            .expect("right raw observer stays open");
-        let header = Header::decode(&observed.data).expect("pre-route datagram is valid UDX");
-        assert!(header.has_flag(FLAG_DATA), "first observed UDX packet is DATA");
-        assert_eq!(header.remote_id, 202, "first DATA addresses the receiver stream");
+        let (observed, header) = timeout(Duration::from_secs(5), async {
+            let mut accepted_heartbeats = 0usize;
+            loop {
+                let observed = raw_before_route
+                    .recv()
+                    .await
+                    .expect("right raw observer stays open");
+                let header = Header::decode(&observed.data)
+                    .expect("pre-route datagram is valid UDX");
+                assert_eq!(
+                    observed.addr, left_addr,
+                    "pre-route UDX traffic must come from the connected left socket"
+                );
+                assert_eq!(
+                    header.remote_id, 202,
+                    "pre-route UDX traffic must address the receiver stream"
+                );
+                if header.type_flags == FLAG_HEARTBEAT {
+                    accepted_heartbeats += 1;
+                    assert_eq!(
+                        accepted_heartbeats, 1,
+                        "only the initial keepalive tick may precede the first DATA"
+                    );
+                    continue;
+                }
+                assert_eq!(
+                    header.type_flags, FLAG_DATA,
+                    "only an exact DATA packet may follow the expected heartbeat"
+                );
+                return (observed, header);
+            }
+        })
+        .await
+        .expect("first framed DATA must reach the raw pre-route observer");
         assert_eq!(
             &observed.data[header.payload_offset()..],
             client_length.as_slice(),

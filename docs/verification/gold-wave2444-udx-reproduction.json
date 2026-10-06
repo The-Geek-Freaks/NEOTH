@@ -23,8 +23,8 @@
     "cacheSave": false
   },
   "validation": {
-    "staticReview": "approved; final report 28F5BF5C and framing addendum B4EDD523; hosted execution pending",
-    "hostedTransport": "pending",
+    "staticReview": "approved; heartbeat fixture correction addendum B1A67E69",
+    "hostedTransport": "Run37460504827 passed4 prior cases; newcase failed at initial-heartbeat test assumption. Corrected test awaiting hosted execution.",
     "localExecutableValidationRan": false,
     "productAccepted": false,
     "releaseReady": false
@@ -37,6 +37,18 @@
   },
   "reviewSha256": [
     "28F5BF5CF98645E31AA86D55678ED7E02E717DE6A9C2FE9A1E3E01BE630A7456",
-    "B4EDD523575B4800297866027DA3AA8B889BBA9CD16F839BD01BDEFB1BEAB5E0"
-  ]
+    "B4EDD523575B4800297866027DA3AA8B889BBA9CD16F839BD01BDEFB1BEAB5E0",
+    "B1A67E69F55F78CC6189D22A34618BEBB4D6B374CEF295A43968C9CEDFF01909"
+  ],
+  "firstHosted": {
+    "run": 37460504827,
+    "producer": "d21b0bf600d94f4384fa60b7549c9d5d1e03f99a",
+    "artifact": 11411332534,
+    "zipSha256": "EE46DEDB20C3A65BB699C436B8423C61198EADCFACAE928824795373DC1696D6",
+    "sourceBindings": 38,
+    "priorCasesPassed": 4,
+    "newCasePassed": false,
+    "workspaceRestored": true,
+    "failure": "new test assumed first packet is DATA; immediate keepalive can arrive first"
+  }
 }

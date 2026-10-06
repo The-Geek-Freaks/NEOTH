@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "static-reviewed-hosted-transport-pending",
+  "status": "reviewed-heartbeat-fixture-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 394822,
-    "sha256": "7CC9EAC1828D19418C6FA3A9ACD0C25B5784EA30933E3CE6170DFDCB00C4539B"
+    "bytes": 394823,
+    "sha256": "FAD8C2074C5D6985957217E7F0EBF5E81A311C1A791250BD79E0536F746EF138"
   },
   "sourceInputs": 2158,
   "requiredNativeTests": [
@@ -76167,6 +76167,32 @@
       }
     ],
     "note": "Real-socket late-route retransmission/source-pin regression; 36 Rust/4 collector/38 selection sources; no product acceptance; local runtime hold preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2444HeartbeatFixture": {
+    "base": "d21b0bf600d94f4384fa60b7549c9d5d1e03f99a",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2444-udx-reproduction.json",
+        "bytes": 2274,
+        "sha256": "6A482F5870B9BF2DC28F8EC0CA7111F4F8D6C9E4CCCEFAEBB2F1EAC1399477C7",
+        "blob": "f95c914ff40aefe3aeacc702da4994b7719c1573"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2435963,
+        "sha256": "F2D4021B4036C3C5BC8AEECEB7908EF714326CD11FA5561D427D2ACC7B5F0DE0",
+        "blob": "8f60dde0aaebb20a772899a824bccc2c990c26b6"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/stream.rs",
+        "bytes": 98938,
+        "sha256": "5AE5C71C78879007D82F855EBD58F502FE776D64F55C4BECC5529AA42C56DE39",
+        "blob": "fae40f0ff288c8d04bba92946e0dcf864ef88b37"
+      }
+    ],
+    "note": "Correct first-DATA barrier for immediate UDX heartbeat, retaining same total deadline and all source/RTO assertions. Actual first run failed test assumption; no product pass.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
