@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED-FORMAT-APPLIED-BEHAVIOR-PENDING",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398802,
-    "sha256": "2535F47078347658C94CA7A9CECF1DCF38F7087C95C36929018225D59AF8DE29"
+    "bytes": 398991,
+    "sha256": "1AB2A435FC49215FA5C2DAB99FD2A10EAB69829D37AC6080CAD8930E55E13FF9"
   },
-  "sourceInputs": 2179,
+  "sourceInputs": 2180,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3900,7 +3900,7 @@
     {
       "test": "cli::serve::tests::ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "4292CC07D35627D620F90B74F351647078F40797935C4D2488D72499B329D4BF",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
       "junitClass": "neoth"
     },
     {
@@ -9540,7 +9540,7 @@
     {
       "test": "cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault",
       "sourcePath": "SRC/neothd/src/cli/serve.rs",
-      "sourceSha256": "CB130A645C543A916AD641DF8A96AE17CF92E96707B045D3DAC248B1C9792B72",
+      "sourceSha256": "C5BFA848CCCD82D6AA65DBA6DAB3897761D1307AC087C18D1DD8B9EDE7D6C6E7",
       "junitClass": "neoth"
     },
     {
@@ -14376,13 +14376,13 @@
     {
       "test": "cli::serve::tests::run_serve_roots_release_wal_senders_before_join",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "4292CC07D35627D620F90B74F351647078F40797935C4D2488D72499B329D4BF",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve::tests::run_serve_releases_all_wal_roots_before_background_shutdown",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
-      "sourceSha256": "4292CC07D35627D620F90B74F351647078F40797935C4D2488D72499B329D4BF",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
       "junitClass": "neoth"
     },
     {
@@ -16772,6 +16772,24 @@
       "test": "daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
       "sourceSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve::tests::completed_audit_listener_is_consumed_before_abort_drain",
+      "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve::tests::audit_listener_error_is_consumed_before_fatal_classification",
+      "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain",
+      "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
+      "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
       "junitClass": "neoth"
     }
   ],
@@ -77585,6 +77603,50 @@
       }
     ],
     "note": "Original producer-bound Preflight rustfmt patch applied; no local formatter or runtime; Mobile product and full owner rerun remain pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2471-audit-listener-completion": {
+    "base": "9fbd30e7075c4dca79c0686c529d9d15c7642eb1",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 10983,
+        "sha256": "F81B9E23E76283E1211509F6B9994B27A02983B7B8269762390EFFF8CC027B2F",
+        "blob": "709dde873e57885b478a31e8abfbf7629947b9af"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 9397,
+        "sha256": "047D6D2DC89D5192253F36AF7430A80485E432FBF1836B5D45BA931FDBBE54A1",
+        "blob": "2a7fdd1035609f7ab8b0760e0372858a0df86cc3"
+      },
+      {
+        "path": "docs/verification/gold-wave2471-audit-listener-completion.json",
+        "bytes": 3113,
+        "sha256": "DB69BB9DA833210E7C73A15E076D5213B27A354ABCF84C58226BC0F313C05EB0",
+        "blob": "8c3b7f832a30bc8d61e3e929ada53d32a91e9030"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2464693,
+        "sha256": "D16B73886A4C7E20F897880B00D6D63ECC9C46B05BA2E0C05BE07BB0789EBBA4",
+        "blob": "d439fdbdedbb5f4d1fdf85f863d990883fa130a8"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tests.rs",
+        "bytes": 26256,
+        "sha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
+        "blob": "d908fa3cb925dde535182c32ecb2b54be8a59fd6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 185871,
+        "sha256": "C5BFA848CCCD82D6AA65DBA6DAB3897761D1307AC087C18D1DD8B9EDE7D6C6E7",
+        "blob": "d46402bef7d2709db6f4caa51d191766aefdd782"
+      }
+    ],
+    "note": "Consume completed fatal audit listener before later drain; three real Tokio ownership regressions selected. Secondary shutdown-panic repair only; initial pairing readiness and final hosted acceptance pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

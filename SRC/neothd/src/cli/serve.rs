@@ -2911,12 +2911,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
             true
         }
-        result = async {
-            audit_rpc_task
-                .as_mut()
-                .expect("required membership/audit listener task missing after startup")
-                .await
-        }, if membership_listener_required => {
+        result = await_required_audit_rpc_task(&mut audit_rpc_task), if membership_listener_required => {
             match result {
                 Ok(Ok(())) => error!(
                     "required membership/audit listener exited unexpectedly — authority mutations can no longer be served safely"
@@ -3348,6 +3343,20 @@ pub(crate) fn cron_spec_fingerprint(
     }
 
     h.finish()
+}
+
+/// Awaits the required audit listener and consumes its handle in the same
+/// ownership operation. A Tokio `JoinHandle` that returned Ready must never
+/// enter a later abort-and-drain path.
+async fn await_required_audit_rpc_task(
+    task: &mut Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+) -> std::result::Result<anyhow::Result<()>, tokio::task::JoinError> {
+    let result = task
+        .as_mut()
+        .expect("required membership/audit listener task missing after startup")
+        .await;
+    let _ = task.take();
+    result
 }
 
 #[cfg(test)]

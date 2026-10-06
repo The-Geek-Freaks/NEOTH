@@ -1,0 +1,63 @@
+{
+  "schema": "neoth.wave2471.audit-listener-completion.v1",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "9fbd30e7075c4dca79c0686c529d9d15c7642eb1",
+  "observedFailure": {
+    "run": "37532387123",
+    "originalArchiveSha256": "1DC6A1CE17EF78550ABBF11BCF38EE760B800BD4B2289D6D20E60873D9452CD8",
+    "verifiedRawSources": 41,
+    "laterRustNotRun": 24,
+    "productStage": "pair_status_read_mint",
+    "fullRunAccepted": false,
+    "failureCustodySha256": "8925178916BAC6F3821D3F1CDF3C8182E373BC8374E414030394538E3EC1D041",
+    "panicSite": "core.rs:422",
+    "passedTransportRust": 37,
+    "originalArchiveEntries": 4,
+    "job": "112504748684",
+    "passedCollector": 16,
+    "partialProofSha256": "005A2F6922C4FE2CC4161FDB7A6230033F0856F318027AC6949E73E1B91A1029",
+    "productAccepted": false,
+    "attempt": 1
+  },
+  "panicClass": {
+    "source": "https://raw.githubusercontent.com/tokio-rs/tokio/tokio-1.52.3/tokio/src/runtime/task/core.rs",
+    "message": "JoinHandle polled after completion",
+    "lockedCrateSha256": "8FC7F01B389AC15039E4DC9531AA973A135D7A4135281B12D7C1BC79FD57FFFE",
+    "version": "1.52.3",
+    "dependency": "tokio"
+  },
+  "confirmedSourceDefect": "Required audit listener result was consumed by the fatal select, but its handle remained in BackgroundHandles and was awaited again by abort_optional during shutdown",
+  "repair": "Production await helper consumes the handle immediately after completion and returns the unchanged result; a cancelled pending wait retains ownership for normal abort-and-drain",
+  "scopeBoundary": "Secondary shutdown panic repair. Original pair-readiness Err, fatal listener classification and serve exit 1 may persist; pair/status/chat/revoke remains unaccepted",
+  "regressions": [
+    "cli::serve::tests::completed_audit_listener_is_consumed_before_abort_drain",
+    "cli::serve::tests::audit_listener_error_is_consumed_before_fatal_classification",
+    "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain"
+  ],
+  "selection": {
+    "collector": 16,
+    "focusedOwner": 22,
+    "portableNative": 2794,
+    "sources": 43,
+    "focusedCompanion": 27,
+    "rust": 64,
+    "core": 25
+  },
+  "staticReview": {
+    "path": "work/gold-20260906/wave2471-neoth-join-fix/review/W2471_AUDIT_RPC_COMPLETED_HANDLE_STATIC_REVIEW.md",
+    "sha256": "6B2770AA430809511762018E7EB7D2AD79C678B10F424305E9461E061911C0DE"
+  },
+  "earlierFeedback": {
+    "productStartedAt": "2026-10-06T21:20:39Z",
+    "postBuildDelaySeconds": 0,
+    "productFailedAt": "2026-10-06T21:20:54Z",
+    "priorUnnecessaryDelaySeconds": 919,
+    "successPathSpeedupClaimed": false,
+    "hostBuildCompletedAt": "2026-10-06T21:20:39Z"
+  },
+  "heldFallback": "work/gold-20260906/wave2472-panic-trace; not imported",
+  "localRuntimeValidationRan": false,
+  "hostedBehaviorAccepted": false,
+  "nativeDeviceReleaseAccepted": false,
+  "next": "Fast gates; source-bound hosted 22 owner +27 Companion including the three actual completion regressions, then one Mobile product rerun. Preserve original failure if primary readiness error persists."
+}

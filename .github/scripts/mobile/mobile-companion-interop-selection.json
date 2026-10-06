@@ -77,7 +77,10 @@
         "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle",
         "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",
         "cluster::hyperswarm::tests::shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains",
-        "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls"
+        "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls",
+        "cli::serve::tests::completed_audit_listener_is_consumed_before_abort_drain",
+        "cli::serve::tests::audit_listener_error_is_consumed_before_fatal_classification",
+        "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain"
       ]
     },
     "no_cluster": {
@@ -156,7 +159,9 @@
     ".github/workflows/udx-transport-regressions.yml",
     "SRC/vendor/libudx/src/native/async_stream.rs",
     "SRC/vendor/peeroxide/src/connection_set.rs",
-    "SRC/neothd/src/lib.rs"
+    "SRC/neothd/src/lib.rs",
+    "SRC/neothd/src/cli/serve.rs",
+    "SRC/neothd/src/cli/serve_tests.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

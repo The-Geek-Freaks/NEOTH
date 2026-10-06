@@ -11,6 +11,59 @@ use tempfile::tempdir;
 use tokio::fs::read;
 
 #[tokio::test]
+async fn completed_audit_listener_is_consumed_before_abort_drain() {
+    let mut audit_rpc_task = Some(tokio::spawn(async { Ok::<(), anyhow::Error>(()) }));
+    let completion = await_required_audit_rpc_task(&mut audit_rpc_task).await;
+    assert!(completion.expect("listener task joins").is_ok());
+    assert!(
+        audit_rpc_task.is_none(),
+        "the fatal ownership operation must consume its completed listener handle"
+    );
+    crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
+}
+
+#[tokio::test]
+async fn audit_listener_error_is_consumed_before_fatal_classification() {
+    let mut audit_rpc_task = Some(tokio::spawn(async {
+        Err::<(), _>(anyhow::anyhow!("listener failure"))
+    }));
+    let completion = await_required_audit_rpc_task(&mut audit_rpc_task).await;
+    assert!(completion.expect("listener task joins").is_err());
+    assert!(
+        audit_rpc_task.is_none(),
+        "the fatal branch must retain its error result without retaining its handle"
+    );
+    crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
+}
+
+#[tokio::test]
+async fn cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain() {
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (_release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut audit_rpc_task = Some(tokio::spawn(async move {
+        let _ = entered_tx.send(());
+        let _ = release_rx.await;
+        Ok::<(), anyhow::Error>(())
+    }));
+    entered_rx.await.expect("listener entered its live wait");
+
+    let wait = tokio::time::timeout(
+        std::time::Duration::from_millis(25),
+        await_required_audit_rpc_task(&mut audit_rpc_task),
+    )
+    .await;
+    assert!(
+        wait.is_err(),
+        "the pending listener must not complete during cancellation probe"
+    );
+    assert!(
+        audit_rpc_task.is_some(),
+        "cancelling the fatal-select wait must leave the live listener for normal abort-and-drain"
+    );
+    crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
+}
+
+#[tokio::test]
 async fn run_serve_roots_release_wal_senders_before_join() {
     let home = tempdir().unwrap();
     let config_path = home.path().join("freedom.yaml");
