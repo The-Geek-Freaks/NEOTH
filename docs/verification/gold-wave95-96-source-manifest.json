@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T21:39:47.4366543Z",
-  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T22:34:51.2368869Z",
+  "validationStatus": "STATIC-REVIEWED-HOSTED-VALIDATION-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 37325,
-      "sha256": "A62C1AB5A1F0F741CC42D534966C84D69867A7C74EC9AD7D9FC63CDDF1B19B72"
+      "bytes": 42160,
+      "sha256": "BBDC291917F5A17EC8B46E3ECCE69F2D840A27D66730DACCC4C427C3B4480D9D"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -53,18 +53,18 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 10983,
-      "sha256": "F81B9E23E76283E1211509F6B9994B27A02983B7B8269762390EFFF8CC027B2F"
+      "bytes": 11143,
+      "sha256": "1DCD6BFD880D629F7E7FFF0A7895FAB846750934141949BB58E938FC740C9DD3"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 20134,
-      "sha256": "DDF31389B1D9E7F442041ED26C5A6570810D701FB70E7AEECA3A50118BF51418"
+      "bytes": 26284,
+      "sha256": "E37865048BA58F81039985537D1D9B71CE4584A50EB3B23D15635DA5B1FDEE4D"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 9397,
-      "sha256": "047D6D2DC89D5192253F36AF7430A80485E432FBF1836B5D45BA931FDBBE54A1"
+      "bytes": 9569,
+      "sha256": "BA47FEB28C2066BC36E7F432F5E7AA3596762404921ADE87D3F4A4A25E2F1957"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 26660,
-      "sha256": "1D93482BA4F9477775BF3A953B213E65A1822B6321AC987E51EA4CD0C2C82F70"
+      "bytes": 27702,
+      "sha256": "A950F5EFAEAF240249BEA19C2FCADDCCA92C5EFFCD5C678B125C6D4881D0C9CC"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -488,8 +488,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 268508,
-      "sha256": "DACC723BBFF7DFC1DDCAA9A8824E8BD271ACFEB8BBB696B83570B4671B6AAD4D"
+      "bytes": 268834,
+      "sha256": "8E679EE7FF84A1DEDA4D50AB015A3F03205A5F889980E51E423A95B0094E8AFD"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3857,6 +3857,11 @@
       "sha256": "DB69BB9DA833210E7C73A15E076D5213B27A354ABCF84C58226BC0F313C05EB0"
     },
     {
+      "path": "docs/verification/gold-wave2480-bounded-owners-and-chat-diagnostics.json",
+      "bytes": 5313,
+      "sha256": "1A7766A5EEFEF25CD86E7CBC414A6295E93B27E3FB0485FCC684C95FD3E85405"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5008,8 +5013,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2464693,
-      "sha256": "D16B73886A4C7E20F897880B00D6D63ECC9C46B05BA2E0C05BE07BB0789EBBA4"
+      "bytes": 2467572,
+      "sha256": "56813918A32B7B40C58AC9AB3E231FB48644140276BC3FD51D1C8B91BD0CAA4C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5948,8 +5953,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 279089,
-      "sha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B"
+      "bytes": 296577,
+      "sha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -6053,8 +6058,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/dream.rs",
-      "bytes": 29276,
-      "sha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68"
+      "bytes": 39982,
+      "sha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7"
     },
     {
       "path": "SRC/neothd/src/cli/dreaming_task.rs",

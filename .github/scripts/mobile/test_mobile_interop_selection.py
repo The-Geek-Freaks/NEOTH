@@ -49,7 +49,7 @@ class SelectionContractTests(unittest.TestCase):
         expected_groups = {"libudx": 8, "peeroxide": 14, "dht": 15, "core": 25, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 16,
+            "collector": 18,
             "sources": 43,
             "groups": expected_groups,
         })
@@ -92,6 +92,8 @@ class SelectionContractTests(unittest.TestCase):
             "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures",
             "test_panic_site_accepts_only_bounded_basename_and_positive_line",
             "test_panic_site_rejects_paths_payloads_zero_and_suffixes",
+            "test_chat_failure_terminal_outcome_accepts_only_closed_failure_enum",
+            "test_chat_start_failure_records_poll_code_terminal_enum_and_closes_bridge",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

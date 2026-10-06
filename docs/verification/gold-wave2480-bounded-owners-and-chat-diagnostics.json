@@ -1,0 +1,106 @@
+{
+  "schema": "neoth.wave2480.bounded-owners-and-chat-diagnostics.v1",
+  "capturedUtc": "2026-10-06T22:34:25.1165966+00:00",
+  "baseProducer": "83a5d15207fc38cbedff83826f6974ba369a77ad",
+  "status": "STATIC-REVIEWED-HOSTED-VALIDATION-PENDING",
+  "changes": [
+    {
+      "area": "Dream audit",
+      "behavior": "One deadline covers acknowledged append and writer completion; caller cancellation or timeout aborts and reaps the owned writer. Existing best-effort render policy is preserved.",
+      "reviewSha256": "B0E626B6507D5AB14C8C00F91E5E47DF2DEDDCE75CB38A0787FB629DF4B1AE9D"
+    },
+    {
+      "area": "Cluster CLI",
+      "behavior": "Optional outbound-dispatch --wait-secs 1..300 performs exactly one authenticated dispatch and reads the existing durable operation/result. Expiry preserves the operation ID; no redispatch. Deadline guards precede and follow each projection; a running synchronous DB read is not preemptible.",
+      "reviewSha256": "1B11FD66FF48DCA21678D9D740F9815FD06CE6239051A159A09F8D13DE0F7576"
+    },
+    {
+      "area": "Hosted Mobile chat diagnosis",
+      "behavior": "Retain only numeric poll code and a closed public terminal kind/code; no raw terminal, request ID, text, provider, model or enrollment material. Observe daemon liveness/provider delta/scoped markers only around the actual chat call after pair validation. No runtime cause or product repair inferred.",
+      "reviewSha256": "39E2CE46AF863E9AF6BA05D355FBA0E8EB4770582960E05A734234601380D136"
+    }
+  ],
+  "sourceImportProofSha256": "5EC17D6CC8B4186D26F3819C77F54F6BB22C86626987994432F05F31624034B8",
+  "diagnosticImportProofSha256": "F7942B07C915B49D7D48DE506EC072193C203F89CA85F809BF4F0085CF4E2BB8",
+  "registration": {
+    "portableNative": 2804,
+    "newNativeTests": [
+      "cli::dream::tests::standalone_dream_audit_waits_for_real_writer_completion",
+      "cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack",
+      "cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer",
+      "cli::dream::tests::cancelled_dream_audit_reaps_real_writer_after_append_admission",
+      "cli::cluster::tests::outbound_wait_calls_the_scripted_dispatch_once_and_returns_its_exact_result",
+      "cli::cluster::tests::outbound_wait_returns_indeterminate_without_redispatch",
+      "cli::cluster::tests::outbound_wait_timeout_keeps_the_operation_id_for_read_only_recovery",
+      "cli::cluster::tests::outbound_wait_does_not_observe_or_accept_a_late_result_after_expiry",
+      "cli::cluster::tests::outbound_wait_rejects_a_projection_that_returns_after_the_budget",
+      "cli::cluster::tests::outbound_wait_parser_rejects_out_of_range_values"
+    ],
+    "focusedOwner": 32,
+    "focusedCompanion": 27,
+    "focusedRustTotal": 59,
+    "focusedOwnerSources": 19,
+    "mobileRust": 64,
+    "mobileCollector": 18,
+    "mobileSources": 43,
+    "newCollectorTests": [
+      "test_chat_failure_terminal_outcome_accepts_only_closed_failure_enum",
+      "test_chat_start_failure_records_poll_code_terminal_enum_and_closes_bridge"
+    ],
+    "generatedCliDocs": "source-derived update; exact hosted generator equality required"
+  },
+  "previousProducerEvidence": {
+    "producer": "83a5d15207fc38cbedff83826f6974ba369a77ad",
+    "focused": {
+      "run": "37536107275",
+      "status": "success",
+      "exactOwnerPassed": 22,
+      "exactCompanionPassed": 27,
+      "originalArchiveEntries": 65,
+      "rootAdmissionSha256": "D07E09E293A1D760AE19DBF278AED988B7C9111F5DA4B86FFBE36813C0E09424"
+    },
+    "mobile": {
+      "run": "37538853243",
+      "attempt": 1,
+      "job": "112526618396",
+      "status": "failed",
+      "stage": "chat_start",
+      "artifactId": "11448002760",
+      "originalZipSha256": "F77E95EDD24403C484E001213F90D45BFE1B4CCB706A65B44C91A4E2798EC711",
+      "exactOriginalEntries": 4,
+      "rawSourceBindings": 43,
+      "earlyRustPassed": 37,
+      "collectorPassed": 16,
+      "laterRustNotRun": 27,
+      "rustPanicObserved": false,
+      "orderedShutdownAndWalDrain": true,
+      "serveExitCode": 1,
+      "completedSubsteps": [
+        "status_pair",
+        "status_reconnect",
+        "status_scope_chat_rejected",
+        "chat_pair"
+      ],
+      "partialCustodySha256": "F07409B44EDA976C43E8976735BB1F61EB3D4256F65A9379D983CB61B7D7F17E",
+      "productAccepted": false
+    }
+  },
+  "heldAndOpen": [
+    "W2478 same-enrollment daemon restart product proof remains a separate unreviewed candidate",
+    "V4 has 10 semantic three-way rebase conflicts; no historical candidate may overwrite current V3 fixes",
+    "Mobile streaming/files/notifications/encrypted offline replay and actual device/upgrade journeys remain separate roadmap obligations",
+    "Cluster durable master custody exists; global origin delivery, coordinator fencing/recovery and real NEXUS QA/retry acceptance remain open",
+    "Full native CI, packaged macOS chat, native signing/notarization and final release are not accepted by this batch"
+  ],
+  "validation": {
+    "staticIndependentReviews": 3,
+    "rawPlanPrefixPreserved": true,
+    "localRuntimeExecuted": false,
+    "localCompilerExecuted": false,
+    "localTestExecuted": false,
+    "slintChanged": false,
+    "claudePolling": false,
+    "hostedForThisBatch": "pending after publication",
+    "releaseAccepted": false
+  }
+}

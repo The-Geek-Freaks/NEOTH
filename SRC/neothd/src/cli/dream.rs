@@ -417,37 +417,169 @@ async fn run_now(
 
     // Best-effort DREAM_COMPOSED audit — only when this process wrote dreams.
     if report.dreams_written > 0 {
-        emit_dream_composed(&report);
+        emit_dream_composed(&report).await;
     }
 
     render(&report, output);
     Ok(())
 }
 
-fn emit_dream_composed(report: &PassReport) {
+async fn emit_dream_composed(report: &PassReport) {
     let home = FreedomConfig::default_neoth_home();
+    if let Err(error) = emit_dream_composed_at(&home, report, Duration::from_secs(30)).await {
+        // This remains a post-effect, best-effort audit: a completed dream pass
+        // remains visible to the operator, while both append and finalization
+        // failures stay explicit in the daemon/CLI log.
+        tracing::warn!(error = %error, "dream: DREAM_COMPOSED audit was not finalized");
+    }
+}
+
+async fn emit_dream_composed_at(
+    home: &Path,
+    report: &PassReport,
+    completion_timeout: Duration,
+) -> Result<()> {
+    #[cfg(test)]
+    {
+        return emit_dream_composed_at_with_lifecycle_signals(
+            home,
+            report,
+            completion_timeout,
+            None,
+            None,
+        )
+        .await;
+    }
+    #[cfg(not(test))]
+    emit_dream_composed_at_with_lifecycle_signals(home, report, completion_timeout, None).await
+}
+
+/// Keep the actual writer owner in a detached supervisor until it has either
+/// completed or been aborted and reaped. Dropping the caller future is allowed
+/// to abandon this best-effort receipt, but never the writer task it started.
+async fn emit_dream_composed_at_with_lifecycle_signals(
+    home: &Path,
+    report: &PassReport,
+    completion_timeout: Duration,
+    mut lifecycle_signals: Option<(
+        Option<tokio::sync::oneshot::Sender<crate::wal::writer::WalWriterHandle>>,
+        Option<tokio::sync::oneshot::Sender<()>>,
+    )>,
+    #[cfg(test)] ack_gate: Option<crate::wal::writer::TestAckGate>,
+) -> Result<()> {
     let now_unix = crate::time::now_unix_secs();
-    // Shared payload builder — identical shape to the daemon cron's 0xF4
-    // frame (only the emit mechanism + provenance flag differ).
     let payload = dream_composed_payload(report, now_unix);
     let wal_dir = home.join("wal");
-    if let Err(error) = std::fs::create_dir_all(&wal_dir) {
-        tracing::warn!(%error, "dream: WAL directory unavailable; DREAM_COMPOSED not recorded");
-        return;
-    }
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create dream WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-composed");
-    let (writer, _join) = match crate::wal::writer::spawn_for_home(segment, home) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "dream: WAL writer spawn failed; DREAM_COMPOSED not recorded");
-            return;
-        }
+    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+        segment,
+        home.to_path_buf(),
+    )
+    .context("spawn completion-owning DREAM_COMPOSED WAL writer")?;
+    #[cfg(test)]
+    let writer = match ack_gate {
+        Some(gate) => writer.with_test_ack_gate(gate),
+        None => writer,
     };
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
             .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "dream: DREAM_COMPOSED frame append failed (audit gap)");
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    let mut caller_lifecycle = DreamAuditCallerLifecycle {
+        cancel_tx: Some(cancel_tx),
+    };
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + completion_timeout;
+        let abort = completion.abort_handle();
+        let append_result = {
+            let append = writer.append(header, payload);
+            tokio::pin!(append);
+            tokio::select! {
+                result = &mut append => result.context("append DREAM_COMPOSED frame"),
+                _ = tokio::time::sleep_until(deadline) => {
+                    abort.abort();
+                    Err(anyhow::anyhow!("DREAM_COMPOSED append exceeded its absolute deadline"))
+                }
+                changed = cancel_rx.changed() => {
+                    if changed.is_ok() && *cancel_rx.borrow() {
+                        abort.abort();
+                    }
+                    Err(anyhow::anyhow!("DREAM_COMPOSED caller cancelled during append"))
+                }
+            }
+        };
+        if append_result.is_ok() {
+            if let Some(signal) = lifecycle_signals
+                .as_mut()
+                .and_then(|signals| signals.0.take())
+            {
+                let _ = signal.send(writer.clone());
+            }
+        }
+        drop(writer);
+        let finalized = completion.wait();
+        tokio::pin!(finalized);
+        let finalized_result = tokio::select! {
+            result = &mut finalized => result.context("finalize DREAM_COMPOSED WAL writer"),
+            _ = tokio::time::sleep_until(deadline) => {
+                abort.abort();
+                match finalized.await {
+                    Ok(()) => Err(anyhow::anyhow!(
+                        "DREAM_COMPOSED finalization exceeded its absolute deadline"
+                    )),
+                    Err(reap) => Err(anyhow::anyhow!(
+                        "DREAM_COMPOSED finalization exceeded its absolute deadline; writer reap failed: {reap:#}"
+                    )),
+                }
+            }
+            changed = cancel_rx.changed() => {
+                if changed.is_ok() && *cancel_rx.borrow() {
+                    abort.abort();
+                }
+                finalized.await.context("reap cancelled DREAM_COMPOSED WAL writer")
+            }
+        };
+        if let Some(signal) = lifecycle_signals
+            .as_mut()
+            .and_then(|signals| signals.1.take())
+        {
+            let _ = signal.send(());
+        }
+        let result = match (append_result, finalized_result) {
+            (Ok(_), Ok(())) => Ok(()),
+            (Err(append), Ok(())) | (Ok(_), Err(append)) => Err(append),
+            (Err(append), Err(finalized)) => Err(anyhow::anyhow!(
+                "{append:#}; additionally failed to finalize DREAM_COMPOSED WAL: {finalized:#}"
+            )),
+        };
+        let _ = result_tx.send(result);
+    });
+    let result = result_rx
+        .await
+        .context("DREAM_COMPOSED writer supervisor ended before terminal cleanup")?;
+    caller_lifecycle.disarm();
+    result
+}
+
+
+struct DreamAuditCallerLifecycle {
+    cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl DreamAuditCallerLifecycle {
+    fn disarm(&mut self) {
+        self.cancel_tx.take();
+    }
+}
+
+impl Drop for DreamAuditCallerLifecycle {
+    fn drop(&mut self) {
+        if let Some(cancel_tx) = self.cancel_tx.take() {
+            let _ = cancel_tx.send(true);
+        }
     }
 }
 
@@ -753,6 +885,144 @@ mod tests {
         }
     }
 
+    fn dream_report() -> PassReport {
+        PassReport {
+            events_considered: 2,
+            dreams_written: 1,
+            path: PathBuf::from("dreams/2026-10-06.jsonl"),
+            path_taken: DreamingPath::Deterministic,
+        }
+    }
+
+    #[tokio::test]
+    async fn standalone_dream_audit_waits_for_real_writer_completion() {
+        let home = tempdir().unwrap();
+        emit_dream_composed_at(home.path(), &dream_report(), Duration::from_secs(1))
+            .await
+            .expect("best-effort helper must complete a healthy writer before returning");
+        let entries = std::fs::read_dir(home.path().join("wal"))
+            .unwrap()
+            .count();
+        assert!(entries > 0, "completed standalone writer publishes its WAL segment");
+    }
+
+    #[tokio::test]
+    async fn dream_audit_absolute_deadline_aborts_pending_append_ack() {
+        let home = tempdir().unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(
+            crate::wal::events::EVENT_TYPE_DREAM_COMPOSED,
+        );
+        let (writer_reaped_tx, writer_reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            let gate = gate.clone();
+            async move {
+                emit_dream_composed_at_with_lifecycle_signals(
+                    &home,
+                    &dream_report(),
+                    Duration::from_millis(25),
+                    Some((None, Some(writer_reaped_tx))),
+                    Some(gate),
+                )
+                .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(1), gate.wait_until_durable())
+            .await
+            .expect("real DREAM_COMPOSED append must reach the durable-before-ack gate");
+        let result = task
+            .await
+            .expect("pending append deadline supervisor must finish");
+        assert!(
+            result
+                .expect_err("gated append must exhaust the absolute deadline")
+                .to_string()
+                .contains("append exceeded its absolute deadline"),
+            "the absolute budget bounds the real append acknowledgement"
+        );
+        tokio::time::timeout(Duration::from_secs(1), writer_reaped_rx)
+            .await
+            .expect("pending append deadline must reap the actual writer")
+            .expect("pending append supervisor must report terminal cleanup");
+    }
+    #[tokio::test]
+    async fn dream_audit_absolute_deadline_reaps_retained_writer() {
+        let home = tempdir().unwrap();
+        let (append_admitted_tx, append_admitted_rx) = tokio::sync::oneshot::channel();
+        let (writer_reaped_tx, writer_reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move {
+                emit_dream_composed_at_with_lifecycle_signals(
+                    &home,
+                    &dream_report(),
+                    Duration::from_millis(25),
+                    Some((Some(append_admitted_tx), Some(writer_reaped_tx))),
+                    None,
+                )
+                .await
+            }
+        });
+        let retained_writer = append_admitted_rx
+            .await
+            .expect("real append must be admitted before the deadline fixture holds its writer");
+        let result = task
+            .await
+            .expect("deadline fixture supervisor must finish");
+        assert!(
+            result
+                .expect_err("retained writer must exhaust the absolute deadline")
+                .to_string()
+                .contains("absolute deadline"),
+            "the one budget covers finalization after a successful append"
+        );
+        tokio::time::timeout(Duration::from_secs(1), writer_reaped_rx)
+            .await
+            .expect("deadline path must reap the actual writer")
+            .expect("deadline supervisor must report terminal cleanup");
+        drop(retained_writer);
+    }
+    #[tokio::test]
+    async fn cancelled_dream_audit_reaps_real_writer_after_append_admission() {
+        let home = tempdir().unwrap();
+        let (append_admitted_tx, append_admitted_rx) = tokio::sync::oneshot::channel();
+        let (writer_reaped_tx, writer_reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move {
+                emit_dream_composed_at_with_lifecycle_signals(
+                    &home,
+                    &dream_report(),
+                    Duration::from_secs(1),
+                    Some((Some(append_admitted_tx), Some(writer_reaped_tx))),
+                    None,
+                )
+                .await
+            }
+        });
+        let retained_writer = append_admitted_rx
+            .await
+            .expect("real DREAM_COMPOSED append must be admitted before cancellation");
+        task.abort();
+        let _ = task.await;
+        tokio::time::timeout(Duration::from_secs(1), writer_reaped_rx)
+            .await
+            .expect("cancelled production emitter must reap its real writer")
+            .expect("writer owner supervisor must report terminal cleanup");
+        drop(retained_writer);
+        let wal_dir = home.path().join("wal");
+        let replacement = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-after-cancel");
+        let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+            replacement,
+            home.path().to_path_buf(),
+        )
+        .expect("cancelled supervisor must release its real writer before another standalone writer");
+        drop(writer);
+        completion
+            .wait_bounded(Duration::from_secs(1))
+            .await
+            .expect("replacement standalone writer completes after cancellation cleanup");
+    }
     #[test]
     fn day_label_extracts_yyyy_mm_dd() {
         let report = PassReport {

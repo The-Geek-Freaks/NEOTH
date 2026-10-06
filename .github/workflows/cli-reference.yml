@@ -267,7 +267,7 @@ jobs:
 
       # This optional batch shares the already-built default-feature neoth
       # library. It executes six updater-status, five self-update owner, six manual-Cron, and five
-      # offline agents-owner identities once each, retaining source-bound logs for narrow status-and-owner admission.
+      # offline agents-owner, four Dream writer, and six bounded cluster-wait identities once each.
       - name: Run exact updater-status regressions
         if: ${{ inputs.updater_status_regressions }}
         timeout-minutes: 20
@@ -302,7 +302,17 @@ jobs:
             'cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release' \
             'cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup' \
             'cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases' \
-            'daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases' > "$proof_dir/selection.txt"
+            'daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases' \
+            'cli::dream::tests::standalone_dream_audit_waits_for_real_writer_completion' \
+            'cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack' \
+            'cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer' \
+            'cli::dream::tests::cancelled_dream_audit_reaps_real_writer_after_append_admission' \
+            'cli::cluster::tests::outbound_wait_calls_the_scripted_dispatch_once_and_returns_its_exact_result' \
+            'cli::cluster::tests::outbound_wait_returns_indeterminate_without_redispatch' \
+            'cli::cluster::tests::outbound_wait_timeout_keeps_the_operation_id_for_read_only_recovery' \
+            'cli::cluster::tests::outbound_wait_does_not_observe_or_accept_a_late_result_after_expiry' \
+            'cli::cluster::tests::outbound_wait_rejects_a_projection_that_returns_after_the_budget' \
+            'cli::cluster::tests::outbound_wait_parser_rejects_out_of_range_values' > "$proof_dir/selection.txt"
           printf '%s\n' \
             'SRC/neothd/src/cli/serve.rs' \
             'SRC/neothd/src/cli/serve_tasks.rs' \
@@ -320,12 +330,14 @@ jobs:
             'SRC/neothd/src/cron/runner.rs' \
             'SRC/neothd/src/config/mod.rs' \
             'SRC/neothd/src/consent.rs' \
-            'SRC/neothd/src/providers/cost_authorization.rs' > "$proof_dir/source-paths.txt"
+            'SRC/neothd/src/providers/cost_authorization.rs' \
+            'SRC/neothd/src/cli/dream.rs' \
+            'SRC/neothd/src/cli/cluster.rs' > "$proof_dir/source-paths.txt"
           while IFS= read -r source_path; do
             sha256sum "${source_path#SRC/}"
           done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
           expected_updater_count="$(wc -l < "$proof_dir/selection.txt")"
-          test "$expected_updater_count" -eq 22
+          test "$expected_updater_count" -eq 32
           ordinal=0
           while IFS= read -r identity; do
             ordinal=$((ordinal + 1))

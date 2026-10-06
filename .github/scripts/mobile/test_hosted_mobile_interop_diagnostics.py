@@ -380,5 +380,131 @@ class ScopedCollectorTests(unittest.TestCase):
                 self.assertNotIn("chat_pair", steps)
             else:
                 self.assertEqual(steps["chat_pair"], expected_step)
+    def test_chat_failure_terminal_outcome_accepts_only_closed_failure_enum(self) -> None:
+        for outcome in INTEROP.CHAT_FAILURE_TERMINAL_OUTCOMES:
+            raw = ('{"kind":"chat","schema_version":3,"outcome":"' + outcome + '"}').encode("ascii")
+            self.assertEqual(
+                INTEROP.chat_failure_terminal_diagnostic(raw),
+                {"terminal_kind": "chat", "terminal_code": outcome, "terminal_shape_valid": True},
+            )
+        for code in INTEROP.CHAT_FAILED_CODES:
+            self.assertEqual(
+                INTEROP.chat_failure_terminal_diagnostic(
+                    ('{"state":"failed","code":"' + code + '"}').encode("ascii")
+                ),
+                {"terminal_kind": "failed", "terminal_code": code, "terminal_shape_valid": True},
+            )
+        self.assertEqual(
+            INTEROP.chat_failure_terminal_diagnostic(b'{"state":"cancelled"}'),
+            {"terminal_kind": "cancelled", "terminal_code": "cancelled", "terminal_shape_valid": True},
+        )
+        for code in INTEROP.CHAT_DENIED_CODES:
+            self.assertEqual(
+                INTEROP.chat_failure_terminal_diagnostic(
+                    ('{"state":"denied","code":"' + code + '"}').encode("ascii")
+                ),
+                {"terminal_kind": "denied", "terminal_code": code, "terminal_shape_valid": True},
+            )
+        secret = b"descriptor-or-payload-must-not-persist"
+        expected = {
+            "terminal_kind": INTEROP.CHAT_FAILURE_TERMINAL_SENTINEL,
+            "terminal_code": "unknown",
+            "terminal_shape_valid": False,
+        }
+        for raw in (
+            b'{"kind":"chat","schema_version":3,"outcome":"accepted"}',
+            b'{"state":"failed","code":"unbounded-"' + secret + b'}',
+            b'{"state":"denied","code":"unknown"}',
+            b'{"state":"failed","code":"invalid_server_frame","detail":"' + secret + b'"}',
+            b"not-json-" + secret,
+            b'{"kind":"chat","schema_version":3,"outcome":[]}',
+            b'{"state":"failed","code":[]}',
+            b'{"state":"denied","code":{}}',
+            b'{"kind":"chat","schema_version":null,"outcome":"timeout"}',
+        ):
+            value = INTEROP.chat_failure_terminal_diagnostic(raw)
+            self.assertEqual(value, expected)
+            self.assertNotIn(secret.decode("ascii"), repr(value))
+
+    def test_chat_start_failure_records_poll_code_terminal_enum_and_closes_bridge(self) -> None:
+        class FakeBridge:
+            def __init__(self, terminal: bytes) -> None:
+                self.terminal = terminal
+                self.calls: list[str] = []
+                self.closed = False
+            def call(self, name: str, *_args: object, timeout: float) -> tuple[int, bytes]:
+                self.calls.append(name)
+                if name == "neoth_companion_pair_start":
+                    return INTEROP.OK, b'{"state":"paired","device_id":"private","descriptor":{"route":"private"}}'
+                return INTEROP.FAILED, self.terminal
+            def close(self) -> None:
+                self.closed = True
+
+        created: list[FakeBridge] = []
+        def factory(_library: pathlib.Path) -> FakeBridge:
+            bridge = FakeBridge(b'{"state":"failed","code":"invalid_server_frame"}')
+            created.append(bridge)
+            return bridge
+        receipt: dict[str, object] = {"steps": {}}
+        boundaries: list[tuple[str, bool]] = []
+        def observe(boundary: str) -> None:
+            boundaries.append((boundary, created[0].closed))
+        with self.assertRaisesRegex(RuntimeError, "chat rejected"):
+            INTEROP.run_chat_pair_and_start(
+                factory,
+                pathlib.Path("bridge.so"),
+                "neoth://private",
+                receipt,
+                lambda: 1.0,
+                observe,
+            )
+        self.assertEqual(
+            created[0].calls,
+            ["neoth_companion_pair_start", "neoth_companion_chat_start"],
+        )
+        self.assertTrue(created[0].closed)
+        self.assertEqual(boundaries, [("before", False), ("after", False)])
+        self.assertEqual(
+            receipt["chat_start_failure"],
+            {
+                "bridge_poll_code": INTEROP.FAILED,
+                "terminal_kind": "failed",
+                "terminal_code": "invalid_server_frame",
+                "terminal_shape_valid": True,
+            },
+        )
+        self.assertNotIn("private", repr(receipt["chat_start_failure"]))
+        diagnostics = {"basis": "collector_observation_cursor", "observed_delta": {"active": 0}}
+        INTEROP.record_chat_start_observation(receipt, True, True, 0, diagnostics)
+        self.assertTrue(receipt["chat_start_daemon_alive_before"])
+        self.assertTrue(receipt["chat_start_daemon_alive_after"])
+        self.assertEqual(receipt["chat_start_provider_request_delta"], 0)
+        self.assertIs(receipt["chat_start_diagnostics"], diagnostics)
+
+        class PairFailureBridge(FakeBridge):
+            def call(self, name: str, *_args: object, timeout: float) -> tuple[int, bytes]:
+                self.calls.append(name)
+                return INTEROP.FAILED, b'{"state":"failed","code":"transport_closed"}'
+        pair_failure_boundaries: list[str] = []
+        failed: list[PairFailureBridge] = []
+        def pair_failure_factory(_library: pathlib.Path) -> PairFailureBridge:
+            bridge = PairFailureBridge(b"")
+            failed.append(bridge)
+            return bridge
+        failed_receipt: dict[str, object] = {"steps": {}}
+        with self.assertRaisesRegex(RuntimeError, "chat pair rejected"):
+            INTEROP.run_chat_pair_and_start(
+                pair_failure_factory,
+                pathlib.Path("bridge.so"),
+                "neoth://private",
+                failed_receipt,
+                lambda: 1.0,
+                pair_failure_boundaries.append,
+            )
+        self.assertEqual(pair_failure_boundaries, [])
+        self.assertEqual(failed[0].calls, ["neoth_companion_pair_start"])
+        self.assertTrue(failed[0].closed)
+        self.assertNotIn("chat_start_failure", failed_receipt)
+
 if __name__ == "__main__":
     unittest.main()

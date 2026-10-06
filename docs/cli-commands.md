@@ -303,6 +303,7 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+- `--wait-secs <SECONDS>` — Keep the initiating CLI attached to the existing durable result. Expiry is local presentation only; OUTBOUND_RESULT remains recovery
 
 ##### `neoth buddy cluster task-delegate outbound-mark-indeterminate`
 
@@ -1030,6 +1031,7 @@ Ask the live authenticated daemon to dispatch exactly one outbound delegated tas
 - `--skill <SKILL>`
 - `--channel <CHANNEL>`
 - `--account <ACCOUNT>`
+- `--wait-secs <SECONDS>` — Keep the initiating CLI attached to the existing durable result. Expiry is local presentation only; OUTBOUND_RESULT remains recovery
 
 #### `neoth cluster task-delegate outbound-mark-indeterminate`
 

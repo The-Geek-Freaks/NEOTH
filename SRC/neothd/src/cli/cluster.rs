@@ -5,7 +5,9 @@
 //! disabled or no peer transport is active. This CLI reports that live
 //! posture and exposes routing, restore, topology, and swarm operations.
 
+use std::future::Future;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
@@ -25,6 +27,99 @@ use crate::config::{
     ClusterTransport, FreedomConfig,
 };
 use crate::secret::SecretString;
+
+const MAX_OUTBOUND_WAIT_SECS: u64 = 300;
+const OUTBOUND_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum OutboundCliWaitOutcome {
+    Result(crate::cluster::membership::OutboundTaskDelegateResult),
+    Indeterminate(crate::cluster::membership::OutboundTaskDelegateStatus),
+    WaitExpired { operation_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum OutboundCliWaitObservation {
+    Result(crate::cluster::membership::OutboundTaskDelegateResult),
+    Indeterminate(crate::cluster::membership::OutboundTaskDelegateStatus),
+    Pending,
+}
+
+fn parse_outbound_wait_secs(value: &str) -> std::result::Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|_| "wait-secs must be an unsigned integer".to_owned())
+        .and_then(|secs| validate_outbound_wait_secs(secs).map_err(|error| error.to_string()))
+}
+
+fn validate_outbound_wait_secs(secs: u64) -> Result<u64> {
+    anyhow::ensure!(secs > 0 && secs <= MAX_OUTBOUND_WAIT_SECS, "wait-secs must be in 1..={MAX_OUTBOUND_WAIT_SECS}");
+    Ok(secs)
+}
+
+async fn dispatch_outbound_then_wait<Dispatch, DispatchFuture, Observe, ObserveFuture>(
+    request: crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest,
+    wait_secs: u64,
+    dispatch: Dispatch,
+    mut observe: Observe,
+) -> Result<OutboundCliWaitOutcome>
+where
+    Dispatch: FnOnce(
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest,
+    ) -> DispatchFuture,
+    DispatchFuture: Future<
+        Output = Result<crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchReceipt>,
+    >,
+    Observe: FnMut(&str) -> ObserveFuture,
+    ObserveFuture: Future<Output = Result<OutboundCliWaitObservation>>,
+{
+    let wait_secs = validate_outbound_wait_secs(wait_secs)?;
+    let operation_id = request.operation_id.clone();
+    let task_id = request.task_id.clone();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_secs);
+    let receipt = match tokio::time::timeout_at(deadline, dispatch(request)).await {
+        Ok(receipt) => receipt?,
+        Err(_) => return Ok(OutboundCliWaitOutcome::WaitExpired { operation_id }),
+    };
+    anyhow::ensure!(
+        receipt.operation_id == operation_id && receipt.task_id == task_id,
+        "outbound dispatch receipt does not match the submitted operation"
+    );
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(OutboundCliWaitOutcome::WaitExpired { operation_id });
+        }
+        let observation = observe(&operation_id).await?;
+        // The authority DB read is synchronous and therefore cannot be
+        // interrupted by Tokio. If it consumed the remaining local wait
+        // budget, do not accept its potentially late projection.
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(OutboundCliWaitOutcome::WaitExpired { operation_id });
+        }
+        match observation {
+            OutboundCliWaitObservation::Result(result) => {
+                anyhow::ensure!(
+                    result.operation_id == operation_id && result.task_id == task_id,
+                    "outbound result does not match the submitted operation"
+                );
+                return Ok(OutboundCliWaitOutcome::Result(result));
+            }
+            OutboundCliWaitObservation::Indeterminate(status) => {
+                anyhow::ensure!(
+                    status.operation_id == operation_id
+                        && status.task_id == task_id
+                        && status.state == crate::cluster::membership::OutboundTaskDelegateState::Indeterminate,
+                    "outbound status is not the submitted indeterminate operation"
+                );
+                return Ok(OutboundCliWaitOutcome::Indeterminate(status));
+            }
+            OutboundCliWaitObservation::Pending => {}
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        tokio::time::sleep(OUTBOUND_WAIT_POLL_INTERVAL.min(remaining)).await;
+    }
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct ClusterArgs {
@@ -201,6 +296,10 @@ pub enum ClusterTaskDelegateAction {
         channel: Option<String>,
         #[arg(long)]
         account: Option<String>,
+        /// Keep the initiating CLI attached to the existing durable result.
+        /// Expiry is local presentation only; OUTBOUND_RESULT remains recovery.
+        #[arg(long, value_name = "SECONDS", value_parser = parse_outbound_wait_secs)]
+        wait_secs: Option<u64>,
     },
 }
 
@@ -2002,6 +2101,7 @@ async fn run_task_delegate_assignment(
             skill,
             channel,
             account,
+            wait_secs,
         } => {
             let request = crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest {
                 operation_id,
@@ -2016,17 +2116,67 @@ async fn run_task_delegate_assignment(
                     account_id: account,
                 },
             };
-            let receipt =
-                crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&home, &request)
-                    .await
-                    .map_err(|error| anyhow::anyhow!(error))?;
-            match output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
-                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
-                OutputFormat::Table => println!(
-                    "operation_id={} task_id={} peer_key={} state={:?}",
-                    receipt.operation_id, receipt.task_id, receipt.peer_key, receipt.state
-                ),
+            if let Some(wait_secs) = wait_secs {
+                let dispatch_home = home.clone();
+                let outcome = dispatch_outbound_then_wait(
+                    request,
+                    wait_secs,
+                    move |submitted| async move {
+                        crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&dispatch_home, &submitted)
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error))
+                    },
+                    |operation_id| {
+                        let observation = (|| -> Result<OutboundCliWaitObservation> {
+                            if let Some(result) =
+                                task_delegate_outbound_result_show_at(&home, operation_id)?
+                            {
+                                return Ok(OutboundCliWaitObservation::Result(result));
+                            }
+                            match task_delegate_outbound_status_show_at(&home, operation_id)? {
+                                Some(status)
+                                    if status.state
+                                        == crate::cluster::membership::OutboundTaskDelegateState::Indeterminate =>
+                                {
+                                    Ok(OutboundCliWaitObservation::Indeterminate(status))
+                                }
+                                Some(_) => Ok(OutboundCliWaitObservation::Pending),
+                                None => anyhow::bail!("outbound dispatch receipt has no exact durable operation"),
+                            }
+                        })();
+                        async move { observation }
+                    },
+                )
+                .await?;
+                match output {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&outcome)?),
+                    OutputFormat::Jsonl => println!("{}", serde_json::to_string(&outcome)?),
+                    OutputFormat::Table => match outcome {
+                        OutboundCliWaitOutcome::Result(result) => println!(
+                            "operation_id={} outbound_task_result={:?}", result.operation_id, result.body
+                        ),
+                        OutboundCliWaitOutcome::Indeterminate(status) => println!(
+                            "operation_id={} outbound_task_state=indeterminate recovery=outbound-result",
+                            status.operation_id
+                        ),
+                        OutboundCliWaitOutcome::WaitExpired { operation_id } => println!(
+                            "operation_id={} outbound_task_wait=expired recovery=outbound-result", operation_id
+                        ),
+                    },
+                }
+            } else {
+                let receipt =
+                    crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&home, &request)
+                        .await
+                        .map_err(|error| anyhow::anyhow!(error))?;
+                match output {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+                    OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+                    OutputFormat::Table => println!(
+                        "operation_id={} task_id={} peer_key={} state={:?}",
+                        receipt.operation_id, receipt.task_id, receipt.peer_key, receipt.state
+                    ),
+                }
             }
         }
     }
@@ -4468,6 +4618,76 @@ mod tests {
         credentials
             .write(&home.join("credentials.yaml"))
             .expect("write test credentials");
+    }
+
+    #[cfg(feature = "cluster")]
+    fn wait_test_request(
+        operation_id: &str,
+        task_id: &str,
+    ) -> crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest {
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest {
+            operation_id: operation_id.into(),
+            task_id: task_id.into(),
+            prompt: "fixture prompt".into(),
+            model_hint: None,
+            max_output_tokens: None,
+            deadline_unix: i64::MAX,
+            scope: crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: "fixture-skill".into(),
+                channel_id: None,
+                account_id: None,
+            },
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    fn wait_test_receipt(
+        operation_id: &str,
+        task_id: &str,
+    ) -> crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchReceipt {
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchReceipt {
+            operation_id: operation_id.into(),
+            task_id: task_id.into(),
+            peer_key: "a".repeat(64),
+            state: crate::cluster::membership::OutboundTaskDelegateState::Accepted,
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    fn wait_test_result(
+        operation_id: &str,
+        task_id: &str,
+    ) -> crate::cluster::membership::OutboundTaskDelegateResult {
+        crate::cluster::membership::OutboundTaskDelegateResult {
+            operation_id: operation_id.into(),
+            task_id: task_id.into(),
+            peer_key: "a".repeat(64),
+            received_at_unix: 1,
+            body: crate::cluster::heartbeat::TaskResultBody {
+                task_id: task_id.into(),
+                status: crate::cluster::heartbeat::TaskResultStatus::Failed {
+                    error: "fixture-terminal-failure".into(),
+                },
+                result: None,
+                provider_name: None,
+                requested_max_output_tokens: None,
+                effective_output_token_ceiling: None,
+            },
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    fn wait_test_indeterminate(
+        operation_id: &str,
+    ) -> crate::cluster::membership::OutboundTaskDelegateStatus {
+        crate::cluster::membership::OutboundTaskDelegateStatus {
+            operation_id: operation_id.into(),
+            task_id: "wait-task".into(),
+            peer_key: "a".repeat(64),
+            deadline_unix: 1,
+            state: crate::cluster::membership::OutboundTaskDelegateState::Indeterminate,
+            updated_at_unix: 1,
+        }
     }
 
     #[cfg(feature = "cluster")]
@@ -7129,5 +7349,195 @@ mod tests {
             let mode = meta.permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "audit log must be 0600, got 0o{mode:03o}");
         }
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn outbound_wait_calls_the_scripted_dispatch_once_and_returns_its_exact_result() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_dispatch = Arc::clone(&calls);
+        let expected = wait_test_result("wait-op", "wait-task");
+        let expected_for_read = expected.clone();
+        let outcome = dispatch_outbound_then_wait(
+            wait_test_request("wait-op", "wait-task"),
+            1,
+            move |submitted| {
+                let calls = Arc::clone(&calls_for_dispatch);
+                async move {
+                    assert_eq!((submitted.operation_id.as_str(), submitted.task_id.as_str()), ("wait-op", "wait-task"));
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(wait_test_receipt("wait-op", "wait-task"))
+                }
+            },
+            move |operation_id| {
+                assert_eq!(operation_id, "wait-op");
+                let expected = expected_for_read.clone();
+                async move { Ok(OutboundCliWaitObservation::Result(expected)) }
+            },
+        )
+        .await
+        .expect("terminal result");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(outcome, OutboundCliWaitOutcome::Result(expected));
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn outbound_wait_returns_indeterminate_without_redispatch() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_dispatch = Arc::clone(&calls);
+        let outcome = dispatch_outbound_then_wait(
+            wait_test_request("wait-indeterminate", "wait-task"),
+            1,
+            move |_| {
+                let calls = Arc::clone(&calls_for_dispatch);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(wait_test_receipt("wait-indeterminate", "wait-task"))
+                }
+            },
+            |operation_id| {
+                let status = wait_test_indeterminate(operation_id);
+                async move { Ok(OutboundCliWaitObservation::Indeterminate(status)) }
+            },
+        )
+        .await
+        .expect("indeterminate result");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(outcome, OutboundCliWaitOutcome::Indeterminate(status) if status.operation_id == "wait-indeterminate"));
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test(start_paused = true)]
+    async fn outbound_wait_timeout_keeps_the_operation_id_for_read_only_recovery() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::sync::oneshot;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_dispatch = Arc::clone(&calls);
+        let (first_probe_tx, first_probe_rx) = oneshot::channel();
+        let mut first_probe_tx = Some(first_probe_tx);
+        let wait = tokio::spawn(dispatch_outbound_then_wait(
+            wait_test_request("wait-timeout", "wait-task"),
+            1,
+            move |_| {
+                let calls = Arc::clone(&calls_for_dispatch);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(wait_test_receipt("wait-timeout", "wait-task"))
+                }
+            },
+            move |_| {
+                let first_probe_tx = first_probe_tx.take();
+                async move {
+                    if let Some(first_probe_tx) = first_probe_tx {
+                        first_probe_tx.send(()).expect("first probe receiver");
+                    }
+                    Ok(OutboundCliWaitObservation::Pending)
+                }
+            },
+        ));
+        first_probe_rx.await.expect("first pending probe");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let outcome = wait.await.expect("wait task").expect("bounded local wait");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            outcome,
+            OutboundCliWaitOutcome::WaitExpired {
+                operation_id: "wait-timeout".into()
+            }
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test(start_paused = true)]
+    async fn outbound_wait_does_not_observe_or_accept_a_late_result_after_expiry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::sync::oneshot;
+
+        let observations = Arc::new(AtomicUsize::new(0));
+        let observations_for_read = Arc::clone(&observations);
+        let (first_probe_tx, first_probe_rx) = oneshot::channel();
+        let mut first_probe_tx = Some(first_probe_tx);
+        let wait = tokio::spawn(dispatch_outbound_then_wait(
+            wait_test_request("wait-no-late-result", "wait-task"),
+            1,
+            |_| async { Ok(wait_test_receipt("wait-no-late-result", "wait-task")) },
+            move |_| {
+                let observation = observations_for_read.fetch_add(1, Ordering::SeqCst);
+                let first_probe_tx = first_probe_tx.take();
+                async move {
+                    if observation == 0 {
+                        first_probe_tx
+                            .expect("first observation sender")
+                            .send(())
+                            .expect("first observation receiver");
+                        Ok(OutboundCliWaitObservation::Pending)
+                    } else {
+                        Ok(OutboundCliWaitObservation::Result(wait_test_result(
+                            "wait-no-late-result",
+                            "wait-task",
+                        )))
+                    }
+                }
+            },
+        ));
+        first_probe_rx.await.expect("first pending probe");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let outcome = wait.await.expect("wait task").expect("bounded local wait");
+
+        assert_eq!(observations.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            outcome,
+            OutboundCliWaitOutcome::WaitExpired {
+                operation_id: "wait-no-late-result".into()
+            }
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test(start_paused = true)]
+    async fn outbound_wait_rejects_a_projection_that_returns_after_the_budget() {
+        let outcome = dispatch_outbound_then_wait(
+            wait_test_request("wait-overshoot", "wait-task"),
+            1,
+            |_| async { Ok(wait_test_receipt("wait-overshoot", "wait-task")) },
+            |_| async {
+                tokio::time::advance(Duration::from_secs(1)).await;
+                Ok(OutboundCliWaitObservation::Result(wait_test_result(
+                    "wait-overshoot",
+                    "wait-task",
+                )))
+            },
+        )
+        .await
+        .expect("late projection is discarded");
+
+        assert_eq!(
+            outcome,
+            OutboundCliWaitOutcome::WaitExpired {
+                operation_id: "wait-overshoot".into()
+            }
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn outbound_wait_parser_rejects_out_of_range_values() {
+        assert!(parse_outbound_wait_secs("0").is_err());
+        assert!(parse_outbound_wait_secs("301").is_err());
+        assert_eq!(parse_outbound_wait_secs("1").unwrap(), 1);
+        assert_eq!(parse_outbound_wait_secs("300").unwrap(), 300);
     }
 }

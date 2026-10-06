@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "status": "STATIC-REVIEWED-HOSTED-VALIDATION-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398991,
-    "sha256": "1AB2A435FC49215FA5C2DAB99FD2A10EAB69829D37AC6080CAD8930E55E13FF9"
+    "bytes": 399209,
+    "sha256": "C162CB49831FFE508321A605604E961F6F18457DAF577C13EABF17564EE256F7"
   },
-  "sourceInputs": 2180,
+  "sourceInputs": 2181,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4944,7 +4944,7 @@
     {
       "test": "cli::cluster::tests::task_delegate_set_show_is_revisioned_and_readback_exact",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
@@ -6480,37 +6480,37 @@
     {
       "test": "cli::dream::tests::status_without_config_reports_manual_only_defaults",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_enable_is_atomic_lossless_and_canonicalizes_legacy_spelling",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_disable_is_idempotent_but_still_requests_reconciliation",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_mutation_requires_initialized_config",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::invalid_config_is_unchanged_and_never_requests_reload",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::status_exposes_enabled_but_fail_closed_autonomy_contracts",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
       "junitClass": "neoth"
     },
     {
@@ -6594,7 +6594,7 @@
     {
       "test": "cli::cluster::tests::task_delegate_scope_cli_read_set_stale_cas_and_reset_preserve_exact_default_deny",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
@@ -6798,7 +6798,7 @@
     {
       "test": "cli::cluster::tests::outbound_task_delegate_show_is_exact_and_read_only_when_absent",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
@@ -7050,19 +7050,19 @@
     {
       "test": "cli::cluster::tests::generic_configure_preserves_budget_policy_in_apply_and_readback_snapshot",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cluster::tests::generic_configure_rejects_budget_drift_before_public_only_commit",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cluster::tests::generic_configure_rejects_budget_drift_before_passphrase_commit",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
@@ -7074,7 +7074,7 @@
     {
       "test": "cli::cluster::tests::live_scoped_and_outbound_assignment_rpc_failures_never_fall_back_offline",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "4221A2F5317F10F4210EA7DF619DBD0E38B447FB25F1631D08045657EE627F0B",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     },
     {
@@ -16790,6 +16790,66 @@
       "test": "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain",
       "sourcePath": "SRC/neothd/src/cli/serve_tests.rs",
       "sourceSha256": "E8815894F37843A69A842BB714B952EBD60F19C338E3308C20F770904ECE6A6A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::dream::tests::standalone_dream_audit_waits_for_real_writer_completion",
+      "sourcePath": "SRC/neothd/src/cli/dream.rs",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack",
+      "sourcePath": "SRC/neothd/src/cli/dream.rs",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer",
+      "sourcePath": "SRC/neothd/src/cli/dream.rs",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::dream::tests::cancelled_dream_audit_reaps_real_writer_after_append_admission",
+      "sourcePath": "SRC/neothd/src/cli/dream.rs",
+      "sourceSha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_calls_the_scripted_dispatch_once_and_returns_its_exact_result",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_returns_indeterminate_without_redispatch",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_timeout_keeps_the_operation_id_for_read_only_recovery",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_does_not_observe_or_accept_a_late_result_after_expiry",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_rejects_a_projection_that_returns_after_the_budget",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cluster::tests::outbound_wait_parser_rejects_out_of_range_values",
+      "sourcePath": "SRC/neothd/src/cli/cluster.rs",
+      "sourceSha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
       "junitClass": "neoth"
     }
   ],
@@ -77647,6 +77707,74 @@
       }
     ],
     "note": "Consume completed fatal audit listener before later drain; three real Tokio ownership regressions selected. Secondary shutdown-panic repair only; initial pairing readiness and final hosted acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2480BoundedOwnersAndChatDiagnostics": {
+    "base": "83a5d15207fc38cbedff83826f6974ba369a77ad",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 42160,
+        "sha256": "BBDC291917F5A17EC8B46E3ECCE69F2D840A27D66730DACCC4C427C3B4480D9D",
+        "blob": "4efe7ea864fac3e1b4bb2c609782980919237449"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 11143,
+        "sha256": "1DCD6BFD880D629F7E7FFF0A7895FAB846750934141949BB58E938FC740C9DD3",
+        "blob": "a4ddb59cf7048badbf309c79c305fdb2787725e0"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 26284,
+        "sha256": "E37865048BA58F81039985537D1D9B71CE4584A50EB3B23D15635DA5B1FDEE4D",
+        "blob": "f3e0bc32d29bf9b2d1598cee287aa8cb0980d291"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 9569,
+        "sha256": "BA47FEB28C2066BC36E7F432F5E7AA3596762404921ADE87D3F4A4A25E2F1957",
+        "blob": "525be447d688664a2497ce550c857d84687797aa"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 27702,
+        "sha256": "A950F5EFAEAF240249BEA19C2FCADDCCA92C5EFFCD5C678B125C6D4881D0C9CC",
+        "blob": "aaf5f151af3661d61558d4e53ffde6dd410104da"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 268834,
+        "sha256": "8E679EE7FF84A1DEDA4D50AB015A3F03205A5F889980E51E423A95B0094E8AFD",
+        "blob": "51dfa1663df30606a41f91b402dbee9426d18c41"
+      },
+      {
+        "path": "docs/verification/gold-wave2480-bounded-owners-and-chat-diagnostics.json",
+        "bytes": 5313,
+        "sha256": "1A7766A5EEFEF25CD86E7CBC414A6295E93B27E3FB0485FCC684C95FD3E85405",
+        "blob": "95ec777af2e426636b7c324c2371baddec20136e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2467572,
+        "sha256": "56813918A32B7B40C58AC9AB3E231FB48644140276BC3FD51D1C8B91BD0CAA4C",
+        "blob": "9177f958c6e3efaed13e7dae4bb526922407d0cf"
+      },
+      {
+        "path": "SRC/neothd/src/cli/cluster.rs",
+        "bytes": 296577,
+        "sha256": "5D190BE9CD3F9B91FDA9AA9E20584537357769AFD469CC81D0D30A62B56B5C97",
+        "blob": "7611c39eddfe46e85a4a28e3b4b530dc8bf2ccfb"
+      },
+      {
+        "path": "SRC/neothd/src/cli/dream.rs",
+        "bytes": 39982,
+        "sha256": "58BFC6DAD9BE67AA44A5F196C72EA0A9005A71F57C5F8EB32870C1C7B6F092B7",
+        "blob": "3b76b926d23b9be1453a972d8b60cafaef1de448"
+      }
+    ],
+    "note": "Dream one-budget append/completion ownership; one-dispatch bounded cluster CLI wait; fixed public chat-failure classification. Ten new Rust and two collector registrations; prior83a5 focused49 admitted, Mobile chat still failed. Local BSOD hold; no native/release claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

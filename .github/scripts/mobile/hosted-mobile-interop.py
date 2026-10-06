@@ -422,12 +422,109 @@ class Bridge:
             self.lib.neoth_companion_operation_free(op)
             for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
 
+CHAT_FAILURE_TERMINAL_OUTCOMES = frozenset((
+    "denied",
+    "busy",
+    "unavailable",
+    "timeout",
+    "indeterminate",
+))
+CHAT_FAILED_CODES = frozenset((
+    "bridge_task_panicked",
+    "invalid_reconnect_descriptor",
+    "key_derivation_failed",
+    "transport_start_failed",
+    "transport_start_timeout",
+    "transport_join_failed",
+    "transport_closed",
+    "chat_connect_timeout",
+    "transport_read_failed",
+    "chat_challenge_timeout",
+    "invalid_server_frame",
+    "invalid_chat_request",
+))
+CHAT_DENIED_CODES = frozenset((
+    "daemon_key_mismatch",
+    "invalid_chat_challenge",
+    "device_denied",
+    "invalid_frame",
+    "retry_later",
+    "unavailable",
+))
+CHAT_SCHEMA_VERSION = 3
+CHAT_FAILURE_TERMINAL_SENTINEL = "malformed_or_nonterminal"
+
+def chat_failure_terminal_diagnostic(raw: bytes) -> dict[str, Any]:
+    malformed = {
+        "terminal_kind": CHAT_FAILURE_TERMINAL_SENTINEL,
+        "terminal_code": "unknown",
+        "terminal_shape_valid": False,
+    }
+    try:
+        value = cli_json(raw, "chat failure terminal")
+    except RuntimeError:
+        return malformed
+    if not isinstance(value, dict):
+        return malformed
+    if value.get("kind") == "chat" and value.get("schema_version") == CHAT_SCHEMA_VERSION:
+        outcome = value.get("outcome")
+        if isinstance(outcome, str) and outcome in CHAT_FAILURE_TERMINAL_OUTCOMES:
+            return {
+                "terminal_kind": "chat",
+                "terminal_code": outcome,
+                "terminal_shape_valid": True,
+            }
+        return malformed
+    if set(value) == {"state", "code"} and value.get("state") == "failed":
+        code = value.get("code")
+        if isinstance(code, str) and code in CHAT_FAILED_CODES:
+            return {
+                "terminal_kind": "failed",
+                "terminal_code": code,
+                "terminal_shape_valid": True,
+            }
+        return malformed
+    if set(value) == {"state", "code"} and value.get("state") == "denied":
+        code = value.get("code")
+        if isinstance(code, str) and code in CHAT_DENIED_CODES:
+            return {
+                "terminal_kind": "denied",
+                "terminal_code": code,
+                "terminal_shape_valid": True,
+            }
+        return malformed
+    if value == {"state": "cancelled"}:
+        return {
+            "terminal_kind": "cancelled",
+            "terminal_code": "cancelled",
+            "terminal_shape_valid": True,
+        }
+    return malformed
+
+def record_chat_start_failure(receipt: dict[str, Any], code: int, raw: bytes) -> None:
+    receipt["chat_start_failure"] = {
+        "bridge_poll_code": code,
+        **chat_failure_terminal_diagnostic(raw),
+    }
+def record_chat_start_observation(
+    receipt: dict[str, Any],
+    daemon_alive_before: bool,
+    daemon_alive_after: bool,
+    provider_request_delta: int,
+    diagnostics: dict[str, Any],
+) -> None:
+    receipt["chat_start_daemon_alive_before"] = daemon_alive_before
+    receipt["chat_start_daemon_alive_after"] = daemon_alive_after
+    receipt["chat_start_provider_request_delta"] = provider_request_delta
+    receipt["chat_start_diagnostics"] = diagnostics
+
 def run_chat_pair_and_start(
     factory: Callable[[pathlib.Path], Any],
     library: pathlib.Path,
     pair_url_value: str,
     receipt: dict[str,Any],
     timeout: Callable[[], float],
+    observe_chat_start: Callable[[str], None] | None = None,
 ) -> tuple[dict[str,Any],dict[str,Any]]:
     chat_bridge = factory(library)
     try:
@@ -440,8 +537,21 @@ def run_chat_pair_and_start(
         chat_pair=terminal(raw,"paired")
         receipt["steps"]["chat_pair"]={"code":code,"validated":True}
         receipt["stage"]="chat_start"
-        code,raw=chat_bridge.call("neoth_companion_chat_start",json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],"W2328 interop canary",timeout=timeout())
-        chat=terminal(raw,"chat") if code==OK else (_ for _ in ()).throw(RuntimeError("chat rejected"))
+        if observe_chat_start is not None:
+            observe_chat_start("before")
+        try:
+            code,raw=chat_bridge.call("neoth_companion_chat_start",json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],"W2328 interop canary",timeout=timeout())
+        finally:
+            if observe_chat_start is not None:
+                observe_chat_start("after")
+        if code != OK:
+            record_chat_start_failure(receipt, code, raw)
+            raise RuntimeError("chat rejected")
+        try:
+            chat = terminal(raw, "chat")
+        except RuntimeError:
+            record_chat_start_failure(receipt, code, raw)
+            raise
         return chat_pair,chat
     finally:
         chat_bridge.close()
@@ -530,8 +640,31 @@ def main() -> int:
                     raise RuntimeError("status-scope rejection/provider boundary missing")
                 receipt["steps"]["status_scope_chat_rejected"]={"code":code,"failure_code":"invalid_server_frame","loopback_request_count":0}
                 chat_pair_url=pair_url(mint_pair("chat-send","pair_chat_send_mint"))
+                chat_provider_before = 0
+                chat_cursor: dict[str, Any] | None = None
+                def observe_chat_start(boundary: str) -> None:
+                    nonlocal chat_provider_before, chat_cursor
+                    if boundary == "before":
+                        chat_provider_before = provider.server.request_count
+                        chat_cursor = shutdown_markers.scoped_connect_cursor()
+                        receipt["chat_start_daemon_alive_before"] = serve.poll() is None
+                        return
+                    if boundary != "after" or chat_cursor is None:
+                        raise RuntimeError("invalid chat-start observation boundary")
+                    record_chat_start_observation(
+                        receipt,
+                        receipt["chat_start_daemon_alive_before"],
+                        serve.poll() is None,
+                        provider.server.request_count - chat_provider_before,
+                        shutdown_markers.scoped_connect_since(chat_cursor),
+                    )
                 chat_pair,chat=run_chat_pair_and_start(
-                    Bridge,library,chat_pair_url,receipt,lambda: budget(work_deadline)
+                    Bridge,
+                    library,
+                    chat_pair_url,
+                    receipt,
+                    lambda: budget(work_deadline),
+                    observe_chat_start,
                 )
                 records=chat.get("records",[])
                 if provider.server.request_count != 1 or chat.get("outcome") != "accepted" or not any(isinstance(record,dict) and record.get("text") == REPLY for record in records):
