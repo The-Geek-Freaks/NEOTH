@@ -1,0 +1,48 @@
+{
+  "schema": "neoth.wave2439.hickory-lock-import.v1",
+  "base": "aca28ceb97dff11a4d0e3e74ba8e98d9c626d84d",
+  "status": "hosted-resolution-admitted-index-only-import-compatibility-pending",
+  "hosted": {
+    "producer": "aca28ceb97dff11a4d0e3e74ba8e98d9c626d84d",
+    "rootAdmissionSha256": "F34A66DDAB26A8EF5836BC38F1E4057005C6A809F2F6B9D7FDEDEE9EFFC0E014",
+    "run": "37439820097",
+    "archiveSha256": "FF54F469F1422679932EAC720D3A536B70F0A716D78413A6119D804400CFCAF4",
+    "job": "112190545514",
+    "artifactId": "11399894609",
+    "attempt": 1,
+    "result": "success"
+  },
+  "lock": {
+    "indexOnly": true,
+    "physicalDirtySha256": "A53BF380469CD0242E9F64735AEAAF2ABF6BCE4098E32200E8EF00DB61B2552A",
+    "sha256": "C5A501434048FAD98C6B4476CF55073C67BA93A2E499BD45AB49C2A3E8F2E498",
+    "newBlob": "0bd5778da51e83d97b18548759fcb2a3ddb96dc9",
+    "physicalDirtyPreserved": true,
+    "oldBlob": "b6dd58f2d54055ccc2c09887de248936ecf28b99"
+  },
+  "dependencyChange": {
+    "otherRetargetedEdges": 24,
+    "otherRetargetedPackages": 23,
+    "targetedAdvisories": [
+      "GHSA-5j98-2g5x-46v6",
+      "GHSA-6w6g-hm98-mhgm",
+      "GHSA-6f2x-v7q7-m7m5"
+    ],
+    "orderOnlyRecords": 2,
+    "otherIdentitySourceChecksumChanges": 0,
+    "hickoryResolver": "0.26.1 -> 0.26.2"
+  },
+  "acceptance": {
+    "v4Accepted": false,
+    "releaseReady": false,
+    "v3Accepted": false,
+    "dependabotClosure": "not-yet-observed",
+    "deviceAccepted": false,
+    "crossPlatformCompatibility": "required-pending",
+    "localExecutableValidationRan": false,
+    "exactReviewedLockBytesReproduced": true,
+    "freshCargoResolutionPassed": true,
+    "lockedAllFeaturesMetadataPassed": true
+  },
+  "followup": "Future W2414 fixture-lock preparation must rebind its baseline to this committed lock; never reuse the earlier b6dd lock expectation."
+}
