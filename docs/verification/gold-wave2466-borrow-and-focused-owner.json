@@ -32,5 +32,17 @@
   "localExecutableValidationRan": false,
   "hostedAcceptance": false,
   "pairingPanicFixed": false,
-  "productNativeDeviceReleaseAcceptance": false
+  "productNativeDeviceReleaseAcceptance": false,
+  "followupProvenWarnings": {
+    "wave": "W2467",
+    "baseProducer": "8634d9c385fb9c85facd98e7d224bb76ed669b58",
+    "sameFailureRun": "37526503887",
+    "changes": {
+      "unnecessaryOuterConnectionsMutRemoved": true,
+      "unusedChatChallengeImportRemoved": true
+    },
+    "scope": "Two unused tokens only; dispatcher still owns a mutable receiver and ServerFrame::ChatChallenge remains unchanged",
+    "candidateManifestSha256": "B9D6C6B7B5654A493D3A29AD858156BED8D768420F017FC913A49E675937CE90",
+    "hostedVerification": "PENDING-FINAL-PRODUCER"
+  }
 }

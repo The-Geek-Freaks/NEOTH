@@ -292,7 +292,7 @@ pub(crate) async fn spawn_shared_public_rendezvous_carrier(
             anyhow::bail!("shared public carrier cancelled or expired during bootstrap");
         }
     }
-    let (swarm_task, peer_handle, mut connections) = startup.finish().await.map_err(|error| {
+    let (swarm_task, peer_handle, connections) = startup.finish().await.map_err(|error| {
         uncertain_start_error(format!(
             "shared public carrier finish lost cleanup ownership: {error}"
         ))

@@ -29,7 +29,7 @@ use crate::{
             StatusLease,
         },
         companion_protocol::{
-            COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatOutcome, CompanionChatRecord,
+            COMPANION_V3_SCHEMA_VERSION, CompanionChatOutcome, CompanionChatRecord,
             CompanionChatRecordKind, CompanionChatRequest, CompanionChatTerminal, CompanionDenied,
             CompanionDeniedCode, CompanionDeviceId, CompanionReadiness, CompanionScope,
             CompanionStatusSnapshot, EnrollmentAccepted, EnrollmentProof, ReconnectDescriptor,
