@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2442 static-reviewed canonical selection and full open-item inventory; hosted Preflight pending",
+  "status": "W2442 raw-body fixture corrected; fresh hosted Preflight pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 394508,
-    "sha256": "A1DD69989DC1693D6A6F4B8453F37BB3B0AB2A8EBBA14B86E4D5B52F9FAC952C"
+    "bytes": 394476,
+    "sha256": "BC26E7C58CB8EF8A8BE16E147FCDBD6200E78CE0360FFB143E5BB8389E9F6236"
   },
   "sourceInputs": 2156,
   "requiredNativeTests": [
@@ -76097,6 +76097,26 @@
       }
     ],
     "note": "Same35 Rust and4collector cases, canonical36source map, complete243raw-roadmap-item export, stable compatible cache. No localruntime, product/native/release acceptance; protected dirty Cargo.lock and .gitignore preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2442RawBodyFixtureCorrection": {
+    "base": "af50faf8310c3df29851cb977e40fb039e627c33",
+    "sources": [
+      {
+        "path": "packaging/tests/test_roadmap_release_gate.py",
+        "bytes": 11517,
+        "sha256": "37A41B61462126F9AC07220295E6071609F16D8C92F07EE23162515CB0112CE7",
+        "blob": "f08044928d037da60966d3ce1f83e50fd9d63a1c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2434261,
+        "sha256": "FFD849F5218330E9146DDC8B6A00CED9A95C0AE2B3ADF393774ECC3EBFD3EA60",
+        "blob": "8ab80813c2cf3ce9466e116cdd7da7aec99a83dd"
+      }
+    ],
+    "note": "Only3 expectedstrings corrected to existingfulltaskbody contract; productionparser/export and allselection/productgates unchanged. Priorpreflight9selectioncasespassed, roadmapfixturefailed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -72,13 +72,13 @@ class RoadmapReleaseGateTests(unittest.TestCase):
                     "line": 2,
                     "state": " ",
                     "identifier": "GOLD-OPEN-01",
-                    "body": "quoted",
+                    "body": "**GOLD-OPEN-01** quoted",
                 },
                 {
                     "line": 3,
                     "state": "~",
                     "identifier": "GOLD-PARTIAL-01",
-                    "body": "partial",
+                    "body": "**GOLD-PARTIAL-01** partial",
                 },
                 {
                     "line": 4,
@@ -90,7 +90,7 @@ class RoadmapReleaseGateTests(unittest.TestCase):
                     "line": 5,
                     "state": " ",
                     "identifier": "GOLD-OPEN-01",
-                    "body": "duplicate",
+                    "body": "**GOLD-OPEN-01** duplicate",
                 },
             ],
         )

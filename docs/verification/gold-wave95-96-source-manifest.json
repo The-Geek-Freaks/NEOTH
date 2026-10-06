@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T10:30:06.6369026Z",
-  "validationStatus": "W2442 static-reviewed canonical selection and full open-item inventory; hosted Preflight pending",
+  "capturedUtc": "2026-10-06T10:35:14.2569758Z",
+  "validationStatus": "W2442 raw-body fixture corrected; fresh hosted Preflight pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4813,8 +4813,8 @@
     },
     {
       "path": "packaging/tests/test_roadmap_release_gate.py",
-      "bytes": 11463,
-      "sha256": "B46923B0E0C4287F37330425605FE9B2A7D37118423700C0617B62A64EA8A6F8"
+      "bytes": 11517,
+      "sha256": "37A41B61462126F9AC07220295E6071609F16D8C92F07EE23162515CB0112CE7"
     },
     {
       "path": "packaging/tests/test_workflow_replay_gate.py",
@@ -4903,8 +4903,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2433585,
-      "sha256": "0467B0417345523C627BE35FD74730AD69A5405EF5EE992798BD5764D5138AE1"
+      "bytes": 2434261,
+      "sha256": "FFD849F5218330E9146DDC8B6A00CED9A95C0AE2B3ADF393774ECC3EBFD3EA60"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
