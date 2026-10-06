@@ -708,7 +708,7 @@ struct SwarmActor {
     flush_waiters: Vec<oneshot::Sender<Result<(), SwarmError>>>,
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 struct PendingResponderReplyKey {
     public_key: [u8; 32],
     noise: Vec<u8>,

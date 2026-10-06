@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T13:05:43.3041135Z",
-  "validationStatus": "W2445 corrected selection expectations; hosted acceptance pending",
+  "capturedUtc": "2026-10-06T13:13:05.4118224Z",
+  "validationStatus": "W2445 clone compile repair; actual product acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3763,8 +3763,8 @@
     },
     {
       "path": "docs/verification/gold-wave2445-responder-replay.json",
-      "bytes": 3250,
-      "sha256": "466548779C6E3E1022FD42EEFC46A218B3AE56B9964C6FD1A7D24A81F4898895"
+      "bytes": 3834,
+      "sha256": "654017E2A8DD0CE25B10B331915F7B4426D4DE890E770106EBE85454E7586C64"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4918,8 +4918,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2439522,
-      "sha256": "5A6D6C8DB64E123CD061B3DF683D99FEA72E7965B1B8EFA249492062B0FF79F6"
+      "bytes": 2440163,
+      "sha256": "B5505E14A42B6BE5AB7ED13B73386B47551DB4158BE9D5184E5EA7544C11C0A6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -10788,8 +10788,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide/src/swarm.rs",
-      "bytes": 119583,
-      "sha256": "DF943D173894578CCB5FCD012F6467CCA39E028A0E8FEDA4995BAC07FEE8C0A0"
+      "bytes": 119590,
+      "sha256": "3E24887FF4AB829AF7DCF19B2E6CE196BA5ECACA6E60EFBE5B6A607A7EACBA79"
     },
     {
       "path": "THIRD_PARTY_LICENSES",

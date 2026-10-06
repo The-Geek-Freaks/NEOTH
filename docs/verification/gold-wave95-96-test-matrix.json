@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2445 corrected selection expectations; hosted acceptance pending",
+  "status": "W2445 clone compile repair; actual product acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 395214,
-    "sha256": "FE9C4B58E05CB6B4748A197A7381F8098C359613261D603B20EA0910FB854AF8"
+    "bytes": 395210,
+    "sha256": "AC340D0EA0A79F2548F9C15577D9054EF6A8695E7B3A6770717AE91043102605"
   },
   "sourceInputs": 2160,
   "requiredNativeTests": [
@@ -76311,6 +76311,32 @@
       }
     ],
     "note": "Preflight37467721070 retained all gates and caught stale independently specified fixture expectations; manifest/product unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2445ReplayKeyClone": {
+    "base": "5ad5ced80c713ec2ef8e4fd028e84aebe17123fc",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2445-responder-replay.json",
+        "bytes": 3834,
+        "sha256": "654017E2A8DD0CE25B10B331915F7B4426D4DE890E770106EBE85454E7586C64",
+        "blob": "4b19b1b1c19b95352ebab0e445361a5eecee40ed"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2440163,
+        "sha256": "B5505E14A42B6BE5AB7ED13B73386B47551DB4158BE9D5184E5EA7544C11C0A6",
+        "blob": "af34acb90f24a09601c249605f278962fc3ea24a"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 119590,
+        "sha256": "3E24887FF4AB829AF7DCF19B2E6CE196BA5ECACA6E60EFBE5B6A607A7EACBA79",
+        "blob": "af435d74ea2946ff093044e67156bef8f64f6336"
+      }
+    ],
+    "note": "Hosted37468762773 proved8 UDX and9 collector cases; missing test Clone derived without changing replay behavior. Both overlays restored; actual product not run.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

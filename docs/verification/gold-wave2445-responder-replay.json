@@ -48,6 +48,20 @@
       "formatAndMetadata": "passed",
       "repair": "Explicit group counts, stable bounded-read position, nine exact collector identities; manifest and product unchanged",
       "hosted": "pending corrected producer"
+    },
+    "firstFullAttempt": {
+      "run": 37468762773,
+      "producer": "5ad5ced80c713ec2ef8e4fd028e84aebe17123fc",
+      "result": "compile failure in new replay-key tests",
+      "rustPassed": 8,
+      "collectorPassed": 9,
+      "sourceBindings": 39,
+      "bothOverlaysRestored": true,
+      "mainBuildRan": false,
+      "productRan": false,
+      "partialProofSha256": "D5173C189902522C0DE956A5AB92F0075509B0DBE93CA2D4F2848896F137DE47",
+      "repair": "derive Clone on PendingResponderReplyKey; exact tuple/equality unchanged",
+      "hosted": "pending corrected producer"
     }
   },
   "upstreamReference": "https://github.com/holepunchto/hyperdht/blob/fdcda937d8cf3ca2e494396c430218e2996e6b29/lib/server.js#L469-L486",
