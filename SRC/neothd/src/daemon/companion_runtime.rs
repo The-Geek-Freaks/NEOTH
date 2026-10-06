@@ -306,7 +306,8 @@ pub(crate) struct CompanionRuntime {
     listener_generation: u64,
     readiness: Arc<RwLock<CompanionReadiness>>,
     shutdown_tx: watch::Sender<bool>,
-    public_carrier: Arc<Mutex<Option<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>>>>,
+    public_carrier:
+        Arc<Mutex<Option<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>>>>,
     pair_tasks: Arc<Mutex<BTreeMap<String, PairListenerOwner>>>,
     listener_tasks: Arc<Mutex<BTreeMap<Uuid, DeviceListenerOwner>>>,
     #[cfg(test)]
@@ -407,14 +408,19 @@ impl CompanionRuntime {
         Ok(())
     }
 
-    async fn shared_public_carrier(&self) -> Result<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>> {
+    async fn shared_public_carrier(
+        &self,
+    ) -> Result<Arc<crate::cluster::hyperswarm::SharedPublicRendezvousCarrier>> {
         let mut carrier = self.public_carrier.lock().await;
-        if let Some(carrier) = carrier.as_ref() { return Ok(Arc::clone(carrier)); }
+        if let Some(carrier) = carrier.as_ref() {
+            return Ok(Arc::clone(carrier));
+        }
         let started = crate::cluster::hyperswarm::spawn_shared_public_rendezvous_carrier(
             self.daemon_key.clone(),
             tokio::time::Instant::now() + ACTIVE_LISTENER_READINESS_TIMEOUT,
             self.shutdown_tx.subscribe(),
-        ).await?;
+        )
+        .await?;
         *carrier = Some(Arc::clone(&started));
         Ok(started)
     }
@@ -664,9 +670,15 @@ impl CompanionRuntime {
         let mut diagnostics = CompanionPairDiagnostics::from_environment();
         diagnostics.phase("bootstrap_started");
         let carrier = self.shared_public_carrier().await?;
-        let mut rendezvous = match carrier.open_route(
-            topic, expected_client_noise, deadline, shutdown.clone(), Some(&mut pair_stop),
-        ).await
+        let mut rendezvous = match carrier
+            .open_route(
+                topic,
+                expected_client_noise,
+                deadline,
+                shutdown.clone(),
+                Some(&mut pair_stop),
+            )
+            .await
         {
             Ok(value) => value,
             Err(error) => {
@@ -994,9 +1006,15 @@ impl CompanionRuntime {
             let readiness_deadline =
                 tokio::time::Instant::now() + ACTIVE_LISTENER_READINESS_TIMEOUT;
             let carrier = self.shared_public_carrier().await?;
-            let mut rendezvous = match carrier.open_route(
-                topic, grant.client_noise_key, readiness_deadline, shutdown.clone(), None,
-            ).await
+            let mut rendezvous = match carrier
+                .open_route(
+                    topic,
+                    grant.client_noise_key,
+                    readiness_deadline,
+                    shutdown.clone(),
+                    None,
+                )
+                .await
             {
                 Ok(rendezvous) => rendezvous,
                 Err(error) => {

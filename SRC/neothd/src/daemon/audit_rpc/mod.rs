@@ -84,7 +84,6 @@ pub(crate) use client::{
     ConversationClientError, attested_conversation_boot_id, conversation_attach, conversation_post,
     conversation_post_cancellable,
 };
-pub(crate) use client::{UpdaterStatusClientError, updater_status_binding};
 pub(crate) use client::{
     DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,
     instance_commitment_for_nonce,
@@ -93,6 +92,7 @@ pub(crate) use client::{
     GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
     webchat_handoff_mint, webchat_resume_handoff_mint, webchat_runtime_status,
 };
+pub(crate) use client::{UpdaterStatusClientError, updater_status_binding};
 pub(crate) use client::{
     companion_v3_list_devices, companion_v3_mint_pair, companion_v3_revoke_device,
 };
@@ -106,11 +106,11 @@ pub use client::{
 };
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
 pub(crate) use server::bind_and_serve;
+pub(crate) use server::daemon_updater_status_binding;
 pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState,
     is_allowed_client_event, is_allowed_client_event_pair,
 };
-pub(crate) use server::daemon_updater_status_binding;
 #[cfg(test)]
 pub(crate) use sidecar::read_sidecar;
 pub(crate) use sidecar::write_sidecar;

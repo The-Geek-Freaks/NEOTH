@@ -705,7 +705,8 @@ pub(crate) fn daemon_updater_status_binding(
         .parent()
         .context("daemon updater chain base has no parent")?;
     anyhow::ensure!(
-        std::fs::canonicalize(parent).context("canonicalize daemon updater chain parent")? == wal_dir,
+        std::fs::canonicalize(parent).context("canonicalize daemon updater chain parent")?
+            == wal_dir,
         "daemon updater chain base is not a direct child of the instance WAL directory"
     );
     let name = segment_chain_base_path

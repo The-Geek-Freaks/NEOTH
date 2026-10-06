@@ -198,7 +198,8 @@ pub(crate) struct PublicRendezvous {
 /// carrier; they never create a second swarm for the same daemon key.
 pub(crate) struct SharedPublicRendezvousCarrier {
     peer_handle: Arc<peeroxide::SwarmHandle>,
-    routes: Arc<tokio::sync::Mutex<HashMap<SharedRouteKey, mpsc::Sender<peeroxide::SwarmConnection>>>>,
+    routes:
+        Arc<tokio::sync::Mutex<HashMap<SharedRouteKey, mpsc::Sender<peeroxide::SwarmConnection>>>>,
     topic_refs: tokio::sync::Mutex<HashMap<[u8; 32], usize>>,
     /// Serializes route reservation, exact admission retirement, and topic
     /// leave so an old route cannot erase a replacement for the same topic.
@@ -223,7 +224,10 @@ pub(crate) struct SharedPublicRendezvous {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct SharedRouteKey { remote_static_key: [u8; 32], topic: [u8; 32] }
+struct SharedRouteKey {
+    remote_static_key: [u8; 32],
+    topic: [u8; 32],
+}
 
 /// The dispatcher derives an exact authenticated remote-key/topic tuple before
 /// transferring the still-owned SwarmConnection. Keeping lookup separate lets
@@ -274,7 +278,9 @@ pub(crate) async fn spawn_shared_public_rendezvous_carrier(
     let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
     config.key_pair = Some(server_key_pair);
     config.server_authenticated_topic_admission = true;
-    let startup = peeroxide::spawn_starting(config).await.context("begin shared public carrier")?;
+    let startup = peeroxide::spawn_starting(config)
+        .await
+        .context("begin shared public carrier")?;
     match wait_for_bootstrap_or_stop(startup.bootstrapped(), &mut shutdown, None, deadline).await {
         BootstrapWait::Ready(Ok(())) => {}
         BootstrapWait::Ready(Err(error)) => {
@@ -286,11 +292,17 @@ pub(crate) async fn spawn_shared_public_rendezvous_carrier(
             anyhow::bail!("shared public carrier cancelled or expired during bootstrap");
         }
     }
-    let (swarm_task, peer_handle, mut connections) = startup.finish().await
-        .map_err(|error| uncertain_start_error(format!("shared public carrier finish lost cleanup ownership: {error}")))?;
+    let (swarm_task, peer_handle, mut connections) = startup.finish().await.map_err(|error| {
+        uncertain_start_error(format!(
+            "shared public carrier finish lost cleanup ownership: {error}"
+        ))
+    })?;
     // Retain the actor join in the dispatcher: normal daemon shutdown is the
     // sole terminal owner and must prove the actor has drained.
-    let routes = Arc::new(tokio::sync::Mutex::new(HashMap::<SharedRouteKey, mpsc::Sender<peeroxide::SwarmConnection>>::new()));
+    let routes = Arc::new(tokio::sync::Mutex::new(HashMap::<
+        SharedRouteKey,
+        mpsc::Sender<peeroxide::SwarmConnection>,
+    >::new()));
     let terminal_failure = Arc::new(tokio::sync::Mutex::new(None));
     let dispatcher = spawn_shared_public_dispatcher(
         connections,
@@ -299,20 +311,33 @@ pub(crate) async fn spawn_shared_public_rendezvous_carrier(
         Arc::clone(&terminal_failure),
     );
     Ok(Arc::new(SharedPublicRendezvousCarrier {
-        peer_handle: Arc::new(peer_handle), routes, topic_refs: tokio::sync::Mutex::new(HashMap::new()), lifecycle: tokio::sync::Mutex::new(()), closed: AtomicBool::new(false), dispatcher: tokio::sync::Mutex::new(Some(dispatcher)), terminal_failure,
+        peer_handle: Arc::new(peer_handle),
+        routes,
+        topic_refs: tokio::sync::Mutex::new(HashMap::new()),
+        lifecycle: tokio::sync::Mutex::new(()),
+        closed: AtomicBool::new(false),
+        dispatcher: tokio::sync::Mutex::new(Some(dispatcher)),
+        terminal_failure,
     }))
 }
 
 fn spawn_shared_public_dispatcher(
     mut connections: mpsc::Receiver<peeroxide::SwarmConnection>,
     swarm_task: tokio::task::JoinHandle<()>,
-    routes: Arc<tokio::sync::Mutex<HashMap<SharedRouteKey, mpsc::Sender<peeroxide::SwarmConnection>>>>,
+    routes: Arc<
+        tokio::sync::Mutex<HashMap<SharedRouteKey, mpsc::Sender<peeroxide::SwarmConnection>>>,
+    >,
     terminal_failure: Arc<tokio::sync::Mutex<Option<String>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(connection) = connections.recv().await {
-            let Some(topic) = connection.topics.first().copied() else { continue; };
-            let key = SharedRouteKey { remote_static_key: *connection.remote_public_key(), topic };
+            let Some(topic) = connection.topics.first().copied() else {
+                continue;
+            };
+            let key = SharedRouteKey {
+                remote_static_key: *connection.remote_public_key(),
+                topic,
+            };
             let route = shared_route_sender(&routes, key).await;
             if let Some(route) = route {
                 // One stalled route must never head-of-line block another.
@@ -335,9 +360,8 @@ fn spawn_shared_public_dispatcher(
             }
         }
         if let Err(error) = swarm_task.await {
-            *terminal_failure.lock().await = Some(format!(
-                "shared public carrier actor join failed: {error}"
-            ));
+            *terminal_failure.lock().await =
+                Some(format!("shared public carrier actor join failed: {error}"));
         }
     })
 }
@@ -351,7 +375,10 @@ impl SharedPublicRendezvousCarrier {
         shutdown: tokio::sync::watch::Receiver<bool>,
         local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
     ) -> Result<SharedPublicRendezvous> {
-        if *shutdown.borrow() || local_stop.as_deref().is_some_and(|stop| *stop.borrow()) || tokio::time::Instant::now() >= deadline {
+        if *shutdown.borrow()
+            || local_stop.as_deref().is_some_and(|stop| *stop.borrow())
+            || tokio::time::Instant::now() >= deadline
+        {
             anyhow::bail!("shared public route cancelled or expired before admission");
         }
         let _lifecycle = self.lifecycle.lock().await;
@@ -361,8 +388,13 @@ impl SharedPublicRendezvousCarrier {
         // One exact authenticated key/topic tuple has one receiver owner.
         // Distinct authenticated devices may share the topic while retaining
         // separate response/replay ownership.
-        let key = SharedRouteKey { remote_static_key: expected_remote_static_key, topic };
-        if self.routes.lock().await.contains_key(&key) { anyhow::bail!("shared public route already owns authenticated key/topic"); }
+        let key = SharedRouteKey {
+            remote_static_key: expected_remote_static_key,
+            topic,
+        };
+        if self.routes.lock().await.contains_key(&key) {
+            anyhow::bail!("shared public route already owns authenticated key/topic");
+        }
         let (tx, rx) = mpsc::channel(8);
         self.routes.lock().await.insert(key, tx);
         let first_topic_route = {
@@ -371,12 +403,18 @@ impl SharedPublicRendezvousCarrier {
             *refs.entry(topic).or_insert(0) += 1;
             first
         };
-        if first_topic_route && let Err(error) = self.peer_handle.join(topic, server_only_join_opts()).await {
+        if first_topic_route
+            && let Err(error) = self.peer_handle.join(topic, server_only_join_opts()).await
+        {
             self.routes.lock().await.remove(&key);
             self.topic_refs.lock().await.remove(&topic);
             return Err(error).context("join shared public route");
         }
-        let lease = match self.peer_handle.register_server_authenticated_topic(expected_remote_static_key, topic).await {
+        let lease = match self
+            .peer_handle
+            .register_server_authenticated_topic(expected_remote_static_key, topic)
+            .await
+        {
             Ok(lease) => lease,
             Err(error) => {
                 self.routes.lock().await.remove(&key);
@@ -384,14 +422,27 @@ impl SharedPublicRendezvousCarrier {
                     let mut refs = self.topic_refs.lock().await;
                     let count = refs.get_mut(&topic).expect("route topic ref exists");
                     *count -= 1;
-                    if *count == 0 { refs.remove(&topic); true } else { false }
+                    if *count == 0 {
+                        refs.remove(&topic);
+                        true
+                    } else {
+                        false
+                    }
                 };
-                if !last { return Err(error).context("register shared public route admission"); }
+                if !last {
+                    return Err(error).context("register shared public route admission");
+                }
                 let leave = self.peer_handle.leave(topic).await;
                 return match leave { Ok(()) => Err(error).context("register shared public route admission"), Err(leave_error) => Err(error).context(format!("register shared public route admission; cleanup leave failed: {leave_error}")) };
             }
         };
-        Ok(SharedPublicRendezvous { carrier: Arc::clone(self), topic, remote_static_key: expected_remote_static_key, lease, connections: rx })
+        Ok(SharedPublicRendezvous {
+            carrier: Arc::clone(self),
+            topic,
+            remote_static_key: expected_remote_static_key,
+            lease,
+            connections: rx,
+        })
     }
 
     pub(crate) async fn shutdown_checked(&self) -> Result<()> {
@@ -404,11 +455,19 @@ impl SharedPublicRendezvousCarrier {
         }
         self.routes.lock().await.clear();
         self.topic_refs.lock().await.clear();
-        let mut first_error = self.peer_handle.destroy().await.context("destroy shared public carrier").err();
+        let mut first_error = self
+            .peer_handle
+            .destroy()
+            .await
+            .context("destroy shared public carrier")
+            .err();
         // The dispatcher owns the actor join; awaiting it is the terminal
         // proof that the DHT/UDX actor drained.
         if let Some(dispatcher) = self.dispatcher.lock().await.take() {
-            if let Err(error) = dispatcher.await.context("shared public carrier dispatcher panicked") {
+            if let Err(error) = dispatcher
+                .await
+                .context("shared public carrier dispatcher panicked")
+            {
                 first_error.get_or_insert(error);
             }
         }
@@ -429,36 +488,87 @@ impl SharedPublicRendezvousCarrier {
 }
 
 impl SharedPublicRendezvous {
-    pub(crate) async fn recv(&mut self) -> Option<peeroxide::SwarmConnection> { self.connections.recv().await }
-    pub(crate) async fn wait_for_initial_discovery(&self, shutdown: &mut tokio::sync::watch::Receiver<bool>, deadline: tokio::time::Instant) -> Result<()> {
-        self.wait_for_initial_discovery_until_stop(shutdown, None, deadline).await
+    pub(crate) async fn recv(&mut self) -> Option<peeroxide::SwarmConnection> {
+        self.connections.recv().await
     }
-    pub(crate) async fn wait_for_initial_discovery_until_stop(&self, shutdown: &mut tokio::sync::watch::Receiver<bool>, local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>, deadline: tokio::time::Instant) -> Result<()> {
-        match wait_for_bootstrap_or_stop(self.carrier.peer_handle.server_publication(self.topic), shutdown, local_stop, deadline).await {
-            BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => Ok(()),
-            BootstrapWait::Ready(Ok(_)) => anyhow::bail!("shared public route initial publication did not establish both required routes"),
-            BootstrapWait::Ready(Err(error)) => Err(error).context("shared public route initial publication"),
-            BootstrapWait::CancelledOrExpired => anyhow::bail!("shared public route cancelled or expired during initial publication"),
+    pub(crate) async fn wait_for_initial_discovery(
+        &self,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        self.wait_for_initial_discovery_until_stop(shutdown, None, deadline)
+            .await
+    }
+    pub(crate) async fn wait_for_initial_discovery_until_stop(
+        &self,
+        shutdown: &mut tokio::sync::watch::Receiver<bool>,
+        local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        match wait_for_bootstrap_or_stop(
+            self.carrier.peer_handle.server_publication(self.topic),
+            shutdown,
+            local_stop,
+            deadline,
+        )
+        .await
+        {
+            BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => {
+                Ok(())
+            }
+            BootstrapWait::Ready(Ok(_)) => anyhow::bail!(
+                "shared public route initial publication did not establish both required routes"
+            ),
+            BootstrapWait::Ready(Err(error)) => {
+                Err(error).context("shared public route initial publication")
+            }
+            BootstrapWait::CancelledOrExpired => {
+                anyhow::bail!("shared public route cancelled or expired during initial publication")
+            }
         }
     }
     pub(crate) async fn shutdown_checked(self) -> Result<()> {
         let _lifecycle = self.carrier.lifecycle.lock().await;
-        let key = SharedRouteKey { remote_static_key: self.remote_static_key, topic: self.topic };
+        let key = SharedRouteKey {
+            remote_static_key: self.remote_static_key,
+            topic: self.topic,
+        };
         self.carrier.routes.lock().await.remove(&key);
         let last = {
             let mut refs = self.carrier.topic_refs.lock().await;
-            let count = refs.get_mut(&self.topic).context("shared public route topic reference missing")?;
+            let count = refs
+                .get_mut(&self.topic)
+                .context("shared public route topic reference missing")?;
             *count -= 1;
-            if *count == 0 { refs.remove(&self.topic); true } else { false }
+            if *count == 0 {
+                refs.remove(&self.topic);
+                true
+            } else {
+                false
+            }
         };
-        let mut first_error = self.carrier.peer_handle.remove_server_authenticated_topic(self.lease).await
-            .context("remove exact shared public route admission").err();
+        let mut first_error = self
+            .carrier
+            .peer_handle
+            .remove_server_authenticated_topic(self.lease)
+            .await
+            .context("remove exact shared public route admission")
+            .err();
         if last {
-            if let Err(error) = self.carrier.peer_handle.leave(self.topic).await.context("leave shared public route topic") {
+            if let Err(error) = self
+                .carrier
+                .peer_handle
+                .leave(self.topic)
+                .await
+                .context("leave shared public route topic")
+            {
                 first_error.get_or_insert(error);
             }
         }
-        match first_error { Some(error) => Err(error), None => Ok(()) }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
@@ -845,9 +955,12 @@ async fn spawn_public_rendezvous_with_optional_key(
 
     // Keyed admission validates an already joined server topic.  The legacy
     // one-shot owner keeps its lease implicitly until actor teardown.
-    let admission_result = peer_handle.register_server_authenticated_topic(expected_remote_static_key, topic).await;
+    let admission_result = peer_handle
+        .register_server_authenticated_topic(expected_remote_static_key, topic)
+        .await;
     if let Err(error) = admission_result {
-        shutdown_started_public_rendezvous(peer_handle, swarm_task).await
+        shutdown_started_public_rendezvous(peer_handle, swarm_task)
+            .await
             .context("public rendezvous authenticated admission cleanup")?;
         return Err(error).context("peeroxide register public rendezvous authenticated topic");
     }
@@ -3434,36 +3547,57 @@ mod tests {
             .expect("carrier shutdown exceeded test bound")
             .expect("owned local actor must drain");
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let result = carrier.open_route(
-            [0x71; 32],
-            [0x72; 32],
-            tokio::time::Instant::now() + Duration::from_secs(5),
-            shutdown_rx,
-            None,
-        ).await;
+        let result = carrier
+            .open_route(
+                [0x71; 32],
+                [0x72; 32],
+                tokio::time::Instant::now() + Duration::from_secs(5),
+                shutdown_rx,
+                None,
+            )
+            .await;
         let error = match result {
             Err(error) => error,
             Ok(_) => panic!("closed carrier admitted a replacement route"),
         };
         assert!(error.to_string().contains("closing or closed"));
         assert!(carrier.routes.lock().await.is_empty());
-        carrier.shutdown_checked().await.expect("successful drain remains successful");
+        carrier
+            .shutdown_checked()
+            .await
+            .expect("successful drain remains successful");
     }
 
     #[tokio::test]
-    async fn shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains() {
+    async fn shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains()
+     {
         // This is the production dispatch lookup with a bounded controlled
         // payload. Peeroxide intentionally keeps SwarmConnection's encrypted
         // fields private, so test code cannot forge one without unsafe; the
         // real transport regression lives in the vendor actor suite.
         let shared_topic = [0xA1; 32];
-        let active_a = SharedRouteKey { remote_static_key: [0x11; 32], topic: shared_topic };
-        let pair = SharedRouteKey { remote_static_key: [0x22; 32], topic: shared_topic };
-        let active_b = SharedRouteKey { remote_static_key: [0x33; 32], topic: [0xB2; 32] };
-        let unknown = SharedRouteKey { remote_static_key: [0x44; 32], topic: shared_topic };
+        let active_a = SharedRouteKey {
+            remote_static_key: [0x11; 32],
+            topic: shared_topic,
+        };
+        let pair = SharedRouteKey {
+            remote_static_key: [0x22; 32],
+            topic: shared_topic,
+        };
+        let active_b = SharedRouteKey {
+            remote_static_key: [0x33; 32],
+            topic: [0xB2; 32],
+        };
+        let unknown = SharedRouteKey {
+            remote_static_key: [0x44; 32],
+            topic: shared_topic,
+        };
         let routes = tokio::sync::Mutex::new(HashMap::<SharedRouteKey, mpsc::Sender<u8>>::new());
         let (bounded_tx, bounded_rx) = mpsc::channel(1);
-        assert_eq!(shared_route_try_deliver(&bounded_tx, 9), SharedRouteDelivery::Delivered);
+        assert_eq!(
+            shared_route_try_deliver(&bounded_tx, 9),
+            SharedRouteDelivery::Delivered
+        );
         assert_eq!(
             shared_route_try_deliver(&bounded_tx, 10),
             SharedRouteDelivery::RefusedOverloaded,
@@ -3485,7 +3619,11 @@ mod tests {
             shared_route_try_deliver(&drop_tx, DropObservedToken(Arc::clone(&drops))),
             SharedRouteDelivery::RefusedOverloaded
         );
-        assert_eq!(drops.load(Ordering::Acquire), 1, "refused owned entry is dropped exactly once");
+        assert_eq!(
+            drops.load(Ordering::Acquire),
+            1,
+            "refused owned entry is dropped exactly once"
+        );
         let (a_tx, mut a_rx) = mpsc::channel(1);
         let (b_tx, mut b_rx) = mpsc::channel(1);
         let (pair_tx, mut pair_rx) = mpsc::channel(1);
@@ -3495,9 +3633,18 @@ mod tests {
             owned.insert(active_b, b_tx);
             owned.insert(pair, pair_tx);
         }
-        assert_eq!(shared_route_try_deliver(&shared_route_sender(&routes, active_a).await.unwrap(), 1), SharedRouteDelivery::Delivered);
-        assert_eq!(shared_route_try_deliver(&shared_route_sender(&routes, active_b).await.unwrap(), 2), SharedRouteDelivery::Delivered);
-        assert_eq!(shared_route_try_deliver(&shared_route_sender(&routes, pair).await.unwrap(), 3), SharedRouteDelivery::Delivered);
+        assert_eq!(
+            shared_route_try_deliver(&shared_route_sender(&routes, active_a).await.unwrap(), 1),
+            SharedRouteDelivery::Delivered
+        );
+        assert_eq!(
+            shared_route_try_deliver(&shared_route_sender(&routes, active_b).await.unwrap(), 2),
+            SharedRouteDelivery::Delivered
+        );
+        assert_eq!(
+            shared_route_try_deliver(&shared_route_sender(&routes, pair).await.unwrap(), 3),
+            SharedRouteDelivery::Delivered
+        );
         assert_eq!(a_rx.recv().await, Some(1));
         assert_eq!(b_rx.recv().await, Some(2));
         assert_eq!(pair_rx.recv().await, Some(3));
@@ -3507,8 +3654,14 @@ mod tests {
         // retain their delivery ownership for a later reconnect.
         routes.lock().await.remove(&pair);
         assert!(shared_route_sender(&routes, pair).await.is_none());
-        assert_eq!(shared_route_try_deliver(&shared_route_sender(&routes, active_a).await.unwrap(), 4), SharedRouteDelivery::Delivered);
-        assert_eq!(shared_route_try_deliver(&shared_route_sender(&routes, active_b).await.unwrap(), 5), SharedRouteDelivery::Delivered);
+        assert_eq!(
+            shared_route_try_deliver(&shared_route_sender(&routes, active_a).await.unwrap(), 4),
+            SharedRouteDelivery::Delivered
+        );
+        assert_eq!(
+            shared_route_try_deliver(&shared_route_sender(&routes, active_b).await.unwrap(), 5),
+            SharedRouteDelivery::Delivered
+        );
         assert_eq!(a_rx.recv().await, Some(4));
         assert_eq!(b_rx.recv().await, Some(5));
 
@@ -3545,13 +3698,15 @@ mod tests {
             terminal_failure,
         };
 
-        let first = carrier.shutdown_checked().await.expect_err(
-            "dispatcher must surface the aborted owned actor as an unproven drain",
-        );
+        let first = carrier
+            .shutdown_checked()
+            .await
+            .expect_err("dispatcher must surface the aborted owned actor as an unproven drain");
         assert!(first.to_string().contains("actor join failed"));
-        let repeated = carrier.shutdown_checked().await.expect_err(
-            "a repeated shutdown must retain the original actor-drain failure",
-        );
+        let repeated = carrier
+            .shutdown_checked()
+            .await
+            .expect_err("a repeated shutdown must retain the original actor-drain failure");
         assert!(repeated.to_string().contains("actor join failed"));
         assert_eq!(first.to_string(), repeated.to_string());
     }

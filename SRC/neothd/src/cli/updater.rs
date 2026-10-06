@@ -1848,8 +1848,7 @@ mod tests {
         // This is the explicit offline fixture; production does not create a
         // default chain when the daemon is absent.
         let (writer, wal_join, ready) =
-            crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf())
-                .unwrap();
+            crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf()).unwrap();
         ready.wait().await.unwrap();
         drop(writer);
         wal_join.await.unwrap();

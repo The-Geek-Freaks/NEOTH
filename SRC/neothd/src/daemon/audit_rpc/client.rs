@@ -1110,9 +1110,12 @@ pub(crate) async fn updater_status_binding(
                 "response lost validated header boundary".into(),
             )
         })?;
-    let binding: super::DaemonUpdaterStatusBinding = serde_json::from_str(body).map_err(|error| {
-        UpdaterStatusClientError::AuthenticatedInvalid(format!("invalid response JSON: {error}"))
-    })?;
+    let binding: super::DaemonUpdaterStatusBinding =
+        serde_json::from_str(body).map_err(|error| {
+            UpdaterStatusClientError::AuthenticatedInvalid(format!(
+                "invalid response JSON: {error}"
+            ))
+        })?;
     if binding.schema_version != super::DAEMON_UPDATER_STATUS_SCHEMA_VERSION
         || binding.instance_commitment != expected.0
     {
@@ -1120,12 +1123,11 @@ pub(crate) async fn updater_status_binding(
             "updater status response is not bound to the authenticated daemon incarnation".into(),
         ));
     }
-    super::validate_daemon_updater_chain_base_name(&binding.chain_base_name)
-        .map_err(|error| {
-            UpdaterStatusClientError::AuthenticatedInvalid(format!(
-                "invalid updater chain base: {error:#}"
-            ))
-        })?;
+    super::validate_daemon_updater_chain_base_name(&binding.chain_base_name).map_err(|error| {
+        UpdaterStatusClientError::AuthenticatedInvalid(format!(
+            "invalid updater chain base: {error:#}"
+        ))
+    })?;
     Ok(binding)
 }
 
@@ -1153,28 +1155,30 @@ async fn updater_status_exchange_until(
     request: String,
     deadline: tokio::time::Instant,
 ) -> std::result::Result<(u16, String), UpdaterStatusClientError> {
-    let mut stream = match tokio::time::timeout_at(deadline, super::transport::connect(&endpoint)).await {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(error)) if updater_status_connection_refused(&error) => {
-            return Err(UpdaterStatusClientError::Unavailable(
-                "daemon listener refused connection".into(),
-            ));
-        }
-        Ok(Err(error)) => {
-            return Err(UpdaterStatusClientError::AuthenticatedInvalid(format!(
-                "connect authenticated daemon endpoint: {error:#}"
-            )));
-        }
-        Err(_) => {
-            return Err(UpdaterStatusClientError::AuthenticatedInvalid(
-                "connect authenticated daemon endpoint exceeded absolute deadline".into(),
-            ));
-        }
-    };
+    let mut stream =
+        match tokio::time::timeout_at(deadline, super::transport::connect(&endpoint)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) if updater_status_connection_refused(&error) => {
+                return Err(UpdaterStatusClientError::Unavailable(
+                    "daemon listener refused connection".into(),
+                ));
+            }
+            Ok(Err(error)) => {
+                return Err(UpdaterStatusClientError::AuthenticatedInvalid(format!(
+                    "connect authenticated daemon endpoint: {error:#}"
+                )));
+            }
+            Err(_) => {
+                return Err(UpdaterStatusClientError::AuthenticatedInvalid(
+                    "connect authenticated daemon endpoint exceeded absolute deadline".into(),
+                ));
+            }
+        };
     tokio::time::timeout_at(deadline, async {
-        stream.write_all(request.as_bytes()).await.map_err(|error| {
-            format!("write authenticated updater-status request: {error}")
-        })?;
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|error| format!("write authenticated updater-status request: {error}"))?;
         read_rpc_response(&mut stream)
             .await
             .map_err(|error| format!("read authenticated updater-status response: {error}"))
@@ -1838,7 +1842,10 @@ mod tests {
             .expect("authenticated peer must receive a request")
             .expect("authenticated peer received request before deadline expiry");
         assert!(
-            matches!(result, Err(UpdaterStatusClientError::AuthenticatedInvalid(_))),
+            matches!(
+                result,
+                Err(UpdaterStatusClientError::AuthenticatedInvalid(_))
+            ),
             "a connected peer that stalls after request admission must fail hard: {result:?}"
         );
         peer.abort();
@@ -1856,9 +1863,8 @@ mod tests {
         assert!(!updater_status_connection_refused(&missing));
 
         // A lookalike message must never obtain offline fallback rights.
-        let lookalike = anyhow::anyhow!(
-            "not found / connection refused / connect local endpoint refused"
-        );
+        let lookalike =
+            anyhow::anyhow!("not found / connection refused / connect local endpoint refused");
         assert!(!updater_status_missing_discovery(&lookalike));
         assert!(!updater_status_connection_refused(&lookalike));
     }
