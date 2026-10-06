@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::Ipv4Addr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -192,6 +193,7 @@ pub struct UserRequest {
     /// Optional request payload.
     pub value: Option<Vec<u8>>,
     reply_tx: Option<oneshot::Sender<(u64, Option<Vec<u8>>)>>,
+    reply_is_handshake: Arc<AtomicBool>,
 }
 
 impl UserRequest {
@@ -200,6 +202,12 @@ impl UserRequest {
         if let Some(tx) = self.reply_tx.take() {
             let _ = tx.send((0, value));
         }
+    }
+
+    /// Marks this locally routed request as a peer-handshake reply for
+    /// internal diagnostics.
+    pub(crate) fn enable_handshake_reply_diagnostics(&mut self) {
+        self.reply_is_handshake.store(true, Ordering::Release);
     }
 
     /// Replies to the request with an error code.
@@ -225,6 +233,7 @@ impl UserRequest {
             target: None,
             value: None,
             reply_tx: Some(reply_tx),
+            reply_is_handshake: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -574,6 +583,7 @@ struct DhtNode {
     /// detached waiter task or an unbounded reply registry.
     pending_user_replies: PendingUserReplyLedger,
     external_request_admission: Arc<Semaphore>,
+    incoming_diagnostics: Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
 
     needs_id_update: bool,
     addr_samples: Vec<Ipv4Peer>,
@@ -636,6 +646,7 @@ struct PendingUserReply {
     /// dequeue or drop `UserRequest`, but cannot release the slot before the
     /// reply receiver resolves or closes and this entry is removed.
     admission_permit: OwnedSemaphorePermit,
+    reply_is_handshake: Arc<AtomicBool>,
 }
 
 /// Fixed-size actor-owned ledger for externally forwarded user requests.
@@ -962,13 +973,13 @@ impl DhtNode {
         // every wire delayed-ping request, including forged internal ones.
         if let Err(mut rejected) = self.delayed_pings.try_admit(deadline, reply) {
             rejected.error = ERR_UNKNOWN_COMMAND;
-            self.handle_deferred_reply(rejected);
+            self.handle_deferred_reply(rejected, false);
         }
     }
 
     fn flush_due_delayed_pings(&mut self) {
         for reply in self.delayed_pings.drain_due(Instant::now()) {
-            self.handle_deferred_reply(reply);
+            self.handle_deferred_reply(reply, false);
         }
     }
 
@@ -1035,6 +1046,7 @@ impl DhtNode {
 
     fn forward_user_request(&mut self, req: crate::io::IncomingRequest) {
         let (reply_tx, reply_rx) = oneshot::channel::<(u64, Option<Vec<u8>>)>();
+        let reply_is_handshake = Arc::new(AtomicBool::new(false));
 
         let user_req = UserRequest {
             from: req.from.clone(),
@@ -1044,6 +1056,7 @@ impl DhtNode {
             target: req.target,
             value: req.value.clone(),
             reply_tx: Some(reply_tx),
+            reply_is_handshake: Arc::clone(&reply_is_handshake),
         };
 
         let admission_permit = match try_admit_user_request(
@@ -1068,6 +1081,7 @@ impl DhtNode {
             target: req.target,
             reply_rx,
             admission_permit,
+            reply_is_handshake,
         };
         if self.pending_user_replies.try_push(pending).is_err() {
             // This cannot happen while the semaphore and ledger capacities
@@ -1079,6 +1093,12 @@ impl DhtNode {
 
     fn poll_pending_user_replies(&mut self) {
         for (reply, (error, value)) in self.pending_user_replies.take_ready() {
+            let is_handshake = reply.reply_is_handshake.load(Ordering::Acquire);
+            if is_handshake {
+                if let Some(diagnostics) = &self.incoming_diagnostics {
+                    diagnostics.phase("handshake_deferred_reply_observed");
+                }
+            }
             self.handle_deferred_reply(DeferredReply {
                 from: reply.from,
                 reply_ctx: reply.reply_ctx,
@@ -1086,7 +1106,7 @@ impl DhtNode {
                 target: reply.target,
                 error,
                 value,
-            });
+            }, is_handshake);
         }
     }
 
@@ -1690,7 +1710,8 @@ impl DhtNode {
         }
     }
 
-    fn handle_deferred_reply(&mut self, reply: DeferredReply) {
+    fn handle_deferred_reply(&mut self, reply: DeferredReply, is_handshake: bool) {
+        let diagnostics = is_handshake.then(|| self.incoming_diagnostics.clone()).flatten();
         self.io.send_reply_deferred(
             &reply.from,
             reply.reply_ctx,
@@ -1698,6 +1719,7 @@ impl DhtNode {
             reply.target,
             reply.error,
             reply.value.as_deref(),
+            diagnostics,
         );
     }
 
@@ -1754,6 +1776,14 @@ impl DhtNode {
 pub async fn spawn(
     runtime: &UdxRuntime,
     config: DhtConfig,
+) -> Result<(tokio::task::JoinHandle<Result<(), DhtError>>, DhtHandle), DhtError> {
+    spawn_with_incoming_diagnostics(runtime, config, None).await
+}
+
+pub(crate) async fn spawn_with_incoming_diagnostics(
+    runtime: &UdxRuntime,
+    config: DhtConfig,
+    incoming_diagnostics: Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
 ) -> Result<(tokio::task::JoinHandle<Result<(), DhtError>>, DhtHandle), DhtError> {
     let table_id: NodeId = rand::random();
     let table = Arc::new(Mutex::new(RoutingTable::new(table_id)));
@@ -1812,6 +1842,7 @@ pub async fn spawn(
         delayed_pings: DelayedPingQueue::new(),
         pending_user_replies: PendingUserReplyLedger::new(),
         external_request_admission: Arc::new(Semaphore::new(EXTERNAL_REQUEST_QUEUE_CAPACITY)),
+        incoming_diagnostics,
         needs_id_update,
         addr_samples: Vec::new(),
     };
@@ -1844,7 +1875,57 @@ mod tests {
             target: None,
             value: None,
             reply_tx: Some(reply_tx),
+            reply_is_handshake: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    #[test]
+    fn deferred_handshake_reply_diagnostics_ignore_non_handshake_replies() {
+        let (handshake_tx, handshake_rx) = oneshot::channel();
+        let (other_tx, other_rx) = oneshot::channel();
+        let mut handshake = test_user_request(91, handshake_tx);
+        let mut other = test_user_request(92, other_tx);
+        let handshake_marker = Arc::clone(&handshake.reply_is_handshake);
+        let other_marker = Arc::clone(&other.reply_is_handshake);
+        handshake.enable_handshake_reply_diagnostics();
+        handshake.reply(Some(vec![1]));
+        other.reply(Some(vec![2]));
+
+        let admission = Arc::new(Semaphore::new(2));
+        let mut ledger = PendingUserReplyLedger::new();
+        for (reply_rx, reply_is_handshake) in [
+            (handshake_rx, handshake_marker),
+            (other_rx, other_marker),
+        ] {
+            let admitted = ledger.try_push(PendingUserReply {
+                from: Ipv4Peer {
+                    host: "198.51.100.1".to_string(),
+                    port: 42_424,
+                },
+                reply_ctx: ReplyContext {
+                    socket_kind: crate::io::SocketKind::Server,
+                },
+                tid: 1,
+                target: None,
+                reply_rx,
+                admission_permit: Arc::clone(&admission)
+                    .try_acquire_owned()
+                    .expect("test admission"),
+                reply_is_handshake,
+            });
+            assert!(admitted.is_ok(), "ready reply must enter the bounded ledger");
+        }
+
+        let ready = ledger.take_ready();
+        assert_eq!(ready.len(), 2);
+        assert_eq!(
+            ready
+                .iter()
+                .filter(|(reply, _)| reply.reply_is_handshake.load(Ordering::Acquire))
+                .count(),
+            1,
+            "only the locally routed peer handshake reaches deferred diagnostics"
+        );
     }
 
     #[test]

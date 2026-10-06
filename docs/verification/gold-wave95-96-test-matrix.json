@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "independent-static-review-approved-hosted-pending",
+  "status": "W2431-static-reviewed-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 391103,
-    "sha256": "48D9ECF44C954C438CCA90A7ED0A5C3C5494496DFA8E649256AFE361000CCA00"
+    "bytes": 391647,
+    "sha256": "F18BEF915DC2823D527D8D7307E87AAA563E9EF2F6EA4527C354ACF30055C824"
   },
-  "sourceInputs": 2138,
+  "sourceInputs": 2141,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75777,6 +75777,74 @@
       }
     ],
     "note": "Retain bounded WouldBlock replies with finite expiry and request progress; 26 exact hosted Rust and 2 collector cases selected; observed V3 cause and new runtime acceptance remain open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2431ReplyBoundaryEvidence": {
+    "base": "7a7d6cb5c61cb4083013d898a8e46a84a225080a",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 32499,
+        "sha256": "CD997F37FB7858C9455A729B45850C00C9D1B785FE455EC838C328E26AA78C2D",
+        "blob": "f34f150ad1bda7f9ec7e88115b7c0fa3b64372be"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 5201,
+        "sha256": "0F0F88C2D925703F8D48FB22D7086A065AA9B1E62D86609E75A9E46D36B25CB8",
+        "blob": "dc07f0664b0bb3c8ff9202514d75eae16fe5be21"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 15969,
+        "sha256": "7D863DE8B98D4D7858A1C8A34A7F73C7CD0D8656AB5950C6FDE386660CE934B0",
+        "blob": "f6337122f61936b148e744fa0ef3e898ded94dd2"
+      },
+      {
+        "path": "docs/verification/gold-wave2431-reconnect-reply-boundary.json",
+        "bytes": 4990,
+        "sha256": "AEAE9B66E4F9B54E6636E885C8C4E36BF590932380305759342282DAD23C6F1F",
+        "blob": "f81280216a22d4a13eeef5d08dd527a5f91c407e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2423483,
+        "sha256": "1E8E04CF9ABBE4A2FD8CED2BA84764FD37769CF13014D8007F73DCBE4A82AC29",
+        "blob": "fb4cb8a7cb9aac9cdb991467e52f38e2773c43c8"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht_messages.rs",
+        "bytes": 69117,
+        "sha256": "2F079AB21A359E66B8D06C4B03F3D3B82778BF0B4E5CD41383F5345AE7DF3229",
+        "blob": "4088ab419438b99d514e9963c1063130b0be57cf"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 142030,
+        "sha256": "F07239ED9370C0487A3B3A290328D6EA575598767B2D26F8130CC5DDA30F77CA",
+        "blob": "d465c11b342446dbc1509afbadda8bcdec085bf9"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+        "bytes": 66872,
+        "sha256": "4AB8727518A56B663460604CC69FDBED38487E06E84751A473CE5D4324669ADE",
+        "blob": "e945cbf45ed149a8e6ffc7e11a9a70457022fba9"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/messages.rs",
+        "bytes": 19839,
+        "sha256": "7286F687C49279C4868408B87B9E5B3168DA0D26C1EA6DD2A290302E5981CC83",
+        "blob": "3b3bb2e9bfc1b49d6c7ad661d5acde778886efd7"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/rpc.rs",
+        "bytes": 75184,
+        "sha256": "E93DF843859E8287D553194B24C8DD4D06DB5C5E521B67CC085F2101202AF156",
+        "blob": "02936e2d7b4f79f90c5cd59a84458ac3735743fc"
+      }
+    ],
+    "note": "W2430 actual V3 failure retained; W2431 adds bounded server reply/client strict-response diagnostics with 29 selected vendor/core/bridge Rust cases and three collector cases. No local executable validation; no product acceptance inferred.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

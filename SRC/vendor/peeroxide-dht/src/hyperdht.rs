@@ -212,7 +212,7 @@ impl Drop for OutgoingConnectDiagnostics {
 /// Fixed, secret-free diagnostics owned by a single request-handler actor.
 /// This is deliberately actor-local, so an active listener remains observable
 /// after a completed pairing listener has been destroyed.
-struct IncomingConnectDiagnostics {
+pub(crate) struct IncomingConnectDiagnostics {
     enabled: bool,
     scope: CompanionDiagnosticScope,
     emitted: AtomicU16,
@@ -227,7 +227,7 @@ impl IncomingConnectDiagnostics {
         }
     }
 
-    fn phase(&self, phase: &'static str) {
+    pub(crate) fn phase(&self, phase: &'static str) {
         let bit = match phase {
             "handshake_dispatch_received" => 1 << 0,
             "handshake_routing_local" => 1 << 1,
@@ -238,6 +238,13 @@ impl IncomingConnectDiagnostics {
             "handshake_local_rejected" => 1 << 6,
             "handshake_reply_capability_consumed" => 1 << 7,
             "handshake_reply_capability_dropped" => 1 << 8,
+            "handshake_deferred_reply_observed" => 1 << 9,
+            "handshake_reply_udp_accepted" => 1 << 10,
+            "handshake_reply_udp_queued" => 1 << 11,
+            "handshake_reply_udp_queue_dropped" => 1 << 12,
+            "handshake_reply_udp_terminal_error" => 1 << 13,
+            "handshake_reply_prepare_failed" => 1 << 14,
+            "handshake_reply_expired" => 1 << 15,
             _ => return,
         };
         if self.enabled && self.emitted.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
@@ -256,7 +263,7 @@ impl IncomingConnectDiagnostics {
     }
 
     #[cfg(test)]
-    fn for_test(scope: CompanionDiagnosticScope) -> Self {
+    pub(crate) fn for_test(scope: CompanionDiagnosticScope) -> Self {
         Self {
             enabled: true,
             scope,
@@ -265,7 +272,7 @@ impl IncomingConnectDiagnostics {
     }
 
     #[cfg(test)]
-    fn emitted(&self) -> u16 {
+    pub(crate) fn emitted(&self) -> u16 {
         self.emitted.load(Ordering::Relaxed)
     }
 }
@@ -451,9 +458,10 @@ impl ServerReply {
     }
 
     fn with_diagnostics(
-        request: crate::rpc::UserRequest,
+        mut request: crate::rpc::UserRequest,
         diagnostics: Arc<IncomingConnectDiagnostics>,
     ) -> Self {
+        request.enable_handshake_reply_diagnostics();
         Self {
             request: Some(request),
             diagnostics: Some(diagnostics),
@@ -2655,7 +2663,15 @@ pub async fn spawn_starting(
     config: HyperDhtConfig,
 ) -> Result<HyperDhtStartup, HyperDhtError> {
     let companion_diagnostic_scope = config.companion_diagnostic_scope;
-    let (dht_join, dht_handle) = crate::rpc::spawn(runtime, config.dht).await?;
+    let incoming_diagnostics = Arc::new(IncomingConnectDiagnostics::from_environment(
+        companion_diagnostic_scope,
+    ));
+    let (dht_join, dht_handle) = crate::rpc::spawn_with_incoming_diagnostics(
+        runtime,
+        config.dht,
+        Some(Arc::clone(&incoming_diagnostics)),
+    )
+    .await?;
     let persistent_config = config.persistent;
 
     let request_rx = dht_handle
@@ -2666,10 +2682,6 @@ pub async fn spawn_starting(
     let router = Arc::new(Mutex::new(Router::new()));
     let (server_tx, server_rx) = mpsc::channel(SERVER_EVENT_QUEUE_CAPACITY);
     let (admin_tx, admin_rx) = mpsc::unbounded_channel::<AdminRequest>();
-    let incoming_diagnostics = Arc::new(IncomingConnectDiagnostics::from_environment(
-        companion_diagnostic_scope,
-    ));
-
     let request_task = tokio::spawn(run_request_handler(
         request_rx,
         persistent_config,

@@ -16,6 +16,8 @@ SPEC.loader.exec_module(INTEROP)
 
 PAIR = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_dispatch_received\n"
 ACTIVE = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_dispatch_received\n"
+ACTIVE_REPLY_ACCEPTED = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_reply_udp_accepted\n"
+PAIR_REPLY_QUEUED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_queued\n"
 
 
 class ChunkStream:
@@ -58,6 +60,28 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertEqual(result["scoped_connect_counts"]["active_handshake_dispatch_received"], 2)
         self.assertFalse(result["scoped_connect_saturated"])
         self.assertNotIn(private_canary.decode(), repr(result))
+
+    def test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody(self) -> None:
+        private_canary = b"private-reply-diagnostic-must-not-persist"
+        unknown_scope = b"NEOTH_COMPANION_CONNECT_PHASE=inactive_handshake_reply_udp_accepted\n"
+        nonmatching_suffix = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_reply_udp_accepted_extra\n"
+        stream = ChunkStream([
+            private_canary + PAIR_REPLY_QUEUED[:37],
+            PAIR_REPLY_QUEUED[37:] + ACTIVE_REPLY_ACCEPTED[:29],
+            ACTIVE_REPLY_ACCEPTED[29:] + unknown_scope + nonmatching_suffix,
+        ])
+        collector = INTEROP.ShutdownMarkerCollector(stream)
+        result = collector.snapshot(5)
+        counts = result["scoped_connect_counts"]
+        self.assertEqual(counts["pair_handshake_reply_udp_queued"], 1)
+        self.assertEqual(counts["active_handshake_reply_udp_accepted"], 1)
+        self.assertEqual(counts["pair_handshake_reply_udp_accepted"], 0)
+        self.assertEqual(counts["active_handshake_reply_udp_queued"], 0)
+        self.assertFalse(result["scoped_connect_saturated"])
+        self.assertTrue(result["reader_closed"])
+        self.assertFalse(result["reader_error"])
+        self.assertNotIn(private_canary.decode(), repr(result))
+
 
     def test_cursor_retains_prior_pair_evidence_without_counting_it_as_active(self) -> None:
         stream = ControlledStream()

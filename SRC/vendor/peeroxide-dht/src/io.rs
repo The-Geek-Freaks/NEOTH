@@ -16,6 +16,7 @@ use tokio::time::Instant;
 
 use libudx::{Datagram, UdxRuntime, UdxSocket};
 
+use crate::hyperdht_messages::PEER_HANDSHAKE;
 use crate::messages::{self, Ipv4Peer, Response};
 use crate::peer::{self, NodeId};
 use crate::routing_table::{RoutingTable, K};
@@ -101,6 +102,50 @@ pub struct IoStats {
     pub responses: u64,
     pub timeouts: u64,
     pub retries: u64,
+}
+
+/// Fixed, secret-free client response-dispatch evidence owned by one `Io`.
+///
+/// Disabled unless the existing companion diagnostics opt-in is present. It
+/// intentionally records neither TIDs nor remote endpoints.
+struct ClientResponseDiagnostics {
+    enabled: bool,
+    emitted: u8,
+}
+
+impl ClientResponseDiagnostics {
+    fn from_environment() -> Self {
+        Self {
+            enabled: std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1"),
+            emitted: 0,
+        }
+    }
+
+    fn phase(&mut self, phase: &'static str) {
+        let bit = match phase {
+            "client_socket_datagram_observed" => 1 << 0,
+            "server_socket_datagram_observed" => 1 << 1,
+            "datagram_decode_rejected" => 1 << 2,
+            "response_tid_unmatched" => 1 << 3,
+            "handshake_response_tid_known_wrong_source" => 1 << 4,
+            "handshake_response_exact_matched" => 1 << 5,
+            _ => return,
+        };
+        if self.enabled && self.emitted & bit == 0 {
+            self.emitted |= bit;
+            eprintln!("NEOTH_COMPANION_CLIENT_RESPONSE_PHASE={phase}");
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self { enabled: true, emitted: 0 }
+    }
+
+    #[cfg(test)]
+    fn emitted(&self) -> u8 {
+        self.emitted
+    }
 }
 
 /// Wire-byte counters shared between the IO layer and consumers (e.g. progress
@@ -245,6 +290,7 @@ struct PendingReply {
     addr: SocketAddr,
     socket_kind: SocketKind,
     expires_at: Instant,
+    diagnostics: Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,6 +380,7 @@ pub struct Io {
     pub ephemeral: bool,
     pub stats: IoStats,
     pub wire: WireCounters,
+    client_response_diagnostics: ClientResponseDiagnostics,
     table: Arc<Mutex<RoutingTable>>,
     destroying: bool,
 }
@@ -379,6 +426,7 @@ impl Io {
             ephemeral: config.ephemeral,
             stats: IoStats::default(),
             wire: WireCounters::default(),
+            client_response_diagnostics: ClientResponseDiagnostics::from_environment(),
             table,
             destroying: false,
         })
@@ -519,7 +567,9 @@ impl Io {
             if reply.expires_at > now {
                 return;
             }
-            let _ = self.take_pending_reply();
+            if let Some(reply) = self.take_pending_reply() {
+                Self::phase_pending_reply(&reply, "handshake_reply_expired");
+            }
         }
     }
 
@@ -695,6 +745,7 @@ impl Io {
                 include_token,
                 value: value.map(|v| v.to_vec()),
             },
+            None,
         );
     }
 
@@ -708,6 +759,7 @@ impl Io {
         target: Option<NodeId>,
         error: u64,
         value: Option<&[u8]>,
+        diagnostics: Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
     ) {
         let include_token = error == 0;
         self.send_reply_internal(
@@ -720,6 +772,7 @@ impl Io {
                 include_token,
                 value: value.map(|v| v.to_vec()),
             },
+            diagnostics,
         );
     }
 
@@ -847,7 +900,12 @@ impl Io {
     }
 
     /// Encode and send a response message.
-    fn send_reply_internal(&mut self, to: &Ipv4Peer, params: ReplyInternalParams) {
+    fn send_reply_internal(
+        &mut self,
+        to: &Ipv4Peer,
+        params: ReplyInternalParams,
+        diagnostics: Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
+    ) {
         let include_id = !self.ephemeral && params.socket_kind == SocketKind::Server;
 
         let (id, closer_nodes) = match self.table.lock() {
@@ -890,6 +948,7 @@ impl Io {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(err = %e, "send_reply_internal: encode failed");
+                Self::phase_diagnostics(&diagnostics, "handshake_reply_prepare_failed");
                 return;
             }
         };
@@ -899,6 +958,7 @@ impl Io {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!(err = %e, "send_reply_internal: invalid address");
+                Self::phase_diagnostics(&diagnostics, "handshake_reply_prepare_failed");
                 return;
             }
         };
@@ -911,6 +971,7 @@ impl Io {
             // Match the existing initial send plus retry horizon: a reply may
             // wait for raw-egress admission, but it cannot live indefinitely.
             expires_at: Instant::now() + Duration::from_millis(reply_horizon),
+            diagnostics,
         };
         let result = {
             let socket = match reply.socket_kind {
@@ -920,6 +981,19 @@ impl Io {
             socket.send_to(&reply.buffer, reply.addr)
         };
         self.finish_pending_reply(reply, result);
+    }
+
+    fn phase_diagnostics(
+        diagnostics: &Option<Arc<crate::hyperdht::IncomingConnectDiagnostics>>,
+        phase: &'static str,
+    ) {
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.phase(phase);
+        }
+    }
+
+    fn phase_pending_reply(reply: &PendingReply, phase: &'static str) {
+        Self::phase_diagnostics(&reply.diagnostics, phase);
     }
 
     /// Account for one reply egress attempt. A raw queue rejection retains the
@@ -935,6 +1009,7 @@ impl Io {
                 self.wire
                     .bytes_sent
                     .fetch_add(reply.buffer.len() as u64, Ordering::Relaxed);
+                Self::phase_pending_reply(&reply, "handshake_reply_udp_accepted");
                 ReplySendOutcome::Sent
             }
             Err(error) if is_egress_backpressure(&error) => {
@@ -943,13 +1018,17 @@ impl Io {
                     && self.pending_reply_bytes.saturating_add(reply_len)
                         <= PENDING_REPLY_BYTE_CAPACITY
                 {
+                    Self::phase_pending_reply(&reply, "handshake_reply_udp_queued");
                     self.pending_reply_bytes += reply_len;
                     self.pending_replies.push_back(reply);
+                } else {
+                    Self::phase_pending_reply(&reply, "handshake_reply_udp_queue_dropped");
                 }
                 ReplySendOutcome::Backpressured
             }
             Err(error) => {
                 tracing::warn!(err = %error, "send_reply_internal: send_to failed");
+                Self::phase_pending_reply(&reply, "handshake_reply_udp_terminal_error");
                 ReplySendOutcome::Failed
             }
         }
@@ -1040,6 +1119,10 @@ impl Io {
 
     /// Decode and dispatch a datagram from either socket.
     fn process_datagram(&mut self, datagram: Datagram, socket_kind: SocketKind) -> Option<IoEvent> {
+        self.client_response_diagnostics.phase(match socket_kind {
+            SocketKind::Client => "client_socket_datagram_observed",
+            SocketKind::Server => "server_socket_datagram_observed",
+        });
         if datagram.data.len() < 2 {
             return None;
         }
@@ -1064,6 +1147,8 @@ impl Io {
                     err = %e,
                     "process_datagram: decode failed"
                 );
+                self.client_response_diagnostics
+                    .phase("datagram_decode_rejected");
                 None
             }
             Ok(messages::Message::Request(req)) => {
@@ -1087,6 +1172,7 @@ impl Io {
                                 include_token: true,
                                 value: None,
                             },
+                            None,
                         );
                         return None;
                     }
@@ -1130,6 +1216,20 @@ impl Io {
                 {
                     Some(p) => p,
                     None => {
+                        match self.inflight.iter().find(|entry| {
+                            entry.tid == res.tid
+                                && !entry.internal
+                                && entry.command == PEER_HANDSHAKE
+                        }) {
+                            Some(_) => {
+                                self.client_response_diagnostics
+                                    .phase("handshake_response_tid_known_wrong_source");
+                            }
+                            None if !self.inflight.iter().any(|entry| entry.tid == res.tid) => {
+                                self.client_response_diagnostics.phase("response_tid_unmatched");
+                            }
+                            None => {}
+                        }
                         tracing::debug!(
                             tid = res.tid,
                             from = %format!("{}:{}", from.host, from.port),
@@ -1139,6 +1239,10 @@ impl Io {
                     }
                 };
                 let entry = self.inflight.swap_remove(pos);
+                if !entry.internal && entry.command == PEER_HANDSHAKE {
+                    self.client_response_diagnostics
+                        .phase("handshake_response_exact_matched");
+                }
 
                 let rtt = entry.timestamp.elapsed();
 
@@ -1333,6 +1437,7 @@ mod tests {
             addr: "127.0.0.1:4243".parse().expect("loopback address"),
             socket_kind: SocketKind::Server,
             expires_at,
+            diagnostics: None,
         }
     }
 
@@ -1345,6 +1450,38 @@ mod tests {
             std::io::ErrorKind::WouldBlock,
             "UDX raw egress queue is full",
         )))
+    }
+
+    #[tokio::test]
+    async fn deferred_handshake_reply_diagnostics_cover_queue_retry_and_expiry() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let table = Arc::new(Mutex::new(RoutingTable::new([0u8; 32])));
+        let mut io = Io::bind(&runtime, table, IoConfig::default())
+            .await
+            .expect("io bind");
+        let diagnostics = Arc::new(
+            crate::hyperdht::IncomingConnectDiagnostics::for_test(
+                crate::hyperdht::CompanionDiagnosticScope::Active,
+            ),
+        );
+        let mut queued = test_pending_reply(Instant::now() + Duration::from_secs(4));
+        queued.diagnostics = Some(Arc::clone(&diagnostics));
+        assert_eq!(
+            io.finish_pending_reply(queued, raw_egress_would_block()),
+            ReplySendOutcome::Backpressured
+        );
+        io.drain_one_pending_reply(|_| Ok(()));
+        let mut expired = test_pending_reply(Instant::now() - Duration::from_millis(1));
+        expired.diagnostics = Some(Arc::clone(&diagnostics));
+        io.pending_reply_bytes = expired.buffer.len();
+        io.pending_replies.push_back(expired);
+        io.drain_one_pending_reply(|_| Ok(()));
+        assert_eq!(
+            diagnostics.emitted(),
+            (1 << 10) | (1 << 11) | (1 << 15),
+            "a queued handshake reply must record retention, accepted retry, and expiry"
+        );
+        io.destroy().await.expect("io destroy");
     }
 
     #[tokio::test]
@@ -1496,6 +1633,19 @@ mod tests {
     }
 
     fn test_inflight_entry(tid: u16, to: Ipv4Peer) -> InflightEntry {
+        test_inflight_entry_with_command(tid, to, 1)
+    }
+
+    fn test_inflight_entry_with_command(tid: u16, to: Ipv4Peer, command: u64) -> InflightEntry {
+        test_inflight_entry_with_command_and_internal(tid, to, command, false)
+    }
+
+    fn test_inflight_entry_with_command_and_internal(
+        tid: u16,
+        to: Ipv4Peer,
+        command: u64,
+        internal: bool,
+    ) -> InflightEntry {
         let addr = format!("{}:{}", to.host, to.port)
             .parse()
             .expect("loopback address");
@@ -1503,8 +1653,8 @@ mod tests {
             tid,
             to,
             addr,
-            internal: false,
-            command: 1,
+            internal,
+            command,
             target: None,
             buffer: vec![1, 2, 3],
             socket_kind: SocketKind::Client,
@@ -1590,6 +1740,93 @@ mod tests {
         assert_eq!(io.congestion.total, 0);
         assert_eq!(io.stats.active, 0);
         assert_eq!(io.stats.responses, 1);
+
+        io.destroy().await.expect("io destroy");
+    }
+
+    #[tokio::test]
+    async fn client_handshake_response_diagnostics_distinguish_handshake_from_other_responses() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let table = Arc::new(Mutex::new(RoutingTable::new([0u8; 32])));
+        let mut io = Io::bind(&runtime, table, IoConfig::default())
+            .await
+            .expect("io bind");
+        io.client_response_diagnostics = ClientResponseDiagnostics::for_test();
+        let expected = Ipv4Peer {
+            host: "127.0.0.1".to_string(),
+            port: 4242,
+        };
+        let wrong_source = Ipv4Peer {
+            host: "127.0.0.2".to_string(),
+            port: 4242,
+        };
+
+        // An internal Ping shares command zero with PEER_HANDSHAKE. Its exact
+        // response resolves normally, but must not claim a handshake phase.
+        io.inflight.push(test_inflight_entry_with_command_and_internal(
+            70,
+            expected.clone(),
+            PEER_HANDSHAKE,
+            true,
+        ));
+        io.congestion.send();
+        io.stats.active = 1;
+        assert!(io
+            .process_datagram(response_datagram(70, expected.clone()), SocketKind::Client)
+            .is_some());
+        assert_eq!(io.client_response_diagnostics.emitted(), 1 << 0);
+
+        // The same internal Ping must not consume the strict-source handshake
+        // evidence either.
+        io.inflight.push(test_inflight_entry_with_command_and_internal(
+            71,
+            expected.clone(),
+            PEER_HANDSHAKE,
+            true,
+        ));
+        io.congestion.send();
+        io.stats.active = 1;
+        assert!(io
+            .process_datagram(response_datagram(71, wrong_source.clone()), SocketKind::Client)
+            .is_none());
+        assert_eq!(io.inflight.len(), 1, "wrong source retains internal Ping");
+        assert_eq!(io.client_response_diagnostics.emitted(), 1 << 0);
+
+        // Preserve strict source matching for a real external handshake.
+        io.inflight.push(test_inflight_entry_with_command(
+            72,
+            expected.clone(),
+            PEER_HANDSHAKE,
+        ));
+        io.congestion.send();
+        io.stats.active = 2;
+        assert!(io
+            .process_datagram(response_datagram(72, wrong_source), SocketKind::Client)
+            .is_none());
+        assert_eq!(io.inflight.len(), 2, "wrong source retains handshake request");
+        assert_eq!(
+            io.client_response_diagnostics.emitted(),
+            (1 << 0) | (1 << 4),
+            "only an actual handshake request records the strict-source mismatch"
+        );
+
+        assert!(io
+            .process_datagram(response_datagram(72, expected.clone()), SocketKind::Client)
+            .is_some());
+        assert_eq!(
+            io.client_response_diagnostics.emitted(),
+            (1 << 0) | (1 << 4) | (1 << 5),
+            "matching handshake source is classified before normal resolution"
+        );
+
+        assert!(io
+            .process_datagram(response_datagram(73, expected), SocketKind::Client)
+            .is_none());
+        assert_eq!(
+            io.client_response_diagnostics.emitted(),
+            (1 << 0) | (1 << 3) | (1 << 4) | (1 << 5),
+            "unknown TIDs are actor-wide and do not consume an inflight request"
+        );
 
         io.destroy().await.expect("io destroy");
     }

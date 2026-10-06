@@ -1,0 +1,95 @@
+{
+  "schema": "neoth.wave2431.reconnect-reply-boundary.v1",
+  "base": "7a7d6cb5c61cb4083013d898a8e46a84a225080a",
+  "status": "independent-static-review-approved-hosted-pending",
+  "priorHostedEvidence": {
+    "run": "37426207793",
+    "attempt": 1,
+    "job": "112146330597",
+    "producer": "7a7d6cb5c61cb4083013d898a8e46a84a225080a",
+    "result": "failure",
+    "exactRustPassed": 26,
+    "collectorPassed": 2,
+    "rawSourceBindings": 25,
+    "failureStage": "status_reconnect_start",
+    "failureCategory": "work_deadline",
+    "artifactId": "11396630598",
+    "zipSha256": "D079A7A0AC69AA27CD2D5D176BD42938C376D03F6244AAB725A3C800C19B705A",
+    "rootFailureCustodySha256": "EEF7F1CEF5EF8CD0B2FF29ADB7D41127C07E1313B187E8D997F8B24083D2C17F",
+    "rootPartialRegressionSha256": "5032C4DE29E2AA5D7943D5630CA86F6D74095D77BB22CC20E1E8AFED288E4DE2",
+    "serveExitCode": 0,
+    "serveShutdown": "graceful",
+    "walDrained": true
+  },
+  "reason": "Actual V3 reconnect remains unaccepted after the source-backed bounded reply egress repair. Existing markers prove actor-local capability consumption but do not prove raw deferred reply observation or UDP send acceptance.",
+  "observedFailureCauseEstablished": false,
+  "scope": {
+    "diagnosticsOnly": true,
+    "optInExistingEnvironment": true,
+    "server": "Locally routed deferred PEER_HANDSHAKE reply lifecycle including queue-rejection/drop-generated generic errors; raw writer acceptance is not wire delivery or peer success.",
+    "client": "Fixed per-Io actor-wide datagram/decode/unmatched-TID phases; handshake exact-match/wrong-source phases require an external inflight request (!internal) with PEER_HANDSHAKE command. Command 0 alone is insufficient because internal Ping also uses 0.",
+    "rawAddressesIdsKeysPayloadsLogged": false,
+    "protocolOrKeyPinsChanged": false,
+    "timeoutOrRetryPolicyChanged": false,
+    "actorPhaseCountsAreRequestCounts": false,
+    "collectorCursorIsEmissionTime": false
+  },
+  "selection": {
+    "exactRustCases": 29,
+    "collectorCases": 3,
+    "portableBefore": 2760,
+    "portableAfter": 2760,
+    "sourceBindingCount": 27
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedRun": "not-dispatched",
+    "v3Accepted": false,
+    "v4Held": true,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "review": {
+    "status": "APPROVED-FOR-NARROW-INTEGRATION-AND-HOSTED-VALIDATION",
+    "path": "work\\gold-20260906\\wave2431-reconnect-boundary\\review\\FINAL_COMBINED_STATIC_REVIEW.md",
+    "sha256": "4B7A47C2E070AB6EC806E7D04DEB38BA6DB7153DB76F938E4ECE83F1C6B35522"
+  },
+  "candidateBindings": [
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+      "baseSha256": "2C62459EC0C18E4D921140E99135C7A2DAD4ED08A08BCCABCB249213707AA5CB",
+      "candidateSha256": "F07239ED9370C0487A3B3A290328D6EA575598767B2D26F8130CC5DDA30F77CA",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\server\\candidate\\SRC\\vendor\\peeroxide-dht\\src\\hyperdht.rs"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/rpc.rs",
+      "baseSha256": "BFED079713A336BE695A5153445DCDC56AF8D1EDF27915DA19B3907C1A1598F7",
+      "candidateSha256": "E93DF843859E8287D553194B24C8DD4D06DB5C5E521B67CC085F2101202AF156",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\server\\candidate\\SRC\\vendor\\peeroxide-dht\\src\\rpc.rs"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+      "baseSha256": "EDCBB730C995E1F8D9024EA43CE23F56F03C295927CD2112D38A1B164D77040E",
+      "candidateSha256": "4AB8727518A56B663460604CC69FDBED38487E06E84751A473CE5D4324669ADE",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\client\\candidate\\SRC\\vendor\\peeroxide-dht\\src\\io.rs"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseSha256": "3011CA478BE53977A9BB6CF14A5CF8F00F38F087ECBA54111726C7892467EA2E",
+      "candidateSha256": "CD997F37FB7858C9455A729B45850C00C9D1B785FE455EC838C328E26AA78C2D",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\collector\\candidate\\.github_scripts_mobile_hosted-mobile-interop.py"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseSha256": "89D7894F8D8EA9EC36BD2BDBA7A47009C3F6BB3004E5DEC04BE7A333AD31D2A4",
+      "candidateSha256": "0F0F88C2D925703F8D48FB22D7086A065AA9B1E62D86609E75A9E46D36B25CB8",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\collector\\candidate\\.github_scripts_mobile_test_hosted_mobile_interop_diagnostics.py"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "baseSha256": "516A13FAF7FD7061CCED39A7C2E5B18ED6D08E2CEB1CEE51667C041DCB6BD1E5",
+      "candidateSha256": "DFDF147E0EB7D18430505F196214BAFE1AA5ECAACB1462B74D58F3A122E15C9E",
+      "candidate": "work\\gold-20260906\\wave2431-reconnect-boundary\\root-harness\\mobile-companion-interop.yml"
+    }
+  ]
+}
