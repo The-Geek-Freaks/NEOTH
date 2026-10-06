@@ -170,10 +170,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Targeted diagnosis before repeating all 528 focus cases. These are real
-      # authority and WAL regressions; this optional probe never replaces the
-      # full focused or native acceptance lanes. Reject zero-test selections.
-      - name: Run exact mobile authority and revoke regressions
+      # Targeted diagnosis before repeating all 528 focus cases. The original
+      # authority/revoke pair remains selected, followed by the four canonical
+      # W2449 compile-repair contracts. This probe never replaces the full
+      # focused or native acceptance lanes. Reject zero-test selections.
+      - name: Run exact mobile authority, lifecycle, and revoke regressions
         if: ${{ inputs.companion_regressions }}
         timeout-minutes: 20
         working-directory: SRC
@@ -185,16 +186,53 @@ jobs:
           set -euo pipefail
           proof_dir="$RUNNER_TEMP/neoth-companion-regressions"
           mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          printf '%s\n' \
+            'daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use' \
+            'daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing' \
+            'daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join' \
+            'daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live' \
+            'daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener' \
+            'daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle' > "$proof_dir/selection.txt"
+          printf '%s\n' \
+            'SRC/neothd/src/daemon/companion_runtime.rs' \
+            'SRC/neothd/src/daemon/companion_runtime_unavailable.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/tests.rs' \
+            'SRC/neothd/src/daemon/audit_rpc/server.rs' \
+            'SRC/neothd/src/daemon/companion_authority.rs' \
+            'SRC/neothd/src/daemon/chat_runtime.rs' > "$proof_dir/source-paths.txt"
+          sha256sum \
+            neothd/src/daemon/companion_runtime.rs \
+            neothd/src/daemon/companion_runtime_unavailable.rs \
+            neothd/src/daemon/audit_rpc/tests.rs \
+            neothd/src/daemon/audit_rpc/server.rs \
+            neothd/src/daemon/companion_authority.rs \
+            neothd/src/daemon/chat_runtime.rs > "$proof_dir/SHA256SUMS.txt"
           ordinal=0
           for identity in \
             daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use \
-            daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing
+            daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing \
+            daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join \
+            daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live \
+            daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener \
+            daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
-            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$ordinal.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log")" -eq 1
           done
-          test "$ordinal" -eq 2
+          test "$ordinal" -eq 6
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$ordinal" "$ordinal" > "$proof_dir/final-counts.txt"
+
+      - name: Upload companion regression evidence
+        if: ${{ always() && inputs.companion_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: companion-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-companion-regressions/
+          if-no-files-found: error
+          retention-days: 14
 
       # Generate without changing the committed snapshot or bypassing its
       # equality test. A maintainer imports only the SHA/digest-bound output.

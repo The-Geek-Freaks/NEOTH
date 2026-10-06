@@ -1,0 +1,27 @@
+{
+  "schema": "neoth.wave2449.compile-repair.v1",
+  "baseProducer": "a4fb7eebbaa8964670a6cf36b785c746feece4d7",
+  "failedRun": "37482539570",
+  "failure": "E0277: cfg(test) one-shot readiness Mutex did not implement CompanionRuntime Clone",
+  "verifiedPartial": {
+    "exactRustPassed": 33,
+    "exactRustSelected": 53,
+    "collectorPassed": 12,
+    "rawSourceBindings": 40,
+    "originalArtifact": "11422464452",
+    "originalZipSha256": "84A9EEFCA3EB7A9336E510C655AF15C1C112201D6E5CAB7B618746BB18D1FE2E",
+    "originalArchiveEntries": 3,
+    "bothTransientOverlaysRestored": true,
+    "hostCliAndBridgeBuilt": true,
+    "productExecuted": false,
+    "rootAdmissionSha256": "908CE20A4BDBB461BB4F7596DDB2A7D94B41F5FC12D04AD636DAEFC8CE32C205"
+  },
+  "repair": [
+    "Share the cfg(test) one-shot outcome across CompanionRuntime clones with Arc<Mutex<_>>; production layout is unchanged.",
+    "Expect dead_code only for the deliberately unconstructible no-cluster Prepared variant required by the shared RPC match; verify with hosted slim Clippy.",
+    "Extend the existing optional CLI-reference companion selection with all four new W2449 cases, retaining the original authority and revoke cases; combine with three Codegraph contracts in one hosted build."
+  ],
+  "validationStatus": "STATIC-REPAIRED-HOSTED-VALIDATION-PENDING",
+  "localExecutableValidationRan": false,
+  "productNativeDeviceReleaseAccepted": false
+}

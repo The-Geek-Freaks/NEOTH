@@ -309,7 +309,7 @@ pub(crate) struct CompanionRuntime {
     pair_tasks: Arc<Mutex<BTreeMap<String, PairListenerOwner>>>,
     listener_tasks: Arc<Mutex<BTreeMap<Uuid, DeviceListenerOwner>>>,
     #[cfg(test)]
-    next_audit_pair_readiness: Mutex<Option<AuditPairReadinessTestOutcome>>,
+    next_audit_pair_readiness: Arc<Mutex<Option<AuditPairReadinessTestOutcome>>>,
 }
 
 impl CompanionRuntime {
@@ -343,7 +343,7 @@ impl CompanionRuntime {
             pair_tasks: Arc::new(Mutex::new(BTreeMap::new())),
             listener_tasks: Arc::new(Mutex::new(BTreeMap::new())),
             #[cfg(test)]
-            next_audit_pair_readiness: Mutex::new(None),
+            next_audit_pair_readiness: Arc::new(Mutex::new(None)),
         }))
     }
 

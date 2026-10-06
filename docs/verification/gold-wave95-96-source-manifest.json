@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T14:44:38.1043187Z",
-  "validationStatus": "hosted formatter receipt imported; final producer validation pending",
+  "capturedUtc": "2026-10-06T15:17:18.1600471Z",
+  "validationStatus": "W2449-COMPILE-REPAIR-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 17396,
-      "sha256": "EC8B31AA787A0B15120B35593D1AA1197A8159008026A43D93654CF529D24500"
+      "bytes": 20231,
+      "sha256": "F7A30B88E6CE3E64578D8BA107002B254AED6CDA269FFBE68BB61F3CE4681315"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3777,6 +3777,11 @@
       "sha256": "913F8F29D46E29EDEE891CA3BA8258FDD61C7FFA6E7C5A4A54A1FDE10A5C33FE"
     },
     {
+      "path": "docs/verification/gold-wave2449-hosted-compile-repair.json",
+      "bytes": 1421,
+      "sha256": "B93F2BBFC937E14C8B324657076FC59AD4E96C3201CBE5329BFBCDF3D021CF77"
+    },
+    {
       "path": "docs/verification/gold-wave2449-pair-failure-diagnostics.json",
       "bytes": 1972,
       "sha256": "EA66B49B8DE05A0D7F365B7C0AA4B33CE8A633CD07E5FAD907C17FD42CA27A78"
@@ -4938,8 +4943,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2444621,
-      "sha256": "5ED06E6EA02D0A2A87496BED7BDF9C0B6A29349EE19D1686C3A343390FCB19C5"
+      "bytes": 2445983,
+      "sha256": "B95089F456459F1C6F67CE0E5779A09E1A81FA9FD3AC8E8807E3EF558ECB8416"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6838,13 +6843,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
-      "bytes": 4448,
-      "sha256": "5ED964AE809FF3AA08619A5C91D7D04313BE7D3C413445A637A23F62594B372F"
+      "bytes": 4623,
+      "sha256": "3CD36D7715CE5B19AAE42BCADCA092D66E7E9BAB9609D4A103A580E65FE1DEC2"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 85051,
-      "sha256": "2680503F64D19CDE5412C2588ADB0898A8FC42732928B82756DCFEB96DA5510B"
+      "bytes": 85066,
+      "sha256": "BC50B2DD5F6489EB8A639D6DC12BAC28708B305313ED896A4B63D6E358BFE4B0"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
