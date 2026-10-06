@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T09:25:13.2577562Z",
-  "validationStatus": "wave2437-static-reviewed-hosted-pending",
+  "capturedUtc": "2026-10-06T09:54:15.0821057Z",
+  "validationStatus": "wave2441-static-reviewed-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -133,8 +133,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 20300,
-      "sha256": "ABCDC45C7F4C72F41D16F4D659FA00D4AD70CCD1B7EFAB1D2621A560DAAC21CF"
+      "bytes": 20707,
+      "sha256": "636441446D83D6AFBDC91408F732784063F6DB5FCBF98A4EA0794FD3A32EC899"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3727,6 +3727,11 @@
       "sha256": "C9FB5277BDBA02F750EE027F3FD8FAFF56215C42A47FFE20BFEB51007ED767DE"
     },
     {
+      "path": "docs/verification/gold-wave2441-libudx-test-build.json",
+      "bytes": 3965,
+      "sha256": "1A4C5048BFFA9540C315D746189A0696C3089AF535CEEAF3D8433BBB0A151126"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4868,8 +4873,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2428809,
-      "sha256": "567B3AE92EC8842D58379987E51B1B303784C357706D428C921367E20C018E77"
+      "bytes": 2430913,
+      "sha256": "986EBB1AC9FE170EF346C4B430CEC59951DA66403591D2A050B1F909EF93752B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8963,8 +8968,13 @@
     },
     {
       "path": "SRC/vendor/libudx/src/native/socket.rs",
-      "bytes": 35348,
-      "sha256": "401FF80A3228B8BA37137EFF9CAA87DEE879B3CD167EF3FE7BC89C3CEFC550F5"
+      "bytes": 35388,
+      "sha256": "9C7B2823B03E4A97D4EF44AFFC224AE075799425BCA6C8BE7A2D45BBC9A1BE2C"
+    },
+    {
+      "path": "SRC/vendor/libudx/src/native/stream.rs",
+      "bytes": 89230,
+      "sha256": "716F43D790E0AD65123D0E9E7C93C0887F2DB8F7E65931FBC282D22281FBEAA9"
     },
     {
       "path": "SRC/vendor/matrix-sdk-crypto/.cargo_vcs_info.json",

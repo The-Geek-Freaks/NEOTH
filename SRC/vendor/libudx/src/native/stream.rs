@@ -1905,32 +1905,33 @@ mod bounded_transport_tests {
         // More packets than the bounded application queue. The right-side
         // processor cannot ACK all packets until the consumer drains them.
         let payload = vec![0xC7; MAX_PAYLOAD * (STREAM_READ_QUEUE_CAPACITY + 32)];
-        let write = left.write(&payload);
-        tokio::pin!(write);
-        assert!(
-            timeout(Duration::from_millis(100), &mut write)
-                .await
-                .is_err(),
-            "write must not complete before the saturated reader accepts data"
-        );
-
         let mut received = Vec::with_capacity(payload.len());
-        while received.len() < payload.len() {
-            let chunk = timeout(Duration::from_secs(5), right.read())
-                .await
-                .expect("right reader makes progress")
-                .expect("stream read succeeds")
-                .expect("data before eof");
-            received.extend_from_slice(&chunk);
-        }
+        {
+            let write = left.write(&payload);
+            tokio::pin!(write);
+            assert!(
+                timeout(Duration::from_millis(100), &mut write)
+                    .await
+                    .is_err(),
+                "write must not complete before the saturated reader accepts data"
+            );
 
-        timeout(Duration::from_secs(5), &mut write)
-            .await
-            .expect("write completes after drain")
-            .expect("remote ACK succeeds");
+            while received.len() < payload.len() {
+                let chunk = timeout(Duration::from_secs(5), right.read())
+                    .await
+                    .expect("right reader makes progress")
+                    .expect("stream read succeeds")
+                    .expect("data before eof");
+                received.extend_from_slice(&chunk);
+            }
+
+            timeout(Duration::from_secs(5), &mut write)
+                .await
+                .expect("write completes after drain")
+                .expect("remote ACK succeeds");
+        }
         assert_eq!(received, payload);
 
-        drop(write);
         left.destroy().await.expect("destroy left");
         right.destroy().await.expect("destroy right");
         left_socket.close().await.expect("close left socket");

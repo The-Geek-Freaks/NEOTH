@@ -1,0 +1,88 @@
+{
+  "schema": "neoth.wave2441.libudx-test-build-repair.v1",
+  "base": "9862e996346bf7b9f942f68340b354e87848dff8",
+  "status": "static-reviewed-hosted-pending",
+  "priorHosted": {
+    "run": "37443425500",
+    "attempt": 1,
+    "job": "112202428867",
+    "producer": "9862e996346bf7b9f942f68340b354e87848dff8",
+    "buildSucceeded": true,
+    "exactRustPassed": 14,
+    "collectorPassed": 4,
+    "sourceBindings": 32,
+    "bothOverlaysRestored": true,
+    "failedStep": "Run exact locked libudx OS-send completion regression",
+    "errors": [
+      "E0382 socket handle used after consuming close",
+      "E0505 pinned write future outlives destroy receiver"
+    ],
+    "productExecuted": false,
+    "zipSha256": "61FFA267C32711E033C4889D353D1952F017273132699B8356732C0E14E36D54",
+    "rootPartialSha256": "FE3EC4D397B94BA7822D2C723A733211DA1ECC5564CF26CC090102A7BBB6912B"
+  },
+  "repair": {
+    "testOnly": true,
+    "productionChanged": false,
+    "socket": "Keep Arc to inner state before consuming close and preserve post-close task count assertion.",
+    "stream": "Scope pinned write future through original assertions and drain, releasing borrow before consuming destroy."
+  },
+  "acceleration": {
+    "libudxTestsBeforeProductBuild": true,
+    "cacheIncludesBridgeTarget": true,
+    "cacheKeyBindsBothLocks": true,
+    "allExistingAcceptanceGatesRetained": true,
+    "speedupMeasured": false
+  },
+  "selection": {
+    "exactRust": 35,
+    "collector": 4,
+    "rawSourceBindings": 33,
+    "portable": 2760,
+    "addedExactRust": [
+      "native::socket::tests::close_aborts_the_owned_reader_and_writer_tasks",
+      "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
+    ]
+  },
+  "metadataCorrection": "W2437 recorded 3 collector cases, but source and actual hosted log have 4. That historical count is incorrect and was never a full-product admission. W2441 spec/helper bind all four exact identities.",
+  "review": {
+    "combined": "2FF0B6B554BD3B134C055A0750357B91C3550E0642FC6AE7FEF02188FA135D89",
+    "collectorCorrection": "1ED0F44919E0036E5FA123E5B6EDF043C0D6BD70D785EC10284898885ED8792E",
+    "acceleration": "D27FB09E42F3679600CCA41784D7BF719AD865AFC4DC4D8ABA636B8B2F1F6803"
+  },
+  "admission": {
+    "unboundSpecSha256": "4AF57077EF8894034415CF2B58B79C41980E912FE1F144872BC4F39C1A97FDF9",
+    "helperSha256": "3F08A1D891CDE399B7C24F47A8C0D8A33CF5D29E862D01DA4D3C36C4CF731DC6"
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedRun": "pending",
+    "v3Accepted": false,
+    "v4Held": true,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "candidateBindings": [
+    {
+      "path": "SRC/vendor/libudx/src/native/socket.rs",
+      "baseBlob": "b1bd8a109b92588ef325afc45be2d32a30d6f32f",
+      "baseSha256": "401FF80A3228B8BA37137EFF9CAA87DEE879B3CD167EF3FE7BC89C3CEFC550F5",
+      "candidate": "work/gold-20260906/wave2441-libudx-test-build/candidate/SRC/vendor/libudx/src/native/socket.rs",
+      "candidateSha256": "5CDAE0DCF9ABEED49DC19A2BB6F45075F4AF126BF3BAD4FE9DFDBC73CE3642E9"
+    },
+    {
+      "path": "SRC/vendor/libudx/src/native/stream.rs",
+      "baseBlob": "5c7de816c968ca1c9995a61cdca4f46bd217a64e",
+      "baseSha256": "9C8D68FEFD51F8C8B6251AB9B6CD619B4765E522E9DD995818649221214269A0",
+      "candidate": "work/gold-20260906/wave2441-libudx-test-build/candidate/SRC/vendor/libudx/src/native/stream.rs",
+      "candidateSha256": "716F43D790E0AD65123D0E9E7C93C0887F2DB8F7E65931FBC282D22281FBEAA9"
+    },
+    {
+      "path": ".github/workflows/mobile-companion-interop.yml",
+      "baseBlob": "890d2b0134813be19c24dec47b610424c738e6b6",
+      "baseSha256": "ABCDC45C7F4C72F41D16F4D659FA00D4AD70CCD1B7EFAB1D2621A560DAAC21CF",
+      "candidate": "work/gold-20260906/wave2441-libudx-test-build/root-harness/mobile-companion-interop.yml",
+      "candidateSha256": "DDE814D26C865A0B1EE7547CC61EAEB75373DAA154BCFD54504225FCBAC1841C"
+    }
+  ]
+}

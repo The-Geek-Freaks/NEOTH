@@ -820,8 +820,9 @@ mod tests {
         let _raw_rx = socket.recv_start().expect("raw receiver");
         assert_eq!(socket.inner.active_task_count(), 2);
 
+        let inner = Arc::clone(&socket.inner);
         socket.close().await.expect("close");
-        assert_eq!(socket.inner.active_task_count(), 0);
+        assert_eq!(inner.active_task_count(), 0);
     }
 
     #[tokio::test]
