@@ -502,6 +502,7 @@ fn now_unix_secs() -> u64 {
 /// Callers surface an indeterminate acknowledgement before committed output or restart scheduling.
 /// Shared applied-update receipt path. Callers must propagate an indeterminate
 /// ACK before they render `committed` or schedule post-commit cleanup.
+#[cfg(windows)]
 pub(super) async fn emit_self_update_applied(
     outcome: &crate::updater::self_update::UpdateApplied,
     repo: &str,

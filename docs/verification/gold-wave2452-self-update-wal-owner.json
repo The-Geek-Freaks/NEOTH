@@ -117,7 +117,7 @@
   "requiredPortableRegistrations": 4,
   "requiredUnixOnlyRegistrations": 1,
   "localExecutableValidationRan": false,
-  "hostedStatus": "pending",
+  "hostedStatus": "W2459-CLIPPY-REPAIR-PENDING-RERUN",
   "allStandaloneWalCallersMigrated": false,
   "nativeDeviceReleaseAccepted": false,
   "hostedFormatting": {
@@ -127,5 +127,17 @@
     "archiveSha256": "78EC5E484F0765B729A1137B2612E46D340B3135150B4F33AF829F9B98837E46",
     "custodySha256": "6F0A87205F30B72233F0AB9BF13B9884566FBA3DB562B5C6FA0408C6CC3CD2AA",
     "localFormatterRan": false
+  },
+  "clippyRepair": {
+    "failedProducer": "7ae0444f2da6b8407a903c6ac091ac2b6ca18f1c",
+    "failedRun": "37509488762",
+    "behaviorCasesExecuted": 0,
+    "failureProofSha256": "930200E02367A79076FC572BADCF6B0B6360CF734B4E563F9B4C84E9141202ED",
+    "changes": [
+      "Gate sole Windows-handoff applied-event wrapper with cfg(windows).",
+      "Use semantically identical is_some early return for live-daemon refusal."
+    ],
+    "candidateManifestSha256": "38404491EB5345EE9CAC85B91ED69CE0ED379081E3CD3F6E806C9850B7BB58C2",
+    "localExecutableValidationRan": false
   }
 }

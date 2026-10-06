@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2456-HARNESS-STATIC-REVIEWED-HOSTED-PENDING",
+  "status": "W2459-STRICT-CLIPPY-REPAIR-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 397640,
-    "sha256": "13D57346981547F18FBCD66BBAE54F4335F456FE2003B450C4BFECB48068AF5C"
+    "bytes": 397637,
+    "sha256": "5E279A6D570D4985A4CBB0A2DC31B83448F023193CD12BF4DECC4F925733BA4A"
   },
   "sourceInputs": 2173,
   "requiredNativeTests": [
@@ -16693,19 +16693,19 @@
     {
       "test": "cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "5750DFAF17B2BAA2F37EA901A39D5FC06A66BD7DB7CE515287AB8639134E850D",
+      "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "27E68CEDE9A3B4B21D9F022531DFDCFF71FCF2CD5F75A7A1C7A8F6BC7DED6FB1",
+      "sourceSha256": "DEB002F0D75F1B898FF12D32AEFCC2B235223B3F2A5BA712DD634C49AD0D5CBA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "5750DFAF17B2BAA2F37EA901A39D5FC06A66BD7DB7CE515287AB8639134E850D",
+      "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
       "junitClass": "neoth"
     }
   ],
@@ -19094,7 +19094,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "5750DFAF17B2BAA2F37EA901A39D5FC06A66BD7DB7CE515287AB8639134E850D",
+        "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
         "junitClass": "neoth"
       }
     ],
@@ -19504,7 +19504,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "5750DFAF17B2BAA2F37EA901A39D5FC06A66BD7DB7CE515287AB8639134E850D",
+        "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
         "junitClass": "neoth"
       }
     ]
@@ -77139,6 +77139,38 @@
       }
     ],
     "note": "Fresh chat Bridge with exact production helper/cleanup regressions; collector14/Rust61/source40. Imported verified hosted W2452 formatting. Exact producer behavior tests and complete mobile product flow pending; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2459OwnerStrictClippy": {
+    "base": "7ae0444f2da6b8407a903c6ac091ac2b6ca18f1c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2452-self-update-wal-owner.json",
+        "bytes": 6861,
+        "sha256": "269013FAE6ED4F975EF0E06D3E794543CC93D1782D5B507C1D3452B6E608BB21",
+        "blob": "1b52f21dcb2f38e0f006ace33aef34b526da5304"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2454251,
+        "sha256": "A57528E01F6898DED6BE9218A0C545FCC40BD4B93519DC8C04AE19B1790EFA04",
+        "blob": "09c695b63528f65218426d34efdbd721e708c7d5"
+      },
+      {
+        "path": "SRC/neothd/src/cli/update.rs",
+        "bytes": 44813,
+        "sha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
+        "blob": "75493347f1e038e9b2915940dc9bb2ce93d5481c"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/pidfile.rs",
+        "bytes": 38145,
+        "sha256": "DEB002F0D75F1B898FF12D32AEFCC2B235223B3F2A5BA712DD634C49AD0D5CBA",
+        "blob": "fb89ff8cc79377577d65d775948c2470f622546b"
+      }
+    ],
+    "note": "Only cfg(windows) on sole Windows handoff wrapper and single-match to is_some. Previous CLI run failed before 35 behavior cases. No suppression or local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

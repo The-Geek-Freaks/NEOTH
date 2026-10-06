@@ -214,9 +214,8 @@ pub(crate) fn acquire_offline_self_update_audit_interlock(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create offline audit PID directory {}", parent.display()))?;
     }
-    match live_daemon_pid(pidfile)? {
-        Some(_) => return Ok(None),
-        None => {}
+    if live_daemon_pid(pidfile)?.is_some() {
+        return Ok(None);
     }
     let Some(lock) = open_exclusive(pidfile).with_context(|| {
         format!(
