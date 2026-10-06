@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T15:17:18.1600471Z",
-  "validationStatus": "W2449-COMPILE-REPAIR-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T15:22:39.6219646Z",
+  "validationStatus": "W2449-COMBINED-CONTRACT-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6843,8 +6843,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
-      "bytes": 4623,
-      "sha256": "3CD36D7715CE5B19AAE42BCADCA092D66E7E9BAB9609D4A103A580E65FE1DEC2"
+      "bytes": 4645,
+      "sha256": "4AD1BDD327A30D04FDD2772AF723A6C62E66A95C244B76B99E9F4916BEC14059"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",

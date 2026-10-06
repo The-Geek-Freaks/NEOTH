@@ -48,7 +48,10 @@ pub(crate) struct PreparedCompanionV3Invite {
 /// No-cluster builds have no pairing listener owner to retain or clean up.
 pub(crate) enum AuditPairInvitePreparation {
     // Shared RPC matching requires this shape; no-cluster builds cannot create it.
-    #[expect(dead_code, reason = "no-cluster pairing has no successful preparation path")]
+    #[expect(
+        dead_code,
+        reason = "no-cluster pairing has no successful preparation path"
+    )]
     Prepared(PreparedCompanionV3Invite),
     Refused,
 }

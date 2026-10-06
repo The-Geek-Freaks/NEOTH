@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2449-COMPILE-REPAIR-HOSTED-PENDING",
+  "status": "W2449-COMBINED-CONTRACT-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 396140,
-    "sha256": "F7592DBC8F3062479F8CA2C5FAA96E6FD79573978A589DDC78CED1BABC46A148"
+    "bytes": 396143,
+    "sha256": "2D64B2050966D4020D383400A662170707AD9B003D39E894623FA87EC4437851"
   },
   "sourceInputs": 2165,
   "requiredNativeTests": [
@@ -76615,6 +76615,20 @@
       }
     ],
     "note": "Run37482539570 partial33Rust/12collector/40sources admitted; test-only Clone correction and intentional no-cluster variant lint expectation; optional combined 6 Companion + 3 Codegraph contract lane awaits hosted execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2449CompileRepairHostedFormat": {
+    "base": "85c1399e6124fbef9152c69d719b89e70bc1b099",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+        "bytes": 4645,
+        "sha256": "4AD1BDD327A30D04FDD2772AF723A6C62E66A95C244B76B99E9F4916BEC14059",
+        "blob": "3d2f6b891777da665e109b755ab32b21876d37f7"
+      }
+    ],
+    "note": "Only hosted formatter output for the intentional no-cluster expected lint attribute. Producer85c1399 Preflight failed formatting only; Code Quality passed. Verified original formatter ZIP E27DF5A67D5A3F64261A92317E1E77A63F16B0F73985CFFB34ACD43E3F05EEC9 and all three entries. Combined6Companion+3Codegraph validation remains pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
