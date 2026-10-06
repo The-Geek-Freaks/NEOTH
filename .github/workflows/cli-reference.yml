@@ -7,6 +7,10 @@ on:
         description: 'Also run the two real-authority mobile scope and revoke regressions'
         type: boolean
         default: false
+      codegraph_contract_regressions:
+        description: 'Also run the exact Codegraph catalog, stdio, and descriptor contract regressions'
+        type: boolean
+        default: false
       macos_provider_regression:
         description: 'Run the exact native macOS Buddy provider GUI callback regression'
         type: boolean
@@ -37,7 +41,7 @@ jobs:
     name: Export exact-source CLI reference
     if: ${{ !inputs.macos_provider_regression }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.workspace_clippy && 90 || inputs.companion_regressions && 75 || 50 }}
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || (inputs.companion_regressions || inputs.codegraph_contract_regressions) && 75 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -98,6 +102,73 @@ jobs:
         timeout-minutes: 25
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked
+
+      # This optional contract is deliberately narrow: each listed identity is
+      # discovered and run once, while the ordinary type check, public CLI
+      # build, generated-reference export, and optional companion mode remain
+      # unchanged. It is a source-bound hosted proof, not a substitute for the
+      # broader product or native acceptance lanes.
+      - name: Run exact Codegraph contract regressions
+        id: exact_codegraph_contract
+        if: ${{ inputs.codegraph_contract_regressions }}
+        timeout-minutes: 20
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/neoth-codegraph-contract-regressions"
+          mkdir -p "$proof_dir"
+          printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
+          cat > "$proof_dir/selection.tsv" <<'EOF'
+          mcp::codegraph_server::tests::codegraph_tools_lists_twelve_canonical_tools	SRC/neothd/src/mcp/codegraph_server.rs
+          mcp::codegraph_server::tests::stdio_server_negotiates_and_requires_initialized_notification	SRC/neothd/src/mcp/codegraph_server.rs
+          mcp::codegraph_server::tests::generated_descriptor_allowlist_requires_exact_canonical_set_without_duplicates	SRC/neothd/src/mcp/codegraph_server.rs
+          EOF
+          cat > "$proof_dir/source-paths.tsv" <<'EOF'
+          SRC/neothd/src/cli/mcp.rs	cli-mcp-source
+          SRC/neothd/src/mcp/codegraph_server.rs	codegraph-server-source
+          docs/cli-commands.md	generated-cli-reference
+          .github/workflows/cli-reference.yml	workflow-source
+          SRC/Cargo.lock	root-lock
+          SRC/Cargo.toml	root-manifest
+          SRC/neothd/Cargo.toml	neoth-manifest
+          EOF
+          sha256sum \
+            neothd/src/cli/mcp.rs \
+            neothd/src/mcp/codegraph_server.rs \
+            ../docs/cli-commands.md \
+            ../.github/workflows/cli-reference.yml \
+            Cargo.lock \
+            Cargo.toml \
+            neothd/Cargo.toml > "$proof_dir/SHA256SUMS.txt"
+          selected=0
+          visited=0
+          failed_or_missing=0
+          while IFS=$'\t' read -r identity source_path; do
+            test -n "$identity"
+            test "$source_path" = 'SRC/neothd/src/mcp/codegraph_server.rs'
+            selected=$((selected + 1))
+            cargo test -p neoth --lib --locked "$identity" -- --exact --list 2>&1 | tee "$proof_dir/$selected.discovery.log"
+            test "$(grep -Fxc "$identity: test" "$proof_dir/$selected.discovery.log")" -eq 1
+            cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$selected.test.log"
+            test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$selected.test.log")" -eq 1
+            test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$selected.test.log")" -eq 1
+            visited=$((visited + 1))
+          done < "$proof_dir/selection.tsv"
+          test "$selected" -eq 3
+          test "$visited" -eq 3
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=%s\n' "$selected" "$visited" "$failed_or_missing" > "$proof_dir/final-counts.txt"
+
+      - name: Upload Codegraph contract regression evidence
+        if: ${{ always() && inputs.codegraph_contract_regressions }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codegraph-contract-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/neoth-codegraph-contract-regressions/
+          if-no-files-found: error
+          retention-days: 14
 
       # Targeted diagnosis before repeating all 528 focus cases. These are real
       # authority and WAL regressions; this optional probe never replaces the

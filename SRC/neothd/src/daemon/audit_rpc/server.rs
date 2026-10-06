@@ -131,6 +131,11 @@ const CONNECTION_TIMEOUT_SECS: u64 = 5;
 /// validation. Its daemon-owned initial-discovery lifecycle is bounded here;
 /// the ordinary pre-admission five-second slow-client budget stays unchanged.
 const COMPANION_MINT_READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Keep enough of the fixed mint exchange for a framed terminal response and
+/// its close after an initial-publication refusal. The readiness owner must
+/// never consume the whole lifecycle and strand the same-user client at EOF.
+const COMPANION_MINT_TERMINAL_RESERVE: std::time::Duration =
+    std::time::Duration::from_secs(2);
 /// Cap on concurrent in-flight connections. A local process can't exhaust the
 /// daemon's FD table / task pool by holding connections open — excess
 /// connections are dropped immediately (the one-shot falls back to its
@@ -839,7 +844,17 @@ async fn run_accept_loop(
                             requested_scope,
                         })) => {
                             let _permit = permit;
-                            serve_companion_pair_mint(stream, runtime, requested_scope).await?;
+                            match serve_companion_pair_mint(stream, runtime, requested_scope)
+                                .await?
+                            {
+                                CompanionMintTerminal::Published
+                                | CompanionMintTerminal::ClientCancelled => {}
+                                CompanionMintTerminal::Refused => {
+                                    tracing::warn!(
+                                        "audit-RPC companion pair mint refused after a terminal response"
+                                    );
+                                }
+                            }
                         }
                         Ok(Err(error)) => {
                             tracing::warn!(%error, "audit-RPC connection failed");
@@ -2330,9 +2345,9 @@ async fn serve_companion_pair_mint(
     stream: super::transport::AuditStream,
     runtime: Arc<crate::daemon::companion_runtime::CompanionRuntime>,
     requested_scope: crate::daemon::companion_protocol::CompanionScope,
-) -> Result<()> {
+) -> Result<CompanionMintTerminal> {
     let lifecycle_deadline = tokio::time::Instant::now() + COMPANION_MINT_READINESS_TIMEOUT;
-    let readiness_budget = remaining_companion_mint_budget(lifecycle_deadline)?;
+    let readiness_budget = companion_mint_readiness_budget(lifecycle_deadline)?;
     let (reader, mut writer) = tokio::io::split(stream);
     let (peer_cancel_tx, mut peer_cancel_rx) = tokio::sync::watch::channel(false);
     let (monitor_stop_tx, monitor_stop_rx) = tokio::sync::watch::channel(false);
@@ -2342,21 +2357,41 @@ async fn serve_companion_pair_mint(
         peer_cancel_tx,
     ));
 
-    let prepared = runtime
-        .prepare_pair_invite(requested_scope, readiness_budget, &mut peer_cancel_rx)
+    let preparation = runtime
+        .prepare_pair_invite_for_audit_rpc(requested_scope, readiness_budget, &mut peer_cancel_rx)
         .await;
 
     monitor_stop_tx.send_replace(true);
-    let prepared = match prepared {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let _ = monitor.await;
-            let _ = write_companion_mint_terminal(
+    let prepared = match preparation {
+        Ok(crate::daemon::companion_runtime::AuditPairInvitePreparation::Prepared(prepared)) => {
+            prepared
+        }
+        Ok(crate::daemon::companion_runtime::AuditPairInvitePreparation::Refused) => {
+            let monitor_terminal = monitor
+                .await
+                .context("companion pair mint peer monitor join failed")?;
+            anyhow::ensure!(
+                monitor_terminal == CompanionMintPeerMonitor::Stopped,
+                "companion pair mint peer changed while readiness was settling"
+            );
+            write_companion_mint_terminal(
                 &mut writer,
                 lifecycle_deadline,
                 http_response(503, "companion pair mint unavailable"),
             )
-            .await;
+            .await
+            .context("write companion pair mint readiness refusal")?;
+            tracing::warn!("companion pair mint readiness refused");
+            return Ok(CompanionMintTerminal::Refused);
+        }
+        Err(error) => {
+            let monitor_terminal = monitor
+                .await
+                .context("companion pair mint peer monitor join failed")?;
+            anyhow::ensure!(
+                monitor_terminal == CompanionMintPeerMonitor::Stopped,
+                "companion pair mint peer changed while readiness was settling"
+            );
             return Err(error).context("companion pair mint readiness failed");
         }
     };
@@ -2371,7 +2406,7 @@ async fn serve_companion_pair_mint(
     if monitor_terminal != CompanionMintPeerMonitor::Stopped {
         runtime.cancel_prepared_pair_invite(prepared).await?;
         let _ = close_companion_mint_writer(&mut writer, lifecycle_deadline).await;
-        return Ok(());
+        return Ok(CompanionMintTerminal::ClientCancelled);
     }
 
     let body = match serde_json::to_string(prepared.invite()) {
@@ -2420,7 +2455,37 @@ async fn serve_companion_pair_mint(
         return Err(error).context("close ready companion pair invitation response");
     }
     let _published = runtime.publish_prepared_pair_invite(prepared);
-    Ok(())
+    Ok(CompanionMintTerminal::Published)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompanionMintTerminal {
+    Published,
+    Refused,
+    ClientCancelled,
+}
+
+fn companion_mint_readiness_budget(
+    deadline: tokio::time::Instant,
+) -> Result<std::time::Duration> {
+    companion_mint_readiness_budget_at(deadline, tokio::time::Instant::now())
+}
+
+fn companion_mint_readiness_budget_at(
+    deadline: tokio::time::Instant,
+    now: tokio::time::Instant,
+) -> Result<std::time::Duration> {
+    let remaining = deadline
+        .checked_duration_since(now)
+        .context("companion pair mint lifecycle deadline expired before readiness")?;
+    let readiness = remaining
+        .checked_sub(COMPANION_MINT_TERMINAL_RESERVE)
+        .context("companion pair mint lacks terminal-response reserve before readiness")?;
+    anyhow::ensure!(
+        !readiness.is_zero(),
+        "companion pair mint lacks terminal-response reserve before readiness"
+    );
+    Ok(readiness)
 }
 
 fn remaining_companion_mint_budget(deadline: tokio::time::Instant) -> Result<std::time::Duration> {
@@ -2521,6 +2586,42 @@ async fn handle_webchat_handoff_resume(
     Ok(ConnectionOutcome::Complete)
 }
 
+#[cfg(test)]
+mod companion_mint_budget_tests {
+    use super::*;
+
+    #[test]
+    fn readiness_keeps_terminal_reserve_inside_existing_lifecycle() {
+        let now = tokio::time::Instant::now();
+        let readiness = companion_mint_readiness_budget_at(
+            now + COMPANION_MINT_READINESS_TIMEOUT,
+            now,
+        )
+        .expect("the fixed lifecycle leaves readiness time before its terminal reserve");
+        assert_eq!(
+            readiness,
+            std::time::Duration::from_secs(13),
+            "the existing 15-second lifecycle reserves two seconds for terminal write and close"
+        );
+        assert!(
+            companion_mint_readiness_budget_at(
+                now + COMPANION_MINT_TERMINAL_RESERVE,
+                now,
+            )
+            .is_err(),
+            "a lifecycle no larger than the terminal reserve never starts readiness"
+        );
+        assert!(
+            companion_mint_readiness_budget_at(
+                now + std::time::Duration::from_secs(1),
+                now + std::time::Duration::from_secs(1)
+                    + std::time::Duration::from_millis(1),
+            )
+            .is_err(),
+            "an expired lifecycle never starts readiness"
+        );
+    }
+}
 async fn emit_reject(state: &AuditRpcState, reason: &str) {
     let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason }))
         .expect("audit-RPC reject payload contains only infallible JSON values");

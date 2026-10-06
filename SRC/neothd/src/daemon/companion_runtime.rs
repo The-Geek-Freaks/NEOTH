@@ -53,6 +53,12 @@ const MAX_DEVICE_LISTENERS: usize = 128;
 
 type PairListenerReadiness = std::result::Result<(), String>;
 
+#[cfg(test)]
+pub(crate) enum AuditPairReadinessTestOutcome {
+    RefusedAfterOwnerSpawn,
+    UncertainAfterOwnerSpawn,
+}
+
 enum PairReadinessWait {
     Discovery(Result<()>),
     CallerCancelled,
@@ -257,6 +263,18 @@ pub(crate) struct PreparedCompanionV3Invite {
     pair_task_key: String,
 }
 
+/// Audit-RPC may keep its listener alive after a pairing readiness refusal only
+/// when the runtime proved that it left no newly-created listener owner behind.
+pub(crate) enum AuditPairInvitePreparation {
+    Prepared(PreparedCompanionV3Invite),
+    Refused,
+}
+
+enum PairListenerPreparation {
+    Ready(ReadyPairListener),
+    Refused,
+}
+
 impl PreparedCompanionV3Invite {
     pub(crate) fn invite(&self) -> &CompanionV3Invite {
         &self.invite
@@ -290,6 +308,8 @@ pub(crate) struct CompanionRuntime {
     shutdown_tx: watch::Sender<bool>,
     pair_tasks: Arc<Mutex<BTreeMap<String, PairListenerOwner>>>,
     listener_tasks: Arc<Mutex<BTreeMap<Uuid, DeviceListenerOwner>>>,
+    #[cfg(test)]
+    next_audit_pair_readiness: Mutex<Option<AuditPairReadinessTestOutcome>>,
 }
 
 impl CompanionRuntime {
@@ -322,6 +342,8 @@ impl CompanionRuntime {
             shutdown_tx,
             pair_tasks: Arc::new(Mutex::new(BTreeMap::new())),
             listener_tasks: Arc::new(Mutex::new(BTreeMap::new())),
+            #[cfg(test)]
+            next_audit_pair_readiness: Mutex::new(None),
         }))
     }
 
@@ -378,12 +400,12 @@ impl CompanionRuntime {
         Ok(())
     }
 
-    pub(crate) async fn prepare_pair_invite(
+    pub(crate) async fn prepare_pair_invite_for_audit_rpc(
         self: &Arc<Self>,
         requested_scope: CompanionScope,
         readiness_budget: Duration,
         cancellation: &mut watch::Receiver<bool>,
-    ) -> Result<PreparedCompanionV3Invite> {
+    ) -> Result<AuditPairInvitePreparation> {
         let mut topic = [0u8; 32];
         let mut psk = [0u8; 16];
         getrandom::getrandom(&mut topic).context("mint companion v3 topic")?;
@@ -392,7 +414,7 @@ impl CompanionRuntime {
         let invite_deadline = minted_at + Duration::from_secs(INVITE_TTL_SECS);
         let readiness_deadline =
             minted_at + readiness_budget.min(Duration::from_secs(INVITE_TTL_SECS));
-        let ready_listener = self
+        let preparation = self
             .spawn_pair_listener(
                 topic,
                 psk,
@@ -402,6 +424,9 @@ impl CompanionRuntime {
                 cancellation,
             )
             .await?;
+        let PairListenerPreparation::Ready(ready_listener) = preparation else {
+            return Ok(AuditPairInvitePreparation::Refused);
+        };
         let url = build_pair_url(
             topic,
             psk,
@@ -409,7 +434,7 @@ impl CompanionRuntime {
             ready_listener.remaining_ttl_secs,
             requested_scope,
         );
-        Ok(PreparedCompanionV3Invite {
+        Ok(AuditPairInvitePreparation::Prepared(PreparedCompanionV3Invite {
             invite: CompanionV3Invite {
                 schema_version: COMPANION_V3_SCHEMA_VERSION,
                 pair_url: url,
@@ -417,7 +442,20 @@ impl CompanionRuntime {
                 requested_scope,
             },
             pair_task_key: ready_listener.pair_task_key,
-        })
+        }))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn set_next_audit_pair_readiness_for_test(
+        &self,
+        outcome: AuditPairReadinessTestOutcome,
+    ) {
+        *self.next_audit_pair_readiness.lock().await = Some(outcome);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn audit_pair_owner_count_for_test(&self) -> usize {
+        self.pair_tasks.lock().await.len()
     }
 
     pub(crate) async fn cancel_prepared_pair_invite(
@@ -443,23 +481,37 @@ impl CompanionRuntime {
         invite_deadline: tokio::time::Instant,
         readiness_deadline: tokio::time::Instant,
         cancellation: &mut watch::Receiver<bool>,
-    ) -> Result<ReadyPairListener> {
+    ) -> Result<PairListenerPreparation> {
         self.reap_finished_pair_tasks().await?;
         let key = hex::encode(topic);
         let (ready_tx, ready_rx) = oneshot::channel();
         let (pair_stop_tx, pair_stop_rx) = watch::channel(false);
+        #[cfg(test)]
+        let fixture_readiness = self.next_audit_pair_readiness.lock().await.take();
         {
             let mut tasks = self.pair_tasks.lock().await;
-            anyhow::ensure!(
-                tasks.len() < MAX_DEVICE_LISTENERS,
-                "companion pairing listener cap reached"
-            );
-            anyhow::ensure!(
-                !tasks.contains_key(&key),
-                "duplicate companion pairing topic"
-            );
+            if tasks.len() >= MAX_DEVICE_LISTENERS || tasks.contains_key(&key) {
+                return Ok(PairListenerPreparation::Refused);
+            }
             let runtime = Arc::clone(self);
             let task = tokio::spawn(async move {
+                #[cfg(test)]
+                if let Some(fixture) = fixture_readiness {
+                    return match fixture {
+                        AuditPairReadinessTestOutcome::RefusedAfterOwnerSpawn => {
+                            let _ = ready_tx.send(Err(
+                                "fixture checked readiness refusal".to_owned(),
+                            ));
+                            Ok(())
+                        }
+                        AuditPairReadinessTestOutcome::UncertainAfterOwnerSpawn => {
+                            let _ = ready_tx.send(Err(
+                                "fixture teardown uncertainty".to_owned(),
+                            ));
+                            anyhow::bail!("fixture pair listener teardown uncertainty")
+                        }
+                    };
+                }
                 runtime
                     .run_pair_listener_until_ready(
                         topic,
@@ -490,10 +542,10 @@ impl CompanionRuntime {
             readiness = ready_rx => match readiness {
             Ok(Ok(())) if !*cancellation.borrow() => {
                 match remaining_pair_invite_ttl(invite_deadline) {
-                    Ok(remaining_ttl_secs) => Ok(ReadyPairListener {
+                    Ok(remaining_ttl_secs) => Ok(PairListenerPreparation::Ready(ReadyPairListener {
                         remaining_ttl_secs,
                         pair_task_key: key.clone(),
-                    }),
+                    })),
                     Err(error) => {
                         self.join_failed_pair_listener(&key).await?;
                         Err(error)
@@ -505,8 +557,12 @@ impl CompanionRuntime {
                 anyhow::bail!("companion pair mint was cancelled before publication")
             }
             Ok(Err(message)) => {
-                self.join_failed_pair_listener(&key).await?;
-                anyhow::bail!("companion pair listener was not ready: {message}")
+                match self.join_proven_refused_pair_listener(&key).await {
+                    Ok(()) => Ok(PairListenerPreparation::Refused),
+                    Err(error) => Err(error.context(format!(
+                        "companion pair listener readiness was unproven: {message}"
+                    ))),
+                }
             }
             Err(_) => {
                 self.join_failed_pair_listener(&key).await?;
@@ -522,6 +578,24 @@ impl CompanionRuntime {
                 self.join_failed_pair_listener(&key).await?;
                 anyhow::bail!("companion pair mint deadline expired before readiness")
             }
+        }
+    }
+
+    async fn join_proven_refused_pair_listener(&self, key: &str) -> Result<()> {
+        let owner = self
+            .pair_tasks
+            .lock()
+            .await
+            .remove(key)
+            .with_context(|| "unready pair listener owner disappeared before its terminal join")?;
+        owner.stop_tx.send_replace(true);
+        match owner
+            .task
+            .await
+            .with_context(|| "unready pair listener task panicked or was cancelled")?
+        {
+            Ok(()) => Ok(()),
+            Err(error) => Err(error.context("unready pair listener terminal was unproven")),
         }
     }
 
@@ -569,7 +643,7 @@ impl CompanionRuntime {
                 &mut readiness_tx,
                 Err("companion runtime is already shutting down".to_owned()),
             );
-            return Ok(());
+            anyhow::bail!("companion runtime is already shutting down")
         }
         let mut diagnostics = CompanionPairDiagnostics::from_environment();
         diagnostics.phase("bootstrap_started");
@@ -587,7 +661,10 @@ impl CompanionRuntime {
             Ok(value) => value,
             Err(error) => {
                 diagnostics.failed("bootstrap_started");
-                report_pair_readiness(&mut readiness_tx, Err(error.to_string()));
+                report_pair_readiness(
+                    &mut readiness_tx,
+                    Err(error.to_string()),
+                );
                 return Err(error);
             }
         };
@@ -621,9 +698,21 @@ impl CompanionRuntime {
             PairReadinessWait::Discovery(Err(error)) => {
                 let message = error.to_string();
                 let teardown = rendezvous.shutdown_checked().await;
-                report_pair_readiness(&mut readiness_tx, Err(message));
-                teardown.context("unready companion pair listener teardown")?;
-                return Err(error);
+                match teardown {
+                    Ok(()) => {
+                        report_pair_readiness(&mut readiness_tx, Err(message));
+                        return Ok(());
+                    }
+                    Err(teardown_error) => {
+                        report_pair_readiness(
+                            &mut readiness_tx,
+                            Err(message),
+                        );
+                        return Err(
+                            teardown_error.context("unready companion pair listener teardown")
+                        );
+                    }
+                }
             }
             PairReadinessWait::CallerCancelled => {
                 return rendezvous.shutdown_checked().await;
@@ -1749,6 +1838,72 @@ mod tests {
             .expect("companion stop-race writer drains within bound")
             .expect("join companion stop-race writer")
             .expect("companion stop-race writer succeeds");
+    }
+
+    #[tokio::test]
+    async fn audit_rpc_refusal_requires_retained_pair_owner_join() {
+        let home = tempfile::tempdir().expect("create companion refusal home");
+        let config_path = home.path().join("freedom.yaml");
+        let crate::cli::serve_tasks::WalSetup {
+            segment_path,
+            writer,
+            writer_join,
+            ..
+        } = crate::cli::serve_tasks::prepare_wal(home.path(), None)
+            .await
+            .expect("prepare companion refusal WAL");
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            config_path.clone(),
+        ));
+        let chat = Arc::new(DaemonChatRuntime::new(
+            home.path().to_path_buf(),
+            config_path,
+            segment_path,
+            controller,
+            writer.clone(),
+        ));
+        let runtime = CompanionRuntime::load(
+            home.path().to_path_buf(),
+            writer.clone(),
+            Arc::clone(&chat),
+            "testboot".into(),
+            1,
+        )
+        .expect("load companion runtime");
+
+        let (stop_tx, _stop_rx) = watch::channel(false);
+        runtime.pair_tasks.lock().await.insert(
+            "refused".to_owned(),
+            PairListenerOwner {
+                stop_tx,
+                task: tokio::spawn(async { Ok::<(), anyhow::Error>(()) }),
+            },
+        );
+        runtime
+            .join_proven_refused_pair_listener("refused")
+            .await
+            .expect("an observed listener terminal is joined before audit-RPC refusal");
+        assert!(
+            runtime.pair_tasks.lock().await.is_empty(),
+            "settled refusal leaves no listener owner for shutdown"
+        );
+        assert!(
+            runtime
+                .join_proven_refused_pair_listener("refused")
+                .await
+                .is_err(),
+            "missing ownership is uncertain and must not become a recoverable refusal"
+        );
+
+        drop(runtime);
+        drop(chat);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), writer_join)
+            .await
+            .expect("companion refusal writer drains within bound")
+            .expect("join companion refusal writer")
+            .expect("companion refusal writer succeeds");
     }
 
     #[tokio::test]

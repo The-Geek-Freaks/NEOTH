@@ -1,0 +1,46 @@
+{
+  "schema": "neoth.wave2449.pair-mint-terminal.v1",
+  "baseProducer": "37cc1d9e5761273a855e60e70d108a8a650be5b7",
+  "problem": "A readiness refusal could consume the response budget, discard the terminal write error, and propagate out of the required audit listener.",
+  "implementation": [
+    "Reserve two seconds from initial readiness admission within the existing fifteen-second response lifecycle; retained cleanup may exceed that admission budget and is never falsely treated as settled.",
+    "Distinct server-facing Prepared/Refused outcome preserves the existing discovery Result channel.",
+    "Recoverable refusal requires no created owner or exact owner removal, stop signal and successful inner task join after checked discovery teardown.",
+    "Monitor join, complete framed503 write and close must succeed before the listener continues. Missing owner, task/join failure, cancellation, deadline and terminal delivery uncertainty remain fatal."
+  ],
+  "tests": [
+    "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
+    "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle",
+    "daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live",
+    "daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener"
+  ],
+  "staticReviewSha256": "C43DE7FFBEA21736C27B30463695BA55A53B2F1AC850759C0B4C22C4AACE035C",
+  "listenerReviewSha256": "F05253231B98E224588917510591DCD06A0C15307BCA6FD681E44D47580CDCBB",
+  "selection": {
+    "rust": 53,
+    "collector": 12,
+    "sources": 40
+  },
+  "validation": {
+    "hosted": "pending final producer",
+    "localExecutableValidationRan": false,
+    "productAccepted": false,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "remainingProductFailure": {
+    "run": 37476598405,
+    "producer": "37cc1d9e5761273a855e60e70d108a8a650be5b7",
+    "rustExactPassed": 49,
+    "collectorExactPassed": 12,
+    "sourceBindings": 39,
+    "pairValidated": true,
+    "stage": "status_reconnect_start",
+    "failureCategory": "work_deadline",
+    "gracefulWalDrainProven": true,
+    "panicObserved": false,
+    "productAccepted": false,
+    "partialProofSha256": "E392A5A89BEE1F88F4DA8AA5DE602D2115E0D707F16D0739AD358304B2231D7A",
+    "originalZipSha256": "EA76214715A22D680CDEE856C110FC946EB8BC0DBD7619B9A3D44CF4D909567A"
+  }
+}

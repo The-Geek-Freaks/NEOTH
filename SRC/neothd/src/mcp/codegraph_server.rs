@@ -5447,24 +5447,64 @@ fn root() { alpha(); beta(); }
             serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}),
         )
         .unwrap();
+        let tools = listed["result"]["tools"]
+            .as_array()
+            .expect("tools/list must return a tool array");
+        let names: Vec<&str> = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name must be a string"))
+            .collect();
         assert_eq!(
-            listed["result"]["tools"].as_array().unwrap().len(),
-            TOOL_NAMES.len()
+            names,
+            TOOL_NAMES.to_vec(),
+            "stdio tools/list must expose the canonical set"
         );
-        assert!(
-            listed["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|tool| { tool["name"] == "codegraph_imports" })
-        );
-        assert!(
-            listed["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|tool| { tool["name"] == "codegraph_types" })
-        );
+        for tool in tools {
+            assert_eq!(
+                tool["annotations"]["readOnlyHint"],
+                true,
+                "{} must declare read-only effect",
+                tool["name"]
+            );
+            assert_eq!(
+                tool["annotations"]["destructiveHint"],
+                false,
+                "{} must declare non-destructive effect",
+                tool["name"]
+            );
+        }
+    }
+
+    #[test]
+    fn generated_descriptor_allowlist_requires_exact_canonical_set_without_duplicates() {
+        let dir = tempdir().expect("generated descriptor fixture directory");
+        let database = dir.path().join("code_map.db");
+        let base = w56_generated_base(&database);
+        assert!(has_generated_codegraph_descriptor(&base));
+
+        let mut missing = base.clone();
+        missing
+            .allow_tools
+            .as_mut()
+            .expect("generated descriptor has an allowlist")
+            .pop();
+        assert!(!has_generated_codegraph_descriptor(&missing));
+
+        let mut extra = base.clone();
+        extra
+            .allow_tools
+            .as_mut()
+            .expect("generated descriptor has an allowlist")
+            .push("codegraph_lookalike".into());
+        assert!(!has_generated_codegraph_descriptor(&extra));
+
+        let mut duplicate = base;
+        duplicate
+            .allow_tools
+            .as_mut()
+            .expect("generated descriptor has an allowlist")
+            .push(TOOL_NAMES[0].into());
+        assert!(!has_generated_codegraph_descriptor(&duplicate));
     }
 
     #[test]

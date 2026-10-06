@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T14:04:01.3943885Z",
-  "validationStatus": "static reviewed; hosted relay ownership and pairing diagnostics pending",
+  "capturedUtc": "2026-10-06T14:40:31.8926192Z",
+  "validationStatus": "static-reviewed typed mint refusal and Codegraph contract; hosted final-producer validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 8991,
-      "sha256": "62298347E7532F06E911D046F2627DC795A2F39F45448EB80D46D79B88B5D10E"
+      "bytes": 9501,
+      "sha256": "751527CC134B0217CDEFF8EDDFC6A5218C5B1FDD80816ABD5639B05EFAC8CD55"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
@@ -64,7 +64,7 @@
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
       "bytes": 7530,
-      "sha256": "0478052580349C8966ADEC50E96A5261E9D2567A69ABEE03289739EC0CD37D88"
+      "sha256": "C7EE4E4FCB080ED53118B5703CF817D7012F26F285F537CD1322A7621A37CC72"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 13532,
-      "sha256": "DDDE06D3EFE7B82BF509874CB4B2DA41844490A0164FD9AD798348F5F2CC96BD"
+      "bytes": 17396,
+      "sha256": "EC8B31AA787A0B15120B35593D1AA1197A8159008026A43D93654CF529D24500"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -488,8 +488,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 267699,
-      "sha256": "255986A3CB207A8689FE911320B05F635892C1AAED7AA21BAA7D883950E3745F"
+      "bytes": 268508,
+      "sha256": "DACC723BBFF7DFC1DDCAA9A8824E8BD271ACFEB8BBB696B83570B4671B6AAD4D"
     },
     {
       "path": "docs/cli-reference.md",
@@ -3768,13 +3768,23 @@
     },
     {
       "path": "docs/verification/gold-wave2446-relay-ownership.json",
-      "bytes": 2269,
-      "sha256": "2C56E62F0C7842ED9E31548F1800419884656C66C5B72E1F3D3BAC2AF3CF6E66"
+      "bytes": 2996,
+      "sha256": "C0305274C63270E4A1008CD03E1D4B3A6ECB21082089691CA558D56BD5C2BB13"
+    },
+    {
+      "path": "docs/verification/gold-wave2448-codegraph-contract.json",
+      "bytes": 1441,
+      "sha256": "913F8F29D46E29EDEE891CA3BA8258FDD61C7FFA6E7C5A4A54A1FDE10A5C33FE"
     },
     {
       "path": "docs/verification/gold-wave2449-pair-failure-diagnostics.json",
-      "bytes": 1245,
-      "sha256": "8B0798B0526B9A613A7B8CD71953B8ADF5D27C49FD7FE1C120059FC816870FD9"
+      "bytes": 1972,
+      "sha256": "EA66B49B8DE05A0D7F365B7C0AA4B33CE8A633CD07E5FAD907C17FD42CA27A78"
+    },
+    {
+      "path": "docs/verification/gold-wave2449-pair-mint-terminal.json",
+      "bytes": 2475,
+      "sha256": "8F91B5922EED1BC674619C6386841E454A46B2E3A59445113D949DF89AF0C494"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4928,8 +4938,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2442927,
-      "sha256": "98B08AFD8E76C00C2011D1335922C7A7122C3C2ACABCDEEE5A767DF8C4877E05"
+      "bytes": 2444621,
+      "sha256": "5ED06E6EA02D0A2A87496BED7BDF9C0B6A29349EE19D1686C3A343390FCB19C5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6083,8 +6093,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 148154,
-      "sha256": "A3C604AFA41B83DA300600482BDFC058729412A0ED19A781FBC0D364D35A5193"
+      "bytes": 149066,
+      "sha256": "51FBDA0E27765A2402B16C9879458F8788B1FD7DF3FFF39C4AA2885087BF729C"
     },
     {
       "path": "SRC/neothd/src/cli/memory.rs",
@@ -6743,13 +6753,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 105880,
-      "sha256": "036E7DB8B96C7015A96A8811B5F4993C6AFC0ADE3196408D8B2D74D5F7365826"
+      "bytes": 110061,
+      "sha256": "F5579E7B960E1A745ABED87594AB7523E19221649B1262A8E574952FC4A69FB0"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 142382,
-      "sha256": "2699DE900904962D6E8EFEA53768BF98BDCA54018D998E991AC28F8421A744E1"
+      "bytes": 149723,
+      "sha256": "2D159DF6DFFBC0F96E0C09FB63C3EACD5142231C2602CAB12797ABF67F9396DA"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",
@@ -6828,13 +6838,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
-      "bytes": 3941,
-      "sha256": "A51ADCBCBC8E99C7D24E3E19AB3DE7B592DEE1EB807393C4023C008579F8EB76"
+      "bytes": 4448,
+      "sha256": "5ED964AE809FF3AA08619A5C91D7D04313BE7D3C413445A637A23F62594B372F"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 79501,
-      "sha256": "7141253D0C0C6AC0E50AAB2A1D72CFB54B9EFE4575C4BA0FB8EAF1EDCCB7724A"
+      "bytes": 85254,
+      "sha256": "17BA3DD59F086AF53D239825C433466B9AA895E8A0A50CD2C99E98F3FF641E41"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
@@ -7493,8 +7503,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 235210,
-      "sha256": "3095B0D4938566D207061C983DF3703038F3290D0E301E36FAAE3D1086A81E8C"
+      "bytes": 236679,
+      "sha256": "434634F69D31DC5CE6AE5A6B22E0FB3EB5D6288033F8119173E9EE49F325D930"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",

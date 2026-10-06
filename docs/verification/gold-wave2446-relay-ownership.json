@@ -20,7 +20,7 @@
   ],
   "selection": "All prior mobile selections retained plus three DHT ownership tests; total derives from independent expected group counts in the fixture.",
   "validation": {
-    "hosted": "pending",
+    "hosted": "49 exact Rust and 12 collector cases passed on 37cc1d9e; pairing passed, status reconnect hit work deadline; complete graceful WAL drain confirmed",
     "localExecutableValidationRan": false,
     "productAccepted": false,
     "deviceAccepted": false,
@@ -42,5 +42,20 @@
     "slintEdits": false,
     "claudePolling": false,
     "protectedLocalChangesPreserved": true
+  },
+  "latestHostedEvidence": {
+    "run": 37476598405,
+    "producer": "37cc1d9e5761273a855e60e70d108a8a650be5b7",
+    "rustExactPassed": 49,
+    "collectorExactPassed": 12,
+    "sourceBindings": 39,
+    "pairValidated": true,
+    "stage": "status_reconnect_start",
+    "failureCategory": "work_deadline",
+    "gracefulWalDrainProven": true,
+    "panicObserved": false,
+    "productAccepted": false,
+    "partialProofSha256": "E392A5A89BEE1F88F4DA8AA5DE602D2115E0D707F16D0739AD358304B2231D7A",
+    "originalZipSha256": "EA76214715A22D680CDEE856C110FC946EB8BC0DBD7619B9A3D44CF4D909567A"
   }
 }

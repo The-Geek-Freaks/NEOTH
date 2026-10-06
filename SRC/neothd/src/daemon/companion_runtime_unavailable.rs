@@ -45,6 +45,12 @@ pub(crate) struct PreparedCompanionV3Invite {
     invite: CompanionV3Invite,
 }
 
+/// No-cluster builds have no pairing listener owner to retain or clean up.
+pub(crate) enum AuditPairInvitePreparation {
+    Prepared(PreparedCompanionV3Invite),
+    Refused,
+}
+
 impl PreparedCompanionV3Invite {
     pub(crate) fn invite(&self) -> &CompanionV3Invite {
         &self.invite
@@ -80,6 +86,15 @@ impl CompanionRuntime {
         _cancellation: &mut tokio::sync::watch::Receiver<bool>,
     ) -> Result<PreparedCompanionV3Invite> {
         bail!("companion v3 requires the cluster feature")
+    }
+
+    pub(crate) async fn prepare_pair_invite_for_audit_rpc(
+        self: &Arc<Self>,
+        _requested_scope: CompanionScope,
+        _readiness_budget: Duration,
+        _cancellation: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<AuditPairInvitePreparation> {
+        Ok(AuditPairInvitePreparation::Refused)
     }
 
     pub(crate) async fn cancel_prepared_pair_invite(

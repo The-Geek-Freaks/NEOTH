@@ -1,0 +1,24 @@
+{
+  "schema": "neoth.wave2448.codegraph-contract.v1",
+  "baseProducer": "37cc1d9e5761273a855e60e70d108a8a650be5b7",
+  "problem": "The CLI description still advertised nine tools while the implemented canonical catalog contains twelve.",
+  "implementation": [
+    "Align Clap source description and expected generated CLI reference with twelve intentional canonical tools.",
+    "Strengthen real stdio initialize/tools-list checks to exact ordered names and read-only/non-destructive annotations.",
+    "Reject missing, extra/lookalike and duplicate generated descriptor allowlist entries.",
+    "Reuse the existing Ubuntu CLI-reference workflow with an optional three-case mode, exact discovery/execution counts and source-bound evidence; preserve default checks and generated reference export."
+  ],
+  "tests": [
+    "mcp::codegraph_server::tests::codegraph_tools_lists_twelve_canonical_tools",
+    "mcp::codegraph_server::tests::stdio_server_negotiates_and_requires_initialized_notification",
+    "mcp::codegraph_server::tests::generated_descriptor_allowlist_requires_exact_canonical_set_without_duplicates"
+  ],
+  "staticReviewSha256": "604ED2D3683EAEA42EFD6523DD7E9CBE5B4E58B97BF859902CB01A37F61D5D14",
+  "validation": {
+    "hosted": "pending final producer",
+    "generatedReferenceEquality": "pending hosted export",
+    "localExecutableValidationRan": false,
+    "roadmapOriginalTextPreserved": true,
+    "releaseReady": false
+  }
+}

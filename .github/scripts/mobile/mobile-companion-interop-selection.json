@@ -65,7 +65,11 @@
         "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation",
         "cluster::hyperswarm::tests::public_rendezvous_requires_and_wires_the_expected_remote_static_key",
         "cluster::hyperswarm::tests::v3_public_rendezvous_retains_the_supplied_daemon_noise_key",
-        "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn"
+        "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn",
+        "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
+        "daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live",
+        "daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener",
+        "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle"
       ]
     },
     "no_cluster": {
@@ -112,6 +116,7 @@
     "SRC/neothd/src/daemon/audit_rpc/client.rs",
     "SRC/neothd/src/cli/serve_tasks.rs",
     "SRC/neothd/src/daemon/companion_runtime.rs",
+    "SRC/neothd/src/daemon/audit_rpc/tests.rs",
     "SRC/vendor/peeroxide/src/peer_discovery.rs",
     "SRC/vendor/peeroxide/src/swarm.rs",
     "SRC/neothd/src/cluster/hyperswarm.rs",

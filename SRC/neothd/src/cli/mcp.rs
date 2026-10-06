@@ -49,9 +49,22 @@ pub enum McpAction {
         #[arg(long, default_value = "{}")]
         args: String,
     },
-    /// Serve NEOTH's nine read-only codegraph tools over MCP stdio. Intended as
-    /// a subprocess entrypoint for MCP hosts; stdout contains protocol messages
-    /// only. Run `codegraph-install` to register it in NEOTH itself.
+    /// Serve NEOTH's twelve read-only codegraph tools over MCP stdio. The exact
+    /// generated registration and live `tools/list` catalogue are:
+    /// `codegraph_relevant_files` (ranked local files), `codegraph_recall_v1`
+    /// (generation-bound recall), `codegraph_extract_identifiers`,
+    /// `codegraph_path_keywords`, `codegraph_callers`, `codegraph_callees`,
+    /// `codegraph_imports` (bounded root-local imports), `codegraph_types`
+    /// (bounded type hierarchies), `codegraph_impact_radius`,
+    /// `codegraph_diff_impact`, `codegraph_diff_test_gaps` (observed evidence,
+    /// never an absence claim), and `codegraph_outline`. All use
+    /// generation-bound code-map evidence; `codegraph_diff_impact` and
+    /// `codegraph_diff_test_gaps` additionally acquire only the explicitly
+    /// requested bounded Git or stdin diff. Stale, incomplete, malformed or
+    /// generation-mismatched state is refused where the tool requires a current
+    /// snapshot. Intended as a subprocess entrypoint for MCP hosts; stdout
+    /// contains protocol messages only. Run `codegraph-install` to register it
+    /// in NEOTH itself
     CodegraphServe {
         /// Override the persisted code-map database path.
         #[arg(long)]

@@ -3718,3 +3718,205 @@ async fn gui_attach_rejects_an_oversized_close_delimited_frame() {
     );
     server.await.unwrap();
 }
+
+
+#[cfg(feature = "cluster")]
+struct CompanionPairListenerFixture {
+    runtime: Arc<crate::daemon::companion_runtime::CompanionRuntime>,
+    chat: Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<std::result::Result<(), String>>,
+}
+
+#[cfg(feature = "cluster")]
+async fn companion_pair_listener_fixture(home: &std::path::Path) -> CompanionPairListenerFixture {
+    let config_path = home.join("freedom.yaml");
+    let crate::cli::serve_tasks::WalSetup {
+        segment_path,
+        writer,
+        writer_join,
+        ..
+    } = crate::cli::serve_tasks::prepare_wal(home, None)
+        .await
+        .expect("prepare W2449 companion test WAL");
+    let controller = Arc::new(crate::config::reload::ReloadController::new(
+        crate::config::FreedomConfig::default(),
+        config_path.clone(),
+    ));
+    let chat = Arc::new(crate::daemon::chat_runtime::DaemonChatRuntime::new(
+        home.to_path_buf(),
+        config_path,
+        segment_path,
+        controller,
+        writer.clone(),
+    ));
+    let runtime = crate::daemon::companion_runtime::CompanionRuntime::load(
+        home.to_path_buf(),
+        writer.clone(),
+        Arc::clone(&chat),
+        "w2449-pair-listener-test".into(),
+        1,
+    )
+    .expect("load W2449 companion runtime");
+    CompanionPairListenerFixture {
+        runtime,
+        chat,
+        writer,
+        writer_join,
+    }
+}
+
+#[cfg(feature = "cluster")]
+async fn finish_companion_pair_listener_fixture(fixture: CompanionPairListenerFixture) {
+    fixture
+        .runtime
+        .shutdown_and_drain()
+        .await
+        .expect("companion runtime drains all retained owners");
+    drop(fixture.runtime);
+    drop(fixture.chat);
+    drop(fixture.writer);
+    tokio::time::timeout(std::time::Duration::from_secs(5), fixture.writer_join)
+        .await
+        .expect("W2449 WAL writer drains within bound")
+        .expect("join W2449 WAL writer")
+        .expect("W2449 WAL writer succeeds");
+}
+
+#[cfg(feature = "cluster")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live() {
+    let home = tempdir().expect("create W2449 listener home");
+    let fixture = companion_pair_listener_fixture(home.path()).await;
+    fixture
+        .runtime
+        .set_next_audit_pair_readiness_for_test(
+            crate::daemon::companion_runtime::AuditPairReadinessTestOutcome::RefusedAfterOwnerSpawn,
+        )
+        .await;
+
+    let token = init_rpc_token(home.path()).expect("mint same-user RPC token");
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: fixture.writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        membership: None,
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        conversation_runtime: None,
+        companion_runtime: Some(Arc::clone(&fixture.runtime)),
+        webchat: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state)
+        .await
+        .expect("bind real audit-RPC listener");
+    let _endpoint_owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+
+    let mint = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        companion_v3_mint_pair(
+            home.path(),
+            crate::daemon::companion_protocol::CompanionScope::StatusRead,
+        ),
+    )
+    .await
+    .expect("fixture readiness refusal reaches the client within bound");
+    assert!(
+        matches!(mint, Err(super::client::CompanionV3ClientError::Refused(503))),
+        "only a bounded, framed 503 is recoverable; got {mint:?}"
+    );
+    assert_eq!(
+        fixture.runtime.audit_pair_owner_count_for_test().await,
+        0,
+        "the admitted owner is removed and joined before the recoverable 503"
+    );
+
+    assert_eq!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            raw_post_path(&endpoint, "/health", Some(&token), "{}"),
+        )
+        .await
+        .expect("fresh same-listener health request completes within bound")
+        .0,
+        200,
+        "the exact audit-RPC listener remains live after a settled refusal"
+    );
+
+    listener.abort();
+    let _ = listener.await;
+    finish_companion_pair_listener_fixture(fixture).await;
+}
+
+#[cfg(feature = "cluster")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener() {
+    let home = tempdir().expect("create W2449 fatal listener home");
+    let fixture = companion_pair_listener_fixture(home.path()).await;
+    fixture
+        .runtime
+        .set_next_audit_pair_readiness_for_test(
+            crate::daemon::companion_runtime::AuditPairReadinessTestOutcome::UncertainAfterOwnerSpawn,
+        )
+        .await;
+
+    let token = init_rpc_token(home.path()).expect("mint same-user RPC token");
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token,
+        writer: fixture.writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        membership: None,
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        conversation_runtime: None,
+        companion_runtime: Some(Arc::clone(&fixture.runtime)),
+        webchat: None,
+    };
+    let (_endpoint, listener) = bind_and_serve(home.path(), &nonce, state)
+        .await
+        .expect("bind real audit-RPC listener");
+    let _endpoint_owner = publish_test_endpoint(home.path(), &_endpoint, &nonce);
+
+    let mint = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        companion_v3_mint_pair(
+            home.path(),
+            crate::daemon::companion_protocol::CompanionScope::StatusRead,
+        ),
+    )
+    .await
+    .expect("fatal fixture reaches the client within bound");
+    assert!(
+        matches!(mint, Err(super::client::CompanionV3ClientError::Unavailable(_))),
+        "observed terminal owner failure is not falsely converted to a framed 503: {mint:?}"
+    );
+
+    let listener_error = tokio::time::timeout(std::time::Duration::from_secs(3), listener)
+        .await
+        .expect("unproven teardown terminates the listener within bound")
+        .expect("join listener task")
+        .expect_err("observed unproven readiness teardown remains listener-fatal");
+    assert!(
+        listener_error
+            .to_string()
+            .contains("companion pair mint readiness"),
+        "fatal result retains the readiness boundary; got {listener_error:#}"
+    );
+    assert_eq!(
+        fixture.runtime.audit_pair_owner_count_for_test().await,
+        0,
+        "the fatal path observed and removed its failed owner; it did not pretend it was settled"
+    );
+
+    // The owner failure was deliberately observed by the failed preparation;
+    // later runtime shutdown has no retained owner to reinterpret as success.
+    finish_companion_pair_listener_fixture(fixture).await;
+}
