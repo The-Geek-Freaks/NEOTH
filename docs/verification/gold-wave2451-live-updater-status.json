@@ -54,8 +54,83 @@
       "sha256": "9887DBFBF7A36A00B333EF1D3DB588DE9E66908862958F5380281A67D8489F1D"
     }
   ],
-  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "validationStatus": "HOSTED-EXACT-UPDATER-STATUS-SIX-CASES-PASS",
   "localExecutableValidationRan": false,
   "nativeWindowsMacAcceptance": "pending",
-  "productNativeDeviceReleaseAccepted": false
+  "productNativeDeviceReleaseAccepted": false,
+  "hostedAcceptance": {
+    "producer": "05d46bb1638989565a489454a37bc62d436757ca",
+    "run": "37496531914",
+    "attempt": 1,
+    "job": 112382401091,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37496531914",
+    "proof": "work/gold-20260906/wave2451-contract-admission/ROOT_HOSTED_ADMISSION.json",
+    "proofSha256": "68064C09A87214DF8A0E6B7678E3BB2BEBD11D3E36002819ED32FF57B09C75FA",
+    "updaterCases": [
+      "daemon::audit_rpc::tests::updater_status_client_round_trips_live_listener_and_refuses_invalid_requests",
+      "daemon::audit_rpc::tests::updater_status_binding_rejects_noncanonical_or_foreign_chain_bases",
+      "cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child",
+      "cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent",
+      "daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback",
+      "daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics"
+    ],
+    "companionRegressionCases": [
+      "daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use",
+      "daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing",
+      "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
+      "daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live",
+      "daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener",
+      "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle"
+    ],
+    "slimClippyPassed": true,
+    "coreTestTypeCheckPassed": true,
+    "cliBuildPassed": true,
+    "generatedDocsByteEqual": true,
+    "sourceBindings": [
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "blob": "9f86f3ace669e92be9b9c5021c45d1c6af13b43c",
+        "sha256": "CB130A645C543A916AD641DF8A96AE17CF92E96707B045D3DAC248B1C9792B72",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "blob": "45638c7bb57fb8f73027a313767cbe535402a11f",
+        "sha256": "F95D7DA36BA6E655E33EAFFCF949AADA130F56FA294E1052B7CB08652F8BF41E",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/cli/updater.rs",
+        "blob": "b0e3b0d647966a91be94ed50efe37757a055ba9a",
+        "sha256": "B524FF5CB946E4DF8A34EC53C7F40668ECAD2EA2CD1271A230E96C92047332F6",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+        "blob": "3d541297657adc1254ae4114a4d030bccb2bc883",
+        "sha256": "116FC8A701BEE3642D2568B71EE207171B3DF7531EAB650AE02C30469488E1B8",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+        "blob": "dd1b84cc9842d34a25781356e76af3a348dde676",
+        "sha256": "901943F11D9709548CA65E6B7CCC1253A150F1562817AC2B35F9BDA78C815C36",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+        "blob": "a34bade495bf3a4a78787830bcf3ceea1738c2a3",
+        "sha256": "5944BB4837D274E1F09A710A00AE05A6E2097A4C6DC32FBFA37CE392342301D8",
+        "group": "updater"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+        "blob": "216d8fe301afcd2b270cff3e805a40255a4f4f17",
+        "sha256": "92628748CA600829218C86B1E6EFD577C96A5E216A6732A5200CA32AC6C7D85D",
+        "group": "updater"
+      }
+    ],
+    "originalArchiveCount": 3,
+    "note": "Candidate hashes above describe pre-format development custody; this hosted acceptance binds the published producer blobs below. Native OS, mobile product/device and release acceptance remain separate."
+  }
 }

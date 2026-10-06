@@ -665,7 +665,9 @@ impl CompanionRuntime {
                 &mut readiness_tx,
                 Err("companion runtime is already shutting down".to_owned()),
             );
-            anyhow::bail!("companion runtime is already shutting down")
+            // A durable stop is a clean listener terminal. Reporting readiness
+            // refusal still lets the retained owner join this task cleanly.
+            return Ok(());
         }
         let mut diagnostics = CompanionPairDiagnostics::from_environment();
         diagnostics.phase("bootstrap_started");
@@ -1847,6 +1849,15 @@ mod tests {
         .await
         .expect("stopped pair listener returns without rendezvous")
         .expect("persistent stop is a clean listener terminal");
+
+        assert!(
+            runtime.public_carrier.lock().await.is_none(),
+            "preclosed listener never creates a shared DHT/UDX carrier"
+        );
+        assert!(
+            runtime.pair_tasks.lock().await.is_empty(),
+            "preclosed direct listener retains no pair task owner"
+        );
 
         drop(runtime);
         drop(chat);

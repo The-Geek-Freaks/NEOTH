@@ -1,0 +1,20 @@
+{
+  "schema": "neoth.wave2453.preclosed-companion.v1",
+  "baseProducer": "05d46bb1638989565a489454a37bc62d436757ca",
+  "failureRun": "37499678036",
+  "failureJob": "112393178462",
+  "failureUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37499678036",
+  "failedTest": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
+  "diagnosis": "The pre-bootstrap persistent-stop fence rejected readiness then returned an error instead of a clean stopped listener terminal.",
+  "changes": [
+    "Keep the existing readiness refusal and stop fence; return Ok only before any bootstrap/transport work.",
+    "Retain all later bootstrap, readiness, teardown and owner-join errors.",
+    "Strengthen the existing exact regression to prove no shared carrier and no retained pair owner."
+  ],
+  "candidateSha256": "135AB2241E8E830A2B47BAA6554907F8AF2A3E2EC66F3B34D68231BEC1D14153",
+  "staticReviewSha256": "E8B08882DF18A47CF5BCC17210619E7359172B709C1B0FFB8D4758E6D8F589BB",
+  "hostedStatus": "REPAIR-PENDING-EXACT-PRODUCER-RERUN",
+  "priorProductFlowExecuted": false,
+  "localExecutableValidationRan": false,
+  "mobileNativeDeviceReleaseAccepted": false
+}
