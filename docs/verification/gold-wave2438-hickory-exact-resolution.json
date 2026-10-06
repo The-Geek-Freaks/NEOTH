@@ -1,0 +1,50 @@
+{
+  "schema": "neoth.wave2438.hickory-exact-resolution.v1",
+  "base": "fbe236ac464d19f0f4faa9a22cc804a23c2f12c5",
+  "status": "static-reviewed-exact-hosted-reproduction-pending",
+  "priorRun": {
+    "run": "37437775849",
+    "artifactId": "11399956203",
+    "attempt": 1,
+    "rootRejectedCustodySha256": "98BA67FAC2DAD439F7B5B027056CCCB4D516E4314FB4F8FBCE82C767A8B0F9C8",
+    "job": "112183739525",
+    "producer": "fbe236ac464d19f0f4faa9a22cc804a23c2f12c5",
+    "zipSha256": "1A91709F872E5EFBAE697185929DC8F9AF72E3422A07CE14A5757A7A2F1DE5FB",
+    "solverExit": 0,
+    "patchExit": 1,
+    "lockedMetadataExit": 0,
+    "lockHashExit": 0,
+    "result": "rejected-not-admitted"
+  },
+  "reviewedDelta": {
+    "retargetedEdgeCount": 24,
+    "newTargetsFitDeclaredRanges": true,
+    "otherIdentitySourceChecksumChanges": 0,
+    "causedByHickoryUpdateProven": false,
+    "updatedPackage": "hickory-resolver 0.26.1 -> 0.26.2",
+    "compatibilityProven": false,
+    "otherRetargetedPackageCount": 23,
+    "recordOrderOnlyChanges": 2
+  },
+  "requiredExactLocks": {
+    "baselineSha256": "8C51757F1E0CF49885A7EF653237C49C6E3D72E3CA2544E869F094AFF9EA2B20",
+    "everyOtherBytePairRejected": true,
+    "resolvedSha256": "C5A501434048FAD98C6B4476CF55073C67BA93A2E499BD45AB49C2A3E8F2E498"
+  },
+  "review": {
+    "sha256": "9098428200FF34B82E0AA3BD90F021DE95BF61CF99FA4FD12A782726BD11500E",
+    "path": "work\\gold-20260906\\wave2438-hickory-delta-review\\review\\R4_STATIC_REVIEW.md",
+    "status": "approved-for-fresh-hosted-revalidation"
+  },
+  "acceptance": {
+    "v3Accepted": false,
+    "freshHostedReproduction": "not-dispatched",
+    "releaseReady": false,
+    "crossPlatformCompatibility": "required-pending",
+    "v4Accepted": false,
+    "lockImported": false,
+    "priorFailureReclassified": false,
+    "localExecutableValidationRan": false,
+    "lockAdmitted": false
+  }
+}

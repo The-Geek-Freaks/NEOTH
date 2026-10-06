@@ -84,7 +84,8 @@ jobs:
           import tomllib
 
           baseline_path, resolved_path, output_path = map(Path, sys.argv[1:])
-          permitted = lambda name: name == "hickory-resolver" or name.startswith("hickory-")
+          expected_baseline_sha256 = "8c51757f1e0cf49885a7ef653237c49c6e3d72e3ca2544e869f094aff9ea2b20"
+          expected_resolved_sha256 = "c5a501434048fad98c6b4476cf55073c67ba93a2e499bd45ab49c2a3e8f2e498"
 
           def records(path: Path) -> tuple[str, list[tuple[dict[str, object], str]]]:
               source = path.read_text(encoding="utf-8")
@@ -130,7 +131,7 @@ jobs:
           result: dict[str, object] = {
               "baselineLockPresent": baseline_path.is_file(),
               "resolvedLockPresent": resolved_path.is_file(),
-              "allowedPackageRule": "hickory-resolver or hickory-* only",
+              "allowedPackageRule": "exact reviewed baseline and resolved lock hashes; Hickory update plus 23 reviewed dependency retargets and two record-order changes",
               "allowlistAccepted": False,
           }
           try:
@@ -167,13 +168,14 @@ jobs:
                       }
                       for name in affected_names
                   ]
-                  unexpected = [key for key in affected if not permitted(key[0])]
+                  non_hickory = [key for key in affected if not (key[0] == "hickory-resolver" or key[0].startswith("hickory-"))]
                   resolver = sorted(key for key in after if key[0] == "hickory-resolver")
-                  result["unexpectedPackages"] = [f"{name}@{version}" for name, version in unexpected]
+                  result["nonHickoryChangedPackages"] = [f"{name}@{version}" for name, version in non_hickory]
                   result["resolvedHickoryResolver"] = [f"{name}@{version}" for name, version in resolver]
                   result["allowlistAccepted"] = (
                       baseline_header == resolved_header
-                      and not unexpected
+                      and result["baselineLockSha256"] == expected_baseline_sha256
+                      and result["resolvedLockSha256"] == expected_resolved_sha256
                       and resolver == [("hickory-resolver", "0.26.2")]
                       and ("hickory-resolver", "0.26.1") not in after
                   )

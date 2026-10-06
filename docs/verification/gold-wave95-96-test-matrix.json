@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "wave2434-static-approved-resolution-pending-v3-failed",
+  "status": "wave2438-exact-reviewed-resolution-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 392243,
-    "sha256": "C19F9119FD9670FB3BF71323B28332B73F2D8EEAE1A2E7BE25B99C0A9D467C48"
+    "bytes": 392435,
+    "sha256": "EA2CAC407CD6DE8FAC57B0ABC8BF5A25EA5FB0E1F2C296335290DCFEED0E1F88"
   },
-  "sourceInputs": 2144,
+  "sourceInputs": 2145,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75877,6 +75877,32 @@
       }
     ],
     "note": "Reviewed hosted Hickory resolution producer; original V3 run37433802979 admitted only29Rust/3collector/27sources, actual reconnect remains failed. Protected physical lock unchanged; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2438ExactHickoryResolution": {
+    "base": "fbe236ac464d19f0f4faa9a22cc804a23c2f12c5",
+    "sources": [
+      {
+        "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+        "bytes": 14067,
+        "sha256": "72AC74273184E93ED4BCBDFA9E0A7F3B32B662551BCFC1898F9DA8CA9879BD18",
+        "blob": "088d44e8992eb34c3d04ec1f9bc16dc34ad42f4d"
+      },
+      {
+        "path": "docs/verification/gold-wave2438-hickory-exact-resolution.json",
+        "bytes": 1870,
+        "sha256": "31E2BED8C8623A5FF8AA7701372F5BC7665F9C734ACEFB06FAEAEC935B9E9D2A",
+        "blob": "60486a2df59a70b27e92a4c0a84d98a7ccfebefc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2425613,
+        "sha256": "4F5E0264DD4065B7D8BCF314BC931F75A5B74B28A72291362DB7E323BA43B8B0",
+        "blob": "4f6008ecead49f172b2a1dd7db32a4cfc7270ef9"
+      }
+    ],
+    "note": "R4 requires fresh reproduction of exact reviewed baseline/resolved lock hashes. Prior run intentionally rejected; no lock import or compatibility claim. V3 remains failed; local BSOD hold preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
