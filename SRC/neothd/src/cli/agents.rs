@@ -339,7 +339,7 @@ where
                         prompt_hash_xxh3: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
                         results: report.results,
                     };
-                    crate::sub_agents::runtime::persist_run(home, &record).map(|path| (record, path))
+                    crate::sub_agents::runtime::persist_run(&home, &record).map(|path| (record, path))
                 })
             } => transaction_result,
             _ = result_tx.closed() => Err(anyhow::anyhow!(

@@ -18514,3 +18514,11 @@ paths, payloads and suffixes. The canonical mobile selection is61 Rust/16 collec
 41 source bindings. No panic root cause or transport fix is claimed. Full mobile,
 native/device and release acceptance remain open. The existing PLAN prefix is
 preserved; no local runtime/compiler/parser/test/formatter or .slint change ran.
+
+## W2466 - Hosted borrow failure repair and focused fan-out acceptance (2026-10-06)
+
+Run `37526503887` / attempt 1 / job `112484744719` on `46afcdbc2acff5df5ade137cf1ae9636dcc58e26` stopped in the hosted CLI/bridge build with E0308: `persist_run` requires `&Path`, while the W2464 retained transaction passed its owned `PathBuf`. The isolated reviewed correction borrows `&home` at that existing call. This is a source correction; a successful rebuilt producer is still required. The pair/status/chat/revoke product branch was not reached, so no panic-cause or product acceptance is claimed.
+
+The existing focused updater/owner lane retains all 17 previous identities, command flags and exact one-pass assertions and adds the five already registered W2464 fan-out ownership tests. It now requires exactly 22 cases and binds `cli/agents.rs` in addition to the existing `pidfile.rs` and `wal/writer.rs` custody. The 24-case canonical Companion union remains intact. This reuses the same hosted library and gives earlier behavior feedback before the larger Mobile/Full-CI sequence. Portable inventory remains 2791; no test was removed or invented.
+
+The optional Cargo fingerprint instrumentation remains unimported after independent review found unobserved filter completion and locale-dependent byte bounds. Cache keys, paths, acceptance gates and the local BSOD hold remain unchanged. Next: fast gates, exact-source CLI build and all 22 owner plus 24 Companion cases, then the still-open Mobile product diagnosis; Full CI and packaged macOS acceptance remain later gates. Report: `docs/verification/gold-wave2466-borrow-and-focused-owner.json`. No existing roadmap backlog line is closed by this static step.

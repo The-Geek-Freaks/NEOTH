@@ -1,0 +1,36 @@
+{
+  "schema": "neoth.wave2466.borrow-and-focused-owner-selection.v1",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "46afcdbc2acff5df5ade137cf1ae9636dcc58e26",
+  "failureRun": "37526503887",
+  "failureJob": "112484744719",
+  "failure": "E0308 at agents.rs:342: persist_run expects &Path but receives owned PathBuf",
+  "repair": "Borrow the retained home at the existing persist_run call; no lifetime or ownership-policy change",
+  "focusedSelection": {
+    "retainedCases": 17,
+    "addedExistingW2464Cases": 5,
+    "totalCases": 22,
+    "commandAndOnePassGatePreserved": true,
+    "sourceCustodyAdded": "SRC/neothd/src/cli/agents.rs",
+    "companionCases": 24
+  },
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave2466-build-borrow-fix/review/W2466_BORROW_FIX_STATIC_REVIEW.md",
+      "sha256": "833F735681C142DA3C0CE58738099184AAEB03D9A0E945F7A9F2E98F8EA2E505"
+    },
+    {
+      "path": "work/gold-20260906/wave2466-owner-selection/review/W2466_OWNER_SELECTION_STATIC_REVIEW.md",
+      "sha256": "B81C9F6CF1D1A35C4C130702DDEC2E40AC8FDAD1E10AB12D988122E701322D36"
+    }
+  ],
+  "buildFailureCustody": {
+    "path": "work/gold-20260906/wave2465-interop-admission/BUILD_FAILURE_CUSTODY.json",
+    "sha256": "662280C0C7CC5310FC687827CBEE70A7B2D54262A19AFAAFFD43D0320BEA0289"
+  },
+  "optionalCacheInstrumentation": "DEFERRED: diagnostic filter completion and byte bounds not proven; no cache or fingerprint workflow change imported",
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "pairingPanicFixed": false,
+  "productNativeDeviceReleaseAcceptance": false
+}

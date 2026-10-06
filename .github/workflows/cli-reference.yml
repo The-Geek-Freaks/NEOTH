@@ -266,8 +266,8 @@ jobs:
           retention-days: 14
 
       # This optional batch shares the already-built default-feature neoth
-      # library. It executes six updater-status, five self-update owner, and six manual-Cron identities,
-      # once each, and retains source-bound logs for their narrow status-and-owner admission.
+      # library. It executes six updater-status, five self-update owner, six manual-Cron, and five
+      # offline agents-owner identities once each, retaining source-bound logs for narrow status-and-owner admission.
       - name: Run exact updater-status regressions
         if: ${{ inputs.updater_status_regressions }}
         timeout-minutes: 20
@@ -297,7 +297,12 @@ jobs:
             'cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction' \
             'daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder' \
             'daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile' \
-            'daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start' > "$proof_dir/selection.txt"
+            'daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start' \
+            'cli::agents::tests::w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal' \
+            'cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release' \
+            'cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup' \
+            'cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases' \
+            'daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases' > "$proof_dir/selection.txt"
           printf '%s\n' \
             'SRC/neothd/src/cli/serve.rs' \
             'SRC/neothd/src/cli/serve_tasks.rs' \
@@ -308,6 +313,7 @@ jobs:
             'SRC/neothd/src/daemon/audit_rpc/tests.rs' \
             'SRC/neothd/src/cli/update.rs' \
             'SRC/neothd/src/cli/internal.rs' \
+            'SRC/neothd/src/cli/agents.rs' \
             'SRC/neothd/src/daemon/pidfile.rs' \
             'SRC/neothd/src/wal/writer.rs' \
             'SRC/neothd/src/cli/cron.rs' \
@@ -319,7 +325,7 @@ jobs:
             sha256sum "${source_path#SRC/}"
           done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
           expected_updater_count="$(wc -l < "$proof_dir/selection.txt")"
-          test "$expected_updater_count" -eq 17
+          test "$expected_updater_count" -eq 22
           ordinal=0
           while IFS= read -r identity; do
             ordinal=$((ordinal + 1))

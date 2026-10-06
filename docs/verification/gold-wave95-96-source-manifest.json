@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T20:18:27.3732538Z",
-  "validationStatus": "HOSTED-FORMAT-IMPORTED-EXECUTABLE-VALIDATION-PENDING",
+  "capturedUtc": "2026-10-06T20:33:13.5674707Z",
+  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 26053,
-      "sha256": "68D544B5CF6015CAF53F1D11AF1E01AB95A0AAF35EA563D7EBDC77CAB2385737"
+      "bytes": 26660,
+      "sha256": "1D93482BA4F9477775BF3A953B213E65A1822B6321AC987E51EA4CD0C2C82F70"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3842,6 +3842,11 @@
       "sha256": "E86EFF2D0AEC68741849167FC8A6BFBF27A7C496BA0DBF9BE273EA043034A819"
     },
     {
+      "path": "docs/verification/gold-wave2466-borrow-and-focused-owner.json",
+      "bytes": 1609,
+      "sha256": "78B227720A50018DACAF9FD6FA9903440A9547F6C1E55A02F9C57C48491C42FE"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4993,8 +4998,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2458140,
-      "sha256": "D29B6F078EC882E19DC4F69B04A1D6C1F82E4993B04E5B858BAB88418933D909"
+      "bytes": 2459848,
+      "sha256": "070AA540A86B2E00F70DCF1D8D268A49066C39D19FDC73AF8DCB6A322ABA85B3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5813,8 +5818,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 57149,
-      "sha256": "40FA41C719DC05967E554D771D04EC43A7734207DD8450CD64974B23C23D8EF2"
+      "bytes": 57150,
+      "sha256": "3205E50E748CFAD4CDA7CF55C63B6F5BC026AAB6E25AD8DEB9825CB838DF78D1"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
