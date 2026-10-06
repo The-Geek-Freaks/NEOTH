@@ -1274,7 +1274,7 @@ pub(crate) async fn rebind_at(
                     // Rebinding a named selection creates an inline slot. The
                     // selector is mutually exclusive with every inline field,
                     // so it cannot survive the lossless field merge.
-                    current.remove(&serde_yaml::Value::String(
+                    current.remove(serde_yaml::Value::String(
                         "provider_instance_id".to_string(),
                     ));
                     for (key, value) in new_fields {

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T15:22:39.6219646Z",
-  "validationStatus": "W2449-COMBINED-CONTRACT-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T15:39:46.2264627Z",
+  "validationStatus": "W2449-SLIM-CLIPPY-REPAIR-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3778,8 +3778,8 @@
     },
     {
       "path": "docs/verification/gold-wave2449-hosted-compile-repair.json",
-      "bytes": 1421,
-      "sha256": "B93F2BBFC937E14C8B324657076FC59AD4E96C3201CBE5329BFBCDF3D021CF77"
+      "bytes": 2055,
+      "sha256": "E63535F166FC4AAF22C511751873142F9530642A0A9600F6708D988BC33F343D"
     },
     {
       "path": "docs/verification/gold-wave2449-pair-failure-diagnostics.json",
@@ -4943,8 +4943,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2445983,
-      "sha256": "B95089F456459F1C6F67CE0E5779A09E1A81FA9FD3AC8E8807E3EF558ECB8416"
+      "bytes": 2446663,
+      "sha256": "E161ED48A04879D934E57368A011A44A8C6157A7E3CD4F3D5E9C8C9B5A175EA0"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6028,8 +6028,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 112181,
-      "sha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE"
+      "bytes": 112180,
+      "sha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B"
     },
     {
       "path": "SRC/neothd/src/cli/identity.rs",
@@ -6843,8 +6843,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
-      "bytes": 4645,
-      "sha256": "4AD1BDD327A30D04FDD2772AF723A6C62E66A95C244B76B99E9F4916BEC14059"
+      "bytes": 4662,
+      "sha256": "9EDE5BDFE8AFFED471E31A8C0012B9911C969ACC775B727A43F4F477712B3C9B"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",

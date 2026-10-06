@@ -23,5 +23,19 @@
   ],
   "validationStatus": "STATIC-REPAIRED-HOSTED-VALIDATION-PENDING",
   "localExecutableValidationRan": false,
-  "productNativeDeviceReleaseAccepted": false
+  "productNativeDeviceReleaseAccepted": false,
+  "clippyFollowup": {
+    "producer": "7dbc19874196869854b0c2d41d9a06e122c32a0c",
+    "run": "37487875133",
+    "job": "112352614211",
+    "diagnostics": [
+      "prepare_pair_invite is test-only in no-cluster after the typed RPC entrypoint replacement; restrict it with cfg(test).",
+      "Remove needless borrow from serde_yaml Mapping::remove in CLI provider-instance cleanup."
+    ],
+    "artifacts": 0,
+    "behaviorTestsExecuted": 0,
+    "generatedReferenceExported": false,
+    "rootFailureProofSha256": "015FA5DB39037F9B561C5E651CEADA2394D573078294F602D07F87F19C4EAE45",
+    "status": "MINIMAL-CORRECTION-HOSTED-PENDING"
+  }
 }

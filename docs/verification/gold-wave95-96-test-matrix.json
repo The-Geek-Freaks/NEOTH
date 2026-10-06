@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2449-COMBINED-CONTRACT-HOSTED-PENDING",
+  "status": "W2449-SLIM-CLIPPY-REPAIR-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 396143,
-    "sha256": "2D64B2050966D4020D383400A662170707AD9B003D39E894623FA87EC4437851"
+    "bytes": 396144,
+    "sha256": "77E4FCA8457B9353642AF9077141272EF6D271814265EF2B291B963964330C49"
   },
   "sourceInputs": 2165,
   "requiredNativeTests": [
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
@@ -15522,49 +15522,49 @@
     {
       "test": "cli::hemispheres::tests::replace_fallback_persists_named_selectors_in_order_and_preserves_neighbors",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::replace_fallback_rejects_unknown_before_writing_and_clear_preserves_max_hops",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_preparation_cas_rejects_a_newer_generation_without_overwrite",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::fallback_selector_builder_rejects_invalid_and_duplicate_instance_ids",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_persists_selector_and_audits_resolved_identity",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_rejects_invalid_or_unknown_before_snapshot_or_mutation",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_leaving_single_materializes_effective_neighbors_not_stale_slots",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::select_named_instance_projects_providerless_legacy_prior_with_global_alias",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
@@ -15949,25 +15949,25 @@
     {
       "test": "cli::hemispheres::tests::buddy_gui_readback_is_typed_redacted_and_preserves_fallback_order",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_readback_rejects_unknown_named_fallback_selector",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_test_receipt_outcome_is_typed_and_has_no_content_channel",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::buddy_gui_preset_receipt_uses_canonical_cli_spellings",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
@@ -16579,7 +16579,7 @@
     {
       "test": "cli::hemispheres::tests::rebind_replaces_named_role_selector_with_inline_authority",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE",
+      "sourceSha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
       "junitClass": "neoth"
     },
     {
@@ -17386,8 +17386,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 112181,
-      "sha256": "457117C3EDE2DA5BC8AACBC7CCF4333B8E3E5305BBD50FEF391A3A56E403FCBE"
+      "bytes": 112180,
+      "sha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B"
     }
   ],
   "remoteFormatCorrection": {
@@ -76629,6 +76629,38 @@
       }
     ],
     "note": "Only hosted formatter output for the intentional no-cluster expected lint attribute. Producer85c1399 Preflight failed formatting only; Code Quality passed. Verified original formatter ZIP E27DF5A67D5A3F64261A92317E1E77A63F16B0F73985CFFB34ACD43E3F05EEC9 and all three entries. Combined6Companion+3Codegraph validation remains pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2449SlimClippyRepair": {
+    "base": "7dbc19874196869854b0c2d41d9a06e122c32a0c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2449-hosted-compile-repair.json",
+        "bytes": 2055,
+        "sha256": "E63535F166FC4AAF22C511751873142F9530642A0A9600F6708D988BC33F343D",
+        "blob": "64393462cafaf6719685cb230dd5454a2e42f7d2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2446663,
+        "sha256": "E161ED48A04879D934E57368A011A44A8C6157A7E3CD4F3D5E9C8C9B5A175EA0",
+        "blob": "d760e300ae136686fab5ddaf9af4ca6179661557"
+      },
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 112180,
+        "sha256": "73E29241418707A60F1BFE8693FB222B6D258112411036C42DE3E6450E79B48B",
+        "blob": "c9510cddaa8ca372e97c51a957ecb697fb67d74a"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+        "bytes": 4662,
+        "sha256": "9EDE5BDFE8AFFED471E31A8C0012B9911C969ACC775B727A43F4F477712B3C9B",
+        "blob": "6c8c7b481e79ed1c45be76daac45b9f4667953a4"
+      }
+    ],
+    "note": "Exact hosted run37487875133 failed on two lint diagnostics before all9behaviorcases. Restrict test-only no-cluster helper and remove one needless borrow; no lint gate reduced; combined exact hosted revalidation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -84,6 +84,7 @@ impl CompanionRuntime {
         bail!("companion v3 requires the cluster feature")
     }
 
+    #[cfg(test)]
     pub(crate) async fn prepare_pair_invite(
         self: &Arc<Self>,
         _requested_scope: CompanionScope,
