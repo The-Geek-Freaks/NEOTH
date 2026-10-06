@@ -1,0 +1,129 @@
+name: UDX Transport Regressions
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  udx-transport-regressions:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - name: Bind expected source and materialize transport selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          proof_dir="$RUNNER_TEMP/udx-transport-regressions"
+          mkdir -p "$proof_dir"
+          git rev-parse HEAD > "$proof_dir/source-head.txt"
+          sha256sum SRC/Cargo.toml SRC/Cargo.lock SRC/vendor/libudx/Cargo.toml > "$proof_dir/source-inputs.sha256"
+          selection_dir="$RUNNER_TEMP/mobile-interop-selection"
+          python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"
+          cp .github/scripts/mobile/mobile-companion-interop-selection.json "$proof_dir/mobile-companion-interop-selection.json"
+          cp "$selection_dir/selection-custody.json" "$proof_dir/selection-custody.json"
+          test -s "$selection_dir/libudx.txt"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.91.0 }
+      - name: Restore mobile-interop Cargo checkpoint
+        id: mobile_interop_cache_restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+            bridges/companion-native/target/
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-
+      - name: Run exact locked UDX transport regressions
+        id: exact_udx_transport
+        timeout-minutes: 14
+        working-directory: SRC
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/udx-transport-regressions"
+          root_manifest=Cargo.toml
+          root_lock=Cargo.lock
+          libudx_manifest=vendor/libudx/Cargo.toml
+          root_manifest_hash="$(sha256sum "$root_manifest" | awk '{print $1}')"
+          root_lock_hash="$(sha256sum "$root_lock" | awk '{print $1}')"
+          libudx_manifest_hash="$(sha256sum "$libudx_manifest" | awk '{print $1}')"
+          root_manifest_backup="$RUNNER_TEMP/udx-root-Cargo.toml"
+          root_lock_backup="$RUNNER_TEMP/udx-Cargo.lock"
+          libudx_manifest_backup="$RUNNER_TEMP/udx-vendor-Cargo.toml"
+          cp "$root_manifest" "$root_manifest_backup"
+          cp "$root_lock" "$root_lock_backup"
+          cp "$libudx_manifest" "$libudx_manifest_backup"
+          cleanup() {
+            local status=$?
+            cp "$root_manifest_backup" "$root_manifest"
+            cp "$root_lock_backup" "$root_lock"
+            cp "$libudx_manifest_backup" "$libudx_manifest"
+            test "$(sha256sum "$root_manifest" | awk '{print $1}')" = "$root_manifest_hash"
+            test "$(sha256sum "$root_lock" | awk '{print $1}')" = "$root_lock_hash"
+            test "$(sha256sum "$libudx_manifest" | awk '{print $1}')" = "$libudx_manifest_hash"
+            printf '%s\n' 'UDX_TEST_WORKSPACE_RESTORED=1' | tee "$proof_dir/restoration-success.marker"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          test "$(grep -Fxc '    "neoth-relay",' "$root_manifest")" -eq 1
+          test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 0
+          sed -i '/^    "neoth-relay",$/a\    "vendor/libudx",' "$root_manifest"
+          test "$(grep -Fxc '    "vendor/libudx",' "$root_manifest")" -eq 1
+          test "$(grep -Fxc '[workspace]' "$libudx_manifest")" -eq 1
+          sed -i '/^\[workspace\]$/d' "$libudx_manifest"
+          test "$(grep -Fxc '[workspace]' "$libudx_manifest")" -eq 0
+          test "$(grep -Fxc 'name = "libudx"' "$root_lock")" -eq 1
+          for dependency in ' "rand 0.9.4",' ' "serde_json",' ' "sha2 0.10.9",' ' "tracing-subscriber",'; do
+            test "$(grep -Fxc "$dependency" "$root_lock")" -ge 1
+          done
+          sed -i '/^name = "libudx"$/,/^\[\[package\]\]$/s/^ "thiserror 2\.0\.18",$/ "rand 0.9.4",\n "serde_json",\n "sha2 0.10.9",\n "thiserror 2.0.18",/' "$root_lock"
+          sed -i '/^name = "libudx"$/,/^\[\[package\]\]$/s/^ "tracing",$/ "tracing",\n "tracing-subscriber",/' "$root_lock"
+          for dependency in ' "rand 0.9.4",' ' "serde_json",' ' "sha2 0.10.9",' ' "tracing-subscriber",'; do
+            test "$(sed -n '/^name = "libudx"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc "$dependency")" -eq 1
+          done
+          mapfile -t identities < "$RUNNER_TEMP/mobile-interop-selection/libudx.txt"
+          test "${#identities[@]}" -gt 0
+          ordinal=0
+          for identity in "${identities[@]}"; do
+            ordinal=$((ordinal + 1))
+            cargo test -p libudx --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
+          done
+          test "$ordinal" -eq "${#identities[@]}"
+      - name: Record transport terminal status
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/udx-transport-regressions"
+          mkdir -p "$proof_dir"
+          printf 'exact_udx_transport=%s\n' '${{ steps.exact_udx_transport.outcome }}' > "$proof_dir/terminal-status.txt"
+          if test -f "$proof_dir/restoration-success.marker"; then
+            printf 'restoration_present=true\n' >> "$proof_dir/terminal-status.txt"
+          else
+            printf 'restoration_present=false\n' >> "$proof_dir/terminal-status.txt"
+          fi
+      - name: Upload UDX transport reproduction evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: udx-transport-regressions
+          path: ${{ runner.temp }}/udx-transport-regressions
+          if-no-files-found: error
+          retention-days: 14

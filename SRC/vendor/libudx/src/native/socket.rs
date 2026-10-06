@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
@@ -153,6 +155,10 @@ struct UdxSocketInner {
     outbound_tx: OnceLock<OutboundSender>,
     egress_bytes: Arc<Semaphore>,
     closed: AtomicBool,
+    #[cfg(test)]
+    rejected_source_packets: Arc<AtomicUsize>,
+    #[cfg(test)]
+    rejected_source_notify: Arc<tokio::sync::Notify>,
 }
 
 impl UdxSocketInner {
@@ -165,6 +171,10 @@ impl UdxSocketInner {
             outbound_tx: OnceLock::new(),
             egress_bytes: Arc::new(Semaphore::new(EGRESS_BYTE_BUDGET)),
             closed: AtomicBool::new(false),
+            #[cfg(test)]
+            rejected_source_packets: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            rejected_source_notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -276,6 +286,10 @@ impl UdxSocketInner {
         let udp = self.udp_arc()?;
         let streams = Arc::clone(&self.streams);
         let fallback_tx = Arc::clone(&self.fallback_tx);
+        #[cfg(test)]
+        let rejected_source_packets = Arc::clone(&self.rejected_source_packets);
+        #[cfg(test)]
+        let rejected_source_notify = Arc::clone(&self.rejected_source_notify);
 
         tasks.recv = Some(tokio::spawn(async move {
             let mut buf = vec![0u8; 65_536];
@@ -304,7 +318,14 @@ impl UdxSocketInner {
                                 }
                                 // A mapped UDX route with the wrong source is not raw
                                 // application traffic; drop it without side effects.
-                                Some(_) => None,
+                                Some(_) => {
+                                    #[cfg(test)]
+                                    {
+                                        rejected_source_packets.fetch_add(1, Ordering::AcqRel);
+                                        rejected_source_notify.notify_one();
+                                    }
+                                    None
+                                }
                                 // Preserve the historic raw fallback only for an unknown,
                                 // otherwise valid, MTU-bounded UDX-looking datagram.
                                 None => {
@@ -470,6 +491,22 @@ impl UdxSocket {
 
     pub(crate) fn streams_ref(&self) -> super::stream::StreamMap {
         Arc::clone(&self.inner.streams)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rejected_source_packet_count(&self) -> usize {
+        self.inner.rejected_source_packets.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_rejected_source_packet_after(&self, previous: usize) {
+        loop {
+            let notified = self.inner.rejected_source_notify.notified();
+            if self.rejected_source_packet_count() > previous {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Send an unreliable datagram to addr.

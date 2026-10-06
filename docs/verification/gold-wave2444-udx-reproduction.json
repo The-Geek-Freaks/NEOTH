@@ -1,0 +1,42 @@
+{
+  "schema": "neoth.wave2444.udx-reproduction.v1",
+  "baseProducer": "d7b37c0202431e80df1e0a7b5ec5e74b04bae773",
+  "scope": "Deterministic real-socket transport regression and narrow hosted validation lane",
+  "observedProductFailure": {
+    "run": "37446767415",
+    "producer": "1f5ffae0f79d4b49234ce1088861e81a66b7a66e",
+    "stage": "status_reconnect_start",
+    "category": "work_deadline",
+    "pairPassed": true,
+    "noiseCompleted": true,
+    "udxCompleted": false
+  },
+  "hypothesis": "A first DATA packet reaching a socket before its stream route must recover through normal retransmission after registration; wrong-source packets must remain rejected",
+  "changes": {
+    "productionTransportBehaviorChanged": false,
+    "test": "native::stream::bounded_transport_tests::first_framed_data_retransmits_after_route_registration_and_keeps_source_pin",
+    "canonicalRustSelection": 36,
+    "collectorSelection": 4,
+    "sourceBindings": 38,
+    "transportOnlyWorkflow": ".github/workflows/udx-transport-regressions.yml",
+    "fullProductWorkflowRequired": true,
+    "cacheSave": false
+  },
+  "validation": {
+    "staticReview": "approved; final report 28F5BF5C and framing addendum B4EDD523; hosted execution pending",
+    "hostedTransport": "pending",
+    "localExecutableValidationRan": false,
+    "productAccepted": false,
+    "releaseReady": false
+  },
+  "constraints": {
+    "localBsodHold": true,
+    "slintEdits": false,
+    "claudePolling": false,
+    "protectedLocalChangesPreserved": true
+  },
+  "reviewSha256": [
+    "28F5BF5CF98645E31AA86D55678ED7E02E717DE6A9C2FE9A1E3E01BE630A7456",
+    "B4EDD523575B4800297866027DA3AA8B889BBA9CD16F839BD01BDEFB1BEAB5E0"
+  ]
+}

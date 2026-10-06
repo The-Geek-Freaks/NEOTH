@@ -7,7 +7,8 @@
         "native::socket::tests::observed_raw_datagram_writer_reports_success_failure_and_teardown_once",
         "native::socket::tests::raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata",
         "native::socket::tests::close_aborts_the_owned_reader_and_writer_tasks",
-        "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
+        "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain",
+        "native::stream::bounded_transport_tests::first_framed_data_retransmits_after_route_registration_and_keeps_source_pin"
       ]
     },
     "peeroxide": {
@@ -113,7 +114,9 @@
     "SRC/vendor/libudx/src/native/stream.rs",
     ".github/scripts/mobile/mobile-companion-interop-selection.json",
     ".github/scripts/mobile/validate-mobile-interop-selection.py",
-    ".github/scripts/mobile/test_mobile_interop_selection.py"
+    ".github/scripts/mobile/test_mobile_interop_selection.py",
+    ".github/workflows/udx-transport-regressions.yml",
+    "SRC/vendor/libudx/src/native/async_stream.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

@@ -47,12 +47,12 @@ class SelectionContractTests(unittest.TestCase):
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
         self.assertEqual(custody["counts"], {
-            "rust": 35,
+            "rust": 36,
             "collector": 4,
-            "sources": 36,
-            "groups": {"libudx": 4, "peeroxide": 3, "dht": 11, "core": 15, "no_cluster": 1, "bridge": 1},
+            "sources": 38,
+            "groups": {"libudx": 5, "peeroxide": 3, "dht": 11, "core": 15, "no_cluster": 1, "bridge": 1},
         })
-        self.assertEqual(custody["groups"]["libudx"]["identities"][-1], (
+        self.assertEqual(custody["groups"]["libudx"]["identities"][-2], (
             "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
         ))
         self.assertEqual(custody["collector"]["identities"], [

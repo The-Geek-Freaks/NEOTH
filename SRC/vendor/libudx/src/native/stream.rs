@@ -1873,6 +1873,7 @@ mod bounded_transport_tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::timeout;
 
     use super::*;
@@ -1936,6 +1937,177 @@ mod bounded_transport_tests {
         right.destroy().await.expect("destroy right");
         left_socket.close().await.expect("close left socket");
         right_socket.close().await.expect("close right socket");
+    }
+
+    #[tokio::test]
+    async fn first_framed_data_retransmits_after_route_registration_and_keeps_source_pin() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let left_socket = runtime.create_socket().await.expect("left socket");
+        let right_socket = runtime.create_socket().await.expect("right socket");
+        let spoof_socket = runtime.create_socket().await.expect("spoof socket");
+        left_socket.bind(loopback()).await.expect("bind left");
+        right_socket.bind(loopback()).await.expect("bind right");
+        spoof_socket.bind(loopback()).await.expect("bind spoof");
+        let left_addr = left_socket.local_addr().await.expect("left address");
+        let right_addr = right_socket.local_addr().await.expect("right address");
+        let spoof_addr = spoof_socket.local_addr().await.expect("spoof address");
+
+        let left = runtime.create_stream(101).await.expect("left stream");
+        let right = runtime.create_stream(202).await.expect("right stream");
+        left.connect(&left_socket, 202, right_addr)
+            .await
+            .expect("connect left");
+
+        // This receiver is the deterministic pre-registration barrier: a
+        // UDX-looking packet can arrive here only when no matching stream route
+        // is installed on the right socket. It observes the actual UDP DATA
+        // packet; it does not infer emission from elapsed time.
+        let mut raw_before_route = right_socket
+            .recv_start()
+            .expect("start right raw observation");
+        assert!(
+            !right_socket
+                .streams_ref()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&202),
+            "the receiver route must be absent before the first framed write"
+        );
+
+        let client_payload = b"client framed body after length".to_vec();
+        assert!(client_payload.len() <= 0xFF_FF_FF, "uint24 client frame length");
+        let client_length = [
+            client_payload.len() as u8,
+            (client_payload.len() >> 8) as u8,
+            (client_payload.len() >> 16) as u8,
+        ];
+        let mut left = left.into_async_stream();
+
+        // `poll_write` admits this first framed write and returns its accepted
+        // byte count while retaining the ACK gate for the next write/flush.
+        // Thus the following raw receive waits for the actual first DATA
+        // emission, while the body cannot bypass its acknowledgement.
+        timeout(Duration::from_secs(5), left.write_all(&client_length))
+            .await
+            .expect("first framed write is admitted")
+            .expect("first framed write succeeds");
+        let observed = timeout(Duration::from_secs(5), raw_before_route.recv())
+            .await
+            .expect("first framed DATA must reach the raw pre-route observer")
+            .expect("right raw observer stays open");
+        let header = Header::decode(&observed.data).expect("pre-route datagram is valid UDX");
+        assert!(header.has_flag(FLAG_DATA), "first observed UDX packet is DATA");
+        assert_eq!(header.remote_id, 202, "first DATA addresses the receiver stream");
+        assert_eq!(
+            &observed.data[header.payload_offset()..],
+            client_length.as_slice(),
+            "the observed first DATA is the framed length write"
+        );
+
+        // `connect` records the pinned address and installs the route
+        // synchronously. The barrier proves route installation follows the
+        // observed pre-route first DATA, without making a timing claim about
+        // when the independently scheduled retransmission timer fires.
+        right
+            .connect(&right_socket, 101, left_addr)
+            .await
+            .expect("install exact-source receiver route");
+        assert_ne!(spoof_addr, left_addr, "spoof socket has a distinct UDP source");
+        {
+            let routes = right_socket.streams_ref();
+            let routes = routes.lock().unwrap_or_else(|e| e.into_inner());
+            let route = routes.get(&202).expect("receiver route is installed");
+            assert!(route.accepts_source(left_addr), "exact peer source stays admitted");
+            assert!(
+                !route.accepts_source(spoof_addr),
+                "a different UDP source remains rejected after route registration"
+            );
+        }
+        // Inject a well-formed DATA packet with the captured sequence but a
+        // poisoned framed length. The test-only per-socket receipt is emitted
+        // only by the live `Some(_)` source-mismatch branch in the real recv
+        // loop; this avoids treating a missing raw-fallback event as proof.
+        let rejected_before = right_socket.rejected_source_packet_count();
+        let poisoned_data = build_data_packet(202, header.seq, header.ack, &[1, 0, 0]);
+        spoof_socket
+            .send_to(&poisoned_data, right_addr)
+            .expect("inject wrong-source DATA");
+        timeout(
+            Duration::from_secs(5),
+            right_socket.wait_for_rejected_source_packet_after(rejected_before),
+        )
+        .await
+        .expect("live socket rejects the injected wrong-source DATA");
+
+        let server_payload = b"server framed body after length".to_vec();
+        assert!(server_payload.len() <= 0xFF_FF_FF, "uint24 server frame length");
+        let server_length = [
+            server_payload.len() as u8,
+            (server_payload.len() >> 8) as u8,
+            (server_payload.len() >> 16) as u8,
+        ];
+        let mut right = right.into_async_stream();
+        {
+            // The client body cannot begin until the pre-route length DATA is
+            // acknowledged. Running this against the responder's independent
+            // framed write catches the same bidirectional ACK/flush shape as
+            // SecretStream's ID header followed by frame bytes.
+            let client_body_and_flush = async {
+                left.write_all(&client_payload).await?;
+                left.flush().await
+            };
+            let server_write = async {
+                right.write_all(&server_length).await?;
+                right.write_all(&server_payload).await?;
+                right.flush().await
+            };
+            timeout(Duration::from_secs(5), async {
+                let (client_result, server_result) =
+                    tokio::join!(client_body_and_flush, server_write);
+                client_result?;
+                server_result?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await
+            .expect("framed writes must complete after the correct route exists")
+            .expect("both framed writes are ACKed");
+
+            let mut left_length = [0u8; 3];
+            timeout(Duration::from_secs(5), left.read_exact(&mut left_length))
+                .await
+                .expect("left receives server framed length")
+                .expect("server length read succeeds");
+            let received_server_len = left_length[0] as usize
+                | ((left_length[1] as usize) << 8)
+                | ((left_length[2] as usize) << 16);
+            assert_eq!(received_server_len, server_payload.len(), "server frame length");
+            let mut received_server = vec![0u8; server_payload.len()];
+            timeout(Duration::from_secs(5), left.read_exact(&mut received_server))
+                .await
+                .expect("left receives complete server framed body")
+                .expect("server body read succeeds");
+            assert_eq!(received_server, server_payload);
+
+            let mut right_length = [0u8; 3];
+            timeout(Duration::from_secs(5), right.read_exact(&mut right_length))
+                .await
+                .expect("right receives client framed length")
+                .expect("client length read succeeds");
+            let received_client_len = right_length[0] as usize
+                | ((right_length[1] as usize) << 8)
+                | ((right_length[2] as usize) << 16);
+            assert_eq!(received_client_len, client_payload.len(), "client frame length");
+            let mut received_client = vec![0u8; client_payload.len()];
+            timeout(Duration::from_secs(5), right.read_exact(&mut received_client))
+                .await
+                .expect("right receives complete client framed body")
+                .expect("client body read succeeds");
+            assert_eq!(received_client, client_payload);
+        }
+
+        left_socket.close().await.expect("close left socket");
+        right_socket.close().await.expect("close right socket");
+        spoof_socket.close().await.expect("close spoof socket");
     }
 
     #[test]

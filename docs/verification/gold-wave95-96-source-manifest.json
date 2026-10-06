@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T10:35:14.2569758Z",
-  "validationStatus": "W2442 raw-body fixture corrected; fresh hosted Preflight pending",
+  "capturedUtc": "2026-10-06T11:57:35.6470646Z",
+  "validationStatus": "static-reviewed-hosted-transport-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 6827,
-      "sha256": "4AE625DDA542BC3FF493CA6CA21A000F7697CF5F2BACBCFFA886A31D88814D27"
+      "bytes": 7062,
+      "sha256": "36E410C637B5578B977EF8A19835DAA900E37ED1B3F5B6E7E689500E13A8CFD4"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
@@ -64,7 +64,7 @@
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
       "bytes": 6813,
-      "sha256": "7AAB1B91FDB257DFE8B73413EB72E13370BB650EE8DEF505D73713FDA322224A"
+      "sha256": "A7D4D36B73EF641014D2534652566AC7896478AED5C06C96783A88314BDD6E0B"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -275,6 +275,11 @@
       "path": ".github/workflows/ssh-dependency-lock-reconcile.yml",
       "bytes": 4247,
       "sha256": "66D26F2325D63AD6E37203723D9DE5E987F8D0030DC5A86F8DDA6005046F2E21"
+    },
+    {
+      "path": ".github/workflows/udx-transport-regressions.yml",
+      "bytes": 6766,
+      "sha256": "A0D471309AB7D472135EB11F8DC5240FB6A6183BBBE2AED63AC7760D93E6E70C"
     },
     {
       "path": ".github/workflows/webchat-browser.yml",
@@ -3752,6 +3757,11 @@
       "sha256": "AC7F6FCBF9E140740E80DE42A52CC34B101C4AA6AFDA10BC4AF724CF51B2511A"
     },
     {
+      "path": "docs/verification/gold-wave2444-udx-reproduction.json",
+      "bytes": 1683,
+      "sha256": "3B35E5844A0F0DEE21F243C9275FC1AD898E2699640C905873420608AF1F7DD6"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4903,8 +4913,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2434261,
-      "sha256": "FFD849F5218330E9146DDC8B6A00CED9A95C0AE2B3ADF393774ECC3EBFD3EA60"
+      "bytes": 2435446,
+      "sha256": "97998666332E6E489F0E2DE68297D344501AE3AE476FF9B8E5065B5D7CF5E92E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8998,13 +9008,13 @@
     },
     {
       "path": "SRC/vendor/libudx/src/native/socket.rs",
-      "bytes": 35388,
-      "sha256": "9C7B2823B03E4A97D4EF44AFFC224AE075799425BCA6C8BE7A2D45BBC9A1BE2C"
+      "bytes": 36831,
+      "sha256": "299FEF0B225441B49029E753740A2D63A6FE01377255FBC7A8EE55C9B709D625"
     },
     {
       "path": "SRC/vendor/libudx/src/native/stream.rs",
-      "bytes": 89230,
-      "sha256": "716F43D790E0AD65123D0E9E7C93C0887F2DB8F7E65931FBC282D22281FBEAA9"
+      "bytes": 97981,
+      "sha256": "03195758F0440DEE0E16308DA7AB0699F2F4755677FB02279BE9BF541DE52E41"
     },
     {
       "path": "SRC/vendor/matrix-sdk-crypto/.cargo_vcs_info.json",

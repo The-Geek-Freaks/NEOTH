@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2442 raw-body fixture corrected; fresh hosted Preflight pending",
+  "status": "static-reviewed-hosted-transport-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 394476,
-    "sha256": "BC26E7C58CB8EF8A8BE16E147FCDBD6200E78CE0360FFB143E5BB8389E9F6236"
+    "bytes": 394822,
+    "sha256": "7CC9EAC1828D19418C6FA3A9ACD0C25B5784EA30933E3CE6170DFDCB00C4539B"
   },
-  "sourceInputs": 2156,
+  "sourceInputs": 2158,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -76117,6 +76117,56 @@
       }
     ],
     "note": "Only3 expectedstrings corrected to existingfulltaskbody contract; productionparser/export and allselection/productgates unchanged. Priorpreflight9selectioncasespassed, roadmapfixturefailed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2444UdxReproduction": {
+    "base": "d7b37c0202431e80df1e0a7b5ec5e74b04bae773",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 7062,
+        "sha256": "36E410C637B5578B977EF8A19835DAA900E37ED1B3F5B6E7E689500E13A8CFD4",
+        "blob": "0868ee0275544c3329acd9fedf8cd38a4c20b0c0"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 6813,
+        "sha256": "A7D4D36B73EF641014D2534652566AC7896478AED5C06C96783A88314BDD6E0B",
+        "blob": "b410d8e82cba81d286e7a71e7a26bfd11569f005"
+      },
+      {
+        "path": ".github/workflows/udx-transport-regressions.yml",
+        "bytes": 6766,
+        "sha256": "A0D471309AB7D472135EB11F8DC5240FB6A6183BBBE2AED63AC7760D93E6E70C",
+        "blob": "78ae309e10eb9607a1d43c57a1f3d50a5164ccac"
+      },
+      {
+        "path": "docs/verification/gold-wave2444-udx-reproduction.json",
+        "bytes": 1683,
+        "sha256": "3B35E5844A0F0DEE21F243C9275FC1AD898E2699640C905873420608AF1F7DD6",
+        "blob": "92c431dcee1603acca6f16112c492e54a1a455b8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2435446,
+        "sha256": "97998666332E6E489F0E2DE68297D344501AE3AE476FF9B8E5065B5D7CF5E92E",
+        "blob": "fc275c966a7839a6af5b54e1bf840a4cc030869e"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/socket.rs",
+        "bytes": 36831,
+        "sha256": "299FEF0B225441B49029E753740A2D63A6FE01377255FBC7A8EE55C9B709D625",
+        "blob": "4104520a72df9ec71c2769ac8645507addbe5a1b"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/stream.rs",
+        "bytes": 97981,
+        "sha256": "03195758F0440DEE0E16308DA7AB0699F2F4755677FB02279BE9BF541DE52E41",
+        "blob": "499e8e361a83e18216b4a358e3e83cf36c31f857"
+      }
+    ],
+    "note": "Real-socket late-route retransmission/source-pin regression; 36 Rust/4 collector/38 selection sources; no product acceptance; local runtime hold preserved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
