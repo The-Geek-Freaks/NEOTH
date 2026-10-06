@@ -566,19 +566,67 @@ pub(crate) fn is_allowed_self_update_audit_event(event_type: u8, event_subtype: 
     event_subtype == 0 && matches!(event_type, 0xD2 | 0xDE)
 }
 fn validate_self_update_audit_payload(event_type: u8, payload: &[u8]) -> Result<()> {
-    anyhow::ensure!(payload.len() <= 4096, "self-update audit payload exceeds bound");
-    let value: serde_json::Value = serde_json::from_slice(payload).context("self-update audit payload is not JSON")?;
-    let object = value.as_object().context("self-update audit payload must be an object")?;
+    anyhow::ensure!(
+        payload.len() <= 4096,
+        "self-update audit payload exceeds bound"
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).context("self-update audit payload is not JSON")?;
+    let object = value
+        .as_object()
+        .context("self-update audit payload must be an object")?;
     let required: &[&str] = if event_type == 0xD2 {
-        &["from_version", "to_version", "transaction_id", "repo", "channel", "target_triple", "archive_sha256", "download_url", "signature_status", "trigger_source", "ts_unix"]
+        &[
+            "from_version",
+            "to_version",
+            "transaction_id",
+            "repo",
+            "channel",
+            "target_triple",
+            "archive_sha256",
+            "download_url",
+            "signature_status",
+            "trigger_source",
+            "ts_unix",
+        ]
     } else {
-        &["to_version", "repo", "staged_repo", "channel", "target_triple", "archive_sha256", "reason", "trigger_source", "ts_unix"]
+        &[
+            "to_version",
+            "repo",
+            "staged_repo",
+            "channel",
+            "target_triple",
+            "archive_sha256",
+            "reason",
+            "trigger_source",
+            "ts_unix",
+        ]
     };
-    anyhow::ensure!(required.iter().all(|key| object.contains_key(*key)), "self-update audit payload is missing required field");
-    anyhow::ensure!(object.keys().all(|key| required.contains(&key.as_str()) || (event_type == 0xD2 && key == "recovery")), "self-update audit payload has unknown field");
-    anyhow::ensure!(object.get("ts_unix").and_then(serde_json::Value::as_u64).is_some(), "self-update audit ts_unix invalid");
+    anyhow::ensure!(
+        required.iter().all(|key| object.contains_key(*key)),
+        "self-update audit payload is missing required field"
+    );
+    anyhow::ensure!(
+        object.keys().all(
+            |key| required.contains(&key.as_str()) || (event_type == 0xD2 && key == "recovery")
+        ),
+        "self-update audit payload has unknown field"
+    );
+    anyhow::ensure!(
+        object
+            .get("ts_unix")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "self-update audit ts_unix invalid"
+    );
     for key in required.iter().filter(|key| **key != "ts_unix") {
-        anyhow::ensure!(object.get(*key).and_then(serde_json::Value::as_str).is_some_and(|text| !text.is_empty() && text.len() <= 2048), "self-update audit string field invalid");
+        anyhow::ensure!(
+            object
+                .get(*key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| !text.is_empty() && text.len() <= 2048),
+            "self-update audit string field invalid"
+        );
     }
     Ok(())
 }
@@ -1662,13 +1710,17 @@ async fn handle_one_pre_admission(
     if req_path == "/updater/self-update-audit" {
         if !is_allowed_self_update_audit_event(event_type, event_subtype) {
             emit_reject(state, "self_update_audit_identity_not_allowed").await;
-            let _ = stream.write_all(http_response(422, "self_update_audit_identity_not_allowed").as_bytes()).await;
+            let _ = stream
+                .write_all(http_response(422, "self_update_audit_identity_not_allowed").as_bytes())
+                .await;
             let _ = stream.shutdown().await;
             return Ok(ConnectionOutcome::Complete);
         }
         if let Err(error) = validate_self_update_audit_payload(event_type, &payload) {
             emit_reject(state, "invalid_self_update_audit_payload").await;
-            let _ = stream.write_all(http_response(400, &format!("{error:#}")).as_bytes()).await;
+            let _ = stream
+                .write_all(http_response(400, &format!("{error:#}")).as_bytes())
+                .await;
             let _ = stream.shutdown().await;
             return Ok(ConnectionOutcome::Complete);
         }
@@ -1676,10 +1728,17 @@ async fn handle_one_pre_admission(
         match state.writer.append(header, payload).await {
             Ok(offset) => {
                 emit_accept(state, event_type, 0).await;
-                let _ = stream.write_all(http_response_json(200, &format!("{{\"ok\":true,\"offset\":{offset}}}")).as_bytes()).await;
+                let _ = stream
+                    .write_all(
+                        http_response_json(200, &format!("{{\"ok\":true,\"offset\":{offset}}}"))
+                            .as_bytes(),
+                    )
+                    .await;
             }
             Err(error) => {
-                let _ = stream.write_all(http_response(500, &format!("append failed: {error}")).as_bytes()).await;
+                let _ = stream
+                    .write_all(http_response(500, &format!("append failed: {error}")).as_bytes())
+                    .await;
             }
         }
         let _ = stream.shutdown().await;

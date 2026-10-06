@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, ctypes, hashlib, http.server, json, os, pathlib, secrets
 import signal, socket, socketserver, subprocess, sys, tempfile, threading, time
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 PENDING, OK, FAILED = 0, 1, 3
 MAX_PUBLIC, PAIR_JSON_MAX, PAIR_URL_MAX, DEADLINE = 80 * 1024, 8 * 1024, 512, 140.0
@@ -398,6 +398,30 @@ class Bridge:
             self.lib.neoth_companion_operation_free(op)
             for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
 
+def run_chat_pair_and_start(
+    factory: Callable[[pathlib.Path], Any],
+    library: pathlib.Path,
+    pair_url_value: str,
+    receipt: dict[str,Any],
+    timeout: Callable[[], float],
+) -> tuple[dict[str,Any],dict[str,Any]]:
+    chat_bridge = factory(library)
+    try:
+        receipt["stage"]="pair_chat_start"
+        code,raw=chat_bridge.call("neoth_companion_pair_start",pair_url_value,"w2328-chat",timeout=timeout())
+        if code != OK:
+            receipt["steps"]["chat_pair"]={"code":code,"validated":False}
+            receipt["chat_pair_failure_code"]=code
+            raise RuntimeError("chat pair rejected")
+        chat_pair=terminal(raw,"paired")
+        receipt["steps"]["chat_pair"]={"code":code,"validated":True}
+        receipt["stage"]="chat_start"
+        code,raw=chat_bridge.call("neoth_companion_chat_start",json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],"W2328 interop canary",timeout=timeout())
+        chat=terminal(raw,"chat") if code==OK else (_ for _ in ()).throw(RuntimeError("chat rejected"))
+        return chat_pair,chat
+    finally:
+        chat_bridge.close()
+
 def main() -> int:
     process_started=time.monotonic()
     work_deadline=process_started+WORK_SECONDS
@@ -482,17 +506,13 @@ def main() -> int:
                     raise RuntimeError("status-scope rejection/provider boundary missing")
                 receipt["steps"]["status_scope_chat_rejected"]={"code":code,"failure_code":"invalid_server_frame","loopback_request_count":0}
                 chat_pair_url=pair_url(mint_pair("chat-send","pair_chat_send_mint"))
-                receipt["stage"]="pair_chat_start"
-                code,raw=bridge.call("neoth_companion_pair_start",chat_pair_url,"w2328-chat",timeout=budget(work_deadline))
-                chat_pair=terminal(raw,"paired") if code==OK else (_ for _ in ()).throw(RuntimeError("chat pair rejected"))
-                receipt["steps"]["chat_pair"]={"code":code,"validated":True}
-                receipt["stage"]="chat_start"
-                code,raw=bridge.call("neoth_companion_chat_start",json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],"W2328 interop canary",timeout=budget(work_deadline))
-                chat=terminal(raw,"chat") if code==OK else (_ for _ in ()).throw(RuntimeError("chat rejected"))
+                chat_pair,chat=run_chat_pair_and_start(
+                    Bridge,library,chat_pair_url,receipt,lambda: budget(work_deadline)
+                )
                 records=chat.get("records",[])
                 if provider.server.request_count != 1 or chat.get("outcome") != "accepted" or not any(isinstance(record,dict) and record.get("text") == REPLY for record in records):
                     raise RuntimeError("owned loopback provider/chat terminal proof missing")
-                receipt["steps"]["chat"]={"code":code,"outcome":chat.get("outcome"),"record_count":len(records),"provider":chat.get("provider"),"model":chat.get("model"),"loopback_request_count":provider.server.request_count,"reply_sha256":hashlib.sha256(REPLY.encode()).hexdigest().upper()}
+                receipt["steps"]["chat"]={"code":OK,"outcome":chat.get("outcome"),"record_count":len(records),"provider":chat.get("provider"),"model":chat.get("model"),"loopback_request_count":provider.server.request_count,"reply_sha256":hashlib.sha256(REPLY.encode()).hexdigest().upper()}
                 receipt["stage"]="device_revoke"
                 revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",chat_pair["device_id"]],env,budget(work_deadline,20.0)),"revoke")
                 if revoke != {"revoked": True}: raise RuntimeError("revoke result was not exact success")

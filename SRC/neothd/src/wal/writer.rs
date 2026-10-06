@@ -11651,17 +11651,45 @@ mod tests {
     #[tokio::test]
     async fn w2452_d2_then_de_reuses_rotated_self_update_audit_tail() {
         let home = tempdir().expect("home");
-        let wal = home.path().join("wal"); std::fs::create_dir(&wal).expect("wal");
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).expect("wal");
         let base = self_update_audit_chain_base_path(&wal);
         for (path, event) in [
-            (base.clone(), crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED),
-            (wal.join("self-update-audit-000002.wal"), crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED),
+            (
+                base.clone(),
+                crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
+            ),
+            (
+                wal.join("self-update-audit-000002.wal"),
+                crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
+            ),
         ] {
-            let (writer, join) = spawn_test_writer_at_home(path, home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
-            writer.append(crate::wal::HeaderBuilder::new(event, b"{}").build(), b"{}".to_vec()).await.expect("append");
-            drop(writer); join.await.expect("writer join");
+            let (writer, join) = spawn_test_writer_at_home(
+                path,
+                home.path(),
+                RotationPolicy::default(),
+                CompressionPolicy::None,
+            )
+            .expect("writer");
+            writer
+                .append(
+                    crate::wal::HeaderBuilder::new(event, b"{}").build(),
+                    b"{}".to_vec(),
+                )
+                .await
+                .expect("append");
+            drop(writer);
+            join.await.expect("writer join");
         }
-        let tail = crate::wal::scan::latest_home_segment_in_chain(home.path(), &base, crate::wal::scan::HomeWalScanLimits::default()).expect("tail");
-        assert_eq!(tail.file_name().and_then(|n| n.to_str()), Some("self-update-audit-000002.wal"));
+        let tail = crate::wal::scan::latest_home_segment_in_chain(
+            home.path(),
+            &base,
+            crate::wal::scan::HomeWalScanLimits::default(),
+        )
+        .expect("tail");
+        assert_eq!(
+            tail.file_name().and_then(|n| n.to_str()),
+            Some("self-update-audit-000002.wal")
+        );
     }
 }

@@ -108,7 +108,9 @@
       "test_client_route_phase_whitelist_rejects_suffix_only_marker",
       "test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings",
       "test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes",
-      "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning"
+      "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning",
+      "test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat",
+      "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures"
     ]
   },
   "sourcePaths": [

@@ -269,5 +269,84 @@ class ScopedCollectorTests(unittest.TestCase):
         stream = ChunkStream([b"NEOTH_COMPANION_CONNECT_PHASE=route_direct_selected_extra\n"])
         markers = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)["connect_markers"]
         self.assertFalse(markers["route_direct_selected"])
+    def test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat(self) -> None:
+        class FakeBridge:
+            def __init__(self, identity: int) -> None:
+                self.identity = identity
+                self.calls: list[str] = []
+                self.closed = False
+            def call(self, name: str, *_args: object, timeout: float) -> tuple[int, bytes]:
+                self.calls.append(name)
+                if name == "neoth_companion_pair_start":
+                    return INTEROP.OK, b'{"state":"paired","device_id":"chat-device","descriptor":{"route":"chat"}}'
+                return INTEROP.OK, b'{"kind":"chat","outcome":"accepted","records":[]}'
+            def close(self) -> None:
+                self.closed = True
+        created: list[FakeBridge] = []
+        def factory(_library: pathlib.Path) -> FakeBridge:
+            bridge = FakeBridge(len(created) + 1)
+            created.append(bridge)
+            return bridge
+        status_bridge = factory(pathlib.Path("bridge.so"))
+        receipt: dict[str, object] = {"steps": {}}
+        pair, chat = INTEROP.run_chat_pair_and_start(
+            factory, pathlib.Path("bridge.so"), "neoth://chat-pair", receipt, lambda: 1.0
+        )
+        self.assertIsNot(created[1], status_bridge)
+        self.assertEqual(created[1].calls, ["neoth_companion_pair_start", "neoth_companion_chat_start"])
+        self.assertTrue(created[1].closed)
+        self.assertFalse(status_bridge.closed)
+        self.assertEqual(pair["device_id"], "chat-device")
+        self.assertEqual(chat["outcome"], "accepted")
+        self.assertEqual(receipt["steps"]["chat_pair"], {"code": INTEROP.OK, "validated": True})
+
+    def test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures(self) -> None:
+        class FakeBridge:
+            def __init__(self, outcome: tuple[int, bytes]) -> None:
+                self.outcome = outcome
+                self.closed = False
+                self.calls: list[str] = []
+            def call(self, name: str, *_args: object, timeout: float) -> tuple[int, bytes]:
+                self.calls.append(name)
+                if name == "neoth_companion_pair_start":
+                    return self.outcome
+                return INTEROP.FAILED, b'{"result":"failed","code":"chat_transport_failed"}'
+            def close(self) -> None:
+                self.closed = True
+        cases = (
+            (
+                (INTEROP.FAILED, b'{"result":"failed","code":"pair_transport_failed"}'),
+                ["neoth_companion_pair_start"],
+                {"code": INTEROP.FAILED, "validated": False},
+            ),
+            (
+                (INTEROP.OK, b'{"state":"wrong-terminal"}'),
+                ["neoth_companion_pair_start"],
+                None,
+            ),
+            (
+                (INTEROP.OK, b'{"state":"paired","device_id":"chat-device","descriptor":{"route":"chat"}}'),
+                ["neoth_companion_pair_start", "neoth_companion_chat_start"],
+                {"code": INTEROP.OK, "validated": True},
+            ),
+        )
+        for outcome, expected_calls, expected_step in cases:
+            created: list[FakeBridge] = []
+            def factory(_library: pathlib.Path, outcome: tuple[int, bytes] = outcome) -> FakeBridge:
+                bridge = FakeBridge(outcome)
+                created.append(bridge)
+                return bridge
+            receipt: dict[str, object] = {"steps": {}}
+            with self.assertRaises(RuntimeError):
+                INTEROP.run_chat_pair_and_start(
+                    factory, pathlib.Path("bridge.so"), "neoth://chat-pair", receipt, lambda: 1.0
+                )
+            self.assertEqual(created[0].calls, expected_calls)
+            self.assertTrue(created[0].closed)
+            steps = receipt["steps"]
+            if expected_step is None:
+                self.assertNotIn("chat_pair", steps)
+            else:
+                self.assertEqual(steps["chat_pair"], expected_step)
 if __name__ == "__main__":
     unittest.main()

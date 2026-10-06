@@ -49,7 +49,7 @@ class SelectionContractTests(unittest.TestCase):
         expected_groups = {"libudx": 8, "peeroxide": 14, "dht": 15, "core": 22, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 12,
+            "collector": 14,
             "sources": 40,
             "groups": expected_groups,
         })
@@ -81,6 +81,8 @@ class SelectionContractTests(unittest.TestCase):
             "test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings",
             "test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes",
             "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning",
+            "test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat",
+            "test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

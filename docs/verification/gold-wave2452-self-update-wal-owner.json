@@ -119,5 +119,13 @@
   "localExecutableValidationRan": false,
   "hostedStatus": "pending",
   "allStandaloneWalCallersMigrated": false,
-  "nativeDeviceReleaseAccepted": false
+  "nativeDeviceReleaseAccepted": false,
+  "hostedFormatting": {
+    "producer": "866ff9db014186e46304c4e2cdb68f076d1f1aa2",
+    "run": "37508164271",
+    "artifact": "11432981273",
+    "archiveSha256": "78EC5E484F0765B729A1137B2612E46D340B3135150B4F33AF829F9B98837E46",
+    "custodySha256": "6F0A87205F30B72233F0AB9BF13B9884566FBA3DB562B5C6FA0408C6CC3CD2AA",
+    "localFormatterRan": false
+  }
 }

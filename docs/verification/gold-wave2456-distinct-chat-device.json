@@ -1,0 +1,37 @@
+{
+  "schema": "neoth.gold-wave2456-distinct-chat-device.v1",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "priorProducer": "e36d7ddd5f260770d51d04a4a4fca475e2004bac",
+  "priorRun": "37503311754",
+  "priorProofSha256": "249BFC8BD21DE690F43687A7EF5DDC0922371117E1FE0878A58CE160582F862B",
+  "failureStage": "pair_chat_start",
+  "diagnosis": "The hosted harness reused one durable bridge identity for both status and chat enrollment. The authority correctly rejected the second duplicate signing/Noise key.",
+  "changes": [
+    "Own a fresh Bridge for actual chat pair and chat calls; always close it on success and error while retaining the original status Bridge.",
+    "Set chat-pair validation only after validating the paired public terminal and retain a bounded failure code.",
+    "Exercise the actual production helper in two focused ownership tests, including pair failure, malformed successful terminal, and chat failure.",
+    "Append both methods to the existing canonical collector selection and update its exact fixture: 14 collector, 61 Rust, 40 source paths."
+  ],
+  "candidateManifestSha256": "2D277ABD5ACD029457ABB4F742A5685BDF984490383A0399A31E3A3AF22BC294",
+  "candidateSources": [
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "base_sha256": "82F84359AEBF9594AA59485625AD0877F5D5BBB5D2190827CB2CB66F1E75C57B",
+      "candidate_sha256": "D623ECBD096F4D3B4384FB43DB49CB6510A82508D32FF0F6E2D0C8E1527A9466"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "base_sha256": "C58EC7618B32300BAF28B78C99AB84850390E3E9C05890C28A260DE124D4B6A3",
+      "candidate_sha256": "A2F3743BD3AA1F33F5185CD06FACF5B50A2A41C4CC42DAC5A21754731F6BDEB9"
+    }
+  ],
+  "tests": [
+    "ScopedCollectorTests.test_fresh_chat_bridge_is_distinct_and_runs_actual_pair_then_chat",
+    "ScopedCollectorTests.test_fresh_chat_bridge_closes_on_actual_pair_and_chat_failures"
+  ],
+  "authorityPolicyChanged": false,
+  "localExecutableValidationRan": false,
+  "hostedStatus": "pending",
+  "fullMobileAccepted": false,
+  "nativeDeviceReleaseAccepted": false
+}

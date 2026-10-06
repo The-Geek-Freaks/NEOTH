@@ -287,8 +287,13 @@ async fn run_self_apply(
                             let cleanup_error = locked_stage.clear().err();
                             drop(locked_stage);
                             if let Err(audit) = emit_self_update_rejected_owned(
-                                repo, &pending, &format!("{e:#}"), "manual_from_staged",
-                            ).await {
+                                repo,
+                                &pending,
+                                &format!("{e:#}"),
+                                "manual_from_staged",
+                            )
+                            .await
+                            {
                                 return Err(e.context(format!(
                                     "staged self-update failed integrity verification; SELF_UPDATE_REJECTED audit indeterminate: {audit:#}"
                                 )));
@@ -524,20 +529,33 @@ async fn append_owned_self_update_audit_at_home(
     payload: &[u8],
     event_type: u8,
 ) -> Result<()> {
-    anyhow::ensure!(matches!(event_type, 0xD2 | 0xDE), "self-update audit event outside D2/DE contract");
-    match crate::daemon::audit_rpc::try_post_self_update_audit_frame(home, event_type, payload).await {
+    anyhow::ensure!(
+        matches!(event_type, 0xD2 | 0xDE),
+        "self-update audit event outside D2/DE contract"
+    );
+    match crate::daemon::audit_rpc::try_post_self_update_audit_frame(home, event_type, payload)
+        .await
+    {
         Ok(()) => Ok(()),
         Err(crate::daemon::audit_rpc::SelfUpdateAuditError::OfflinePrewriteAbsent(_)) => {
-            let _lease = crate::daemon::pidfile::acquire_offline_self_update_audit_interlock(&home.join("neothd.pid"))?
-                .ok_or_else(|| anyhow::anyhow!("SELF_UPDATE audit owner became live before offline lease"))?;
+            let _lease = crate::daemon::pidfile::acquire_offline_self_update_audit_interlock(
+                &home.join("neothd.pid"),
+            )?
+            .ok_or_else(|| {
+                anyhow::anyhow!("SELF_UPDATE audit owner became live before offline lease")
+            })?;
             let wal_dir = home.join("wal");
             std::fs::create_dir_all(&wal_dir).context("create self-update audit WAL directory")?;
             let base = crate::wal::writer::self_update_audit_chain_base_path(&wal_dir);
             let tail = crate::wal::scan::latest_home_segment_in_chain(
-                home, &base, crate::wal::scan::HomeWalScanLimits::default(),
-            ).context("resolve canonical self-update audit chain tail")?;
-            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(tail, home.to_path_buf())
-                .context("open canonical self-update audit chain")?;
+                home,
+                &base,
+                crate::wal::scan::HomeWalScanLimits::default(),
+            )
+            .context("resolve canonical self-update audit chain tail")?;
+            let (writer, completion) =
+                crate::wal::writer::spawn_for_home_with_completion(tail, home.to_path_buf())
+                    .context("open canonical self-update audit chain")?;
             let header = crate::wal::HeaderBuilder::new(event_type, payload).build();
             let append = writer.append(header, payload.to_vec()).await;
             drop(writer);
@@ -545,7 +563,9 @@ async fn append_owned_self_update_audit_at_home(
             match (append, finalized) {
                 (Ok(_), Ok(())) => Ok(()),
                 (Err(append), Ok(())) => Err(anyhow::anyhow!("append self-update audit: {append}")),
-                (Ok(_), Err(finalize)) => Err(anyhow::anyhow!("finalize self-update audit: {finalize}")),
+                (Ok(_), Err(finalize)) => {
+                    Err(anyhow::anyhow!("finalize self-update audit: {finalize}"))
+                }
                 (Err(append), Err(finalize)) => Err(anyhow::anyhow!(
                     "append self-update audit: {append}; finalization also failed: {finalize}"
                 )),
@@ -556,8 +576,11 @@ async fn append_owned_self_update_audit_at_home(
 }
 
 async fn emit_self_update_applied_owned(
-    outcome: &crate::updater::self_update::UpdateApplied, repo: &str,
-    channel: crate::config::ReleaseChannel, target: &str, trigger_source: &str,
+    outcome: &crate::updater::self_update::UpdateApplied,
+    repo: &str,
+    channel: crate::config::ReleaseChannel,
+    target: &str,
+    trigger_source: &str,
 ) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "from_version": outcome.from_version, "to_version": outcome.to_version,
@@ -566,21 +589,30 @@ async fn emit_self_update_applied_owned(
         "archive_sha256": outcome.archive_sha256, "download_url": outcome.download_url,
         "signature_status": outcome.signature_status, "trigger_source": trigger_source,
         "ts_unix": now_unix_secs(),
-    })).expect("self-update payload contains only infallible JSON values");
-    append_owned_self_update_audit(&payload, crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED).await
+    }))
+    .expect("self-update payload contains only infallible JSON values");
+    append_owned_self_update_audit(&payload, crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED)
+        .await
 }
 
 async fn emit_self_update_rejected_owned(
-    repo: &str, pending: &crate::updater::self_update::PendingUpdate,
-    reason: &str, trigger_source: &str,
+    repo: &str,
+    pending: &crate::updater::self_update::PendingUpdate,
+    reason: &str,
+    trigger_source: &str,
 ) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "to_version": pending.to_version, "repo": repo, "staged_repo": pending.source_repo,
         "channel": pending.channel.as_str(), "target_triple": pending.target_triple,
         "archive_sha256": pending.archive_sha256, "reason": reason,
         "trigger_source": trigger_source, "ts_unix": now_unix_secs(),
-    })).expect("self-update rejection payload contains only infallible JSON values");
-    append_owned_self_update_audit(&payload, crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED).await
+    }))
+    .expect("self-update rejection payload contains only infallible JSON values");
+    append_owned_self_update_audit(
+        &payload,
+        crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
+    )
+    .await
 }
 fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, output: OutputFormat) {
     match output {
@@ -818,7 +850,10 @@ mod tests {
             )
             .expect("seed canonical self-update chain");
             writer
-                .append(crate::wal::HeaderBuilder::new(event, payload).build(), payload.to_vec())
+                .append(
+                    crate::wal::HeaderBuilder::new(event, payload).build(),
+                    payload.to_vec(),
+                )
                 .await
                 .expect("seed frame");
             drop(writer);
@@ -838,20 +873,31 @@ mod tests {
             crate::wal::scan::HomeWalScanLimits::default(),
         )
         .expect("resolve canonical chain tail after both consumer calls");
-        assert_eq!(selected, rotated_tail, "consumer must continue the pre-existing rotated tail");
+        assert_eq!(
+            selected, rotated_tail,
+            "consumer must continue the pre-existing rotated tail"
+        );
         let tail_bytes = std::fs::read(&selected).expect("read selected tail");
         assert!(
-            tail_bytes.windows(b"consumer-d2".len()).any(|window| window == b"consumer-d2"),
+            tail_bytes
+                .windows(b"consumer-d2".len())
+                .any(|window| window == b"consumer-d2"),
             "D2 must be appended to the selected canonical tail"
         );
         assert!(
-            tail_bytes.windows(b"consumer-de".len()).any(|window| window == b"consumer-de"),
+            tail_bytes
+                .windows(b"consumer-de".len())
+                .any(|window| window == b"consumer-de"),
             "DE must be appended to the same canonical tail"
         );
         let base_bytes = std::fs::read(&base).expect("read original base segment");
         assert!(
-            !base_bytes.windows(b"consumer-d2".len()).any(|window| window == b"consumer-d2")
-                && !base_bytes.windows(b"consumer-de".len()).any(|window| window == b"consumer-de"),
+            !base_bytes
+                .windows(b"consumer-d2".len())
+                .any(|window| window == b"consumer-d2")
+                && !base_bytes
+                    .windows(b"consumer-de".len())
+                    .any(|window| window == b"consumer-de"),
             "consumer must not reopen the older pre-rotation segment"
         );
     }
@@ -880,12 +926,13 @@ mod tests {
         std::fs::create_dir(runtime).expect("create exact endpoint runtime directory");
         std::fs::set_permissions(runtime, std::fs::Permissions::from_mode(0o700))
             .expect("private endpoint runtime directory");
-        let listener = tokio::net::UnixListener::bind(&path).expect("bind exact same-user endpoint");
+        let listener =
+            tokio::net::UnixListener::bind(&path).expect("bind exact same-user endpoint");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
             .expect("private endpoint socket");
 
-        let _token = crate::daemon::audit_rpc::init_rpc_token(home.path())
-            .expect("mint same-user bearer");
+        let _token =
+            crate::daemon::audit_rpc::init_rpc_token(home.path()).expect("mint same-user bearer");
         let mut pid_guard = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
             .expect("hold daemon PID lock for exact owner proof");
         crate::daemon::audit_rpc::write_sidecar(home.path(), &endpoint, std::process::id(), &nonce)
@@ -895,12 +942,18 @@ mod tests {
             .expect("publish sidecar nonce under PID lock");
 
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("accept authenticated client");
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("accept authenticated client");
             let mut request = Vec::new();
             let mut chunk = [0_u8; 1024];
             let header_end = loop {
                 let read = stream.read(&mut chunk).await.expect("read client request");
-                assert_ne!(read, 0, "client must write a complete request before EOF fixture closes");
+                assert_ne!(
+                    read, 0,
+                    "client must write a complete request before EOF fixture closes"
+                );
                 request.extend_from_slice(&chunk[..read]);
                 if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
                     break end + 4;
@@ -915,7 +968,10 @@ mod tests {
                 .parse::<usize>()
                 .expect("numeric content length");
             while request.len() < header_end + content_length {
-                let read = stream.read(&mut chunk).await.expect("read complete client body");
+                let read = stream
+                    .read(&mut chunk)
+                    .await
+                    .expect("read complete client body");
                 assert_ne!(read, 0, "client body must finish before EOF fixture closes");
                 request.extend_from_slice(&chunk[..read]);
             }
@@ -928,10 +984,17 @@ mod tests {
             0xD2,
         )
         .await;
-        assert!(result.is_err(), "post-write EOF must remain a hard audit error");
+        assert!(
+            result.is_err(),
+            "post-write EOF must remain a hard audit error"
+        );
         server.await.expect("EOF fixture task");
         assert!(
-            !home.path().join("wal").join("self-update-audit-000001.wal").exists(),
+            !home
+                .path()
+                .join("wal")
+                .join("self-update-audit-000001.wal")
+                .exists(),
             "connected post-write failure must never create an offline self-update chain"
         );
         drop(pid_guard);
@@ -993,14 +1056,18 @@ mod tests {
             .expect_err("an already-applied update must stop on audit indeterminacy");
 
         assert!(
-            error.to_string().contains("already applied; audit acknowledgement is indeterminate"),
+            error
+                .to_string()
+                .contains("already applied; audit acknowledgement is indeterminate"),
             "the terminal error must preserve the already-applied/audit-indeterminate boundary: {error:#}"
         );
-        assert!(!effects.rendered, "audit indeterminacy must block committed output");
+        assert!(
+            !effects.rendered,
+            "audit indeterminacy must block committed output"
+        );
         assert!(
             !effects.restart_requested,
             "audit indeterminacy must block the restart-request marker"
         );
     }
-
 }
