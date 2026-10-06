@@ -31,6 +31,18 @@ const DEFAULT_RETRIES: u32 = 3;
 /// and are rediscovered by [`Io::drain`]. That keeps retry memory bounded without
 /// dropping a request when libudx applies raw-egress backpressure.
 const PENDING_SEND_CAPACITY: usize = 1024;
+/// Number of encoded replies retained after a raw-egress `WouldBlock`.
+///
+/// This is deliberately a distinct bound from [`PENDING_SEND_CAPACITY`]: an
+/// incoming reply owns bytes rather than an inflight request TID, so it cannot
+/// be rediscovered from the request table. The two bounded queues may each
+/// reach their own capacity under pressure.
+const PENDING_REPLY_CAPACITY: usize = 1024;
+/// Aggregate bytes retained by [`PENDING_REPLY_CAPACITY`].
+///
+/// Match libudx's socket-wide raw-egress byte reservation. A reply that would
+/// exceed this bound keeps the former terminal-drop behavior.
+const PENDING_REPLY_BYTE_CAPACITY: usize = 1_048_576;
 
 /// libudx deliberately reports finite raw egress saturation as WouldBlock.
 /// DHT UDP traffic is retryable; suppressing only this expected condition keeps
@@ -226,8 +238,24 @@ struct PendingSend {
     tid: u16,
 }
 
+/// An encoded server reply retained until raw UDP egress accepts it or the
+/// existing DHT request/retry horizon expires.
+struct PendingReply {
+    buffer: Vec<u8>,
+    addr: SocketAddr,
+    socket_kind: SocketKind,
+    expires_at: Instant,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InflightSendOutcome {
+    Sent,
+    Backpressured,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplySendOutcome {
     Sent,
     Backpressured,
     Failed,
@@ -297,6 +325,8 @@ pub struct Io {
     inflight: Vec<InflightEntry>,
     congestion: CongestionWindow,
     pending: VecDeque<PendingSend>,
+    pending_replies: VecDeque<PendingReply>,
+    pending_reply_bytes: usize,
     tid: u16,
     secrets: Option<[[u8; 32]; 2]>,
     rotate_countdown: u32,
@@ -340,6 +370,8 @@ impl Io {
             inflight: Vec::new(),
             congestion: CongestionWindow::new(config.max_window),
             pending: VecDeque::new(),
+            pending_replies: VecDeque::new(),
+            pending_reply_bytes: 0,
             tid,
             secrets: None,
             rotate_countdown: 10,
@@ -417,6 +449,22 @@ impl Io {
 
         self.congestion.drain();
 
+        // A backpressured reply is retried at most once per actor drain. Keep
+        // the request FIFO reachable even when this socket remains saturated.
+        let client_socket = self.client_socket.clone();
+        let server_socket = self.server_socket.clone();
+        self.drain_one_pending_reply(move |reply| {
+            let socket = match reply.socket_kind {
+                SocketKind::Client => &client_socket,
+                SocketKind::Server => &server_socket,
+            };
+            socket.send_to(&reply.buffer, reply.addr)
+        });
+
+        self.drain_pending_requests();
+    }
+
+    fn drain_pending_requests(&mut self) {
         while !self.congestion.is_full() {
             // The FIFO is intentionally bounded. If it was full when another
             // socket rejection happened, that entry remains marked in
@@ -444,6 +492,43 @@ impl Io {
                 break;
             }
         }
+    }
+
+    fn drain_one_pending_reply<F>(&mut self, send: F)
+    where
+        F: FnOnce(&PendingReply) -> Result<(), libudx::UdxError>,
+    {
+        self.prune_expired_pending_reply_prefix(Instant::now());
+        let Some(reply) = self.take_pending_reply() else {
+            return;
+        };
+        let result = send(&reply);
+        if self.finish_pending_reply(reply, result) == ReplySendOutcome::Backpressured {
+            // A front requeue preserves FIFO ordering and avoids spinning while
+            // the bounded libudx writer remains full.
+            self.pending_replies.rotate_right(1);
+        }
+    }
+
+    fn prune_expired_pending_reply_prefix(&mut self, now: Instant) {
+        let initial_len = self.pending_replies.len();
+        for _ in 0..initial_len {
+            let Some(reply) = self.pending_replies.front() else {
+                return;
+            };
+            if reply.expires_at > now {
+                return;
+            }
+            let _ = self.take_pending_reply();
+        }
+    }
+
+    fn take_pending_reply(&mut self) -> Option<PendingReply> {
+        let reply = self.pending_replies.pop_front()?;
+        self.pending_reply_bytes = self
+            .pending_reply_bytes
+            .saturating_sub(reply.buffer.len());
+        Some(reply)
     }
 
     /// Return the earliest deadline across all inflight requests.
@@ -818,18 +903,55 @@ impl Io {
             }
         };
 
-        let socket = match params.socket_kind {
-            SocketKind::Client => &self.client_socket,
-            SocketKind::Server => &self.server_socket,
+        let reply_horizon = DEFAULT_TIMEOUT_MS * u64::from(DEFAULT_RETRIES + 1);
+        let reply = PendingReply {
+            buffer: bytes,
+            addr,
+            socket_kind: params.socket_kind,
+            // Match the existing initial send plus retry horizon: a reply may
+            // wait for raw-egress admission, but it cannot live indefinitely.
+            expires_at: Instant::now() + Duration::from_millis(reply_horizon),
         };
+        let result = {
+            let socket = match reply.socket_kind {
+                SocketKind::Client => &self.client_socket,
+                SocketKind::Server => &self.server_socket,
+            };
+            socket.send_to(&reply.buffer, reply.addr)
+        };
+        self.finish_pending_reply(reply, result);
+    }
 
-        let bytes_len = bytes.len() as u64;
-        if let Err(e) = socket.send_to(&bytes, addr) {
-            if !is_egress_backpressure(&e) {
-                tracing::warn!(err = %e, "send_reply_internal: send_to failed");
+    /// Account for one reply egress attempt. A raw queue rejection retains the
+    /// exact encoded reply; all other outcomes preserve the old terminal
+    /// behavior.
+    fn finish_pending_reply(
+        &mut self,
+        reply: PendingReply,
+        result: Result<(), libudx::UdxError>,
+    ) -> ReplySendOutcome {
+        match result {
+            Ok(()) => {
+                self.wire
+                    .bytes_sent
+                    .fetch_add(reply.buffer.len() as u64, Ordering::Relaxed);
+                ReplySendOutcome::Sent
             }
-        } else {
-            self.wire.bytes_sent.fetch_add(bytes_len, Ordering::Relaxed);
+            Err(error) if is_egress_backpressure(&error) => {
+                let reply_len = reply.buffer.len();
+                if self.pending_replies.len() < PENDING_REPLY_CAPACITY
+                    && self.pending_reply_bytes.saturating_add(reply_len)
+                        <= PENDING_REPLY_BYTE_CAPACITY
+                {
+                    self.pending_reply_bytes += reply_len;
+                    self.pending_replies.push_back(reply);
+                }
+                ReplySendOutcome::Backpressured
+            }
+            Err(error) => {
+                tracing::warn!(err = %error, "send_reply_internal: send_to failed");
+                ReplySendOutcome::Failed
+            }
         }
     }
 
@@ -1200,6 +1322,174 @@ mod tests {
         assert!(io.inflight[0].deadline > original_deadline);
         assert!(!io.inflight[0].egress_pending);
         assert_eq!(io.congestion.total, 1);
+        assert_eq!(io.wire.snapshot().0, 3);
+
+        io.destroy().await.expect("io destroy");
+    }
+
+    fn test_pending_reply_with_buffer(buffer: Vec<u8>, expires_at: Instant) -> PendingReply {
+        PendingReply {
+            buffer,
+            addr: "127.0.0.1:4243".parse().expect("loopback address"),
+            socket_kind: SocketKind::Server,
+            expires_at,
+        }
+    }
+
+    fn test_pending_reply(expires_at: Instant) -> PendingReply {
+        test_pending_reply_with_buffer(vec![4, 5, 6], expires_at)
+    }
+
+    fn raw_egress_would_block() -> Result<(), libudx::UdxError> {
+        Err(libudx::UdxError::Io(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "UDX raw egress queue is full",
+        )))
+    }
+
+    #[tokio::test]
+    async fn would_block_reply_egress_retains_owned_bytes_until_retry_succeeds() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let table = Arc::new(Mutex::new(RoutingTable::new([0u8; 32])));
+        let mut io = Io::bind(&runtime, table, IoConfig::default())
+            .await
+            .expect("io bind");
+
+        for buffer in [vec![4, 5, 6], vec![7, 8]] {
+            assert_eq!(
+                io.finish_pending_reply(
+                    test_pending_reply_with_buffer(
+                        buffer,
+                        Instant::now() + Duration::from_secs(4),
+                    ),
+                    raw_egress_would_block(),
+                ),
+                ReplySendOutcome::Backpressured
+            );
+        }
+        assert_eq!(io.pending_replies.len(), 2);
+        assert_eq!(
+            io.pending_replies.front().expect("queued reply").buffer,
+            vec![4, 5, 6]
+        );
+        assert_eq!(io.pending_reply_bytes, 5);
+        assert_eq!(io.wire.snapshot().0, 0);
+
+        let mut observed = Vec::new();
+        io.drain_one_pending_reply(|reply| {
+            observed.push(reply.buffer.clone());
+            raw_egress_would_block()
+        });
+        assert_eq!(observed, vec![vec![4, 5, 6]]);
+        assert_eq!(io.pending_replies.len(), 2);
+        assert_eq!(io.pending_reply_bytes, 5);
+        assert_eq!(
+            io.pending_replies.front().expect("front reply preserved").buffer,
+            vec![4, 5, 6]
+        );
+
+        io.drain_one_pending_reply(|reply| {
+            assert_eq!(reply.buffer, vec![4, 5, 6]);
+            Ok(())
+        });
+        assert_eq!(io.pending_replies.len(), 1);
+        assert_eq!(io.pending_reply_bytes, 2);
+        io.drain_one_pending_reply(|reply| {
+            assert_eq!(reply.buffer, vec![7, 8]);
+            Ok(())
+        });
+        assert!(io.pending_replies.is_empty());
+        assert_eq!(io.pending_reply_bytes, 0);
+        assert_eq!(io.wire.snapshot().0, 5);
+
+        assert_eq!(
+            io.finish_pending_reply(
+                test_pending_reply(Instant::now() + Duration::from_secs(4)),
+                raw_egress_would_block(),
+            ),
+            ReplySendOutcome::Backpressured
+        );
+        io.drain_one_pending_reply(|_| raw_egress_would_block());
+        let request_to = Ipv4Peer {
+            host: "127.0.0.1".to_string(),
+            port: 4244,
+        };
+        let mut request = test_inflight_entry(92, request_to);
+        request.sent = 0;
+        io.inflight.push(request);
+        io.congestion.send();
+        io.stats.active = 1;
+        io.pending.push_back(PendingSend { tid: 92 });
+        io.drain_pending_requests();
+        assert!(io.inflight[0].sent > 0 || io.inflight[0].egress_pending);
+        assert!(io.pending.is_empty(), "request FIFO must make progress");
+
+        io.destroy().await.expect("io destroy");
+    }
+
+    #[tokio::test]
+    async fn reply_egress_queue_is_bounded_and_expired_reply_is_terminal() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let table = Arc::new(Mutex::new(RoutingTable::new([0u8; 32])));
+        let mut io = Io::bind(&runtime, table, IoConfig::default())
+            .await
+            .expect("io bind");
+
+        for _ in 0..PENDING_REPLY_CAPACITY {
+            io.pending_replies
+                .push_back(test_pending_reply(Instant::now() + Duration::from_secs(4)));
+        }
+        io.pending_reply_bytes = PENDING_REPLY_CAPACITY * 3;
+        assert_eq!(
+            io.finish_pending_reply(
+                test_pending_reply(Instant::now() + Duration::from_secs(4)),
+                raw_egress_would_block(),
+            ),
+            ReplySendOutcome::Backpressured
+        );
+        assert_eq!(io.pending_replies.len(), PENDING_REPLY_CAPACITY);
+
+        io.pending_replies.clear();
+        let retained = test_pending_reply_with_buffer(
+            vec![0; PENDING_REPLY_BYTE_CAPACITY - 2],
+            Instant::now() + Duration::from_secs(4),
+        );
+        io.pending_reply_bytes = retained.buffer.len();
+        io.pending_replies.push_back(retained);
+        assert_eq!(
+            io.finish_pending_reply(
+                test_pending_reply(Instant::now() + Duration::from_secs(4)),
+                raw_egress_would_block(),
+            ),
+            ReplySendOutcome::Backpressured
+        );
+        assert_eq!(io.pending_replies.len(), 1);
+        assert_eq!(io.pending_reply_bytes, PENDING_REPLY_BYTE_CAPACITY - 2);
+
+        io.pending_replies.clear();
+        io.pending_reply_bytes = 0;
+        assert_eq!(
+            io.finish_pending_reply(
+                test_pending_reply(Instant::now() + Duration::from_secs(4)),
+                Err(libudx::UdxError::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "terminal raw egress error",
+                ))),
+            ),
+            ReplySendOutcome::Failed
+        );
+        assert!(io.pending_replies.is_empty());
+
+        io.pending_reply_bytes = 9;
+        io.pending_replies
+            .push_back(test_pending_reply(Instant::now() - Duration::from_millis(1)));
+        io.pending_replies
+            .push_back(test_pending_reply(Instant::now() - Duration::from_millis(1)));
+        io.pending_replies
+            .push_back(test_pending_reply(Instant::now() + Duration::from_secs(4)));
+        io.drain_one_pending_reply(|_| Ok(()));
+        assert!(io.pending_replies.is_empty());
+        assert_eq!(io.pending_reply_bytes, 0);
         assert_eq!(io.wire.snapshot().0, 3);
 
         io.destroy().await.expect("io destroy");

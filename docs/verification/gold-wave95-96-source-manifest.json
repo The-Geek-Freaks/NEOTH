@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-05T19:36:01.3598634Z",
-  "validationStatus": "W2424 diagnostic sources statically approved; hosted V3 acceptance pending",
+  "capturedUtc": "2026-10-06T06:46:54.2159270Z",
+  "validationStatus": "independent-static-review-approved-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 15504,
-      "sha256": "FC9F4C1F127E5C73160BE9B3BAA0134306F3C4F4227D73E016734C0FFFDB09E6"
+      "bytes": 15680,
+      "sha256": "860E6DC8BFA2B10A726506CAA7B5E4C2B678FA0FE1510A97DC2B867AEE838329"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3687,6 +3687,11 @@
       "sha256": "9D9BCFA231B29259C8E2E8680FBDB72C36D2FAAC9ACE7F9D901251C7E44BA347"
     },
     {
+      "path": "docs/verification/gold-wave2428-deferred-reply-backpressure.json",
+      "bytes": 3630,
+      "sha256": "2E4789C7DEC74D2AD08DB9C2A4734850B4D60D5700C0AEC51758698A986B3230"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4828,8 +4833,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2419975,
-      "sha256": "8E8DAFF29AFD04F96C5CED12BC4F379BB232AAF02AB58A72A5B28C045F8F3B52"
+      "bytes": 2421774,
+      "sha256": "B2073882E29D1D470DAB8361C6E91CBEEFFB3AF6BFA2745A376A18E769DC4AD1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -8917,6 +8922,11 @@
       "sha256": "A739DE42ADA6407358D1FAEAEF59A2F5D22689F86019E7B59498013B77D036B2"
     },
     {
+      "path": "SRC/vendor/libudx/src/native/socket.rs",
+      "bytes": 29471,
+      "sha256": "5D82271ECB80D68A18BBDFACC5C5861ADA2127735913C824C5A0BBC7BE715FFA"
+    },
+    {
       "path": "SRC/vendor/matrix-sdk-crypto/.cargo_vcs_info.json",
       "bytes": 118,
       "sha256": "7205B8DA9A5EEE62D76DA48B05A3230191E745BD2154FD931AF2ABE09E9CC768"
@@ -10637,9 +10647,19 @@
       "sha256": "2C62459EC0C18E4D921140E99135C7A2DAD4ED08A08BCCABCB249213707AA5CB"
     },
     {
+      "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+      "bytes": 57428,
+      "sha256": "EDCBB730C995E1F8D9024EA43CE23F56F03C295927CD2112D38A1B164D77040E"
+    },
+    {
       "path": "SRC/vendor/peeroxide-dht/src/router.rs",
       "bytes": 42180,
       "sha256": "51BBAFA939049ADAB841BFB1EAD69C4340C9BFA3AC6B24F0C1944B94A14BF875"
+    },
+    {
+      "path": "SRC/vendor/peeroxide-dht/src/rpc.rs",
+      "bytes": 71690,
+      "sha256": "BFED079713A336BE695A5153445DCDC56AF8D1EDF27915DA19B3907C1A1598F7"
     },
     {
       "path": "SRC/vendor/peeroxide/src/error.rs",

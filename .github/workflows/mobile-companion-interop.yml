@@ -151,13 +151,15 @@ jobs:
             router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination \
             router::tests::handshake_reply_peer_metadata_never_replaces_request_destination \
             hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase \
-            hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener
+            hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener \
+            io::tests::would_block_reply_egress_retains_owned_bytes_until_retry_succeeds \
+            io::tests::reply_egress_queue_is_bounded_and_expired_reply_is_terminal
           do
             dht_ordinal=$((dht_ordinal + 1))
             cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
-          test "$dht_ordinal" -eq 4
+          test "$dht_ordinal" -eq 6
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         timeout-minutes: 15

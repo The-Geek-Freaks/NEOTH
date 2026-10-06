@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2424 diagnostic sources statically approved; hosted V3 acceptance pending",
+  "status": "independent-static-review-approved-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 390414,
-    "sha256": "C52D08127FA12C226096A5BAE0D90EB6755AC77EB3548E6457AC391CFABC35BA"
+    "bytes": 391103,
+    "sha256": "48D9ECF44C954C438CCA90A7ED0A5C3C5494496DFA8E649256AFE361000CCA00"
   },
-  "sourceInputs": 2134,
+  "sourceInputs": 2138,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75733,6 +75733,50 @@
       }
     ],
     "note": "Fixed Pair/Active actor diagnostics and bounded per-connect summaries;24Rust+2Python selected;1new portable plus1vendor test; no route/timer/auth/ownership changes. Native Buddy37343742991 admitted on59ba7d71; V3 still failed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2428DeferredReplyBackpressure": {
+    "base": "fb8b3469efc62661a2860500c1dd40ea593eaf65",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 15680,
+        "sha256": "860E6DC8BFA2B10A726506CAA7B5E4C2B678FA0FE1510A97DC2B867AEE838329",
+        "blob": "484b5a7d122fc8fd4aaed8de37ae4e056fb3b736"
+      },
+      {
+        "path": "docs/verification/gold-wave2428-deferred-reply-backpressure.json",
+        "bytes": 3630,
+        "sha256": "2E4789C7DEC74D2AD08DB9C2A4734850B4D60D5700C0AEC51758698A986B3230",
+        "blob": "8867f2e4a968446c1cffb23532f64049bfc0d399"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2421774,
+        "sha256": "B2073882E29D1D470DAB8361C6E91CBEEFFB3AF6BFA2745A376A18E769DC4AD1",
+        "blob": "f55e42d72857814d9ca37cf7860a36ddd700d03f"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/socket.rs",
+        "bytes": 29471,
+        "sha256": "5D82271ECB80D68A18BBDFACC5C5861ADA2127735913C824C5A0BBC7BE715FFA",
+        "blob": "f69a52233de0dc79fe4c94a759945f114049ae9c"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+        "bytes": 57428,
+        "sha256": "EDCBB730C995E1F8D9024EA43CE23F56F03C295927CD2112D38A1B164D77040E",
+        "blob": "bb4c48843e70dc74b75deeeb546946cd5e6e3829"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/rpc.rs",
+        "bytes": 71690,
+        "sha256": "BFED079713A336BE695A5153445DCDC56AF8D1EDF27915DA19B3907C1A1598F7",
+        "blob": "73266502e6f286a7358379865a0857ad8ee3d274"
+      }
+    ],
+    "note": "Retain bounded WouldBlock replies with finite expiry and request progress; 26 exact hosted Rust and 2 collector cases selected; observed V3 cause and new runtime acceptance remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

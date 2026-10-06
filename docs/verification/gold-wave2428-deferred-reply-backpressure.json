@@ -1,0 +1,81 @@
+{
+  "schema": "neoth.wave2428.deferred-reply-backpressure.v1",
+  "base": "fb8b3469efc62661a2860500c1dd40ea593eaf65",
+  "status": "independent-static-review-approved-hosted-pending",
+  "priorHostedEvidence": {
+    "run": "37366623867",
+    "attempt": 3,
+    "job": "112130937473",
+    "producer": "fb8b3469efc62661a2860500c1dd40ea593eaf65",
+    "result": "failure",
+    "exactRustPassed": 24,
+    "collectorPassed": 2,
+    "failureStage": "status_reconnect_start",
+    "failureCategory": "work_deadline",
+    "activeScopedNoiseAuthenticatedObserved": true,
+    "activeScopedReplyCapabilityConsumedObserved": true,
+    "activeScopedConnectionDeliveredObserved": false,
+    "packetOrRequestCorrelationProven": false,
+    "serveExitCode": 0,
+    "walDrained": true,
+    "artifactId": "11394002917",
+    "zipSha256": "E94CD2C526227C734C4C282E184C711339066B59731BE653C65C6294E30997E5",
+    "rootFailureCustodySha256": "7064A86A2AA32D7E22A76DC9F9592E754682C0D4202A447E9A0E138352B4024C",
+    "rootPartialRegressionSha256": "CFFB7F2C6A693C5CD18A4379E117286F6F5A488C8C6146206BDDAC8CB00A71D8"
+  },
+  "defect": "Encoded DHT replies are discarded when bounded UDX raw egress returns WouldBlock; outgoing requests already retain actor-owned retry state.",
+  "observedFailureCauseEstablished": false,
+  "repair": {
+    "scope": "SRC/vendor/peeroxide-dht/src/io.rs",
+    "retainOnlyWouldBlock": true,
+    "replyEntryCap": 1024,
+    "replyPayloadByteCap": 1048576,
+    "additionalQueueNotGlobalCap": true,
+    "replyLifetimeMillis": 4000,
+    "existingRequestTimeoutOrRetriesChanged": false,
+    "wireFramesOrKeyPinsChanged": false,
+    "expiredPrefixPruning": "bounded by initial queue length before one live reply attempt",
+    "oneLiveReplyPerExistingDrain": "production-used send seam verified statically and covered by exact vendor tests",
+    "requestFifoProgress": "original inflight request drain retained after reply attempt; regression asserts pending request removal"
+  },
+  "selection": {
+    "exactRustCases": 26,
+    "collectorCases": 2,
+    "portableBefore": 2760,
+    "portableAfter": 2760,
+    "newVendorIdentities": [
+      "io::tests::would_block_reply_egress_retains_owned_bytes_until_retry_succeeds",
+      "io::tests::reply_egress_queue_is_bounded_and_expired_reply_is_terminal"
+    ]
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "freshHostedRun": "pending",
+    "v3Accepted": false,
+    "v4Held": true,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "review": {
+    "status": "APPROVE FOR NARROW INTEGRATION AND HOSTED VALIDATION",
+    "path": "work/gold-20260906/wave2428-reconnect-reply/review/STATIC_REVIEW.md",
+    "sha256": "E6A688A51AB6EBFDC43E9038A8445A21E6CC6BA880B20D46C258C8BB32B76161"
+  },
+  "candidateBindings": [
+    {
+      "candidateSha256": "EDCBB730C995E1F8D9024EA43CE23F56F03C295927CD2112D38A1B164D77040E",
+      "baseSha256": "1E3EE91E25094081ACC5AA3BA568B63F1FC9CAB13CF2EB3667C13794EFABBC5B",
+      "path": "SRC/vendor/peeroxide-dht/src/io.rs"
+    },
+    {
+      "candidateSha256": "516A13FAF7FD7061CCED39A7C2E5B18ED6D08E2CEB1CEE51667C041DCB6BD1E5",
+      "baseSha256": "BB8FB9378002F76A1B6CB6B0AD721FA518636960593C62328A943F9AE7CCC00D",
+      "path": ".github/workflows/mobile-companion-interop.yml"
+    }
+  ],
+  "candidateManifest": {
+    "supersedes": "Earlier HASHES.json and REPORT.md record the initial trace only; CANDIDATE-HASHES.json is the approved candidate authority.",
+    "sha256": "2EEE60FD841EA06C769E9D77A83B4BDCB1707A4F286CB1B4C0BBB322C0444FC6",
+    "path": "work/gold-20260906/wave2428-reconnect-reply/client-vendor/CANDIDATE-HASHES.json"
+  }
+}
