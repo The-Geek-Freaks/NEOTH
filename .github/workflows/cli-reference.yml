@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       companion_regressions:
-        description: 'Also run the six exact companion authority, lifecycle, and revoke regressions'
+        description: 'Also run canonical mobile core plus retained companion authority and revoke regressions'
         type: boolean
         default: false
       codegraph_contract_regressions:
@@ -174,14 +174,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Targeted diagnosis before repeating all 528 focus cases. The original
-      # authority/revoke pair remains selected, followed by the four canonical
-      # W2449 compile-repair contracts. This probe never replaces the full
-      # focused or native acceptance lanes. Reject zero-test selections.
-      - name: Run exact mobile authority, lifecycle, and revoke regressions
+      # Reuse the producer-validated mobile core selection to avoid a copied
+      # lifecycle subset drifting behind it. The two retained authority/chat
+      # guards are outside core and are appended in their established order.
+      # This remains a narrow hosted diagnostic, not mobile product acceptance.
+      - name: Run canonical mobile core and retained companion regressions
         if: ${{ inputs.companion_regressions }}
         timeout-minutes: 20
-        working-directory: SRC
         env:
           CARGO_TERM_COLOR: never
           RUST_BACKTRACE: '1'
@@ -189,45 +188,73 @@ jobs:
         run: |
           set -euo pipefail
           proof_dir="$RUNNER_TEMP/neoth-companion-regressions"
+          selection_dir="$RUNNER_TEMP/neoth-cli-mobile-selection"
           mkdir -p "$proof_dir"
+          python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"
           printf '%s\n' "$GITHUB_SHA" > "$proof_dir/source-head.txt"
-          printf '%s\n' \
-            'daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use' \
-            'daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing' \
-            'daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join' \
-            'daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live' \
-            'daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener' \
-            'daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle' > "$proof_dir/selection.txt"
-          printf '%s\n' \
-            'SRC/neothd/src/daemon/companion_runtime.rs' \
-            'SRC/neothd/src/daemon/companion_runtime_unavailable.rs' \
-            'SRC/neothd/src/daemon/audit_rpc/tests.rs' \
-            'SRC/neothd/src/daemon/audit_rpc/server.rs' \
-            'SRC/neothd/src/daemon/companion_authority.rs' \
-            'SRC/neothd/src/daemon/chat_runtime.rs' > "$proof_dir/source-paths.txt"
-          sha256sum \
-            neothd/src/daemon/companion_runtime.rs \
-            neothd/src/daemon/companion_runtime_unavailable.rs \
-            neothd/src/daemon/audit_rpc/tests.rs \
-            neothd/src/daemon/audit_rpc/server.rs \
-            neothd/src/daemon/companion_authority.rs \
-            neothd/src/daemon/chat_runtime.rs > "$proof_dir/SHA256SUMS.txt"
-          ordinal=0
+          cp "$selection_dir/core.txt" "$proof_dir/canonical-core.txt"
+          cp "$selection_dir/selection-custody.json" "$proof_dir/selection-custody.json"
+          cp .github/scripts/mobile/mobile-companion-interop-selection.json "$proof_dir/canonical-selection.json"
+          declare -A selected=()
+          while IFS= read -r identity; do
+            test -n "$identity"
+            test -z "${selected[$identity]+x}"
+            selected[$identity]=1
+            printf '%s\n' "$identity"
+          done < "$proof_dir/canonical-core.txt" > "$proof_dir/selection.txt"
           for identity in \
             daemon::companion_authority::real_store_regression::status_only_grant_is_denied_before_chat_challenge_and_chat_challenge_is_one_use \
-            daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing \
-            daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join \
-            daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live \
-            daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener \
-            daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle
+            daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing
           do
+            if test -z "${selected[$identity]+x}"; then
+              selected[$identity]=1
+              printf '%s\n' "$identity" >> "$proof_dir/selection.txt"
+            fi
+          done
+          python3 - "$proof_dir/selection-custody.json" > "$selection_dir/canonical-source-paths.txt" <<'PY'
+          import json
+          import sys
+          custody = json.load(open(sys.argv[1], encoding='utf-8'))
+          for path in custody['sourcePaths']:
+              print(path)
+          PY
+          canonical_source_count="$(wc -l < "$selection_dir/canonical-source-paths.txt")"
+          test "$canonical_source_count" -gt 0
+          test "$(sort -u "$selection_dir/canonical-source-paths.txt" | wc -l)" -eq "$canonical_source_count"
+          cat "$selection_dir/canonical-source-paths.txt" > "$proof_dir/source-paths.txt"
+          declare -A source_paths=()
+          while IFS= read -r source_path; do
+            test -n "$source_path"
+            test -z "${source_paths[$source_path]+x}"
+            source_paths[$source_path]=1
+          done < "$proof_dir/source-paths.txt"
+          for source_path in \
+            'SRC/neothd/src/daemon/companion_authority.rs' \
+            'SRC/neothd/src/daemon/chat_runtime.rs'
+          do
+            if test -z "${source_paths[$source_path]+x}"; then
+              source_paths[$source_path]=1
+              printf '%s\n' "$source_path" >> "$proof_dir/source-paths.txt"
+            fi
+          done
+          expected_source_count="${#source_paths[@]}"
+          test "$(wc -l < "$proof_dir/source-paths.txt")" -eq "$expected_source_count"
+          while IFS= read -r source_path; do
+            sha256sum "$source_path"
+          done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
+          canonical_identity_count="$(wc -l < "$proof_dir/canonical-core.txt")"
+          test "$canonical_identity_count" -gt 0
+          expected_identity_count="${#selected[@]}"
+          test "$(wc -l < "$proof_dir/selection.txt")" -eq "$expected_identity_count"
+          ordinal=0
+          while IFS= read -r identity; do
             ordinal=$((ordinal + 1))
-            cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
+            (cd SRC && cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture) 2>&1 | tee "$proof_dir/$ordinal.log"
             test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$ordinal.log")" -eq 1
             test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log")" -eq 1
-          done
-          test "$ordinal" -eq 6
-          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$ordinal" "$ordinal" > "$proof_dir/final-counts.txt"
+          done < "$proof_dir/selection.txt"
+          test "$ordinal" -eq "$expected_identity_count"
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$expected_identity_count" "$ordinal" > "$proof_dir/final-counts.txt"
 
       - name: Upload companion regression evidence
         if: ${{ always() && inputs.companion_regressions }}
@@ -239,8 +266,8 @@ jobs:
           retention-days: 14
 
       # This optional batch shares the already-built default-feature neoth
-      # library. It executes only the six updater-status identities below,
-      # once each, and retains source-bound logs for their narrow admission.
+      # library. It executes six updater-status and five W2452 owner-contract identities below,
+      # once each, and retains source-bound logs for their narrow status-and-owner admission.
       - name: Run exact updater-status regressions
         if: ${{ inputs.updater_status_regressions }}
         timeout-minutes: 20
@@ -259,7 +286,12 @@ jobs:
             'cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child' \
             'cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent' \
             'daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback' \
-            'daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics' > "$proof_dir/selection.txt"
+            'daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics' \
+            'daemon::audit_rpc::tests::w2452_self_update_audit_live_listener_admits_only_d2_and_de' \
+            'cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail' \
+            'daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start' \
+            'cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment' \
+            'cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate' > "$proof_dir/selection.txt"
           printf '%s\n' \
             'SRC/neothd/src/cli/serve.rs' \
             'SRC/neothd/src/cli/serve_tasks.rs' \
@@ -267,31 +299,25 @@ jobs:
             'SRC/neothd/src/daemon/audit_rpc/server.rs' \
             'SRC/neothd/src/daemon/audit_rpc/client.rs' \
             'SRC/neothd/src/daemon/audit_rpc/mod.rs' \
-            'SRC/neothd/src/daemon/audit_rpc/tests.rs' > "$proof_dir/source-paths.txt"
-          sha256sum \
-            neothd/src/cli/serve.rs \
-            neothd/src/cli/serve_tasks.rs \
-            neothd/src/cli/updater.rs \
-            neothd/src/daemon/audit_rpc/server.rs \
-            neothd/src/daemon/audit_rpc/client.rs \
-            neothd/src/daemon/audit_rpc/mod.rs \
-            neothd/src/daemon/audit_rpc/tests.rs > "$proof_dir/SHA256SUMS.txt"
+            'SRC/neothd/src/daemon/audit_rpc/tests.rs' \
+            'SRC/neothd/src/cli/update.rs' \
+            'SRC/neothd/src/cli/internal.rs' \
+            'SRC/neothd/src/daemon/pidfile.rs' \
+            'SRC/neothd/src/wal/writer.rs' > "$proof_dir/source-paths.txt"
+          while IFS= read -r source_path; do
+            sha256sum "${source_path#SRC/}"
+          done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
+          expected_updater_count="$(wc -l < "$proof_dir/selection.txt")"
+          test "$expected_updater_count" -eq 11
           ordinal=0
-          for identity in \
-            daemon::audit_rpc::tests::updater_status_client_round_trips_live_listener_and_refuses_invalid_requests \
-            daemon::audit_rpc::tests::updater_status_binding_rejects_noncanonical_or_foreign_chain_bases \
-            cli::updater::tests::live_daemon_binding_selects_only_a_canonical_direct_child \
-            cli::updater::tests::default_status_uses_offline_canonical_chain_when_daemon_absent \
-            daemon::audit_rpc::client::tests::updater_status_connected_stall_expires_hard_without_offline_fallback \
-            daemon::audit_rpc::client::tests::updater_status_offline_classification_uses_io_kind_never_diagnostics
-          do
+          while IFS= read -r identity; do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             test "$(grep -Fxc "test $identity ... ok" "$proof_dir/$ordinal.log")" -eq 1
             test "$(grep -Ec '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log")" -eq 1
-          done
-          test "$ordinal" -eq 6
-          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$ordinal" "$ordinal" > "$proof_dir/final-counts.txt"
+          done < "$proof_dir/selection.txt"
+          test "$ordinal" -eq "$expected_updater_count"
+          printf 'selected=%s\nvisited=%s\nfailed_or_missing=0\n' "$expected_updater_count" "$ordinal" > "$proof_dir/final-counts.txt"
 
       - name: Upload updater-status regression evidence
         if: ${{ always() && inputs.updater_status_regressions }}

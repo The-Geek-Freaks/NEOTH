@@ -152,7 +152,8 @@ pub async fn run_internal(args: InternalArgs, output: OutputFormat) -> Result<()
                         &completed.target_triple,
                         "windows_detached_handoff",
                     )
-                    .await;
+                    .await
+                    .context("Windows handoff applied but SELF_UPDATE_APPLIED audit acknowledgement is indeterminate")?;
                     println!(
                         "{}",
                         serde_json::json!({

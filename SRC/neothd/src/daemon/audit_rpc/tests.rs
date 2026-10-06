@@ -4111,3 +4111,54 @@ async fn companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_li
     // later runtime shutdown has no retained owner to reinterpret as success.
     finish_companion_pair_listener_fixture(fixture).await;
 }
+
+const W2452_CHILD_HOME: &str = "NEOTH_W2452_SELF_UPDATE_HOME";
+const W2452_CHILD_EVENT: &str = "NEOTH_W2452_SELF_UPDATE_EVENT";
+
+#[test]
+#[ignore = "helper invoked by w2452 self-update listener integration"]
+fn w2452_self_update_audit_child() {
+    let Some(home) = std::env::var_os(W2452_CHILD_HOME) else { return; };
+    let event: u8 = std::env::var(W2452_CHILD_EVENT).expect("event").parse().expect("u8");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let payload: &[u8] = if event == 0xD2 {
+        br#"{"from_version":"1","to_version":"2","transaction_id":"tx","repo":"r","channel":"stable","target_triple":"x","archive_sha256":"h","download_url":"u","signature_status":"verified","trigger_source":"test","ts_unix":1}"#
+    } else {
+        br#"{"to_version":"2","repo":"r","staged_repo":"r","channel":"stable","target_triple":"x","archive_sha256":"h","reason":"r","trigger_source":"test","ts_unix":1}"#
+    };
+    runtime.block_on(super::try_post_self_update_audit_frame(std::path::Path::new(&home), event, payload))
+        .expect("same-user child receives daemon append ACK");
+}
+
+fn w2452_post_from_child(home: &std::path::Path, event: u8) {
+    let output = std::process::Command::new(std::env::current_exe().expect("test exe"))
+        .arg("--ignored").arg("--exact").arg("daemon::audit_rpc::tests::w2452_self_update_audit_child")
+        .env(W2452_CHILD_HOME, home).env(W2452_CHILD_EVENT, event.to_string()).output().expect("child");
+    assert!(output.status.success(), "same-user typed client must receive ACK: stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn w2452_self_update_audit_live_listener_admits_only_d2_and_de() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "self-update-audit");
+    let (writer, join) = crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(), writer: writer.clone(), cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")] membership: None,
+        #[cfg(feature = "cluster")] outbound_task_delegate: None,
+        audit_routes_enabled: false, chat_runtime: None, gui_chat_runtime: None,
+        conversation_runtime: None, companion_runtime: None, webchat: None, updater_status: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    for event_type in [0xD2_u8, 0xDE_u8] {
+        w2452_post_from_child(home.path(), event_type);
+    }
+    let malformed = "{\"event_type\":210,\"event_subtype\":0,\"payload_b64\":\"e30=\"}";
+    assert_eq!(raw_post_path(&endpoint, "/updater/self-update-audit", Some(&token), malformed).await.0, 400);
+    let poisoned = "{\"event_type\":168,\"event_subtype\":0,\"payload_b64\":\"e30=\"}";
+    assert_eq!(raw_post_path(&endpoint, "/updater/self-update-audit", Some(&token), poisoned).await.0, 422);
+    listener.abort(); let _ = listener.await; drop(writer); join.await.unwrap();
+}

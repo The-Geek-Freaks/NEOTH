@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T17:18:44.7643140Z",
-  "validationStatus": "W2451-HOSTED-PASS-W2453-REPAIR-PENDING",
+  "capturedUtc": "2026-10-06T17:59:25.8215501Z",
+  "validationStatus": "W2452-W2454-STATIC-REVIEWED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 24292,
-      "sha256": "CCAC4692B61C7F71CD78291ABFAC122452F599763439172A362AF2D98EE9DA64"
+      "bytes": 25191,
+      "sha256": "E57D7E5EC952CB7F9596AC378765215C9F9501DF9F845DF0095E75434EBD753E"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3802,9 +3802,19 @@
       "sha256": "C3582400619FBE522A2EEE0055D0823B7776735DE6E58DA38CE0AE81BDF70940"
     },
     {
+      "path": "docs/verification/gold-wave2452-self-update-wal-owner.json",
+      "bytes": 5909,
+      "sha256": "EFBB06857AFAEFDE4690ECD691A4255825462E52FD6DB5BA9F23E9222EF93CE9"
+    },
+    {
       "path": "docs/verification/gold-wave2453-preclosed-companion.json",
-      "bytes": 1203,
-      "sha256": "20AC9760ED529B94C10909212998B05FAE7B9AFB9DB4C126A308D1EBF65AA35D"
+      "bytes": 1879,
+      "sha256": "82789FF0BC3E3BEE788B8CAD833068CF15EE1EE5269998464DEA9B88A34A6EA0"
+    },
+    {
+      "path": "docs/verification/gold-wave2454-canonical-cli-selection.json",
+      "bytes": 1586,
+      "sha256": "BED21A77DB53C02E931644AEB056FB4584A6872363EA9AF08841A3FB98DFBEE0"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4958,8 +4968,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2450775,
-      "sha256": "A959163FD8720D8782488A28A7F9207B8BF257C0C6E5BB2E29ACC6A529CA377D"
+      "bytes": 2452615,
+      "sha256": "E1D7AA444528C354A5E00C40C7CA5B67C15E1F11EA6C40F5E2E72F8B59ABDA61"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6093,8 +6103,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/internal.rs",
-      "bytes": 14523,
-      "sha256": "DF76F78173049CD8DEAC3DB111B24627A44C80E8EA2276F612C71F6C60CCDD5A"
+      "bytes": 14643,
+      "sha256": "ADED51459291998CAE059158D4A47D2CC381BDA5F8C9065585B49930CF80571A"
     },
     {
       "path": "SRC/neothd/src/cli/kanban.rs",
@@ -6275,6 +6285,11 @@
       "path": "SRC/neothd/src/cli/todo.rs",
       "bytes": 41696,
       "sha256": "15C4D3ECA52C36E87B943C613B045ABDA01A17D4927E0F91B5FF5933D320CBAA"
+    },
+    {
+      "path": "SRC/neothd/src/cli/update.rs",
+      "bytes": 43790,
+      "sha256": "1D109C8C756B83665EA3AA91DE8C53392961B3DFB619C5A7C84DE14116447ABC"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -6763,23 +6778,23 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 79020,
-      "sha256": "901943F11D9709548CA65E6B7CCC1253A150F1562817AC2B35F9BDA78C815C36"
+      "bytes": 81724,
+      "sha256": "2EFB509929E6C9C5C1FA8E7FC3B83982849E7B74A861E6A4C4B37B0BAEAB5AC1"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 21859,
-      "sha256": "5944BB4837D274E1F09A710A00AE05A6E2097A4C6DC32FBFA37CE392342301D8"
+      "bytes": 21922,
+      "sha256": "F5616A0320D91D39E37344F8AEB1353801E44CEE748FA25DE9F6D0591F3D3F75"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 112281,
-      "sha256": "116FC8A701BEE3642D2568B71EE207171B3DF7531EAB650AE02C30469488E1B8"
+      "bytes": 115752,
+      "sha256": "7533DCF7D49296EF4091A2C82089F80723597124F35D3DA83156FEE0A8D78CEE"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 157122,
-      "sha256": "92628748CA600829218C86B1E6EFD577C96A5E216A6732A5200CA32AC6C7D85D"
+      "bytes": 160492,
+      "sha256": "BB1D8F0922D41DC97DEF0E45CAEE254C556B962BAB0EF3EF2C6C94DD5B736905"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",
@@ -7010,6 +7025,11 @@
       "path": "SRC/neothd/src/daemon/pattern_cron.rs",
       "bytes": 41023,
       "sha256": "9C84613BCE0B6A84838AC40B5814D8176871F61DCB7327F6BEF63294E89E65D3"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/pidfile.rs",
+      "bytes": 37917,
+      "sha256": "C5BDEAD29050EB68F93F61916B38A86E9EF3C2CE4968EFB4EB629B739F8D32E1"
     },
     {
       "path": "SRC/neothd/src/daemon/post_init_cron.rs",
@@ -8653,8 +8673,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 479741,
-      "sha256": "D4A11CD84DF5F16DBBA658429743295A6E659E11461CCDB1CE5501B623BFF2D4"
+      "bytes": 481137,
+      "sha256": "26365E38C3C84D946B613EC68063744663DCC7F1277E697C66ACF2951FA3F799"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

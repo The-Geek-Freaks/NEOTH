@@ -92,7 +92,9 @@ pub(crate) use client::{
     GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
     webchat_handoff_mint, webchat_resume_handoff_mint, webchat_runtime_status,
 };
-pub(crate) use client::{UpdaterStatusClientError, updater_status_binding};
+pub(crate) use client::{
+    SelfUpdateAuditError, UpdaterStatusClientError, try_post_self_update_audit_frame, updater_status_binding,
+};
 pub(crate) use client::{
     companion_v3_list_devices, companion_v3_mint_pair, companion_v3_revoke_device,
 };

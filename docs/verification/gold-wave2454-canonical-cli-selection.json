@@ -1,0 +1,32 @@
+{
+  "schema": "neoth.gold-wave2454-canonical-companion-and-owner-selection.v1",
+  "status": "IMPLEMENTED-STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "e36d7ddd5f260770d51d04a4a4fca475e2004bac",
+  "workflowCandidateSha256": "E57D7E5EC952CB7F9596AC378765215C9F9501DF9F845DF0095E75434EBD753E",
+  "reviewSha256": "AD1C460284CEEE4C43B969F861C1C3CF340E91823A19BC3EAED29AFCAE608639",
+  "changes": [
+    "Reuse validated canonical mobile core selection, preserving order and the ordered union of existing authority/chat guards.",
+    "Use one selection file for each lane; reject internal canonical duplicates and derive companion case/source counts from the actual union.",
+    "Retain six updater-status regressions and add five real self-update audit-owner parent tests; ignored child helpers do not count as acceptance."
+  ],
+  "currentExpected": {
+    "companionCases": 24,
+    "companionSources": 42,
+    "companionArchiveEntries": 32,
+    "updaterCases": 11,
+    "updaterSources": 11,
+    "updaterArchiveEntries": 16,
+    "generatedDocsArchiveEntries": 3,
+    "totalArchiveEntries": 51
+  },
+  "preserved": [
+    "All existing workflow gates and default-false optional inputs.",
+    "Job and step timeouts, features, exact test terminals and cache policy.",
+    "Separate full mobile product and native/release acceptance."
+  ],
+  "researchSource": "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idsteps",
+  "runtimeSpeedupMeasured": false,
+  "localExecutableValidationRan": false,
+  "hostedStatus": "pending",
+  "releaseReady": false
+}

@@ -37,6 +37,17 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
+/// The self-update receipt is a durable owner transaction.  Only a proved
+/// pre-write absence may select the offline owner; every contacted daemon,
+/// stale sidecar, refusal, deadline or response ambiguity remains terminal.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SelfUpdateAuditError {
+    #[error("self-update audit daemon absent before request write: {0}")]
+    OfflinePrewriteAbsent(String),
+    #[error("self-update audit ownership is indeterminate: {0}")]
+    Indeterminate(String),
+}
+
 /// `updater status` may use the legacy offline chain only when the daemon is
 /// genuinely unavailable. Once the authenticated request reached a live
 /// incarnation, every refusal or malformed response is a hard failure: it
@@ -331,6 +342,40 @@ async fn try_post_frame_to_path(
     }
 }
 
+/// Dedicated internal route for the two self-update receipts.  This deliberately
+/// does not share generic `/audit`: the event pair is sealed to D2/DE and all
+/// uncertainty after connection is surfaced to the caller.
+pub(crate) async fn try_post_self_update_audit_frame(
+    home: &Path, event_type: u8, payload: &[u8],
+) -> std::result::Result<(), SelfUpdateAuditError> {
+    if !matches!(event_type, 0xD2 | 0xDE) {
+        return Err(SelfUpdateAuditError::Indeterminate("event type is outside the D2/DE contract".into()));
+    }
+    let sidecar = match read_sidecar(home) {
+        Ok(sidecar) => sidecar,
+        Err(error) if updater_status_missing_discovery(&error) => {
+            return Err(SelfUpdateAuditError::OfflinePrewriteAbsent("audit discovery sidecar is absent".into()));
+        }
+        Err(error) => return Err(SelfUpdateAuditError::Indeterminate(format!("read audit discovery: {error:#}"))),
+    };
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(SelfUpdateAuditError::Indeterminate("stale or foreign daemon sidecar".into()));
+    }
+    let token = read_rpc_token(home)
+        .map_err(|error| SelfUpdateAuditError::Indeterminate(format!("read authenticated audit token: {error:#}")))?;
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+    let body = format!("{{\"event_type\":{event_type},\"event_subtype\":0,\"payload_b64\":{payload_b64:?}}}");
+    let request = format!(
+        "POST /updater/self-update-audit HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+        len = body.len(),
+    );
+    match updater_status_exchange(sidecar.endpoint, request).await {
+        Ok((200, _)) => Ok(()),
+        Ok((status, _)) => Err(SelfUpdateAuditError::Indeterminate(format!("daemon refused dedicated self-update receipt: HTTP {status}"))),
+        Err(UpdaterStatusClientError::Unavailable(error)) => Err(SelfUpdateAuditError::OfflinePrewriteAbsent(error)),
+        Err(UpdaterStatusClientError::AuthenticatedInvalid(error)) => Err(SelfUpdateAuditError::Indeterminate(error)),
+    }
+}
 /// Reconcile a previously persisted durable admission with the daemon-owned
 /// writer. Availability errors are indeterminate: callers retain the exact
 /// descriptor and must never replace this operation with a fresh Gate call.

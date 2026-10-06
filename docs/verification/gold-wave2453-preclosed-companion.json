@@ -13,8 +13,28 @@
   ],
   "candidateSha256": "135AB2241E8E830A2B47BAA6554907F8AF2A3E2EC66F3B34D68231BEC1D14153",
   "staticReviewSha256": "E8B08882DF18A47CF5BCC17210619E7359172B709C1B0FFB8D4758E6D8F589BB",
-  "hostedStatus": "REPAIR-PENDING-EXACT-PRODUCER-RERUN",
+  "hostedStatus": "REPAIR-CASE-PASSED;61-RUST-12-COLLECTOR-PARTIAL-ADMISSION;PRODUCT-CHAT-PAIR-FAILED",
   "priorProductFlowExecuted": false,
   "localExecutableValidationRan": false,
-  "mobileNativeDeviceReleaseAccepted": false
+  "mobileNativeDeviceReleaseAccepted": false,
+  "hostedEvidence": {
+    "producer": "e36d7ddd5f260770d51d04a4a4fca475e2004bac",
+    "run": "37503311754",
+    "attempt": 1,
+    "job": "112405560154",
+    "proofSha256": "249BFC8BD21DE690F43687A7EF5DDC0922371117E1FE0878A58CE160582F862B",
+    "rustPassed": 61,
+    "collectorPassed": 12,
+    "sourceBindings": 40,
+    "archiveEntries": 4,
+    "statusPairPassed": true,
+    "statusReconnectPassed": true,
+    "statusOnlyChatProviderRequests": 0,
+    "chatPairPassed": false,
+    "chatPassed": false,
+    "revokePassed": false,
+    "serveExitCode": 1,
+    "cleanProcessAccepted": false,
+    "failureStage": "pair_chat_start"
+  }
 }

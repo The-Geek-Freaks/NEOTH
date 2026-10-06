@@ -1,0 +1,123 @@
+{
+  "schema": "neoth.gold-wave2452-self-update-wal-owner.v1",
+  "status": "IMPLEMENTED-STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "e36d7ddd5f260770d51d04a4a4fca475e2004bac",
+  "candidateManifestSha256": "CC13B76031BE5B135FE86B754A83E890AC75952D6B70E476DB43F8838DC5F8E3",
+  "staticReviews": [
+    "D4558A600C463E9EF31B196B043DABB8AB2303746AA32AE065B6EC53128938D5",
+    "BC6DA1418C590D86713F1767DB379EE0FE0E9BA9830B681F05AA64132449C042"
+  ],
+  "changes": [
+    "Route only SELF_UPDATE_APPLIED D2 and SELF_UPDATE_REJECTED DE through authenticated live daemon append ownership.",
+    "Only proven pre-write daemon absence permits the offline path; connected errors and ambiguous append results remain hard errors.",
+    "Hold the actual daemon startup OS lock through offline writer completion and continue the latest canonical self-update audit segment.",
+    "Propagate audit failure before successful rendering, restart, or Windows detached-handoff committed cleanup."
+  ],
+  "sources": [
+    {
+      "repo_path": "SRC/neothd/src/cli/internal.rs",
+      "candidate_file": "SRC_neothd_src_cli_internal.rs",
+      "base_sha256": "DF76F78173049CD8DEAC3DB111B24627A44C80E8EA2276F612C71F6C60CCDD5A",
+      "candidate_sha256": "ADED51459291998CAE059158D4A47D2CC381BDA5F8C9065585B49930CF80571A"
+    },
+    {
+      "repo_path": "SRC/neothd/src/cli/update.rs",
+      "candidate_file": "SRC_neothd_src_cli_update.rs",
+      "base_sha256": "C1B3B9809FDF6F248B73893B627C09B6B4955431C9EA9A259E42F9C77EF0CBE2",
+      "candidate_sha256": "1D109C8C756B83665EA3AA91DE8C53392961B3DFB619C5A7C84DE14116447ABC"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_client.rs",
+      "base_sha256": "901943F11D9709548CA65E6B7CCC1253A150F1562817AC2B35F9BDA78C815C36",
+      "candidate_sha256": "2EFB509929E6C9C5C1FA8E7FC3B83982849E7B74A861E6A4C4B37B0BAEAB5AC1"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_mod.rs",
+      "base_sha256": "5944BB4837D274E1F09A710A00AE05A6E2097A4C6DC32FBFA37CE392342301D8",
+      "candidate_sha256": "22EE7C5F1862A6BD547907691C050CE5588C5367237FE8CB054259D387BB3680"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_server.rs",
+      "base_sha256": "116FC8A701BEE3642D2568B71EE207171B3DF7531EAB650AE02C30469488E1B8",
+      "candidate_sha256": "E805BC221901E51006C55725E8ECC0A908D91DBF6E4560165FBB981BD014A449"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "candidate_file": "SRC_neothd_src_daemon_audit_rpc_tests.rs",
+      "base_sha256": "92628748CA600829218C86B1E6EFD577C96A5E216A6732A5200CA32AC6C7D85D",
+      "candidate_sha256": "BB1D8F0922D41DC97DEF0E45CAEE254C556B962BAB0EF3EF2C6C94DD5B736905"
+    },
+    {
+      "repo_path": "SRC/neothd/src/daemon/pidfile.rs",
+      "candidate_file": "SRC_neothd_src_daemon_pidfile.rs",
+      "base_sha256": "6378E74AF10CBAF6D91DE04344360FD9D9FF74C90A0FB0E5D4C02869373141EF",
+      "candidate_sha256": "C5BDEAD29050EB68F93F61916B38A86E9EF3C2CE4968EFB4EB629B739F8D32E1"
+    },
+    {
+      "repo_path": "SRC/neothd/src/wal/writer.rs",
+      "candidate_file": "SRC_neothd_src_wal_writer.rs",
+      "base_sha256": "D4A11CD84DF5F16DBBA658429743295A6E659E11461CCDB1CE5501B623BFF2D4",
+      "candidate_sha256": "26365E38C3C84D946B613EC68063744663DCC7F1277E697C66ACF2951FA3F799"
+    }
+  ],
+  "realBehaviorTests": [
+    {
+      "test": "daemon::audit_rpc::tests::w2452_self_update_audit_live_listener_admits_only_d2_and_de",
+      "platform": "all",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "BB1D8F0922D41DC97DEF0E45CAEE254C556B962BAB0EF3EF2C6C94DD5B736905",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail",
+      "platform": "all",
+      "sourcePath": "SRC/neothd/src/cli/update.rs",
+      "sourceSha256": "1D109C8C756B83665EA3AA91DE8C53392961B3DFB619C5A7C84DE14116447ABC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
+      "platform": "all",
+      "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
+      "sourceSha256": "C5BDEAD29050EB68F93F61916B38A86E9EF3C2CE4968EFB4EB629B739F8D32E1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
+      "platform": "unix",
+      "sourcePath": "SRC/neothd/src/cli/update.rs",
+      "sourceSha256": "1D109C8C756B83665EA3AA91DE8C53392961B3DFB619C5A7C84DE14116447ABC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate",
+      "platform": "all",
+      "sourcePath": "SRC/neothd/src/cli/update.rs",
+      "sourceSha256": "1D109C8C756B83665EA3AA91DE8C53392961B3DFB619C5A7C84DE14116447ABC",
+      "junitClass": "neoth"
+    }
+  ],
+  "ignoredChildHelpers": [
+    {
+      "test": "daemon::audit_rpc::tests::w2452_self_update_audit_child",
+      "platform": "all",
+      "ignored": true,
+      "invokedBy": "daemon::audit_rpc::tests::w2452_self_update_audit_live_listener_admits_only_d2_and_de"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_child_daemon_start",
+      "platform": "all",
+      "ignored": true,
+      "invokedBy": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start"
+    }
+  ],
+  "requiredPortableRegistrations": 4,
+  "requiredUnixOnlyRegistrations": 1,
+  "localExecutableValidationRan": false,
+  "hostedStatus": "pending",
+  "allStandaloneWalCallersMigrated": false,
+  "nativeDeviceReleaseAccepted": false
+}

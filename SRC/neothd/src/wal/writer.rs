@@ -458,6 +458,11 @@ pub(crate) fn unique_standalone_segment_path(wal_dir: &Path, surface: &str) -> P
     wal_dir.join(format!("{}-{surface}-000001.wal", uuid::Uuid::now_v7()))
 }
 
+/// Canonical sequence-one base for the only offline self-update audit owner.
+/// D2 and DE share this exact chain; callers must never allocate UUID namespaces.
+pub(crate) fn self_update_audit_chain_base_path(wal_dir: &Path) -> PathBuf {
+    wal_dir.join("self-update-audit-000001.wal")
+}
 /// The one standalone surface whose writer must NOT emit compaction markers:
 /// the HMAC-key rotation one-shot already holds the rotation transaction lock,
 /// so emitting an old-key marker after that boundary would be wrong.
@@ -11642,5 +11647,21 @@ mod tests {
         );
         drop(writer);
         join.await.expect("join restarted writer");
+    }
+    #[tokio::test]
+    async fn w2452_d2_then_de_reuses_rotated_self_update_audit_tail() {
+        let home = tempdir().expect("home");
+        let wal = home.path().join("wal"); std::fs::create_dir(&wal).expect("wal");
+        let base = self_update_audit_chain_base_path(&wal);
+        for (path, event) in [
+            (base.clone(), crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED),
+            (wal.join("self-update-audit-000002.wal"), crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED),
+        ] {
+            let (writer, join) = spawn_test_writer_at_home(path, home.path(), RotationPolicy::default(), CompressionPolicy::None).expect("writer");
+            writer.append(crate::wal::HeaderBuilder::new(event, b"{}").build(), b"{}".to_vec()).await.expect("append");
+            drop(writer); join.await.expect("writer join");
+        }
+        let tail = crate::wal::scan::latest_home_segment_in_chain(home.path(), &base, crate::wal::scan::HomeWalScanLimits::default()).expect("tail");
+        assert_eq!(tail.file_name().and_then(|n| n.to_str()), Some("self-update-audit-000002.wal"));
     }
 }

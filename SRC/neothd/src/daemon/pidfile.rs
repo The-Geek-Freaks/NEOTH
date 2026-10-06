@@ -194,6 +194,41 @@ fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
     }
 }
 
+/// Holds the daemon PID-file OS lock for the short offline self-update audit
+/// transaction.  It deliberately never writes, truncates, or removes the PID
+/// file, so it cannot change a daemon PID/endpoint nonce.  Its only authority
+/// is making daemon startup and the direct D2/DE writer mutually exclusive.
+pub(crate) struct OfflineSelfUpdateAuditInterlock { _lock: File }
+
+/// Obtain the offline self-update audit owner only after a stable absence proof.
+/// The first probe rejects a live/ambiguous daemon; acquisition then races with
+/// daemon startup on the *same* OS lock.  Once held, the final absence recheck
+/// is satisfied by the interlock itself: no daemon can acquire this lock until
+/// the caller has drained and dropped it.  No PID-file bytes are mutated.
+pub(crate) fn acquire_offline_self_update_audit_interlock(
+    pidfile: &Path,
+) -> Result<Option<OfflineSelfUpdateAuditInterlock>> {
+    if let Some(parent) = pidfile.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create offline audit PID directory {}", parent.display()))?;
+    }
+    match live_daemon_pid(pidfile)? {
+        Some(_) => return Ok(None),
+        None => {}
+    }
+    let Some(lock) = open_exclusive(pidfile)
+        .with_context(|| format!("acquire offline self-update interlock {}", pidfile.display()))?
+    else { return Ok(None); };
+    // Final absence proof is the acquired *exclusive OS handle*, not PID text:
+    // after it succeeds no daemon can hold or newly acquire this exact startup
+    // lock. The caller reaches this point only after typed discovery classified
+    // sidecar absence/pre-write refusal; stale/foreign sidecars fail earlier.
+    // Do not invoke `live_daemon_pid` while retaining this handle: it would
+    // mistake this owner for a daemon and parse unmodified stale bytes.
+    let _ = std::fs::metadata(pidfile)
+        .with_context(|| format!("recheck offline self-update interlock path {}", pidfile.display()))?;
+    Ok(Some(OfflineSelfUpdateAuditInterlock { _lock: lock }))
+}
 enum ExistingLockState {
     Missing,
     Held,
@@ -845,5 +880,32 @@ mod tests {
             p.display()
         );
         assert_eq!(p.file_name().and_then(|s| s.to_str()), Some("neothd.pid"));
+    }
+    const W2452_INTERLOCK_CHILD_PIDFILE: &str = "NEOTH_W2452_INTERLOCK_PIDFILE";
+
+    #[test]
+    #[ignore = "helper launched by w2452 interlock parent"]
+    fn w2452_offline_audit_interlock_child_daemon_start() {
+        let Some(path) = std::env::var_os(W2452_INTERLOCK_CHILD_PIDFILE) else { return; };
+        assert!(acquire(std::path::Path::new(&path)).is_err(), "separate daemon process must lose startup lock");
+    }
+    #[test]
+    fn w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start() {
+        let dir = tempdir().expect("home");
+        let path = dir.path().join("neothd.pid");
+        std::fs::write(&path, "stale informational body\\n").expect("seed PID bytes");
+        let before = std::fs::read(&path).expect("read seeded body");
+        let lease = acquire_offline_self_update_audit_interlock(&path)
+            .expect("interlock probe").expect("daemon absent");
+        assert_eq!(std::fs::read(&path).expect("read locked body"), before);
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--ignored").arg("--exact")
+            .arg("daemon::pidfile::tests::w2452_offline_audit_interlock_child_daemon_start")
+            .env(W2452_INTERLOCK_CHILD_PIDFILE, &path).output().expect("child contender");
+        assert!(child.status.success(), "cross-process daemon contender must lose PID lock; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+        drop(lease);
+        let daemon = acquire(&path).expect("daemon startup succeeds after offline lease release");
+        drop(daemon);
     }
 }
