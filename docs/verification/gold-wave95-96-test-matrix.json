@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2459-STRICT-CLIPPY-REPAIR-HOSTED-PENDING",
+  "status": "W2457-W2462-OWNER-AND-AUTHENTICATED-ROTATION-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 397637,
-    "sha256": "5E279A6D570D4985A4CBB0A2DC31B83448F023193CD12BF4DECC4F925733BA4A"
+    "bytes": 398038,
+    "sha256": "8C1B8F31C62709D4E6E43CF0B700CD5E331A3340774780134636920AA2471B6D"
   },
-  "sourceInputs": 2173,
+  "sourceInputs": 2175,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5898,7 +5898,7 @@
     {
       "test": "cli::cron::tests::w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
       "junitClass": "neoth"
     },
     {
@@ -15708,13 +15708,13 @@
     {
       "test": "cli::cron::tests::edit_updates_name_and_timeout",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
       "junitClass": "neoth"
     },
     {
@@ -16693,19 +16693,55 @@
     {
       "test": "cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
+      "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
       "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
-      "sourceSha256": "DEB002F0D75F1B898FF12D32AEFCC2B235223B3F2A5BA712DD634C49AD0D5CBA",
+      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
+      "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cron::tests::w2457_manual_cron_owner_runs_real_job_and_drains_writer_once",
+      "sourcePath": "SRC/neothd/src/cli/cron.rs",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cron::tests::w2457_manual_cron_owner_refuses_live_daemon_before_work_factory",
+      "sourcePath": "SRC/neothd/src/cli/cron.rs",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction",
+      "sourcePath": "SRC/neothd/src/cli/cron.rs",
+      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder",
+      "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
+      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile",
+      "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
+      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start",
+      "sourcePath": "SRC/neothd/src/daemon/pidfile.rs",
+      "sourceSha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
       "junitClass": "neoth"
     }
   ],
@@ -19094,7 +19130,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
+        "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
         "junitClass": "neoth"
       }
     ],
@@ -19504,7 +19540,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C",
+        "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
         "junitClass": "neoth"
       }
     ]
@@ -77171,6 +77207,62 @@
       }
     ],
     "note": "Only cfg(windows) on sole Windows handoff wrapper and single-match to is_some. Previous CLI run failed before 35 behavior cases. No suppression or local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2457ManualCronAnd2462Rotation": {
+    "base": "39147d5857d2d817aebff47faf295e5e802b41b9",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 26011,
+        "sha256": "72103CDF2C9238C3BDD40E46C01F96748110CC814576EA73CFFA6B97505DF7FB",
+        "blob": "ec197b0d63f53d88c30023581b8f7230a9e0e618"
+      },
+      {
+        "path": "docs/verification/gold-wave2452-self-update-wal-owner.json",
+        "bytes": 7280,
+        "sha256": "B0AF12746A84F57FB7663505A0061B30581F82AB491BB52905395244CEECF28D",
+        "blob": "861017a13a40cc0edb86216db54622c65121fb1f"
+      },
+      {
+        "path": "docs/verification/gold-wave2457-manual-cron-owner.json",
+        "bytes": 2631,
+        "sha256": "0FABE235A89443B3907E84886A9D1177C6007BD42B223F46111A8FB816AA3FBC",
+        "blob": "f5223ae5d46c62aed6689c46ee927d4542920780"
+      },
+      {
+        "path": "docs/verification/gold-wave2462-authenticated-rotation.json",
+        "bytes": 1791,
+        "sha256": "2A8997846A11EF491DB29465C0D6629944BFAD245FA782BF4540E900877EC8E5",
+        "blob": "83f922b68828a98bb2c623a90f538378e9f5fb39"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2455555,
+        "sha256": "17B189ABD82B30C165359B552AAE85E236E267AE8CE5A861810C6F2F91F28D84",
+        "blob": "da1fc2267492bdfadaee91d6f2997b0ccba2facc"
+      },
+      {
+        "path": "SRC/neothd/src/cli/cron.rs",
+        "bytes": 64630,
+        "sha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+        "blob": "37a2b8abc6ed78a9602265d9636721952908e40f"
+      },
+      {
+        "path": "SRC/neothd/src/cli/update.rs",
+        "bytes": 45631,
+        "sha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+        "blob": "77580a5ed3679e309d13e32c3b049840ffa7ea4e"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/pidfile.rs",
+        "bytes": 42446,
+        "sha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C",
+        "blob": "c560723bfaffd6b88ea2528351610614e780acc3"
+      }
+    ],
+    "note": "Reviewed ManualCron PID lease through real writer completion; six portable regressions. Correct authenticated rotated fixture from exact failed39147 run;41 focused cases pending. BSOD hold honored.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,64 @@
+{
+  "schema": "neoth.gold-wave2457-manual-cron-owner.v1",
+  "status": "IMPLEMENTED-STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "39147d5857d2d817aebff47faf295e5e802b41b9",
+  "candidateManifestSha256": "D970318D5AB18CC7148F0CA6AFA1DAFAFAD09D075C9110E570EE47254A652791",
+  "reviewSha256": "0189FC8816F24C05F29CAF38DF3487DAC5A5191F90F4C092926DEB3ED723380A",
+  "changes": [
+    "Acquire the actual daemon PID-file OS lock before invoking the manual Cron transaction and retain it through job execution and writer completion.",
+    "Treat ambiguous or malformed held ownership as refusal before provider, WAL or delivery work.",
+    "Propagate actual writer completion failures after draining either job outcome."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/cron.rs",
+      "base_sha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C",
+      "candidate_sha256": "19AF717B27DAEF59F46C75F34C80B9D7CAB0D26DD3CF29FA680DE658F01DB91E"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/pidfile.rs",
+      "base_sha256": "DEB002F0D75F1B898FF12D32AEFCC2B235223B3F2A5BA712DD634C49AD0D5CBA",
+      "candidate_sha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C"
+    }
+  ],
+  "portableRegressions": [
+    {
+      "id": "cli::cron::tests::w2457_manual_cron_owner_runs_real_job_and_drains_writer_once",
+      "platform": "portable"
+    },
+    {
+      "id": "cli::cron::tests::w2457_manual_cron_owner_refuses_live_daemon_before_work_factory",
+      "platform": "portable"
+    },
+    {
+      "id": "cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction",
+      "platform": "portable"
+    },
+    {
+      "id": "daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder",
+      "platform": "portable"
+    },
+    {
+      "id": "daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile",
+      "platform": "portable"
+    },
+    {
+      "id": "daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start",
+      "platform": "portable"
+    }
+  ],
+  "ignoredChildHelpers": [
+    {
+      "id": "daemon::pidfile::tests::w2457_manual_cron_interlock_child_daemon_start",
+      "platform": "portable",
+      "ignored": true,
+      "invoked_by": "daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start"
+    }
+  ],
+  "fixtureDeliveryMode": "None",
+  "durableDeliveryAcceptance": false,
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "nativeDeviceReleaseAccepted": false,
+  "allStandaloneWalCallersMigrated": false
+}

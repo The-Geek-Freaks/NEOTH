@@ -18460,3 +18460,20 @@ The same publication imports only the seven-file Rust formatting patch generated
 ## W2459 - Exact hosted Clippy repair (2026-10-06)
 
 CLI run 37509488762 on 7ae0444f failed before behavior execution on two strict lints. The sole Windows detached-handoff applied-event wrapper is now cfg(windows), and the offline interlock uses an equivalent is_some early return. No suppression, test selection, ownership policy or timeout changed. The 35 focused behavior cases and full mobile product flow remain pending on the repaired producer. No local executable validation ran.
+
+**W2457 / W2462 manual Cron ownership and authenticated rotation fixture (2026-10-06):**
+Manual Cron now acquires the actual daemon startup OS lock before invoking its
+jobs/provider/WAL transaction and retains it through job execution and real
+writer completion. Ownership errors refuse work, and finalization errors cannot
+produce successful CLI output. Six portable regressions include a real job and
+cross-process contender; the controlled fixture uses no delivery and does not
+claim durable delivery acceptance. No local executable validation was run.
+Run37510945791 on39147d passed slim Clippy, test-target typecheck, public CLI build,
+24 canonical Companion cases and seven Updater cases. Root admitted both original
+archives,44 entries and raw producer bindings. One offline rotation fixture failed
+because it created two independent segments without the mandatory authenticated
+cross-segment link; the remaining three cases and generated docs were unexecuted.
+The fixture now uses one real rotating writer and preserves its prior base bytes;
+production authentication is unchanged. The next focused lane contains24 Companion
+and17 Updater/owner cases. Full mobile, native, device and release acceptance remain
+open. All original PLAN bytes remain preserved; local BSOD hold and no-.slint apply.

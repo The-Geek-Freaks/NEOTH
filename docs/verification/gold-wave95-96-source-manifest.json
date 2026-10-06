@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T18:17:29.4438331Z",
-  "validationStatus": "W2459-STRICT-CLIPPY-REPAIR-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T18:58:57.8594868Z",
+  "validationStatus": "W2457-W2462-OWNER-AND-AUTHENTICATED-ROTATION-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 25191,
-      "sha256": "E57D7E5EC952CB7F9596AC378765215C9F9501DF9F845DF0095E75434EBD753E"
+      "bytes": 26011,
+      "sha256": "72103CDF2C9238C3BDD40E46C01F96748110CC814576EA73CFFA6B97505DF7FB"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3803,8 +3803,8 @@
     },
     {
       "path": "docs/verification/gold-wave2452-self-update-wal-owner.json",
-      "bytes": 6861,
-      "sha256": "269013FAE6ED4F975EF0E06D3E794543CC93D1782D5B507C1D3452B6E608BB21"
+      "bytes": 7280,
+      "sha256": "B0AF12746A84F57FB7663505A0061B30581F82AB491BB52905395244CEECF28D"
     },
     {
       "path": "docs/verification/gold-wave2453-preclosed-companion.json",
@@ -3820,6 +3820,16 @@
       "path": "docs/verification/gold-wave2456-distinct-chat-device.json",
       "bytes": 2121,
       "sha256": "B099C3AC2969FFE66B5316A20EFF019441AC15FEA945BF716ED5513F1FEB0CD5"
+    },
+    {
+      "path": "docs/verification/gold-wave2457-manual-cron-owner.json",
+      "bytes": 2631,
+      "sha256": "0FABE235A89443B3907E84886A9D1177C6007BD42B223F46111A8FB816AA3FBC"
+    },
+    {
+      "path": "docs/verification/gold-wave2462-authenticated-rotation.json",
+      "bytes": 1791,
+      "sha256": "2A8997846A11EF491DB29465C0D6629944BFAD245FA782BF4540E900877EC8E5"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -4973,8 +4983,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2454251,
-      "sha256": "A57528E01F6898DED6BE9218A0C545FCC40BD4B93519DC8C04AE19B1790EFA04"
+      "bytes": 2455555,
+      "sha256": "17B189ABD82B30C165359B552AAE85E236E267AE8CE5A861810C6F2F91F28D84"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5973,8 +5983,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cron.rs",
-      "bytes": 58899,
-      "sha256": "91AA3B35A17F164FC5FFBFE5E0B82D6182BCB17039C4444E0EDADC6CE97C7C0C"
+      "bytes": 64630,
+      "sha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287"
     },
     {
       "path": "SRC/neothd/src/cli/dictate.rs",
@@ -6293,8 +6303,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/update.rs",
-      "bytes": 44813,
-      "sha256": "78F7570B113A6907F0D4A773FB2591516E195630DB3BB97F36AD55741F3DC13C"
+      "bytes": 45631,
+      "sha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -7033,8 +7043,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/pidfile.rs",
-      "bytes": 38145,
-      "sha256": "DEB002F0D75F1B898FF12D32AEFCC2B235223B3F2A5BA712DD634C49AD0D5CBA"
+      "bytes": 42446,
+      "sha256": "FF72ED5ECD59F21DF639D55DF377CA1E0E374C9FCE82FF0F5A9F33F700EEC10C"
     },
     {
       "path": "SRC/neothd/src/daemon/post_init_cron.rs",

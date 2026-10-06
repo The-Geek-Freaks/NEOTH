@@ -240,6 +240,40 @@ pub(crate) fn acquire_offline_self_update_audit_interlock(
     })?;
     Ok(Some(OfflineSelfUpdateAuditInterlock { _lock: lock }))
 }
+
+/// Holds the daemon PID-file OS lock for a ManualCron offline WAL consumer.
+/// This is deliberately a separate API from the self-update interlock: it
+/// preserves the same fail-closed ownership rule without widening that scope.
+pub(crate) struct OfflineManualCronInterlock {
+    _lock: File,
+}
+
+/// Acquire the ManualCron offline owner only after the daemon absence probe.
+/// The PID-file OS lock is the final interlock with daemon startup. It never
+/// writes, truncates or removes PID/nonce content; probe errors remain
+/// errors.
+pub(crate) fn acquire_offline_manual_cron_interlock(
+    pidfile: &Path,
+) -> Result<Option<OfflineManualCronInterlock>> {
+    if let Some(parent) = pidfile.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create ManualCron PID directory {}", parent.display()))?;
+    }
+    if live_daemon_pid(pidfile)?.is_some() {
+        return Ok(None);
+    }
+    let Some(lock) = open_exclusive(pidfile)
+        .with_context(|| format!("acquire ManualCron offline interlock {}", pidfile.display()))?
+    else {
+        return Ok(None);
+    };
+    // Holding the same exclusive startup lock is the final absence proof. Do
+    // not re-probe via live_daemon_pid here: it would observe this guard itself.
+    let _ = std::fs::metadata(pidfile)
+        .with_context(|| format!("recheck ManualCron interlock {}", pidfile.display()))?;
+    Ok(Some(OfflineManualCronInterlock { _lock: lock }))
+}
+
 enum ExistingLockState {
     Missing,
     Held,
@@ -905,6 +939,7 @@ mod tests {
             "separate daemon process must lose startup lock"
         );
     }
+
     #[test]
     fn w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start() {
         let dir = tempdir().expect("home");
@@ -930,6 +965,79 @@ mod tests {
         );
         drop(lease);
         let daemon = acquire(&path).expect("daemon startup succeeds after offline lease release");
+        drop(daemon);
+    }
+    #[test]
+    fn w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        std::fs::write(&path, "stale bytes\n").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let lease = acquire_offline_manual_cron_interlock(&path)
+            .unwrap()
+            .expect("offline lease");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(
+            acquire(&path).is_err(),
+            "daemon startup must lose ManualCron lease"
+        );
+        drop(lease);
+        let daemon = acquire(&path).expect("daemon startup after release");
+        assert!(
+            acquire_offline_manual_cron_interlock(&path)
+                .unwrap()
+                .is_none()
+        );
+        drop(daemon);
+    }
+
+    #[test]
+    fn w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let mut held = open_exclusive(&path).unwrap().unwrap();
+        held.write_all(b"malformed").unwrap();
+        held.sync_all().unwrap();
+        assert!(acquire_offline_manual_cron_interlock(&path).is_err());
+    }
+
+    const W2457_MANUAL_CRON_CHILD_PIDFILE: &str = "NEOTH_W2457_MANUAL_CRON_PIDFILE";
+
+    #[test]
+    #[ignore = "helper launched by the W2457 ManualCron interlock parent"]
+    fn w2457_manual_cron_interlock_child_daemon_start() {
+        let Some(path) = std::env::var_os(W2457_MANUAL_CRON_CHILD_PIDFILE) else {
+            return;
+        };
+        assert!(
+            acquire(std::path::Path::new(&path)).is_err(),
+            "child daemon start must lose ManualCron lease"
+        );
+    }
+
+    #[test]
+    fn w2457_manual_cron_interlock_blocks_cross_process_daemon_start() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let lease = acquire_offline_manual_cron_interlock(&path)
+            .unwrap()
+            .expect("offline lease");
+        let child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("daemon::pidfile::tests::w2457_manual_cron_interlock_child_daemon_start")
+            .env(W2457_MANUAL_CRON_CHILD_PIDFILE, &path)
+            .output()
+            .expect("child contender");
+        assert!(
+            child.status.success(),
+            "cross-process daemon start must lose ManualCron lease; stdout={} stderr={}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        drop(lease);
+        let daemon =
+            acquire(&path).expect("daemon startup succeeds after ManualCron lease release");
         drop(daemon);
     }
 }

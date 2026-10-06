@@ -839,17 +839,27 @@ mod tests {
         let base = crate::wal::writer::self_update_audit_chain_base_path(&wal_dir);
         let rotated_tail = wal_dir.join("self-update-audit-000002.wal");
 
-        // Seed a real rotated chain before the consumer starts. The consumer
-        // must select 000002, not reopen 000001 or allocate a UUID namespace.
-        for (segment, event, payload) in [
-            (base.clone(), 0xD2_u8, &b"preexisting-d2"[..]),
-            (rotated_tail.clone(), 0xDE_u8, &b"preexisting-de"[..]),
+        // Seed a real authenticated rotation before the consumer starts. The
+        // writer creates the mandatory rollover and compaction-link frames;
+        // the consumer must select 000002, not reopen 000001 or allocate a
+        // UUID namespace.
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_with_policy_ready(
+            base.clone(),
+            home.path().to_path_buf(),
+            crate::wal::writer::RotationPolicy {
+                // The first frame remains in 000001; its physical size then
+                // exceeds this test threshold, so the next frame rotates to
+                // 000002 through the production writer path.
+                max_bytes: 100,
+                max_age_ns: crate::wal::writer::RotationPolicy::DEFAULT_MAX_AGE_NS,
+            },
+        )
+        .expect("seed canonical self-update chain");
+        ready.wait().await.expect("seed writer readiness");
+        for (event, payload) in [
+            (0xD2_u8, &b"preexisting-d2"[..]),
+            (0xDE_u8, &b"preexisting-de"[..]),
         ] {
-            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
-                segment,
-                home.path().to_path_buf(),
-            )
-            .expect("seed canonical self-update chain");
             writer
                 .append(
                     crate::wal::HeaderBuilder::new(event, payload).build(),
@@ -857,9 +867,13 @@ mod tests {
                 )
                 .await
                 .expect("seed frame");
-            drop(writer);
-            completion.wait().await.expect("seed completion");
         }
+        drop(writer);
+        join.await
+            .expect("seed writer supervisor")
+            .expect("seed writer outcome");
+        let base_before_consumer =
+            std::fs::read(&base).expect("read pre-existing base segment");
 
         append_owned_self_update_audit_at_home(home.path(), b"consumer-d2", 0xD2)
             .await
@@ -892,6 +906,10 @@ mod tests {
             "DE must be appended to the same canonical tail"
         );
         let base_bytes = std::fs::read(&base).expect("read original base segment");
+        assert_eq!(
+            base_bytes, base_before_consumer,
+            "consumer must leave the older pre-rotation segment byte-for-byte unchanged"
+        );
         assert!(
             !base_bytes
                 .windows(b"consumer-d2".len())

@@ -1,0 +1,35 @@
+{
+  "schema": "neoth.gold-wave2462-authenticated-rotation.v1",
+  "status": "FIXTURE-AND-MANUAL-CRON-SELECTION-HOSTED-PENDING",
+  "failedProducer": "39147d5857d2d817aebff47faf295e5e802b41b9",
+  "failedRun": "37510945791",
+  "partialAdmissionSha256": "7EAE3994C790D113A899F8FAD91C6EA854BA4660D5367C277645FDBC6DDCC506",
+  "partialAdmission": {
+    "archiveCount": 2,
+    "unrun": [
+      "daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start",
+      "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
+      "cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate"
+    ],
+    "archiveEntries": 44,
+    "failed": "cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail",
+    "companionPassed": 24,
+    "generatedDocsExecuted": false,
+    "updaterPassed": 7
+  },
+  "diagnosis": "The fixture created successor 000002 independently and omitted the mandatory authenticated cross-segment link. Production preflight correctly rejected that chain.",
+  "repair": "Seed both preexisting events through one ready home-bound rotating writer. Keep real offline D2/DE consumer and tail assertions; additionally require base bytes unchanged.",
+  "fixtureCandidateSha256": "B37A12F94D30341774A737242B69ADD5EC87C05B17E13C04F9AB0FE15B1E8748",
+  "staticReviewSha256": "FBD4C019CA5B357412A722636D0C2C8D6A6683E319C95D5C21377E9387B2DDF0",
+  "focusedSelection": {
+    "total": 41,
+    "companion": 24,
+    "updaterSourcePaths": 15,
+    "expectedOriginalArchiveEntries": 57,
+    "updaterAndOwner": 17
+  },
+  "productionWalAuthenticationChanged": false,
+  "localExecutableValidationRan": false,
+  "hostedFullAcceptance": false,
+  "productNativeDeviceReleaseAccepted": false
+}

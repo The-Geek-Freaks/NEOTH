@@ -18,7 +18,8 @@
 //! jobs.yaml are safe at any time (the scheduler validates and live-reloads a
 //! complete generation on its next tick).
 
-use std::path::PathBuf;
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -1048,27 +1049,44 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
 }
 
 async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
-    // Refuse while the daemon owns scheduling so a manual invocation cannot
-    // duplicate a job the daemon may fire concurrently.
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = home.join("neothd.pid");
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    ) {
-        anyhow::bail!(
-            "`neoth serve` is running and owns the WAL writer — manual `cron run` can't share it. \
-             Stop the daemon (it fires scheduled jobs on schedule itself), then retry."
-        );
-    }
+    with_manual_cron_owner(&home, || {
+        run_one_transaction(&home, id, file, output)
+    })
+    .await
+}
 
-    let path = jobs_path(file);
+/// Execute the actual manual-Cron transaction under the daemon startup lock.
+/// The lease is acquired before the closure is invoked and its future is created, so an ambiguous/live
+/// owner can never construct a provider, queue delivery, or open a WAL writer.
+async fn with_manual_cron_owner<T, F, Fut>(home: &Path, work: F) -> Result<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let _manual_cron_lease = crate::daemon::pidfile::acquire_offline_manual_cron_interlock(
+        &home.join("neothd.pid"),
+    )?
+    .ok_or_else(|| anyhow::anyhow!(
+        "`neoth serve` owns or is acquiring scheduling for this home — manual `cron run` cannot run concurrently; stop the daemon and retry"
+    ))?;
+    work().await
+}
+
+async fn run_one_transaction(
+    home: &Path,
+    id: &str,
+    file: Option<PathBuf>,
+    output: OutputFormat,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let path = file.unwrap_or_else(|| home.join("jobs.yaml"));
     let jobs = JobsFile::load_from_path(&path)
         .await
         .with_context(|| format!("load jobs from {}", path.display()))?;
     let job = find_job(&jobs, id)?;
 
-    let config = FreedomConfig::load_from_default_path().context("load freedom.yaml")?;
+    let config = FreedomConfig::load_from_path(&home.join("freedom.yaml")).context("load freedom.yaml")?;
     let provider = crate::providers::fallback_chain_from_config(&config, &home, None)
         .await
         .context("construct the provider chain for the job")?;
@@ -1081,8 +1099,11 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "cron-run");
-    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone())
-        .context("open a one-shot WAL writer")?;
+    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+        segment,
+        home.clone(),
+    )
+    .context("open a one-shot WAL writer")?;
 
     let authorizer = bind_manual_cron_left_authorizer(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
@@ -1107,8 +1128,22 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     // close after a successful manual run.
     drop(provider);
     drop(writer);
-    let _ = join.await;
-    let outcome = result.context("run job")?;
+    // Drain the actual writer even if the job failed; a successful user-visible
+    // outcome must never hide a failed final sync or writer task.
+    let writer_result = completion
+        .wait_bounded(std::time::Duration::from_secs(30))
+        .await
+        .context("finalize manual Cron WAL writer");
+    let outcome = match (result, writer_result) {
+        (Ok(outcome), Ok(())) => outcome,
+        (Err(run_error), Ok(())) => return Err(run_error).context("run job"),
+        (Ok(_), Err(writer_error)) => return Err(writer_error),
+        (Err(run_error), Err(writer_error)) => {
+            return Err(run_error).context(format!(
+                "run job failed and manual Cron WAL finalization also failed: {writer_error:#}"
+            ));
+        }
+    };
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -1321,7 +1356,6 @@ mod tests {
         .expect("scan W302 Cron WAL");
         count
     }
-
     #[tokio::test]
     async fn w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf() {
         for (policy_model, expected_calls) in [("w302-cron-allowed", 1usize), ("denied", 0)] {
@@ -1358,8 +1392,113 @@ mod tests {
             assert_eq!(w302_cron_provider_requests(&segment), expected_calls);
         }
     }
+    #[tokio::test]
+    async fn w2457_manual_cron_owner_refuses_live_daemon_before_work_factory() {
+        let home = tempfile::tempdir().expect("temporary ManualCron home");
+        let daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("hold daemon pid");
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&factory_calls);
+        let outcome = with_manual_cron_owner(home.path(), || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(()) }
+        })
+        .await;
+        assert!(outcome.is_err(), "live ownership must refuse before work");
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+        assert!(!home.path().join("wal").exists(), "refusal precedes WAL");
+        drop(daemon);
+    }
+    #[tokio::test]
+    async fn w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction() {
+        let home = tempfile::tempdir().expect("temporary ManualCron home");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let work_calls = Arc::clone(&calls);
+        let outcome = with_manual_cron_owner(home.path(), || async move {
+            work_calls.fetch_add(1, Ordering::SeqCst);
+            Ok("offline-complete")
+        })
+        .await
+        .expect("offline ManualCron work");
+        assert_eq!(outcome, "offline-complete");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
-    #[test]
+    #[tokio::test]
+    async fn w2457_manual_cron_owner_runs_real_job_and_drains_writer_once() {
+        let home = tempfile::tempdir().unwrap();
+        let config = w302_cron_config("w302-cron-allowed");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            config.public_yaml().unwrap()
+        )
+        .unwrap();
+
+        let mut job = jobs_fixture().jobs.remove(0);
+        job.name = "owner transaction".into();
+        job.delivery = None;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let hp = home.path().to_path_buf();
+        let cfg = config.clone();
+        let work_calls = Arc::clone(&calls);
+
+        let outcome = with_manual_cron_owner(home.path(), || async move {
+            let wd = hp.join("wal");
+            std::fs::create_dir_all(&wd).unwrap();
+            let segment =
+                crate::wal::writer::unique_standalone_segment_path(&wd, "w2457-cron");
+            let (writer, completion) =
+                crate::wal::writer::spawn_for_home_with_completion(segment, hp.clone()).unwrap();
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--ignored")
+                .arg("--exact")
+                .arg("daemon::pidfile::tests::w2457_manual_cron_interlock_child_daemon_start")
+                .env("NEOTH_W2457_MANUAL_CRON_PIDFILE", hp.join("neothd.pid"))
+                .output()
+                .expect("cross-process daemon contender");
+            assert!(
+                child.status.success(),
+                "contender must lose owned transaction; stdout={} stderr={}",
+                String::from_utf8_lossy(&child.stdout),
+                String::from_utf8_lossy(&child.stderr)
+            );
+
+            let raw = Arc::new(W302CronLeaf {
+                calls: Arc::clone(&work_calls),
+            });
+            let auth = bind_manual_cron_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    cfg.tokens.max_per_request,
+                ),
+                &cfg,
+                manual_cron_left_provider(&cfg).unwrap(),
+            );
+            let provider = AuthorizedProvider::from_arc(
+                raw,
+                auth,
+                Some("w302-cron-allowed".into()),
+                "cron.w2457.manual",
+            );
+            let result = crate::cron::runner::run_job_at(&hp, &job, &provider, &writer).await;
+            drop(provider);
+            drop(writer);
+            completion
+                .wait_bounded(std::time::Duration::from_secs(3))
+                .await
+                .unwrap();
+            result
+        })
+        .await
+        .unwrap();
+
+        assert!(outcome.success, "{outcome:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!home.path().join("proactive_queue.json").exists());
+    }
+#[test]
     fn jobs_path_defaults_under_neoth_home() {
         let p = jobs_path(None);
         assert!(

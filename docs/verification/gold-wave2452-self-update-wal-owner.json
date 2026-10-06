@@ -117,7 +117,7 @@
   "requiredPortableRegistrations": 4,
   "requiredUnixOnlyRegistrations": 1,
   "localExecutableValidationRan": false,
-  "hostedStatus": "W2459-CLIPPY-REPAIR-PENDING-RERUN",
+  "hostedStatus": "W2462-AUTHENTICATED-ROTATION-FIXTURE-REPAIR-PENDING",
   "allStandaloneWalCallersMigrated": false,
   "nativeDeviceReleaseAccepted": false,
   "hostedFormatting": {
@@ -139,5 +139,14 @@
     ],
     "candidateManifestSha256": "38404491EB5345EE9CAC85B91ED69CE0ED379081E3CD3F6E806C9850B7BB58C2",
     "localExecutableValidationRan": false
+  },
+  "latestPartialHostedEvidence": {
+    "producer": "39147d5857d2d817aebff47faf295e5e802b41b9",
+    "run": "37510945791",
+    "proofSha256": "7EAE3994C790D113A899F8FAD91C6EA854BA4660D5367C277645FDBC6DDCC506",
+    "liveD2DeParentPassed": true,
+    "offlineRotatedFixtureFailed": true,
+    "remainingOwnerParentsExecuted": false,
+    "fixtureCorrection": "gold-wave2462-authenticated-rotation.json"
   }
 }

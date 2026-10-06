@@ -266,7 +266,7 @@ jobs:
           retention-days: 14
 
       # This optional batch shares the already-built default-feature neoth
-      # library. It executes six updater-status and five W2452 owner-contract identities below,
+      # library. It executes six updater-status, five self-update owner, and six manual-Cron identities,
       # once each, and retains source-bound logs for their narrow status-and-owner admission.
       - name: Run exact updater-status regressions
         if: ${{ inputs.updater_status_regressions }}
@@ -291,7 +291,13 @@ jobs:
             'cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail' \
             'daemon::pidfile::tests::w2452_offline_audit_interlock_preserves_pid_bytes_and_blocks_daemon_start' \
             'cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment' \
-            'cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate' > "$proof_dir/selection.txt"
+            'cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate' \
+            'cli::cron::tests::w2457_manual_cron_owner_runs_real_job_and_drains_writer_once' \
+            'cli::cron::tests::w2457_manual_cron_owner_refuses_live_daemon_before_work_factory' \
+            'cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction' \
+            'daemon::pidfile::tests::w2457_manual_cron_interlock_preserves_bytes_and_respects_daemon_holder' \
+            'daemon::pidfile::tests::w2457_manual_cron_interlock_fails_closed_for_malformed_held_pidfile' \
+            'daemon::pidfile::tests::w2457_manual_cron_interlock_blocks_cross_process_daemon_start' > "$proof_dir/selection.txt"
           printf '%s\n' \
             'SRC/neothd/src/cli/serve.rs' \
             'SRC/neothd/src/cli/serve_tasks.rs' \
@@ -303,12 +309,16 @@ jobs:
             'SRC/neothd/src/cli/update.rs' \
             'SRC/neothd/src/cli/internal.rs' \
             'SRC/neothd/src/daemon/pidfile.rs' \
-            'SRC/neothd/src/wal/writer.rs' > "$proof_dir/source-paths.txt"
+            'SRC/neothd/src/wal/writer.rs' \
+            'SRC/neothd/src/cli/cron.rs' \
+            'SRC/neothd/src/cron/runner.rs' \
+            'SRC/neothd/src/config/mod.rs' \
+            'SRC/neothd/src/providers/cost_authorization.rs' > "$proof_dir/source-paths.txt"
           while IFS= read -r source_path; do
             sha256sum "${source_path#SRC/}"
           done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
           expected_updater_count="$(wc -l < "$proof_dir/selection.txt")"
-          test "$expected_updater_count" -eq 11
+          test "$expected_updater_count" -eq 17
           ordinal=0
           while IFS= read -r identity; do
             ordinal=$((ordinal + 1))
