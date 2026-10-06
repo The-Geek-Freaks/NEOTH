@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T21:03:51.1771598Z",
-  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T21:09:32.4853577Z",
+  "validationStatus": "HOSTED-FORMAT-APPLIED-BEHAVIOR-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3848,8 +3848,8 @@
     },
     {
       "path": "docs/verification/gold-wave2469-fan-out-fixture-and-mobile-order.json",
-      "bytes": 2132,
-      "sha256": "AD3724A959416C802F95D439D5B5396ADFB8CCA3957EB52C8A02115BAB2395E5"
+      "bytes": 2952,
+      "sha256": "37DD8CD0E4A6B05E8CAE8BABCEC3A8DC1FCC244D8BD25565071C728707451A7B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5823,8 +5823,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 58198,
-      "sha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73"
+      "bytes": 58224,
+      "sha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",

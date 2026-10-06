@@ -1147,12 +1147,13 @@ mod tests {
         let record = &records[0];
         assert_eq!(record.results.len(), 2, "one result per requested agent");
         for (result, expected_agent) in record.results.iter().zip(["planner", "critic"]) {
-            let crate::council::qa_verdict::QaVerdict::Blocked { reason } = &result.verdict
-            else {
+            let crate::council::qa_verdict::QaVerdict::Blocked { reason } = &result.verdict else {
                 panic!("missing provider must yield a structured blocked result: {result:?}");
             };
             assert!(
-                reason.contains(&format!("worker error: sub-agent `{expected_agent}` primary attempt 1")),
+                reason.contains(&format!(
+                    "worker error: sub-agent `{expected_agent}` primary attempt 1"
+                )),
                 "blocked result must identify the rejected real provider leaf: {reason}"
             );
             assert_eq!(result.from, "<parallel-dispatcher>");

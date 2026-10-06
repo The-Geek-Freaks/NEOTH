@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "status": "HOSTED-FORMAT-APPLIED-BEHAVIOR-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398794,
-    "sha256": "C3D5CD5D4D566A48214AA44B41A0648C59866941841BDE710466712B368D874D"
+    "bytes": 398802,
+    "sha256": "2535F47078347658C94CA7A9CECF1DCF38F7087C95C36929018225D59AF8DE29"
   },
   "sourceInputs": 2179,
   "requiredNativeTests": [
@@ -4800,7 +4800,7 @@
     {
       "test": "cli::agents::tests::fan_out_registry_admits_only_enabled_skills_and_suppresses_eval",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
@@ -15925,19 +15925,19 @@
     {
       "test": "cli::agents::tests::nct_baseline_flag_requires_a_history_run_id_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_projection_uses_validated_private_run_and_excludes_private_content",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::nct_baseline_rejects_table_before_private_run_read_and_uses_history_renderer_path",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
@@ -16747,25 +16747,25 @@
     {
       "test": "cli::agents::tests::w2464_live_daemon_rejects_real_fan_out_before_provider_or_wal",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_offline_real_fan_out_finalizes_writer_before_owner_release",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases",
       "sourcePath": "SRC/neothd/src/cli/agents.rs",
-      "sourceSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+      "sourceSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
       "junitClass": "neoth"
     },
     {
@@ -77565,6 +77565,26 @@
       }
     ],
     "note": "Structured blocked fixture corrected; intact Mobile product steps moved earlier; all acceptance cases and gates retained.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2469-hosted-format": {
+    "base": "d9c0aa1fd2d037f4258333ad9fd895aa56cb8d2c",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2469-fan-out-fixture-and-mobile-order.json",
+        "bytes": 2952,
+        "sha256": "37DD8CD0E4A6B05E8CAE8BABCEC3A8DC1FCC244D8BD25565071C728707451A7B",
+        "blob": "e5518cbf56e4f02145bd1f59ace14ad5acda8917"
+      },
+      {
+        "path": "SRC/neothd/src/cli/agents.rs",
+        "bytes": 58224,
+        "sha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
+        "blob": "5351b87432ac4168eb9e1a1ae5050e88f8a31351"
+      }
+    ],
+    "note": "Original producer-bound Preflight rustfmt patch applied; no local formatter or runtime; Mobile product and full owner rerun remain pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

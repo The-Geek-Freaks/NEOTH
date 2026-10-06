@@ -49,5 +49,21 @@
   "localExecutableValidationRan": false,
   "hostedAcceptance": false,
   "panicCauseKnown": false,
-  "productNativeDeviceReleaseAcceptance": false
+  "productNativeDeviceReleaseAcceptance": false,
+  "hostedFormatting": {
+    "schema": "neoth.wave2469.hosted-format-custody.v1",
+    "producer": "d9c0aa1fd2d037f4258333ad9fd895aa56cb8d2c",
+    "run": "37531437372",
+    "attempt": 1,
+    "artifactId": "11444951052",
+    "archiveSha256": "EFBC3BB091D466B6AAC5F91F344966C96AF196F4A283CB2FFF7C54D8D89CDDE9",
+    "patchSha256": "B9E5495B76D08B9FF5F17AFFE1E38EFC4531A6BE19391742F1D0DD44E550B128",
+    "path": "SRC/neothd/src/cli/agents.rs",
+    "preimageBlob": "0699cb9b8b2cba6a173cbd4ea08f1b297f265887",
+    "physicalPreimageSha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73",
+    "postimageBlob": "5351b87432ac4168eb9e1a1ae5050e88f8a31351",
+    "postimageSha256": "26A51F4CB038DA00EE0CFE4DC826DF15B2D2445F79912A59CA268801F0430DBD",
+    "localFormatterRan": false,
+    "onlyWhitespace": true
+  }
 }
