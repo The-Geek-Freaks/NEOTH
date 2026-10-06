@@ -13,9 +13,10 @@ WORK_SECONDS = HOSTED_STEP_SECONDS - CLEANUP_RESERVE_SECONDS - START_MARGIN_SECO
 
 class WorkDeadline(RuntimeError): pass
 class CliFailure(RuntimeError):
-    def __init__(self, returncode: int, category: str):
+    def __init__(self, returncode: int, category: str, parse_subtype: str = "unknown"):
         super().__init__(f"CLI failed rc={returncode} category={category}")
         self.category = category
+        self.parse_subtype = parse_subtype
 REPLY = "W2328 deterministic loopback reply"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
@@ -37,6 +38,7 @@ SHUTDOWN_MARKERS = (
     ("wal_join_entry", b"shutdown checkpoint: WAL join entry"),
     ("wal_drained", b"WAL writer task drained cleanly"),
 )
+RUST_PANIC_MARKERS = (b"[neoth panic]", b"panicked at")
 PAIR_PHASES = (
     "bootstrap_started", "bootstrap_ready", "topic_joined", "awaiting_connection",
     "connection_received", "psk_verified", "proof_read", "response_written",
@@ -112,6 +114,7 @@ class ShutdownMarkerCollector:
     def __init__(self, stream: Any) -> None:
         self.stream, self.lock = stream, threading.Lock()
         self.observed = {name: False for name, _ in SHUTDOWN_MARKERS}
+        self.rust_panic_observed = False
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.connect_observed = {name: False for name, _ in CONNECT_MARKERS}
@@ -134,6 +137,8 @@ class ShutdownMarkerCollector:
                     for name, marker in SHUTDOWN_MARKERS:
                         if marker in window:
                             self.observed[name] = True
+                    if any(marker in window for marker in RUST_PANIC_MARKERS):
+                        self.rust_panic_observed = True
                     for name, marker in PAIR_MARKERS:
                         if marker in window:
                             self.pair_observed[name] = True
@@ -189,6 +194,7 @@ class ShutdownMarkerCollector:
         with self.lock:
             return {
                 "markers": dict(self.observed),
+                "rust_panic_observed": self.rust_panic_observed,
                 "pair_markers": dict(self.pair_observed),
                 "discovery_markers": dict(self.discovery_observed),
                 "connect_markers": dict(self.connect_observed),
@@ -254,6 +260,40 @@ def pair_cli_failure_category(stderr: bytes) -> str:
     if "companion v3 requires the cluster feature" in text: return "companion_runtime_unavailable"
     return "unclassified"
 
+PAIR_RPC_PARSE_FAILURES = (
+    ("companion v3 daemon unavailable: malformed RPC response", "delimiter"),
+    ("companion v3 daemon unavailable: RPC response did not use HTTP/1.1", "http_version"),
+    ("companion v3 daemon unavailable: invalid RPC status code", "status"),
+    ("companion v3 daemon unavailable: malformed RPC response header", "header"),
+    ("companion v3 daemon unavailable: chunked RPC responses are not supported", "transfer_encoding"),
+    ("companion v3 daemon unavailable: duplicate RPC Content-Length", "content_length_duplicate"),
+    ("companion v3 daemon unavailable: invalid RPC Content-Length", "content_length_invalid"),
+    ("companion v3 daemon unavailable: missing RPC Content-Length", "content_length_missing"),
+    ("companion v3 daemon unavailable: RPC response body length mismatch", "content_length_mismatch"),
+    ("companion v3 daemon returned malformed response", "companion_response_malformed"),
+)
+PAIR_RPC_PARSE_FAILURE_PREFIXES = (
+    ("companion v3 daemon unavailable: invalid RPC headers: ", "headers_invalid"),
+    ("companion v3 daemon unavailable: invalid RPC body: ", "body_invalid"),
+    ("companion v3 daemon unavailable: invalid RPC JSON: ", "json_invalid"),
+)
+
+def pair_cli_failure_parse_subtype(stderr: bytes) -> str:
+    # Result<()> may add `Error:`, anyhow context, and numbered cause-chain
+    # prefixes. Match fixed source messages only as a complete line suffix;
+    # retain just the closed enum, never stderr or formatter detail.
+    text = stderr.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        line = line.strip()
+        for message, subtype in PAIR_RPC_PARSE_FAILURES:
+            if line.endswith(message):
+                return subtype
+        for prefix, subtype in PAIR_RPC_PARSE_FAILURE_PREFIXES:
+            # These three source diagnostics append only Rust's formatter
+            # detail; Result/anyhow may add a prefix before the source text.
+            if prefix in line:
+                return subtype
+    return "unknown"
 def invoke(argv: list[str], env: dict[str,str], timeout: float, pair_mint: bool = False) -> bytes:
     try: item = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
       stderr=subprocess.PIPE, timeout=timeout, check=False)
@@ -261,7 +301,8 @@ def invoke(argv: list[str], env: dict[str,str], timeout: float, pair_mint: bool 
     # Pairing stdout is a capability. Never reflect either stream into a CI log.
     if item.returncode:
         category=pair_cli_failure_category(item.stderr) if pair_mint else "cli_nonzero"
-        raise CliFailure(item.returncode,category)
+        parse_subtype=pair_cli_failure_parse_subtype(item.stderr) if pair_mint else "unknown"
+        raise CliFailure(item.returncode,category,parse_subtype)
     return item.stdout
 
 def stop_serve(serve: subprocess.Popen[bytes], cleanup_deadline: float) -> str:
@@ -411,6 +452,7 @@ def main() -> int:
                     except CliFailure as error:
                         receipt["pair_cli_failure_stage"]=stage
                         receipt["pair_cli_failure_category"]=error.category
+                        receipt["pair_cli_failure_parse_subtype"]=error.parse_subtype
                         raise
                 status_pair_url=pair_url(mint_pair("status-read","pair_status_read_mint"))
                 receipt["stage"]="pair_status_start"
@@ -487,7 +529,7 @@ def main() -> int:
                 receipt["serve_shutdown_markers"]=shutdown_markers.snapshot(cleanup_deadline-time.monotonic())
             else:
                 if serve.stdout is not None: serve.stdout.close()
-                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"scoped_connect_counts":{name:0 for name,_ in SCOPED_CONNECT_MARKERS},"scoped_connect_saturated":False,"reader_closed":True,"reader_error":True}
+                receipt["serve_shutdown_markers"]={"markers":{name:False for name,_ in SHUTDOWN_MARKERS},"rust_panic_observed":False,"pair_markers":{name:False for name,_ in PAIR_MARKERS},"discovery_markers":{name:False for name,_ in DISCOVERY_MARKERS},"connect_markers":{name:False for name,_ in CONNECT_MARKERS},"scoped_connect_counts":{name:0 for name,_ in SCOPED_CONNECT_MARKERS},"scoped_connect_saturated":False,"reader_closed":True,"reader_error":True}
             cleanup_failure = (
                 "forced_kill" if shutdown.startswith("forced_kill") else
                 "shutdown_error" if shutdown == "shutdown_error" else

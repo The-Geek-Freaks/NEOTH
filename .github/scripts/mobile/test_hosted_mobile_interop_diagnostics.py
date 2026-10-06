@@ -51,14 +51,79 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings(self) -> None:
+        delimiter = b"companion v3 daemon unavailable: malformed RPC response"
+        header = b"companion v3 daemon unavailable: malformed RPC response header"
+        self.assertEqual(INTEROP.pair_cli_failure_parse_subtype(delimiter), "delimiter")
+        self.assertEqual(INTEROP.pair_cli_failure_parse_subtype(header), "header")
+        self.assertEqual(
+            INTEROP.pair_cli_failure_parse_subtype(b"Error: " + delimiter), "delimiter"
+        )
+        self.assertEqual(
+            INTEROP.pair_cli_failure_parse_subtype(
+                b"Caused by:\n   0: mint v3 pairing invite from running daemon: " + header
+            ),
+            "header",
+        )
+
+    def test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes(self) -> None:
+        for message, subtype in INTEROP.PAIR_RPC_PARSE_FAILURES:
+            self.assertEqual(INTEROP.pair_cli_failure_parse_subtype(message.encode("ascii")), subtype)
+        for prefix, subtype in INTEROP.PAIR_RPC_PARSE_FAILURE_PREFIXES:
+            self.assertEqual(
+                INTEROP.pair_cli_failure_parse_subtype((prefix + "formatter detail").encode("ascii")),
+                subtype,
+            )
+        secret = b"receipt-secret-must-not-persist"
+        malicious = b"companion v3 daemon unavailable: malformed RPC response " + secret
+        self.assertEqual(INTEROP.pair_cli_failure_parse_subtype(malicious), "unknown")
+        self.assertEqual(
+            INTEROP.pair_cli_failure_parse_subtype(
+                b"Error: mint v3 pairing invite from running daemon: " + malicious
+            ),
+            "unknown",
+        )
+        self.assertEqual(
+            INTEROP.pair_cli_failure_parse_subtype(
+                b"companion v3 daemon unavailable: invalid RPC header: formatter detail"
+            ),
+            "unknown",
+        )
+        self.assertNotIn(secret.decode("ascii"), INTEROP.pair_cli_failure_parse_subtype(malicious))
+
+    def test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning(self) -> None:
+        original_run = INTEROP.subprocess.run
+        calls: list[object] = []
+        result = type("Completed", (), {
+            "returncode": 7,
+            "stdout": b"",
+            "stderr": b"companion v3 daemon unavailable: malformed RPC response header",
+        })()
+        def fake_run(*args: object, **kwargs: object) -> object:
+            calls.append((args, kwargs))
+            return result
+        INTEROP.subprocess.run = fake_run
+        try:
+            with self.assertRaises(INTEROP.CliFailure) as raised:
+                INTEROP.invoke(["not-run"], {}, 1.0, pair_mint=True)
+        finally:
+            INTEROP.subprocess.run = original_run
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(raised.exception.parse_subtype, "header")
+        self.assertEqual(raised.exception.category, "daemon_rpc_malformed_response")
+
     def test_chunk_boundaries_do_not_duplicate_or_merge_pair_and_active_markers(self) -> None:
         private_canary = b"discard-this-raw-daemon-text"
         stream = ChunkStream([
             private_canary + PAIR,
             b"x",  # The retained overlap still contains the shorter pair marker.
             ACTIVE[:31],
-            ACTIVE[31:] + ACTIVE,
+            ACTIVE[31:] + ACTIVE + b"[neoth pan",
+            b"ic] ts_unix=1 at private-path-not-retained: secret-payload",
+            b"thread 'worker' pani",
+            b"cked at also-private-default-panic",
             b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_dispatch_received_extra\n",
+            b"[neoth panicx] close-but-not-custom",
         ])
         collector = INTEROP.ShutdownMarkerCollector(stream)
         result = collector.snapshot(5)
@@ -67,7 +132,10 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertEqual(result["scoped_connect_counts"]["pair_handshake_dispatch_received"], 1)
         self.assertEqual(result["scoped_connect_counts"]["active_handshake_dispatch_received"], 2)
         self.assertFalse(result["scoped_connect_saturated"])
+        self.assertTrue(result["rust_panic_observed"])
         self.assertNotIn(private_canary.decode(), repr(result))
+        self.assertNotIn("private-path-not-retained", repr(result))
+        self.assertNotIn("secret-payload", repr(result))
 
     def test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody(self) -> None:
         private_canary = b"private-reply-diagnostic-must-not-persist"

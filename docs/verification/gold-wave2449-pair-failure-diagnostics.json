@@ -1,0 +1,26 @@
+{
+  "schema": "neoth.wave2449.pair-failure-diagnostics.v1",
+  "baseProducer": "0525c8194ac0493917761cce0447290c086cee70",
+  "observedRun": 37469639953,
+  "observedStage": "pair_status_read_mint",
+  "observedCategory": "daemon_rpc_malformed_response",
+  "implementation": [
+    "Closed parse subtype accepts actual Rust Error/context display strings and emits enum only.",
+    "Fixed boolean recognizes project and default Rust panic markers across bounded collector chunks.",
+    "No stderr, response body, invitation, endpoint or arbitrary panic detail retained."
+  ],
+  "staticReviewSha256": "C9F4FA7E1C7682F5D8D599F0D2E108A70123FBD3553487BA63FC5506C267398E",
+  "exactSelection": {
+    "rust": 49,
+    "collector": 12,
+    "sourcePaths": 39
+  },
+  "validation": {
+    "hosted": "pending",
+    "localExecutableValidationRan": false,
+    "productAccepted": false,
+    "releaseReady": false
+  },
+  "pendingRepair": "Typed pair readiness refusal and terminal response reserve remain in isolated review candidates; no server/runtime fix is included in this diagnostic publication.",
+  "shutdownBoundary": "Ordinary cleanup-error propagation cannot explain missing later shutdown markers. Panic false means not observed, never proof of no panic."
+}

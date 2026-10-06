@@ -42,7 +42,10 @@
         "io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses",
         "io::tests::deferred_handshake_reply_os_completion_preserves_the_listener_tag",
         "io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle",
-        "io::tests::raw_fallback_diagnostics_record_route_outcomes_per_socket_role"
+        "io::tests::raw_fallback_diagnostics_record_route_outcomes_per_socket_role",
+        "hyperdht::tests::relay_task_keeps_control_socket_until_owner_drop_then_aborts",
+        "hyperdht::tests::nested_relay_owner_keeps_upstream_alive_until_final_owner_drop",
+        "hyperdht::tests::peer_connection_relay_mux_handoff_keeps_live_udx_session_until_final_owner_drop"
       ]
     },
     "core": {
@@ -90,7 +93,10 @@
       "test_udx_route_markers_ignore_unscoped_response_and_bound_duplicates",
       "test_udx_route_cursor_keeps_pair_only_outcomes_out_of_active_delta",
       "test_client_route_phase_whitelist_captures_fixed_markers_only",
-      "test_client_route_phase_whitelist_rejects_suffix_only_marker"
+      "test_client_route_phase_whitelist_rejects_suffix_only_marker",
+      "test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings",
+      "test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes",
+      "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning"
     ]
   },
   "sourcePaths": [

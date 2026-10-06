@@ -46,11 +46,12 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
+        expected_groups = {"libudx": 8, "peeroxide": 9, "dht": 15, "core": 15, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
-            "rust": 46,
-            "collector": 9,
+            "rust": sum(expected_groups.values()),
+            "collector": 12,
             "sources": 39,
-            "groups": {"libudx": 8, "peeroxide": 9, "dht": 12, "core": 15, "no_cluster": 1, "bridge": 1},
+            "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
             "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
@@ -65,6 +66,9 @@ class SelectionContractTests(unittest.TestCase):
             "test_udx_route_cursor_keeps_pair_only_outcomes_out_of_active_delta",
             "test_client_route_phase_whitelist_captures_fixed_markers_only",
             "test_client_route_phase_whitelist_rejects_suffix_only_marker",
+            "test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings",
+            "test_pair_rpc_parse_subtype_covers_fixed_enum_and_discards_unknown_bytes",
+            "test_pair_mint_invoke_carries_closed_parse_subtype_without_spawning",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

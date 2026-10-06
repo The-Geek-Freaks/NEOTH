@@ -1,0 +1,46 @@
+{
+  "schema": "neoth.wave2446.relay-ownership.v1",
+  "baseProducer": "0525c8194ac0493917761cce0447290c086cee70",
+  "problem": "A post-handoff relay mux JoinHandle could detach when its PeerConnection owner was dropped; partial stream moves could lose an upstream relay owner.",
+  "repair": [
+    "RelayTask owns mux task plus control socket and aborts on final drop.",
+    "PeerConnection::into_relay_mux moves control stream, socket and upstream driver together.",
+    "Both HyperDHT and downstream Swarm constructors use the ownership-preserving handoff.",
+    "The spawned outer mux retains upstream ownership through final-owner cancellation."
+  ],
+  "tests": [
+    "hyperdht::tests::relay_task_keeps_control_socket_until_owner_drop_then_aborts",
+    "hyperdht::tests::nested_relay_owner_keeps_upstream_alive_until_final_owner_drop",
+    "hyperdht::tests::peer_connection_relay_mux_handoff_keeps_live_udx_session_until_final_owner_drop"
+  ],
+  "testBoundary": "The third case uses actual loopback UDX/SecretStream and production into_relay_mux, then observes upstream teardown on final PeerConnection drop. It is not a multi-host relay-chain qualification.",
+  "staticReviewSha256": [
+    "50B3A40E03254DE7F0F406DD89F58676968730DBFFCCE0C982A882F9D5257C3F",
+    "2DAC9126ED8C026BA1C87878C64D83E9E88290892C3BB1073D70D5DDB470FDA5"
+  ],
+  "selection": "All prior mobile selections retained plus three DHT ownership tests; total derives from independent expected group counts in the fixture.",
+  "validation": {
+    "hosted": "pending",
+    "localExecutableValidationRan": false,
+    "productAccepted": false,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "priorEvidence": {
+    "run": 37469639953,
+    "producer": "0525c8194ac0493917761cce0447290c086cee70",
+    "rustExactPassed": 46,
+    "collectorExactPassed": 9,
+    "sourceBindings": 39,
+    "hostCliBridgeBuilt": true,
+    "actualProduct": "failed before pairing handshake: pair_status_read_mint / daemon_rpc_malformed_response",
+    "walDrainProven": false,
+    "proofSha256": "05CD9FE0C70B6B2613153C0241515082004477422E1080B8895BFC70ACA37886"
+  },
+  "constraints": {
+    "localBsodHold": true,
+    "slintEdits": false,
+    "claudePolling": false,
+    "protectedLocalChangesPreserved": true
+  }
+}

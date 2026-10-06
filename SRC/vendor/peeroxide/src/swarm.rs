@@ -2002,7 +2002,6 @@ async fn create_server_relay_connection(
     noise_result: peeroxide_dht::noise_wrap::NoiseWrapResult,
 ) -> Result<(PeerConnection, UdxRuntime), SwarmError> {
     use peeroxide_dht::blind_relay::BlindRelayClient;
-    use peeroxide_dht::protomux::Mux;
 
     let runtime = UdxRuntime::shared(runtime_handle);
 
@@ -2035,9 +2034,10 @@ async fn create_server_relay_connection(
         ))
     })?;
 
-    // 2. Protomux over the control channel.
-    let (mux, mux_run) = Mux::new(relay_conn.stream);
-    let mux_task = RelayMuxTaskGuard::new(tokio::spawn(mux_run));
+    // 2. Protomux over the control channel. The DHT handoff retains any
+    // nested upstream relay owner inside the mux task until final teardown.
+    let (mux, relay_socket, mux_handoff) = relay_conn.into_relay_mux();
+    let mux_task = RelayMuxTaskGuard::new(mux_handoff.into_task());
 
     // 3. Open blind-relay client + pair as initiator (server initiates pairing).
     // Channel id = our public key (must match relay server's `id: socket.remotePublicKey`).
@@ -2064,7 +2064,7 @@ async fn create_server_relay_connection(
     //    channel's socket so the relay sees traffic from the same source address.
     let data_stream = runtime.create_stream(local_stream_id).await?;
     data_stream
-        .connect(&relay_conn.socket, remote_id, relay_addr)
+        .connect(&relay_socket, remote_id, relay_addr)
         .await?;
 
     // 5. Wrap with SecretStream using the original Noise keys.
@@ -2085,7 +2085,7 @@ async fn create_server_relay_connection(
         ss,
         noise_result.remote_public_key,
         relay_addr,
-        relay_conn.socket,
+        relay_socket,
         Some(mux_task.handoff()),
     );
     Ok((conn, runtime))

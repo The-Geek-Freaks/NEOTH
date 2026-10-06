@@ -667,14 +667,122 @@ pub struct PeerConnection {
     pub remote_public_key: [u8; 32],
     /// Remote peer's network address (used by server-side relay to connect data streams).
     pub remote_addr: Option<std::net::SocketAddr>,
+    /// The relay mux task retains the control-stream socket until this
+    /// connection is dropped. It must be dropped before the public data socket
+    /// so cancellation cannot leave the mux driver detached.
+    _relay_task: Option<RelayTask>,
     /// The UDX socket underlying this connection. Public so relay flows
     /// in downstream crates can reuse the control channel's socket for
     /// data streams (matching Node.js behaviour).
     pub socket: UdxSocket,
-    _relay_task: Option<JoinHandle<()>>,
+}
+
+/// Owns a relay mux driver and the socket supporting the control stream that
+/// the driver consumed. Dropping an established relay connection cancels the
+/// driver before releasing its socket; moving the `PeerConnection` moves both
+/// pieces together.
+struct RelayTask {
+    task: JoinHandle<()>,
+    _control_socket: UdxSocket,
+}
+
+/// The parts that must travel together when a relayed connection becomes the
+/// control stream of one further relay hop.
+struct RelayConnectionParts {
+    stream: SecretStream<UdxAsyncStream>,
+    socket: UdxSocket,
+    upstream_relay_task: Option<RelayTask>,
+}
+
+/// Owned relay-mux handoff for downstream users that need to open a protocol
+/// over an already-relayed peer connection. The upstream relay task remains
+/// captured by this mux task until its final owner drops it.
+pub struct RelayMuxHandoff {
+    task: Option<JoinHandle<()>>,
+    _control_socket: UdxSocket,
+}
+
+impl RelayMuxHandoff {
+    fn new(task: JoinHandle<()>, control_socket: UdxSocket) -> Self {
+        Self {
+            task: Some(task),
+            _control_socket: control_socket,
+        }
+    }
+
+    /// Transfers the running mux task to a `PeerConnection` constructor.
+    /// Dropping this handoff before transfer aborts the task and its captured
+    /// upstream relay owner.
+    pub fn into_task(mut self) -> JoinHandle<()> {
+        self.task
+            .take()
+            .expect("relay mux handoff transfers its task once")
+    }
+}
+
+impl Drop for RelayMuxHandoff {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+impl RelayTask {
+    fn new(task: JoinHandle<()>, control_socket: UdxSocket) -> Self {
+        Self {
+            task,
+            _control_socket: control_socket,
+        }
+    }
+}
+
+impl Drop for RelayTask {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl PeerConnection {
+    /// Consume this private connection without losing the relay task that
+    /// supports its encrypted control stream. Only relay construction may use
+    /// this: public callers keep owning a complete `PeerConnection`.
+    fn into_relay_parts(self) -> RelayConnectionParts {
+        let Self {
+            stream,
+            socket,
+            _relay_task,
+            ..
+        } = self;
+        RelayConnectionParts {
+            stream,
+            socket,
+            upstream_relay_task: _relay_task,
+        }
+    }
+
+    /// Starts a mux over this connection's encrypted relay-control stream and
+    /// returns the mux, the reusable data socket, and a cancellation-safe task
+    /// handoff. This consumes all relay ownership so callers cannot partially
+    /// move the stream while detaching an upstream relay driver.
+    pub fn into_relay_mux(self) -> (Mux, UdxSocket, RelayMuxHandoff) {
+        let RelayConnectionParts {
+            stream,
+            socket,
+            upstream_relay_task,
+        } = self.into_relay_parts();
+        let (mux, mux_run) = Mux::new(stream);
+        let control_socket = socket.clone();
+        let handoff = RelayMuxHandoff::new(
+            tokio::spawn(async move {
+                let _upstream_relay_task = upstream_relay_task;
+                mux_run.await;
+            }),
+            control_socket,
+        );
+        (mux, socket, handoff)
+    }
+
     /// Create a new peer connection from its components.
     pub fn new(
         stream: SecretStream<UdxAsyncStream>,
@@ -686,8 +794,8 @@ impl PeerConnection {
             stream,
             remote_public_key,
             remote_addr: None,
+            _relay_task: relay_task.map(|task| RelayTask::new(task, socket.clone())),
             socket,
-            _relay_task: relay_task,
         }
     }
 
@@ -703,8 +811,8 @@ impl PeerConnection {
             stream,
             remote_public_key,
             remote_addr: Some(remote_addr),
+            _relay_task: relay_task.map(|task| RelayTask::new(task, socket.clone())),
             socket,
-            _relay_task: relay_task,
         }
     }
 }
@@ -1953,8 +2061,8 @@ impl HyperDhtHandle {
         })?;
 
         // 2. Protomux over the control channel.
-        let (mux, mux_run) = Mux::new(relay_conn.stream);
-        let mux_task = tokio::spawn(mux_run);
+        let (mux, relay_socket, mux_handoff) = relay_conn.into_relay_mux();
+        let mux_task = RelayTask::new(mux_handoff.into_task(), relay_socket.clone());
 
         // 3. Open blind-relay client with our public key as channel id.
         // The relay server uses `id = socket.remotePublicKey` (our key).
@@ -1981,7 +2089,7 @@ impl HyperDhtHandle {
         diagnostics.phase("udx_establishment_started");
         let data_stream = runtime.create_stream(data_stream_id).await?;
         data_stream
-            .connect(&relay_conn.socket, remote_id, relay_addr)
+            .connect(&relay_socket, remote_id, relay_addr)
             .await?;
 
         // 5. Wrap with SecretStream::from_session using the original peer's
@@ -2001,8 +2109,8 @@ impl HyperDhtHandle {
             stream: ss,
             remote_public_key: noise_result.remote_public_key,
             remote_addr: Some(relay_addr),
-            socket: relay_conn.socket,
             _relay_task: Some(mux_task),
+            socket: relay_socket,
         };
         diagnostics.phase("udx_establishment_completed");
         diagnostics.phase("path_relay");
@@ -3132,6 +3240,178 @@ fn to_hex(bytes: impl AsRef<[u8]>) -> String {
 mod tests {
     use super::*;
     use crate::hyperdht_messages::{FIREWALL_CONSISTENT, FIREWALL_RANDOM};
+
+    #[tokio::test]
+    async fn relay_task_keeps_control_socket_until_owner_drop_then_aborts() {
+        struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+
+        let runtime = libudx::UdxRuntime::new().expect("relay task test runtime");
+        let socket = runtime
+            .create_socket()
+            .await
+            .expect("relay task test control socket");
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _drop_signal = DropSignal(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), started_rx)
+            .await
+            .expect("relay driver must start")
+            .expect("relay driver start signal remains connected");
+
+        let owner = RelayTask::new(task, socket);
+        assert!(
+            !owner.task.is_finished(),
+            "moving relay ownership must not cancel the running control driver"
+        );
+        drop(owner);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+            .await
+            .expect("dropping the final relay owner must abort the control driver")
+            .expect("aborted relay driver must release its control-stream marker");
+    }
+
+    #[tokio::test]
+    async fn nested_relay_owner_keeps_upstream_alive_until_final_owner_drop() {
+        struct DropSignal {
+            dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+            tx: Option<tokio::sync::oneshot::Sender<()>>,
+        }
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                self.dropped.store(true, std::sync::atomic::Ordering::Release);
+                if let Some(tx) = self.tx.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+
+        let runtime = libudx::UdxRuntime::new().expect("nested relay test runtime");
+        let socket = runtime
+            .create_socket()
+            .await
+            .expect("nested relay test socket");
+        let upstream_dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let outer_dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (upstream_started_tx, upstream_started_rx) = tokio::sync::oneshot::channel();
+        let (upstream_dropped_tx, upstream_dropped_rx) = tokio::sync::oneshot::channel();
+        let (outer_started_tx, outer_started_rx) = tokio::sync::oneshot::channel();
+        let (outer_dropped_tx, outer_dropped_rx) = tokio::sync::oneshot::channel();
+
+        let upstream_marker = std::sync::Arc::clone(&upstream_dropped);
+        let upstream = RelayTask::new(
+            tokio::spawn(async move {
+                let _signal = DropSignal {
+                    dropped: upstream_marker,
+                    tx: Some(upstream_dropped_tx),
+                };
+                let _ = upstream_started_tx.send(());
+                std::future::pending::<()>().await;
+            }),
+            socket.clone(),
+        );
+        upstream_started_rx.await.expect("upstream relay driver starts");
+
+        let outer_marker = std::sync::Arc::clone(&outer_dropped);
+        let final_owner = RelayTask::new(
+            tokio::spawn(async move {
+                let _upstream_relay_task = Some(upstream);
+                let _signal = DropSignal {
+                    dropped: outer_marker,
+                    tx: Some(outer_dropped_tx),
+                };
+                let _ = outer_started_tx.send(());
+                std::future::pending::<()>().await;
+            }),
+            socket,
+        );
+        outer_started_rx.await.expect("outer relay driver starts");
+        assert!(
+            !upstream_dropped.load(std::sync::atomic::Ordering::Acquire),
+            "moving the upstream owner into the outer mux must not abort it"
+        );
+        assert!(
+            !outer_dropped.load(std::sync::atomic::Ordering::Acquire),
+            "the final owner keeps the nested mux driver alive"
+        );
+
+        drop(final_owner);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), outer_dropped_rx)
+            .await
+            .expect("final owner drop aborts the outer mux")
+            .expect("outer mux drop marker remains connected");
+        tokio::time::timeout(std::time::Duration::from_secs(1), upstream_dropped_rx)
+            .await
+            .expect("outer mux cancellation drops and aborts its upstream owner")
+            .expect("upstream mux drop marker remains connected");
+        assert!(outer_dropped.load(std::sync::atomic::Ordering::Acquire));
+        assert!(upstream_dropped.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn peer_connection_relay_mux_handoff_keeps_live_udx_session_until_final_owner_drop() {
+        struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(tx) = self.0.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+
+        let left_runtime = libudx::UdxRuntime::new().expect("left UDX runtime");
+        let right_runtime = libudx::UdxRuntime::new().expect("right UDX runtime");
+        let left_socket = left_runtime.create_socket().await.expect("left socket");
+        let right_socket = right_runtime.create_socket().await.expect("right socket");
+        left_socket
+            .bind("127.0.0.1:0".parse().expect("left bind address"))
+            .await
+            .expect("left socket bind");
+        right_socket
+            .bind("127.0.0.1:0".parse().expect("right bind address"))
+            .await
+            .expect("right socket bind");
+        let left_address = left_socket.local_addr().await.expect("left address");
+        let right_address = right_socket.local_addr().await.expect("right address");
+        let left_stream = left_runtime.create_stream(0x91).await.expect("left stream");
+        let right_stream = right_runtime.create_stream(0x92).await.expect("right stream");
+        left_stream.connect(&left_socket, 0x92, right_address).await.expect("left connect");
+        right_stream.connect(&right_socket, 0x91, left_address).await.expect("right connect");
+        let (left_session, right_session) = tokio::join!(
+            SecretStream::from_session(true, left_stream.into_async_stream(), [1; 32], [2; 32], [3; 64], [4; 32]),
+            SecretStream::from_session(false, right_stream.into_async_stream(), [2; 32], [1; 32], [3; 64], [4; 32]),
+        );
+        let left_session = left_session.expect("left session");
+        let right_session = right_session.expect("right session");
+        let (upstream_dropped_tx, upstream_dropped_rx) = tokio::sync::oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let _signal = DropSignal(Some(upstream_dropped_tx));
+            std::future::pending::<()>().await;
+        });
+        let control = PeerConnection::new(left_session, [5; 32], left_socket, Some(upstream));
+        let (_mux, data_socket, handoff) = control.into_relay_mux();
+        let final_owner = PeerConnection::new(right_session, [6; 32], data_socket, Some(handoff.into_task()));
+        drop(final_owner);
+        tokio::time::timeout(std::time::Duration::from_secs(1), upstream_dropped_rx)
+            .await
+            .expect("final peer owner aborts the live nested upstream relay task")
+            .expect("upstream task drop marker remains connected");
+    }
 
     #[test]
     fn outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase() {

@@ -36,7 +36,7 @@
   },
   "validation": {
     "staticReview": "approved: 0980F321ACCC3895632816C8A030ABFCEA0677B1A916410709731CD94E0656B5",
-    "hosted": "pending",
+    "hosted": "46 exact Rust and 9 collector cases passed on 0525c819; product still failed before pairing handshake",
     "localExecutableValidationRan": false,
     "productAccepted": false,
     "deviceAccepted": false,
@@ -62,6 +62,17 @@
       "partialProofSha256": "D5173C189902522C0DE956A5AB92F0075509B0DBE93CA2D4F2848896F137DE47",
       "repair": "derive Clone on PendingResponderReplyKey; exact tuple/equality unchanged",
       "hosted": "pending corrected producer"
+    },
+    "secondFullAttempt": {
+      "run": 37469639953,
+      "producer": "0525c8194ac0493917761cce0447290c086cee70",
+      "rustExactPassed": 46,
+      "collectorExactPassed": 9,
+      "sourceBindings": 39,
+      "hostCliBridgeBuilt": true,
+      "actualProduct": "failed before pairing handshake: pair_status_read_mint / daemon_rpc_malformed_response",
+      "walDrainProven": false,
+      "proofSha256": "05CD9FE0C70B6B2613153C0241515082004477422E1080B8895BFC70ACA37886"
     }
   },
   "upstreamReference": "https://github.com/holepunchto/hyperdht/blob/fdcda937d8cf3ca2e494396c430218e2996e6b29/lib/server.js#L469-L486",

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2445 clone compile repair; actual product acceptance pending",
+  "status": "static reviewed; hosted relay ownership and pairing diagnostics pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 395210,
-    "sha256": "AC340D0EA0A79F2548F9C15577D9054EF6A8695E7B3A6770717AE91043102605"
+    "bytes": 395603,
+    "sha256": "FB3C3893B51BED76604A21614B3F8CA39089ECF9549F20631C321AE7D0CB7EE3"
   },
-  "sourceInputs": 2160,
+  "sourceInputs": 2162,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -76337,6 +76337,74 @@
       }
     ],
     "note": "Hosted37468762773 proved8 UDX and9 collector cases; missing test Clone derived without changing replay behavior. Both overlays restored; actual product not run.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2446RelayAnd2449Diagnostics": {
+    "base": "0525c8194ac0493917761cce0447290c086cee70",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 35565,
+        "sha256": "A57F3D5F5391A9B522F7AFCC006E8CEDF99B8DCDB47D59FB742191035EEBBE0A",
+        "blob": "5c4b100dc97894297b042d5387aed3573be2bd96"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 8991,
+        "sha256": "62298347E7532F06E911D046F2627DC795A2F39F45448EB80D46D79B88B5D10E",
+        "blob": "560a60fedcfe962095cc0702d71a745f622800a2"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 14490,
+        "sha256": "C58EC7618B32300BAF28B78C99AB84850390E3E9C05890C28A260DE124D4B6A3",
+        "blob": "1b3d21a585bd41f5252011e5248b476f030d7a29"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 7530,
+        "sha256": "0478052580349C8966ADEC50E96A5261E9D2567A69ABEE03289739EC0CD37D88",
+        "blob": "ec912a267e629f25c67c9161bd8841d2a47640bf"
+      },
+      {
+        "path": "docs/verification/gold-wave2445-responder-replay.json",
+        "bytes": 4406,
+        "sha256": "8C1BA8B820C264EC8BD6C607BA56A297B60BB679B28E20AEFAAFB02525FEA211",
+        "blob": "e03489cb830247f6e32616aa03615bfa449730c4"
+      },
+      {
+        "path": "docs/verification/gold-wave2446-relay-ownership.json",
+        "bytes": 2269,
+        "sha256": "2C56E62F0C7842ED9E31548F1800419884656C66C5B72E1F3D3BAC2AF3CF6E66",
+        "blob": "252a3d216439aedf7bad8065715057fac3f16096"
+      },
+      {
+        "path": "docs/verification/gold-wave2449-pair-failure-diagnostics.json",
+        "bytes": 1245,
+        "sha256": "8B0798B0526B9A613A7B8CD71953B8ADF5D27C49FD7FE1C120059FC816870FD9",
+        "blob": "dcd0c5c24512d3c81f7a6012289ca50e9ae623a9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2442927,
+        "sha256": "98B08AFD8E76C00C2011D1335922C7A7122C3C2ACABCDEEE5A767DF8C4877E05",
+        "blob": "b491a8da7b65ca7bbe4da174fb0be0c0e4d77a70"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 155031,
+        "sha256": "7B62BE8619DDADFE142554845DACB109C04AC23BE92D8C86306A341B12AB8B02",
+        "blob": "521d2bd82d6a456072a9ed282a0dc456ffa51ae7"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 119667,
+        "sha256": "FA64B80BF94D8794BC5270E55C48866979FCCAE957A3594B12FD8F2E40BEF7AE",
+        "blob": "60687188f5158d58aebfd99b49ddd72cdc01b04b"
+      }
+    ],
+    "note": "Reviewed relay final-owner cancellation and fixed RPC/panic observations; 49 exact Rust,12 collector,39 source selections. Typed RPC repair remains isolated. No local executable validation and no product acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
