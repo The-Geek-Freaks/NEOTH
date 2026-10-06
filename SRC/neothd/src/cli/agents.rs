@@ -1129,7 +1129,7 @@ mod tests {
         )
         .expect("write fan-out config");
 
-        let error = run_fan_out(
+        run_fan_out(
             home.path(),
             &agent_dir,
             vec!["planner".into(), "critic".into()],
@@ -1140,11 +1140,29 @@ mod tests {
             &OutputFormat::Json,
         )
         .await
-        .expect_err("missing fixture provider must terminally fail the real fan-out");
-        assert!(
-            !home.path().join("sub-agent-runs").exists(),
-            "failed fan-out must not persist a successful run record: {error:#}"
-        );
+        .expect("missing provider must persist the real structured blocked run");
+        let records = crate::sub_agents::runtime::list_runs(home.path(), 2)
+            .expect("load persisted blocked fan-out record");
+        assert_eq!(records.len(), 1, "exactly one blocked run is persisted");
+        let record = &records[0];
+        assert_eq!(record.results.len(), 2, "one result per requested agent");
+        for (result, expected_agent) in record.results.iter().zip(["planner", "critic"]) {
+            let crate::council::qa_verdict::QaVerdict::Blocked { reason } = &result.verdict
+            else {
+                panic!("missing provider must yield a structured blocked result: {result:?}");
+            };
+            assert!(
+                reason.contains(&format!("worker error: sub-agent `{expected_agent}` primary attempt 1")),
+                "blocked result must identify the rejected real provider leaf: {reason}"
+            );
+            assert_eq!(result.from, "<parallel-dispatcher>");
+            assert_eq!(result.to, "<caller>");
+            assert_eq!(result.attempts, 0, "no provider attempt is accepted");
+            assert!(
+                result.provider_calls.is_empty(),
+                "missing provider must yield zero accepted provider calls"
+            );
+        }
         assert!(
             home.path().join("wal").exists(),
             "offline fan-out must have opened its real isolated WAL writer"

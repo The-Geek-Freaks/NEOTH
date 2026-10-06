@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.wave2469.fan-out-fixture-and-mobile-order.v1",
+  "status": "STATIC-REVIEWED-HOSTED-PENDING",
+  "baseProducer": "e5e3b974a6a1061a72c372d5cb643e5920ba9b28",
+  "priorCliRun": "37528483405",
+  "priorCliJob": "112491466440",
+  "partialHostedEvidence": {
+    "path": "work/gold-20260906/wave2466-contract-admission/ROOT_PARTIAL_FAILURE_CHECKS.json",
+    "ownerFailed": 1,
+    "slimClippyPassed": true,
+    "publicCliBuildPassed": true,
+    "ownerPassed": 18,
+    "generatedDocsSkipped": true,
+    "companionPassed": 24,
+    "sha256": "67BDEC9E26B927278544123EEEC31B6D60822AEE72109DFD86066E9F8693C507",
+    "coreTestTypecheckPassed": true,
+    "fullRunAccepted": false,
+    "ownerNotRun": 3
+  },
+  "fixtureCorrection": "Assert persisted structured Blocked leaf results, zero accepted provider calls/attempts and post-return owner reacquisition; production behavior unchanged",
+  "orderingOptimization": {
+    "earlyFailureIsNotFullCaseAcceptance": true,
+    "movedIntactSteps": [
+      "Run fixed isolated-home pair/status/chat/revoke",
+      "Require successful-run receipt custody"
+    ],
+    "priorFailureRun": "37520223935",
+    "newPosition": "immediately after exact_host_build",
+    "priorAvoidableFeedbackDelaySeconds": 919,
+    "measuredNewSpeedup": false,
+    "fullSuccessStillRequires": {
+      "rustCases": 61,
+      "sourceBindings": 41,
+      "collectorCases": 16
+    },
+    "allOriginalGatesPreserved": true
+  },
+  "reviews": [
+    {
+      "sha256": "F848E2CD08EB068841B3B2EC4F7B06E3183A66F4F46D3FED0FD1AF2A70DD1F3B",
+      "path": "work/gold-20260906/wave2469-fan-out-fixture/review/W2469_FAN_OUT_FIXTURE_STATIC_REVIEW.md"
+    },
+    {
+      "sha256": "49275B1A51CE44FABC72F7C696D29AB19A382AE6AEB439B4F7C08C881158B81F",
+      "path": "work/gold-20260906/wave2468-mobile-order/review/W2468_MOBILE_ORDER_STATIC_REVIEW.md"
+    }
+  ],
+  "next": "After fast gates, early Mobile diagnostic; rerun all22 owner cases on final source before complete acceptance",
+  "localExecutableValidationRan": false,
+  "hostedAcceptance": false,
+  "panicCauseKnown": false,
+  "productNativeDeviceReleaseAcceptance": false
+}

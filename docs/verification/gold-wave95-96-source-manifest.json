@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T20:37:27.7060904Z",
-  "validationStatus": "HOSTED-PENDING",
+  "capturedUtc": "2026-10-06T21:03:51.1771598Z",
+  "validationStatus": "STATIC-REVIEWED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -149,7 +149,7 @@
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
       "bytes": 18883,
-      "sha256": "28EC94D33763B891DEB71C982A0E77E58AA83ED692519902994EAA6AEA758327"
+      "sha256": "15D0B5AC2A2A10A8B873518840217777C9DEA09CC7BE6A8B1B9D13A4585E3B8A"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3847,6 +3847,11 @@
       "sha256": "C87FDD9068D9F577A9CAF7D64B67023ED066B279BF1E24CA70A6AD481C10F511"
     },
     {
+      "path": "docs/verification/gold-wave2469-fan-out-fixture-and-mobile-order.json",
+      "bytes": 2132,
+      "sha256": "AD3724A959416C802F95D439D5B5396ADFB8CCA3957EB52C8A02115BAB2395E5"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4998,8 +5003,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2460541,
-      "sha256": "A5AD21FE7C176C1217240D021BB53C51EA463AA4F6D7E467491DB4BAA362C202"
+      "bytes": 2462599,
+      "sha256": "37E3973F746A2B32CEB0EB9F3CA0BA5D2157A84D2642C083169E50B6F48AC959"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5818,8 +5823,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 57150,
-      "sha256": "3205E50E748CFAD4CDA7CF55C63B6F5BC026AAB6E25AD8DEB9825CB838DF78D1"
+      "bytes": 58198,
+      "sha256": "6B78E75B86C1F9A54BF511DECD55FCEDC4A57CC52EB7EB1B3AF994E99FAD0B73"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
