@@ -24,6 +24,12 @@ impl ConnectionSet {
         self.by_public_key.contains_key(public_key)
     }
 
+    pub fn matches_generation(&self, public_key: &[u8; 32], registration_id: u64) -> bool {
+        self.by_public_key
+            .get(public_key)
+            .is_some_and(|info| info.registration_id == registration_id)
+    }
+
     #[cfg(test)]
     pub fn get(&self, public_key: &[u8; 32]) -> Option<&ConnectionInfo> {
         self.by_public_key.get(public_key)

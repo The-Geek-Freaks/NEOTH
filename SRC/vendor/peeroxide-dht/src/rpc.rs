@@ -12,7 +12,9 @@ use tokio::time::{Instant, interval, sleep_until};
 
 use libudx::{UdxRuntime, UdxSocket};
 
-use crate::io::{Io, IoConfig, IoEvent, ReplyContext, RequestParams, TimeoutEvent};
+use crate::io::{
+    Io, IoConfig, IoDiagnosticScope, IoEvent, ReplyContext, RequestParams, TimeoutEvent,
+};
 use crate::messages::{Command, Ipv4Peer};
 use crate::peer::{NodeId, peer_id};
 use crate::query::{
@@ -1789,6 +1791,14 @@ pub(crate) async fn spawn_with_incoming_diagnostics(
     let table = Arc::new(Mutex::new(RoutingTable::new(table_id)));
 
     let ephemeral = config.ephemeral.unwrap_or(!config.bootstrap.is_empty());
+    let io_diagnostic_scope = incoming_diagnostics
+        .as_ref()
+        .map(|diagnostics| match diagnostics.scope() {
+            crate::hyperdht::CompanionDiagnosticScope::Unscoped => IoDiagnosticScope::Unscoped,
+            crate::hyperdht::CompanionDiagnosticScope::Pair => IoDiagnosticScope::Pair,
+            crate::hyperdht::CompanionDiagnosticScope::Active => IoDiagnosticScope::Active,
+        })
+        .unwrap_or(IoDiagnosticScope::Unscoped);
     let io_config = IoConfig {
         max_window: config.max_window,
         port: config.port,
@@ -1797,7 +1807,13 @@ pub(crate) async fn spawn_with_incoming_diagnostics(
         ephemeral,
     };
 
-    let io = Io::bind(runtime, Arc::clone(&table), io_config).await?;
+    let io = Io::bind_with_diagnostic_scope(
+        runtime,
+        Arc::clone(&table),
+        io_config,
+        io_diagnostic_scope,
+    )
+    .await?;
     let local_port = io
         .server_local_addr()
         .await

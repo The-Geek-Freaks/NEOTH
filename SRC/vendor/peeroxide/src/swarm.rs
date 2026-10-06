@@ -114,6 +114,7 @@ const PEER_RECORD_TTL: Duration = Duration::from_secs(15 * 60);
 const PEER_GC_INTERVAL: Duration = Duration::from_secs(60);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_SERVER_PUBLICATION_WAITERS: usize = 16;
+const MAX_PENDING_RESPONDER_NOISE_BYTES: usize = 65_507;
 
 /// Secret-free terminal receipt for one server topic's initial publication.
 ///
@@ -428,6 +429,7 @@ impl SwarmStartup {
             peers: HashMap::new(),
             peer_last_seen: HashMap::new(),
             connections: ConnectionSet::new(),
+            pending_responder_replies: PendingResponderReplies::default(),
             queue: Vec::new(),
             retries: Vec::new(),
             next_peer_gc: Instant::now() + PEER_GC_INTERVAL,
@@ -687,6 +689,7 @@ struct SwarmActor {
     peers: HashMap<[u8; 32], PeerInfo>,
     peer_last_seen: HashMap<[u8; 32], Instant>,
     connections: ConnectionSet,
+    pending_responder_replies: PendingResponderReplies,
     queue: Vec<[u8; 32]>,
     retries: Vec<RetrySchedule>,
     next_peer_gc: Instant,
@@ -703,6 +706,106 @@ struct SwarmActor {
 
     active_connects: usize,
     flush_waiters: Vec<oneshot::Sender<Result<(), SwarmError>>>,
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct PendingResponderReplyKey {
+    public_key: [u8; 32],
+    noise: Vec<u8>,
+    host: String,
+    port: u16,
+}
+
+struct PendingResponderReply {
+    encoded_reply: Vec<u8>,
+    registration_id: u64,
+    expires_at: Instant,
+}
+
+/// Owns a relay mux task until the completed `PeerConnection` takes it over.
+/// Cancelling responder establishment before that handoff must not detach the
+/// mux driver, because the outer attempt timeout drops this future.
+struct RelayMuxTaskGuard {
+    task: Option<JoinHandle<()>>,
+}
+
+impl RelayMuxTaskGuard {
+    fn new(task: JoinHandle<()>) -> Self {
+        Self { task: Some(task) }
+    }
+
+    fn handoff(mut self) -> JoinHandle<()> {
+        self.task
+            .take()
+            .expect("relay mux guard hands off its task once")
+    }
+}
+
+impl Drop for RelayMuxTaskGuard {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+#[derive(Default)]
+struct PendingResponderReplies {
+    entries: HashMap<PendingResponderReplyKey, PendingResponderReply>,
+}
+
+impl PendingResponderReplies {
+    fn key(
+        public_key: [u8; 32],
+        noise: &[u8],
+        from: &Ipv4Peer,
+    ) -> Option<PendingResponderReplyKey> {
+        (noise.len() <= MAX_PENDING_RESPONDER_NOISE_BYTES).then(|| PendingResponderReplyKey {
+            public_key,
+            noise: noise.to_vec(),
+            host: from.host.clone(),
+            port: from.port,
+        })
+    }
+
+    fn replay(
+        &mut self,
+        key: &PendingResponderReplyKey,
+        connections: &ConnectionSet,
+    ) -> Option<Vec<u8>> {
+        let now = Instant::now();
+        self.entries.retain(|stored_key, entry| {
+            entry.expires_at > now
+                && connections.matches_generation(&stored_key.public_key, entry.registration_id)
+        });
+        self.entries.get(key).and_then(|entry| {
+            connections.matches_generation(&key.public_key, entry.registration_id)
+                .then(|| entry.encoded_reply.clone())
+        })
+    }
+
+    fn insert(
+        &mut self,
+        key: PendingResponderReplyKey,
+        encoded_reply: Vec<u8>,
+        registration_id: u64,
+    ) -> bool {
+        if self.entries.len() >= MAX_TOTAL_PEERS
+            || encoded_reply.len() > MAX_PENDING_RESPONDER_NOISE_BYTES
+        {
+            return false;
+        }
+        self.entries.insert(key, PendingResponderReply {
+            encoded_reply,
+            registration_id,
+            expires_at: Instant::now() + CONNECT_ATTEMPT_TIMEOUT,
+        });
+        true
+    }
+
+    fn remove_generation(&mut self, public_key: &[u8; 32], registration_id: u64) {
+        self.entries.retain(|key, entry| key.public_key != *public_key || entry.registration_id != registration_id);
+    }
 }
 
 struct ConnectAttemptResult {
@@ -1041,6 +1144,8 @@ impl SwarmActor {
             .connections
             .remove_if_matches(&public_key, registration_id)
         {
+            self.pending_responder_replies
+                .remove_generation(&public_key, registration_id);
             tracing::debug!(
                 pk = %short_hex(&public_key),
                 registration_id,
@@ -1583,11 +1688,12 @@ impl SwarmActor {
         };
         self.discovery_diagnostics
             .phase("responder_noise_authenticated");
-        let Some(local_stream_id) = after_server_handshake_admission(
+        if after_server_handshake_admission(
             self.config.server_expected_remote_static_key,
             remote_static_key,
-            next_stream_id,
-        ) else {
+            || (),
+        )
+        .is_none() {
             self.discovery_diagnostics.phase("responder_pin_rejected");
             tracing::debug!(
                 expected = ?self.config.server_expected_remote_static_key.map(|key| short_hex(&key)),
@@ -1596,12 +1702,45 @@ impl SwarmActor {
             );
             let _ = reply_tx.send(None);
             return;
+        }
+
+        let remote_pk = remote_static_key;
+        let Some(replay_key) = PendingResponderReplies::key(remote_pk, &msg.noise, &from) else {
+            let _ = reply_tx.send(None);
+            return;
         };
+        if let Some(encoded_reply) = self
+            .pending_responder_replies
+            .replay(&replay_key, &self.connections)
+        {
+            let _ = reply_tx.send(Some(encoded_reply));
+            return;
+        }
+        if self.connections.has(&remote_pk) {
+            tracing::debug!(pk = %short_hex(&remote_pk), "server: existing connection rejects fresh handshake");
+            let _ = reply_tx.send(None);
+            return;
+        }
 
         if remote_payload.error != 0 {
             let _ = reply_tx.send(None);
             return;
         }
+
+        let remote_udx = match remote_payload.udx.clone() {
+            Some(udx) if u32::try_from(udx.id).is_ok() => udx,
+            _ => {
+                tracing::debug!("server: invalid or missing UDX info in handshake");
+                let _ = reply_tx.send(None);
+                return;
+            }
+        };
+        if self.connections.len() >= self.config.max_peers {
+            tracing::debug!("server: at max connections");
+            let _ = reply_tx.send(None);
+            return;
+        }
+        let local_stream_id = next_stream_id();
 
         let (relay_token, relay_through_info) = if let Some(relay_pk) = self.config.relay_through {
             let token: [u8; 32] = rand::random();
@@ -1662,25 +1801,9 @@ impl SwarmActor {
             peer_address: None,
             relay_address: None,
         };
-        let _ = reply_tx.send(encode_handshake_to_bytes(&reply_msg).ok());
-
-        let remote_pk = nw_result.remote_public_key;
-
-        if self.connections.has(&remote_pk) {
-            tracing::debug!(pk = %short_hex(&remote_pk), "server: already connected");
+        let Some(encoded_reply) = encode_handshake_to_bytes(&reply_msg).ok() else {
+            let _ = reply_tx.send(None);
             return;
-        }
-        if self.connections.len() >= self.config.max_peers {
-            tracing::debug!("server: at max connections");
-            return;
-        }
-
-        let remote_udx = match remote_payload.udx {
-            Some(u) => u,
-            None => {
-                tracing::debug!("server: no UDX info in handshake");
-                return;
-            }
         };
 
         // Reserve before spawning stream establishment so duplicate and
@@ -1688,6 +1811,27 @@ impl SwarmActor {
         // registration drops on an establishment failure or when the consumer
         // rejects a pre-auth connection.
         let registration = self.register_connection(remote_pk);
+        let registration_id = registration.registration_id;
+        if !self
+            .pending_responder_replies
+            .insert(replay_key, encoded_reply.clone(), registration_id)
+        {
+            drop(registration);
+            self.handle_connection_lifecycle(ConnectionLifecycleEvent::Closed {
+                public_key: remote_pk,
+                registration_id,
+            });
+            let _ = reply_tx.send(None);
+            return;
+        }
+        if reply_tx.send(Some(encoded_reply)).is_err() {
+            drop(registration);
+            self.handle_connection_lifecycle(ConnectionLifecycleEvent::Closed {
+                public_key: remote_pk,
+                registration_id,
+            });
+            return;
+        }
 
         let conn_tx = self.conn_tx.clone();
 
@@ -1698,19 +1842,22 @@ impl SwarmActor {
             let rh = self.runtime_handle.clone();
             let discovery_diagnostics = Arc::clone(&self.discovery_diagnostics);
             self.establishment_tasks.spawn(async move {
-                match create_server_relay_connection(
-                    rh,
-                    dht,
-                    key_pair,
-                    relay_pk,
-                    relay_addr,
-                    token,
-                    local_stream_id,
-                    nw_result,
+                match tokio::time::timeout(
+                    CONNECT_ATTEMPT_TIMEOUT,
+                    create_server_relay_connection(
+                        rh,
+                        dht,
+                        key_pair,
+                        relay_pk,
+                        relay_addr,
+                        token,
+                        local_stream_id,
+                        nw_result,
+                    ),
                 )
                 .await
                 {
-                    Ok((conn, runtime)) => {
+                    Ok(Ok((conn, runtime))) => {
                         let swarm_conn = SwarmConnection {
                             peer: conn,
                             is_initiator: false,
@@ -1724,8 +1871,11 @@ impl SwarmActor {
                             discovery_diagnostics.phase("responder_connection_delivered");
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::debug!(err = %e, "server: relay connection failed");
+                    }
+                    Err(_) => {
+                        tracing::debug!("server: relay connection establishment timed out");
                     }
                 }
             });
@@ -1734,17 +1884,20 @@ impl SwarmActor {
             let dht = self.dht.clone();
             let discovery_diagnostics = Arc::clone(&self.discovery_diagnostics);
             self.establishment_tasks.spawn(async move {
-                match create_server_connection(
-                    rh,
-                    dht,
-                    local_stream_id,
-                    &remote_udx,
-                    &from,
-                    &nw_result,
+                match tokio::time::timeout(
+                    CONNECT_ATTEMPT_TIMEOUT,
+                    create_server_connection(
+                        rh,
+                        dht,
+                        local_stream_id,
+                        &remote_udx,
+                        &from,
+                        &nw_result,
+                    ),
                 )
                 .await
                 {
-                    Ok((conn, runtime)) => {
+                    Ok(Ok((conn, runtime))) => {
                         let swarm_conn = SwarmConnection {
                             peer: conn,
                             is_initiator: false,
@@ -1758,8 +1911,11 @@ impl SwarmActor {
                             discovery_diagnostics.phase("responder_connection_delivered");
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::debug!(err = %e, "server: stream establishment failed");
+                    }
+                    Err(_) => {
+                        tracing::debug!("server: stream establishment timed out");
                     }
                 }
             });
@@ -1881,7 +2037,7 @@ async fn create_server_relay_connection(
 
     // 2. Protomux over the control channel.
     let (mux, mux_run) = Mux::new(relay_conn.stream);
-    let mux_task = tokio::spawn(mux_run);
+    let mux_task = RelayMuxTaskGuard::new(tokio::spawn(mux_run));
 
     // 3. Open blind-relay client + pair as initiator (server initiates pairing).
     // Channel id = our public key (must match relay server's `id: socket.remotePublicKey`).
@@ -1930,7 +2086,7 @@ async fn create_server_relay_connection(
         noise_result.remote_public_key,
         relay_addr,
         relay_conn.socket,
-        Some(mux_task),
+        Some(mux_task.handoff()),
     );
     Ok((conn, runtime))
 }
@@ -1938,6 +2094,12 @@ async fn create_server_relay_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use peeroxide_dht::{
+        hyperdht_messages::{decode_handshake_from_bytes, FIREWALL_UNKNOWN, PEER_HANDSHAKE},
+        messages::{self, Message, Request},
+        router::Router,
+    };
+    use tokio::net::UdpSocket;
 
     #[test]
     fn server_publication_requires_both_announcement_successes() {
@@ -2080,18 +2242,134 @@ mod tests {
         assert_eq!(c.outbound_expected_remote_static_key, None);
     }
 
+    fn responder_source(host: &str, port: u16) -> Ipv4Peer {
+        Ipv4Peer {
+            host: host.to_owned(),
+            port,
+        }
+    }
+
+    #[test]
+    fn pending_responder_replay_is_byte_identical_only_for_same_noise_and_source() {
+        let public_key = [0x51; 32];
+        let source = responder_source("127.0.0.1", 4040);
+        let noise = vec![0x10, 0x20, 0x30];
+        let key = PendingResponderReplies::key(public_key, &noise, &source)
+            .expect("bounded Noise request creates a replay key");
+        let mut connections = ConnectionSet::new();
+        connections.add(public_key, ConnectionInfo { registration_id: 17 });
+        let mut replies = PendingResponderReplies::default();
+        let encoded_reply = vec![0xa1, 0xb2, 0xc3];
+        assert!(replies.insert(key.clone(), encoded_reply.clone(), 17));
+
+        assert_eq!(
+            replies.replay(&key, &connections),
+            Some(encoded_reply),
+            "a retry must receive the original reply bytes and advertised UDX id"
+        );
+    }
+
+    #[test]
+    fn pending_responder_replay_rejects_different_noise_or_source() {
+        let public_key = [0x52; 32];
+        let source = responder_source("127.0.0.1", 4041);
+        let original_noise = vec![0x11, 0x22];
+        let original = PendingResponderReplies::key(public_key, &original_noise, &source)
+            .expect("bounded original Noise creates a replay key");
+        let mut connections = ConnectionSet::new();
+        connections.add(public_key, ConnectionInfo { registration_id: 18 });
+        let mut replies = PendingResponderReplies::default();
+        assert!(replies.insert(original, vec![0xd4], 18));
+
+        let different_noise = PendingResponderReplies::key(public_key, &[0x11, 0x23], &source)
+            .expect("bounded distinct Noise creates a lookup key");
+        let different_source = PendingResponderReplies::key(
+            public_key,
+            &original_noise,
+            &responder_source("127.0.0.2", 4041),
+        )
+        .expect("bounded source variant creates a lookup key");
+
+        assert_eq!(replies.replay(&different_noise, &connections), None);
+        assert_eq!(replies.replay(&different_source, &connections), None);
+        assert!(connections.has(&public_key));
+    }
+
+    #[test]
+    fn pending_responder_cache_expires_and_stale_generation_cleanup_preserves_replacement() {
+        let public_key = [0x53; 32];
+        let source = responder_source("127.0.0.1", 4042);
+        let mut connections = ConnectionSet::new();
+        connections.add(public_key, ConnectionInfo { registration_id: 19 });
+        let mut replies = PendingResponderReplies::default();
+        let expired = PendingResponderReplies::key(public_key, &[0x31], &source)
+            .expect("bounded Noise creates a replay key");
+        assert!(replies.insert(expired.clone(), vec![0xe1], 19));
+        replies
+            .entries
+            .get_mut(&expired)
+            .expect("inserted expiry is addressable")
+            .expires_at = Instant::now() - Duration::from_millis(1);
+        assert_eq!(replies.replay(&expired, &connections), None);
+        assert!(replies.entries.is_empty());
+
+        connections.add(public_key, ConnectionInfo { registration_id: 20 });
+        let replacement = PendingResponderReplies::key(public_key, &[0x32], &source)
+            .expect("bounded replacement Noise creates a replay key");
+        assert!(replies.insert(replacement.clone(), vec![0xe2], 20));
+        replies.remove_generation(&public_key, 19);
+        assert_eq!(replies.replay(&replacement, &connections), Some(vec![0xe2]));
+        replies.remove_generation(&public_key, 20);
+        assert_eq!(replies.replay(&replacement, &connections), None);
+    }
+
+    struct DropSignal(Option<oneshot::Sender<()>>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_mux_guard_aborts_a_started_pre_handoff_driver() {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (dropped_tx, dropped_rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _drop_signal = DropSignal(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("mux driver must start before its cancellation guard is dropped")
+            .expect("mux driver start barrier must remain connected");
+
+        drop(RelayMuxTaskGuard::new(task));
+
+        tokio::time::timeout(Duration::from_secs(1), dropped_rx)
+            .await
+            .expect("dropping a pre-handoff mux guard must abort the driver")
+            .expect("aborted mux driver must run its drop marker");
+    }
+
     struct LocalDiscoveryActor {
         actor: SwarmActor,
         dht_task: JoinHandle<Result<(), hyperdht::HyperDhtError>>,
         runtime: UdxRuntime,
+        server_rx: mpsc::Receiver<ServerEvent>,
+        connection_lifecycle_rx: mpsc::UnboundedReceiver<ConnectionLifecycleEvent>,
     }
 
     impl LocalDiscoveryActor {
         async fn new(expected_remote_static_key: Option<[u8; 32]>, topic: [u8; 32]) -> Self {
             let runtime = UdxRuntime::new().expect("local UDX runtime");
-            let config = HyperDhtConfig::default();
+            let mut config = HyperDhtConfig::default();
             assert!(config.dht.bootstrap.is_empty(), "local fixture must not bootstrap publicly");
-            let (dht_task, dht, _server_rx) = tokio::time::timeout(
+            config.dht.host = "127.0.0.1".to_owned();
+            let (dht_task, dht, server_rx) = tokio::time::timeout(
                 Duration::from_secs(5),
                 hyperdht::spawn(&runtime, config),
             )
@@ -2101,7 +2379,7 @@ mod tests {
             let (discovery_event_tx, _discovery_event_rx) =
                 mpsc::channel(DISCOVERY_EVENT_CHANNEL_CAPACITY);
             let (conn_tx, _conn_rx) = mpsc::channel(1);
-            let (connection_lifecycle_tx, _connection_lifecycle_rx) = mpsc::unbounded_channel();
+            let (connection_lifecycle_tx, connection_lifecycle_rx) = mpsc::unbounded_channel();
             let mut topics = HashMap::new();
             topics.insert(
                 topic,
@@ -2134,6 +2412,7 @@ mod tests {
                     peers: HashMap::new(),
                     peer_last_seen: HashMap::new(),
                     connections: ConnectionSet::new(),
+                    pending_responder_replies: PendingResponderReplies::default(),
                     queue: Vec::new(),
                     retries: Vec::new(),
                     next_peer_gc: Instant::now() + PEER_GC_INTERVAL,
@@ -2154,6 +2433,8 @@ mod tests {
                 },
                 dht_task,
                 runtime,
+                server_rx,
+                connection_lifecycle_rx,
             }
         }
 
@@ -2170,6 +2451,373 @@ mod tests {
             drop(self.runtime);
         }
     }
+
+    fn loopback_client_noise(
+        client: &KeyPair,
+        server_public_key: [u8; 32],
+        stream_id: u32,
+    ) -> (NoiseWrap, Vec<u8>) {
+        let mut noise = NoiseWrap::new_initiator(
+            NoiseKeypair {
+                public_key: client.public_key,
+                secret_key: client.secret_key,
+            },
+            server_public_key,
+        );
+        let encoded = noise
+            .send(&NoisePayload {
+                version: 1,
+                error: 0,
+                firewall: FIREWALL_UNKNOWN,
+                holepunch: None,
+                addresses4: vec![],
+                addresses6: vec![],
+                udx: Some(UdxInfo {
+                    version: 1,
+                    reusable_socket: true,
+                    id: u64::from(stream_id),
+                    seq: 0,
+                }),
+                secret_stream: Some(SecretStreamInfo { version: 1 }),
+                relay_through: None,
+                relay_addresses: None,
+            })
+            .expect("test initiator must encode a valid first Noise message");
+        (noise, encoded)
+    }
+
+    fn raw_handshake_request(
+        tid: u16,
+        server_addr: std::net::SocketAddr,
+        target: [u8; 32],
+        noise: Vec<u8>,
+    ) -> Vec<u8> {
+        let value = Router::encode_client_handshake(noise, None, None)
+            .expect("test initiator handshake envelope must encode");
+        messages::encode_request_to_bytes(&Request {
+            tid,
+            to: Ipv4Peer {
+                host: server_addr.ip().to_string(),
+                port: server_addr.port(),
+            },
+            id: None,
+            token: None,
+            internal: false,
+            command: PEER_HANDSHAKE,
+            target: Some(target),
+            value: Some(value),
+        })
+        .expect("raw peer-handshake request must encode")
+    }
+
+    /// Receive exactly one matching DHT response from the real listener. The
+    /// timeout wraps the entire loop: unrelated valid UDX datagrams and unrelated
+    /// DHT messages never restart the five-second budget.
+    async fn recv_loopback_dht_response(
+        client: &UdpSocket,
+        expected_source: std::net::SocketAddr,
+        expected_tid: u16,
+    ) -> (Vec<u8>, messages::Response) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let (len, source) = client
+                    .recv_from(&mut buffer)
+                    .await
+                    .expect("raw loopback client must receive a datagram");
+                if source != expected_source {
+                    continue;
+                }
+                let packet = buffer[..len].to_vec();
+                let Ok(Message::Response(response)) = messages::decode_message(&packet) else {
+                    // A UDX packet is valid traffic on the shared listener but is
+                    // not proof of a DHT reply; retain the single outer deadline.
+                    continue;
+                };
+                if response.tid == expected_tid {
+                    return (packet, response);
+                }
+            }
+        })
+        .await
+        .expect("one total five-second budget must contain the loopback DHT reply")
+    }
+
+    async fn recv_and_handle_loopback_server_event(local: &mut LocalDiscoveryActor) {
+        let event = tokio::time::timeout(Duration::from_secs(5), local.server_rx.recv())
+            .await
+            .expect("raw DHT request must reach the server event queue")
+            .expect("local DHT server event channel must stay open");
+        local.actor.handle_server_event(event);
+    }
+
+    #[tokio::test]
+    async fn raw_loopback_handshake_replays_exact_noise_once_and_rejects_fresh_noise_same_key() {
+        let topic = [0xD4; 32];
+        let mut local = LocalDiscoveryActor::new(None, topic).await;
+        let server_public_key = local.actor.key_pair.public_key;
+        let target = hash(&server_public_key);
+        assert!(
+            local.actor.dht.register_server(&target),
+            "the local server route must be admitted before the raw request"
+        );
+        let server_addr = local
+            .actor
+            .dht
+            .listen_socket()
+            .await
+            .expect("local DHT exposes its listen socket")
+            .expect("local DHT binds a listen socket")
+            .local_addr()
+            .await
+            .expect("local DHT listen socket has an address");
+        let client = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("raw loopback client binds");
+        let client_key = KeyPair::from_seed([0xD5; 32]);
+
+        // First request crosses UDP -> DHT routing -> ServerEvent and is handled
+        // only by the production SwarmActor path.
+        let (mut first_initiator, first_noise) =
+            loopback_client_noise(&client_key, server_public_key, 0xD501);
+        let first_request = raw_handshake_request(0xD501, server_addr, target, first_noise.clone());
+        client
+            .send_to(&first_request, server_addr)
+            .await
+            .expect("raw loopback request sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_first_packet, first_response) =
+            recv_loopback_dht_response(&client, server_addr, 0xD501).await;
+        let first_reply = first_response
+            .value
+            .expect("accepted responder handshake returns an encoded reply");
+        let first_handshake = decode_handshake_from_bytes(&first_reply)
+            .expect("accepted responder reply remains a handshake envelope");
+        let first_reply_payload = first_initiator
+            .recv(&first_handshake.noise)
+            .expect("original initiator authenticates the responder reply");
+        let first_server_stream_id = first_reply_payload
+            .udx
+            .as_ref()
+            .expect("accepted responder reply carries UDX metadata")
+            .id;
+
+        assert_eq!(local.actor.connections.len(), 1, "first handshake reserves one peer");
+        assert_eq!(
+            local.actor.establishment_tasks.tasks.len(),
+            1,
+            "first handshake owns one establishment task"
+        );
+        assert_eq!(local.actor.pending_responder_replies.entries.len(), 1);
+
+        // Exact retransmission has the same Noise bytes and UDP source. It must
+        // replay the cached encoded response without another reservation/task.
+        client
+            .send_to(&first_request, server_addr)
+            .await
+            .expect("exact retransmission sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_replayed_packet, replayed_response) =
+            recv_loopback_dht_response(&client, server_addr, 0xD501).await;
+        assert_eq!(
+            replayed_response.value.as_deref(),
+            Some(first_reply.as_slice()),
+            "same Noise and source replay the identical encoded response, including its UDX id"
+        );
+        assert_eq!(
+            decode_handshake_from_bytes(
+                replayed_response
+                    .value
+                    .as_deref()
+                    .expect("replay retains its encoded handshake")
+            )
+            .expect("replay remains decodable")
+            .noise,
+            first_handshake.noise,
+            "the replay carries the original encrypted responder payload"
+        );
+        assert!(first_server_stream_id <= u64::from(u32::MAX));
+        assert_eq!(local.actor.connections.len(), 1);
+        assert_eq!(local.actor.establishment_tasks.tasks.len(), 1);
+        assert_eq!(local.actor.pending_responder_replies.entries.len(), 1);
+
+        // A new IK message from the same static key is not a retransmission. The
+        // existing connection gate must return an empty DHT reply, without a
+        // second reservation or establishment task.
+        let (_fresh_initiator, fresh_noise) =
+            loopback_client_noise(&client_key, server_public_key, 0xD502);
+        assert_ne!(fresh_noise, first_noise, "a new Noise initiation must not be a replay key");
+        let fresh_request = raw_handshake_request(0xD502, server_addr, target, fresh_noise);
+        client
+            .send_to(&fresh_request, server_addr)
+            .await
+            .expect("fresh same-key request sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_fresh_packet, fresh_response) =
+            recv_loopback_dht_response(&client, server_addr, 0xD502).await;
+        assert!(
+            fresh_response.value.is_none(),
+            "fresh Noise from an already reserved static key receives no responder reply"
+        );
+        assert_eq!(local.actor.connections.len(), 1);
+        assert_eq!(local.actor.establishment_tasks.tasks.len(), 1);
+        assert_eq!(local.actor.pending_responder_replies.entries.len(), 1);
+
+        // The test owns the in-flight establishment task; cancel/drain it before
+        // destroying the local DHT so no 30-second attempt remains detached.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            local.actor.establishment_tasks.shutdown(),
+        )
+        .await
+        .expect("test cleanup drains the owned establishment task within five seconds");
+        let released = tokio::time::timeout(Duration::from_secs(5), local.connection_lifecycle_rx.recv())
+            .await
+            .expect("aborting the establishment task releases its reservation")
+            .expect("the fixture lifecycle channel remains connected");
+        let ConnectionLifecycleEvent::Closed {
+            public_key,
+            registration_id,
+        } = released;
+        assert_eq!(public_key, client_key.public_key);
+        local.actor.handle_connection_lifecycle(ConnectionLifecycleEvent::Closed {
+            public_key,
+            registration_id,
+        });
+        assert_eq!(
+            local.actor.connections.len(),
+            0,
+            "cleanup releases the sole reservation"
+        );
+        assert!(
+            local.actor.pending_responder_replies.entries.is_empty(),
+            "cleanup removes the replay entry for the released generation"
+        );
+        local.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn raw_loopback_handshake_timeout_releases_generation_and_stale_close_cannot_remove_reconnect() {
+        let topic = [0xD6; 32];
+        let mut local = LocalDiscoveryActor::new(None, topic).await;
+        let server_public_key = local.actor.key_pair.public_key;
+        let target = hash(&server_public_key);
+        assert!(local.actor.dht.register_server(&target));
+        let server_addr = local
+            .actor
+            .dht
+            .listen_socket()
+            .await
+            .expect("local DHT exposes its listen socket")
+            .expect("local DHT binds a listen socket")
+            .local_addr()
+            .await
+            .expect("local DHT listen socket has an address");
+        let client = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("raw loopback client binds");
+        let client_key = KeyPair::from_seed([0xD7; 32]);
+
+        let (_first_initiator, first_noise) =
+            loopback_client_noise(&client_key, server_public_key, 0xD701);
+        let first_request = raw_handshake_request(0xD701, server_addr, target, first_noise);
+        client
+            .send_to(&first_request, server_addr)
+            .await
+            .expect("initial raw request sends");
+        let establishment_started_at = Instant::now();
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_, first_response) = recv_loopback_dht_response(&client, server_addr, 0xD701).await;
+        assert!(first_response.value.is_some(), "initial authenticated request is admitted");
+        let old_registration_id = local
+            .actor
+            .connections
+            .get(&client_key.public_key)
+            .expect("accepted initial responder is reserved")
+            .registration_id;
+
+        // This is deliberately the real production `CONNECT_ATTEMPT_TIMEOUT`, not
+        // a shortened test knob. The raw client never opens the UDX stream, so the
+        // production establishment attempt times out and its RAII registration is
+        // dropped.
+        tokio::time::timeout(Duration::from_secs(35), local.actor.establishment_tasks.join_next())
+            .await
+            .expect("production responder timeout must complete within 35 seconds")
+            .expect("the timed-out establishment task must be present")
+            .expect("the timed-out establishment task must not panic");
+        assert!(
+            establishment_started_at.elapsed() >= CONNECT_ATTEMPT_TIMEOUT,
+            "the responder task must reach the production timeout rather than another early terminal path"
+        );
+        let released = tokio::time::timeout(Duration::from_secs(5), local.connection_lifecycle_rx.recv())
+            .await
+            .expect("timed-out responder task releases its reservation")
+            .expect("fixture lifecycle channel remains connected");
+        let ConnectionLifecycleEvent::Closed {
+            public_key,
+            registration_id,
+        } = released;
+        assert_eq!(public_key, client_key.public_key);
+        assert_eq!(registration_id, old_registration_id);
+        local.actor.handle_connection_lifecycle(ConnectionLifecycleEvent::Closed {
+            public_key,
+            registration_id,
+        });
+        assert_eq!(local.actor.connections.len(), 0);
+        assert!(local.actor.pending_responder_replies.entries.is_empty());
+
+        // A fresh authenticated IK message from the same static key must now be a
+        // new generation, rather than being blocked by an orphaned reservation.
+        let (_fresh_initiator, fresh_noise) =
+            loopback_client_noise(&client_key, server_public_key, 0xD702);
+        let fresh_request = raw_handshake_request(0xD702, server_addr, target, fresh_noise);
+        client
+            .send_to(&fresh_request, server_addr)
+            .await
+            .expect("post-timeout reconnect request sends");
+        recv_and_handle_loopback_server_event(&mut local).await;
+        let (_, fresh_response) = recv_loopback_dht_response(&client, server_addr, 0xD702).await;
+        assert!(
+            fresh_response.value.is_some(),
+            "post-timeout same-key request receives a new responder reply"
+        );
+        let new_registration_id = local
+            .actor
+            .connections
+            .get(&client_key.public_key)
+            .expect("post-timeout reconnect reserves a new generation")
+            .registration_id;
+        assert_ne!(new_registration_id, old_registration_id);
+
+        // An old task's delayed close cannot release the newer generation.
+        local.actor.handle_connection_lifecycle(ConnectionLifecycleEvent::Closed {
+            public_key: client_key.public_key,
+            registration_id: old_registration_id,
+        });
+        assert!(
+            local
+                .actor
+                .connections
+                .matches_generation(&client_key.public_key, new_registration_id),
+            "stale completion must not remove the post-timeout reconnect generation"
+        );
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            local.actor.establishment_tasks.shutdown(),
+        )
+        .await
+        .expect("second-generation test cleanup drains within five seconds");
+        let released = tokio::time::timeout(Duration::from_secs(5), local.connection_lifecycle_rx.recv())
+            .await
+            .expect("second generation cleanup releases its reservation")
+            .expect("fixture lifecycle channel remains connected");
+        local.actor.handle_connection_lifecycle(released);
+        assert_eq!(local.actor.connections.len(), 0);
+        assert!(local.actor.pending_responder_replies.entries.is_empty());
+        local.shutdown().await;
+    }
+
 
     #[tokio::test]
     async fn outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot() {

@@ -1,0 +1,58 @@
+{
+  "schema": "neoth.wave2445.responder-replay.v1",
+  "baseProducer": "6fbd90072d0bf5deea7a533ad2bd15773e443f4b",
+  "problem": "A repeated authenticated handshake was answered with a fresh UDX stream ID before duplicate/capacity admission; a pending reservation could therefore leave that advertised ID without a stream.",
+  "priorProductEvidence": {
+    "run": 37446767415,
+    "producer": "1f5ffae0f79d4b49234ce1088861e81a66b7a66e",
+    "stage": "status_reconnect_start",
+    "failure": "work_deadline",
+    "noiseCompleted": true,
+    "udxCompleted": false,
+    "causationProven": false
+  },
+  "repair": {
+    "replay": "Identical authenticated Noise request, source endpoint and live registration generation return identical encoded reply; no new stream ID or task.",
+    "duplicate": "Different requests for a reserved or delivered peer are rejected before reply/stream allocation; no supersession.",
+    "admission": "UDX ID and connection capacity validated before allocation; matching cache/slot cleanup on admission failure.",
+    "deadline": "Responder establishment uses the existing 30-second connection-attempt policy.",
+    "relayCancellation": "Abort-on-drop ownership prevents a spawned relay mux task escaping a pre-handoff timeout or failure."
+  },
+  "observation": {
+    "fixedRoutePhasesAfterNoise": true,
+    "scope": "Pair or Active actor and client/server socket role; no per-request claim",
+    "admittedMeans": "Mapped route and pinned source accepted before ingress enqueue; not delivery.",
+    "clientEvidence": "Source-bound hosted job log; daemon collector does not directly collect bridge/client stderr.",
+    "endpointPromotion": false
+  },
+  "delivery": {
+    "publicationRegressionsBeforeHostBuild": true,
+    "allPriorGatesRetained": true,
+    "canonicalSelection": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+    "portableRegisteredTests": 2760,
+    "exactRustCases": 46,
+    "collectorCases": 9,
+    "rawSourceBindings": 39
+  },
+  "validation": {
+    "staticReview": "approved: 0980F321ACCC3895632816C8A030ABFCEA0677B1A916410709731CD94E0656B5",
+    "hosted": "pending",
+    "localExecutableValidationRan": false,
+    "productAccepted": false,
+    "deviceAccepted": false,
+    "releaseReady": false
+  },
+  "upstreamReference": "https://github.com/holepunchto/hyperdht/blob/fdcda937d8cf3ca2e494396c430218e2996e6b29/lib/server.js#L469-L486",
+  "constraints": {
+    "localBsodHold": true,
+    "slintEdits": false,
+    "claudePolling": false,
+    "protectedLocalChangesPreserved": true
+  },
+  "followUp": {
+    "batch": "W2446",
+    "issue": "Pre-existing post-handoff relay driver can detach when a bare JoinHandle is dropped.",
+    "required": "Preserve upstream task ownership when moving a control stream; do not add an unsafe blanket PeerConnection Drop.",
+    "accepted": false
+  }
+}

@@ -101,6 +101,10 @@ impl OutgoingConnectDiagnostics {
             "udx_establishment_completed" => 1 << 9,
             "path_direct" => 1 << 10,
             "path_relay" => 1 << 11,
+            "route_direct_selected" => 1 << 12,
+            "route_forwarded_marker" => 1 << 13,
+            "relay_through_started" => 1 << 14,
+            "holepunch_started" => 1 << 15,
             _ => return,
         };
         if self.enabled && self.emitted & bit == 0 {
@@ -225,6 +229,12 @@ impl IncomingConnectDiagnostics {
             scope,
             emitted: AtomicU32::new(0),
         }
+    }
+
+    /// Preserve the listener's immutable diagnostic scope for adjacent
+    /// transport observability. This exposes no endpoint or request data.
+    pub(crate) fn scope(&self) -> CompanionDiagnosticScope {
+        self.scope
     }
 
     pub(crate) fn phase(&self, phase: &'static str) {
@@ -1625,6 +1635,14 @@ impl HyperDhtHandle {
         let remote_payload = nw.recv(&hs_result.noise)?;
         let nw_result = nw.finalize()?;
         diagnostics.phase("noise_completed");
+        // This fixed, endpoint-free classification is emitted only after the
+        // reply's Noise payload authenticated the remote key. It records the
+        // selected route role, never an address or wire identifier.
+        diagnostics.phase(if hs_result.relayed {
+            "route_forwarded_marker"
+        } else {
+            "route_direct_selected"
+        });
 
         if remote_payload.error != 0 {
             return Err(HyperDhtError::FirewallRejected);
@@ -1632,6 +1650,7 @@ impl HyperDhtHandle {
 
         // Check if the remote peer wants us to relay through a third node.
         if let Some(ref relay_through) = remote_payload.relay_through {
+            diagnostics.phase("relay_through_started");
             let relay_addrs = remote_payload.relay_addresses.clone().unwrap_or_default();
             tracing::debug!(
                 relay_pk = ?&relay_through.public_key[..8],
@@ -1699,6 +1718,7 @@ impl HyperDhtHandle {
         }
 
         // Phase 2: Holepunch rounds via PEER_HOLEPUNCH relay
+        diagnostics.phase("holepunch_started");
         let server_address = hs_result.server_address.clone();
         let hp_result = self
             .run_holepunch_rounds(
@@ -3118,13 +3138,24 @@ mod tests {
         let mut first = OutgoingConnectDiagnostics::for_test();
         first.phase("handshake_request_started");
         first.phase("handshake_request_started");
-        assert_eq!(first.emitted(), 1 << 5);
+        first.phase("route_direct_selected");
+        first.phase("route_direct_selected");
+        first.phase("route_forwarded_marker");
+        first.phase("relay_through_started");
+        first.phase("holepunch_started");
+        assert_eq!(
+            first.emitted(),
+            (1 << 5) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15)
+        );
 
         let mut second = OutgoingConnectDiagnostics::for_test();
         second.phase("handshake_request_started");
         second.phase("find_peer_fallback_started");
         assert_eq!(second.emitted(), (1 << 5) | (1 << 3));
-        assert_eq!(first.emitted(), 1 << 5);
+        assert_eq!(
+            first.emitted(),
+            (1 << 5) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15)
+        );
     }
 
     #[test]

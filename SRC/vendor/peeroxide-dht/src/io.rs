@@ -97,6 +97,18 @@ impl Default for IoConfig {
     }
 }
 
+/// Receipt-safe owner scope for optional socket-route diagnostics.
+///
+/// Ordinary callers remain unscoped. The RPC bootstrap path maps the existing
+/// listener-owned companion scope into this value before binding its `Io`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum IoDiagnosticScope {
+    #[default]
+    Unscoped,
+    Pair,
+    Active,
+}
+
 /// IO layer statistics.
 #[derive(Debug, Clone, Default)]
 pub struct IoStats {
@@ -151,22 +163,25 @@ impl ClientResponseDiagnostics {
     }
 }
 
-/// Fixed, secret-free raw-fallback queue evidence for one `Io` socket role.
+/// Fixed, secret-free socket receive evidence for one `Io` socket role.
 ///
-/// This callback runs before DHT decoding. It reports only raw queue lifecycle,
-/// never packet identity, endpoint, payload, or response/request correlation.
+/// This callback reports raw queue lifecycle and valid UDX route classification
+/// before DHT decoding. It never reports packet identity, endpoint, payload, or
+/// response/request correlation.
 #[derive(Clone)]
 struct RawFallbackDiagnostics {
     enabled: bool,
     socket_kind: SocketKind,
+    scope: IoDiagnosticScope,
     emitted: Arc<AtomicU8>,
 }
 
 impl RawFallbackDiagnostics {
-    fn from_environment(socket_kind: SocketKind) -> Self {
+    fn from_environment(socket_kind: SocketKind, scope: IoDiagnosticScope) -> Self {
         Self {
             enabled: std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1"),
             socket_kind,
+            scope,
             emitted: Arc::new(AtomicU8::new(0)),
         }
     }
@@ -180,11 +195,14 @@ impl RawFallbackDiagnostics {
     }
 
     fn phase(&self, outcome: RawFallbackOutcome) {
-        let (bit, suffix) = match outcome {
-            RawFallbackOutcome::Observed => (1, "observed"),
-            RawFallbackOutcome::Enqueued => (1 << 1, "enqueued"),
-            RawFallbackOutcome::QueueFull => (1 << 2, "queue_full"),
-            RawFallbackOutcome::ReceiverClosed => (1 << 3, "receiver_closed"),
+        let (bit, phase) = match outcome {
+            RawFallbackOutcome::Observed => (1, "raw_fallback_observed"),
+            RawFallbackOutcome::Enqueued => (1 << 1, "raw_fallback_enqueued"),
+            RawFallbackOutcome::QueueFull => (1 << 2, "raw_fallback_queue_full"),
+            RawFallbackOutcome::ReceiverClosed => (1 << 3, "raw_fallback_receiver_closed"),
+            RawFallbackOutcome::UdxMappedSourceAdmitted => (1 << 4, "udx_route_admitted"),
+            RawFallbackOutcome::UdxMappedSourceRejected => (1 << 5, "udx_route_rejected"),
+            RawFallbackOutcome::UdxUnknownRouteFallback => (1 << 6, "udx_route_unknown_fallback"),
         };
         if self.emitted.fetch_or(bit, Ordering::Relaxed) & bit != 0 {
             return;
@@ -193,7 +211,25 @@ impl RawFallbackDiagnostics {
             SocketKind::Client => "client",
             SocketKind::Server => "server",
         };
-        eprintln!("NEOTH_COMPANION_CLIENT_RESPONSE_PHASE={role}_raw_fallback_{suffix}");
+        let is_udx_route = matches!(
+            outcome,
+            RawFallbackOutcome::UdxMappedSourceAdmitted
+                | RawFallbackOutcome::UdxMappedSourceRejected
+                | RawFallbackOutcome::UdxUnknownRouteFallback
+        );
+        if !is_udx_route || self.scope == IoDiagnosticScope::Unscoped {
+            eprintln!("NEOTH_COMPANION_CLIENT_RESPONSE_PHASE={role}_{phase}");
+        } else {
+            match self.scope {
+                IoDiagnosticScope::Pair => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=pair_{role}_{phase}");
+                }
+                IoDiagnosticScope::Active => {
+                    eprintln!("NEOTH_COMPANION_CONNECT_PHASE=active_{role}_{phase}");
+                }
+                IoDiagnosticScope::Unscoped => unreachable!("unscoped route is handled above"),
+            }
+        }
     }
 
     #[cfg(test)]
@@ -201,6 +237,7 @@ impl RawFallbackDiagnostics {
         Self {
             enabled: true,
             socket_kind,
+            scope: IoDiagnosticScope::Unscoped,
             emitted: Arc::new(AtomicU8::new(0)),
         }
     }
@@ -454,6 +491,17 @@ impl Io {
         table: Arc<Mutex<RoutingTable>>,
         config: IoConfig,
     ) -> IoResult<Self> {
+        Self::bind_with_diagnostic_scope(runtime, table, config, IoDiagnosticScope::Unscoped).await
+    }
+
+    /// Bind an Io with the already-owned listener scope used by companion
+    /// diagnostics. This changes only optional marker attribution.
+    pub(crate) async fn bind_with_diagnostic_scope(
+        runtime: &UdxRuntime,
+        table: Arc<Mutex<RoutingTable>>,
+        config: IoConfig,
+        diagnostic_scope: IoDiagnosticScope,
+    ) -> IoResult<Self> {
         let server_addr: SocketAddr = format!("{}:{}", config.host, config.port)
             .parse()
             .map_err(IoError::AddrParse)?;
@@ -462,9 +510,9 @@ impl Io {
             .map_err(IoError::AddrParse)?;
 
         let server_raw_fallback_diagnostics =
-            RawFallbackDiagnostics::from_environment(SocketKind::Server);
+            RawFallbackDiagnostics::from_environment(SocketKind::Server, diagnostic_scope);
         let client_raw_fallback_diagnostics =
-            RawFallbackDiagnostics::from_environment(SocketKind::Client);
+            RawFallbackDiagnostics::from_environment(SocketKind::Client, diagnostic_scope);
 
         let server_socket = runtime.create_socket().await?;
         server_socket.bind(server_addr).await?;
@@ -2032,6 +2080,33 @@ mod tests {
 
         sender.close().await.expect("sender close");
         io.destroy().await.expect("io destroy");
+    }
+
+    #[test]
+    fn raw_fallback_diagnostics_record_route_outcomes_per_socket_role() {
+        let client = RawFallbackDiagnostics::for_test(SocketKind::Client);
+        let client_observer = client.observer().expect("client observer");
+        client_observer(RawFallbackOutcome::UdxMappedSourceAdmitted);
+        client_observer(RawFallbackOutcome::UdxMappedSourceRejected);
+        assert_eq!(
+            client.emitted(),
+            (1 << 4) | (1 << 5),
+            "client route observations use fixed, local one-shot bits"
+        );
+
+        let server = RawFallbackDiagnostics::for_test(SocketKind::Server);
+        let server_observer = server.observer().expect("server observer");
+        server_observer(RawFallbackOutcome::UdxUnknownRouteFallback);
+        assert_eq!(
+            server.emitted(),
+            1 << 6,
+            "server unknown-route fallback stays role-local"
+        );
+        assert_eq!(
+            client.emitted(),
+            (1 << 4) | (1 << 5),
+            "server route observations cannot mutate client diagnostics"
+        );
     }
     #[tokio::test]
     async fn client_handshake_response_diagnostics_distinguish_handshake_from_other_responses() {

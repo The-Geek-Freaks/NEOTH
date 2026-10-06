@@ -21,6 +21,11 @@ PAIR_REPLY_QUEUED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_que
 PAIR_OS_SEND_SUCCEEDED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_os_send_succeeded\n"
 ACTIVE_OS_SEND_FAILED = b"NEOTH_COMPANION_CONNECT_PHASE=active_handshake_reply_udp_os_send_failed\n"
 PAIR_OS_SEND_DROPPED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_handshake_reply_udp_os_send_dropped\n"
+PAIR_CLIENT_UDX_ADMITTED = b"NEOTH_COMPANION_CONNECT_PHASE=pair_client_udx_route_admitted\n"
+ACTIVE_SERVER_UDX_REJECTED = b"NEOTH_COMPANION_CONNECT_PHASE=active_server_udx_route_rejected\n"
+PAIR_SERVER_UDX_UNKNOWN = b"NEOTH_COMPANION_CONNECT_PHASE=pair_server_udx_route_unknown_fallback\n"
+ACTIVE_CLIENT_UDX_ADMITTED = b"NEOTH_COMPANION_CONNECT_PHASE=active_client_udx_route_admitted\n"
+UNSCOPED_CLIENT_RESPONSE = b"NEOTH_COMPANION_CLIENT_RESPONSE_PHASE=client_udx_route_admitted\n"
 
 
 class ChunkStream:
@@ -140,5 +145,61 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertFalse(collector.thread.is_alive())
 
 
+    def test_udx_route_markers_preserve_scope_role_and_terminal_outcome(self) -> None:
+        stream = ChunkStream([PAIR_CLIENT_UDX_ADMITTED[:37], PAIR_CLIENT_UDX_ADMITTED[37:] + ACTIVE_SERVER_UDX_REJECTED, PAIR_SERVER_UDX_UNKNOWN + ACTIVE_CLIENT_UDX_ADMITTED])
+        counts = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)["scoped_connect_counts"]
+        self.assertEqual(counts["pair_client_udx_route_admitted"], 1)
+        self.assertEqual(counts["active_server_udx_route_rejected"], 1)
+        self.assertEqual(counts["pair_server_udx_route_unknown_fallback"], 1)
+        self.assertEqual(counts["active_client_udx_route_admitted"], 1)
+        self.assertEqual(counts["active_client_udx_route_rejected"], 0)
+
+    def test_udx_route_markers_ignore_unscoped_response_and_bound_duplicates(self) -> None:
+        stream = ChunkStream([UNSCOPED_CLIENT_RESPONSE + PAIR_CLIENT_UDX_ADMITTED, PAIR_CLIENT_UDX_ADMITTED + b"NEOTH_COMPANION_CONNECT_PHASE=pair_client_udx_route_admitted_extra\n"])
+        result = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)
+        self.assertEqual(result["scoped_connect_counts"]["pair_client_udx_route_admitted"], 2)
+        self.assertEqual(result["scoped_connect_counts"]["active_client_udx_route_admitted"], 0)
+        self.assertFalse(result["scoped_connect_saturated"])
+        self.assertNotIn(UNSCOPED_CLIENT_RESPONSE.decode(), repr(result))
+
+    def test_udx_route_cursor_keeps_pair_only_outcomes_out_of_active_delta(self) -> None:
+        stream = ControlledStream(); collector = INTEROP.ShutdownMarkerCollector(stream)
+        def await_count(name: str, expected: int) -> None:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if collector.scoped_connect_cursor()["counts"][name] == expected:
+                    return
+                time.sleep(0.001)
+            self.fail(f"collector did not observe {name}")
+        try:
+            stream.chunks.put(PAIR_SERVER_UDX_UNKNOWN)
+            await_count("pair_server_udx_route_unknown_fallback", 1)
+            cursor = collector.scoped_connect_cursor()
+            stream.chunks.put(PAIR_CLIENT_UDX_ADMITTED)
+            await_count("pair_client_udx_route_admitted", 1)
+            delta = collector.scoped_connect_since(cursor)["observed_delta"]
+            self.assertEqual(delta["pair_client_udx_route_admitted"], 1)
+            self.assertEqual(delta["active_client_udx_route_admitted"], 0)
+            self.assertEqual(delta["active_server_udx_route_rejected"], 0)
+        finally:
+            stream.chunks.put(b""); collector.thread.join(timeout=5)
+        self.assertFalse(collector.thread.is_alive())
+    def test_client_route_phase_whitelist_captures_fixed_markers_only(self) -> None:
+        stream = ChunkStream([
+            b"NEOTH_COMPANION_CONNECT_PHASE=route_direct_selected\n",
+            b"NEOTH_COMPANION_CONNECT_PHASE=route_forwarded_marker\n",
+            b"NEOTH_COMPANION_CONNECT_PHASE=relay_through_started\n",
+            b"NEOTH_COMPANION_CONNECT_PHASE=holepunch_started\n",
+        ])
+        markers = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)["connect_markers"]
+        self.assertTrue(markers["route_direct_selected"])
+        self.assertTrue(markers["route_forwarded_marker"])
+        self.assertTrue(markers["relay_through_started"])
+        self.assertTrue(markers["holepunch_started"])
+
+    def test_client_route_phase_whitelist_rejects_suffix_only_marker(self) -> None:
+        stream = ChunkStream([b"NEOTH_COMPANION_CONNECT_PHASE=route_direct_selected_extra\n"])
+        markers = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)["connect_markers"]
+        self.assertFalse(markers["route_direct_selected"])
 if __name__ == "__main__":
     unittest.main()

@@ -121,10 +121,6 @@ jobs:
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
           test "$ordinal" -eq "${#libudx_identities[@]}"
-      - name: Build exact host debug CLI and cdylib
-        id: exact_host_build
-        timeout-minutes: 25
-        run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
       - name: Run exact locked server publication regressions
         id: exact_server_publication
         timeout-minutes: 10
@@ -232,6 +228,10 @@ jobs:
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
           test "$dht_ordinal" -eq "${#dht_identities[@]}"
+      - name: Build exact host debug CLI and cdylib
+        id: exact_host_build
+        timeout-minutes: 25
+        run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
       - name: Prove both transient test overlays restored before cache admission
         id: overlay_restored
         shell: bash

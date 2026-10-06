@@ -24,7 +24,7 @@
   },
   "validation": {
     "staticReview": "approved; heartbeat fixture correction addendum B1A67E69",
-    "hostedTransport": "Run37460504827 passed4 prior cases; newcase failed at initial-heartbeat test assumption. Corrected test awaiting hosted execution.",
+    "hostedTransport": "SUCCESS: run37461731794 attempt1 on6fbd90072d0bf5deea7a533ad2bd15773e443f4b passed all5 exact transport cases; initial-heartbeat fixture correction verified.",
     "localExecutableValidationRan": false,
     "productAccepted": false,
     "releaseReady": false
@@ -50,5 +50,21 @@
     "newCasePassed": false,
     "workspaceRestored": true,
     "failure": "new test assumed first packet is DATA; immediate keepalive can arrive first"
+  },
+  "admittedHostedTransport": {
+    "run": 37461731794,
+    "attempt": 1,
+    "job": 112262726084,
+    "producer": "6fbd90072d0bf5deea7a533ad2bd15773e443f4b",
+    "artifact": 11412653440,
+    "zipSha256": "0A60988B8F4ACCE65E16B78FAEC006C8D6933AE541B475ECA2D42621B767E6A2",
+    "proofSha256": "7C058BDC3602F67DF51600C9AED39C2BB317A212AB06EBD1CF688A90234BC909",
+    "archiveEntries": 11,
+    "sourceBindings": 38,
+    "exactCasesPassed": 5,
+    "workspaceRestored": true,
+    "lateRouteFirstDataRecovers": true,
+    "actualWrongSourceRejected": true,
+    "productAcceptance": false
   }
 }

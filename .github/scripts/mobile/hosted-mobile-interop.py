@@ -68,10 +68,11 @@ CONNECT_PHASES = (
     "find_peer_fallback_started", "find_peer_fallback_completed",
     "handshake_request_started", "handshake_reply_received", "noise_completed",
     "udx_establishment_started", "udx_establishment_completed", "path_direct",
-    "path_relay", "handshake_dispatch_received",
+    "path_relay", "handshake_dispatch_received", "route_direct_selected",
+    "route_forwarded_marker", "relay_through_started", "holepunch_started",
 )
 CONNECT_MARKERS = tuple(
-    (phase, f"NEOTH_COMPANION_CONNECT_PHASE={phase}".encode("ascii"))
+    (phase, f"NEOTH_COMPANION_CONNECT_PHASE={phase}\n".encode("ascii"))
     for phase in CONNECT_PHASES
 )
 SCOPED_CONNECT_PHASES = (
@@ -88,6 +89,9 @@ SCOPED_CONNECT_PHASES = (
     "handshake_reply_udp_os_send_succeeded",
     "handshake_reply_udp_os_send_failed",
     "handshake_reply_udp_os_send_dropped",
+    "client_udx_route_admitted", "client_udx_route_rejected",
+    "client_udx_route_unknown_fallback", "server_udx_route_admitted",
+    "server_udx_route_rejected", "server_udx_route_unknown_fallback",
 )
 SCOPED_CONNECT_MARKERS = tuple(
     (f"{scope}_{phase}", f"NEOTH_COMPANION_CONNECT_PHASE={scope}_{phase}\n".encode("ascii"))

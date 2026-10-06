@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "reviewed-heartbeat-fixture-hosted-pending",
+  "status": "wave2445-static-reviewed-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 394823,
-    "sha256": "FAD8C2074C5D6985957217E7F0EBF5E81A311C1A791250BD79E0536F746EF138"
+    "bytes": 395188,
+    "sha256": "54210B600BCB191DA371C86C209488F0CC27EDB76043AD1183F22EBA4AD62EFF"
   },
-  "sourceInputs": 2158,
+  "sourceInputs": 2160,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -76193,6 +76193,98 @@
       }
     ],
     "note": "Correct first-DATA barrier for immediate UDX heartbeat, retaining same total deadline and all source/RTO assertions. Actual first run failed test assumption; no product pass.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2445ResponderReplay": {
+    "base": "6fbd90072d0bf5deea7a533ad2bd15773e443f4b",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 32934,
+        "sha256": "5649402A9E80A06228DB0593C35E8A256514CF46227D1470219496B0864AD0F6",
+        "blob": "43d1d1ea766e67a66361865d0c878c846c90f02c"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 8471,
+        "sha256": "52F6F76932AED0B0D6240049F055C393D07EF2BBB0393F3E65586B63D12F9A89",
+        "blob": "108e34c88fde52ba69533f1d5c83cabc86885885"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 11105,
+        "sha256": "002A80848E1E73C9CF200E1856933CA3B5B92E1C0A798B6A93FBAE730E6F4B01",
+        "blob": "c5a4a7ee4f6035b89c101e6bdbbe10ff34cb19da"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 6813,
+        "sha256": "C33CC8E8A74BD7BD17298CDBFEC43CFB06DE83E66DEADEB41BB647E078873A0D",
+        "blob": "38aac379ebb3fbedecf5b0d6771b49c1bc008c61"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 18883,
+        "sha256": "28EC94D33763B891DEB71C982A0E77E58AA83ED692519902994EAA6AEA758327",
+        "blob": "df5512ef5b562bff2f3338c53e17825dd8134fb6"
+      },
+      {
+        "path": "docs/verification/gold-wave2444-udx-reproduction.json",
+        "bytes": 2885,
+        "sha256": "243F41F4528639F8A0F322DBEA1DBEEB5B47F9B44119FBB520690F0CAC63690B",
+        "blob": "8990056ebbd91c19fb633bcb2a9cc2b8823aeea3"
+      },
+      {
+        "path": "docs/verification/gold-wave2445-responder-replay.json",
+        "bytes": 2843,
+        "sha256": "5C9751324474AC82DF4456365F4E9AC294891A6D3F6D2750DFB7055586A3A28F",
+        "blob": "1cb4d859974aebbacd6c7947229825a34d0e0834"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2439045,
+        "sha256": "9B7125CF0F559B61DAF5E7BA61E27C5AF6910984698C9655AF5C79083D786029",
+        "blob": "4e282713e93f5f99a0bc0f274f689243706f0e1e"
+      },
+      {
+        "path": "SRC/vendor/libudx/src/native/socket.rs",
+        "bytes": 42488,
+        "sha256": "9CD4DDF1531E714F8F56C3B4998A75219774174841C5633555E9F80EDDE43818",
+        "blob": "d1e7db5439cddc21a8c9b2a821f49c6bcdda7ef1"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 143504,
+        "sha256": "0BE5D11D8C220A8E6EED9EC7E0BE7BCD9A3D241E9F23912BBB00B07B129C9073",
+        "blob": "8e72a56c789a2e9e9bdf79b4dc870167c642c833"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/io.rs",
+        "bytes": 81237,
+        "sha256": "ECFE8CED75CA80DD0596813C233B62F6B226D9DE864C481C03A24C414C58D094",
+        "blob": "1fa2a348521f14834da17303f795452be880b797"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/rpc.rs",
+        "bytes": 75757,
+        "sha256": "0F61EF1B1E46E5132D7B730A8BC3BBF154BC1E1D6B3556C4402A75EC8584A89F",
+        "blob": "6de902946cf1ef2fee74eae9871966ae9af3316c"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/connection_set.rs",
+        "bytes": 3459,
+        "sha256": "330F8CAAB44C37289F9559F7ABB0516659B84D4EC6668179DA33BBC096A50E81",
+        "blob": "8ecd97e8be4bb62ca767cce151f3e9e1c22b09e0"
+      },
+      {
+        "path": "SRC/vendor/peeroxide/src/swarm.rs",
+        "bytes": 119583,
+        "sha256": "DF943D173894578CCB5FCD012F6467CCA39E028A0E8FEDA4995BAC07FEE8C0A0",
+        "blob": "139bd7b54bc131aa8ed911e296c3880e8e69b600"
+      }
+    ],
+    "note": "Request-bound responder replay, generation-safe timeout cleanup and pre-handoff mux guard; source-bound46Rust/9collector/39paths, all prior product/restoration gates retained. No local execution; V3/V4/device/release remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

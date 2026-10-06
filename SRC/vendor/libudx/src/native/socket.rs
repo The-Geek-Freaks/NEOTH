@@ -123,16 +123,25 @@ pub(crate) struct OutboundSender {
     egress_bytes: Arc<Semaphore>,
 }
 
-/// Fixed raw-fallback receiver observations, without packet metadata.
+/// Fixed socket receive observations, without packet metadata.
+///
+/// Raw-fallback lifecycle outcomes report the bounded application queue. The
+/// UDX outcomes report only the result of routing a valid, MTU-bounded UDX
+/// packet; they are neither stream delivery nor remote network evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawFallbackOutcome {
     Observed,
     Enqueued,
     QueueFull,
     ReceiverClosed,
+    UdxMappedSourceAdmitted,
+    UdxMappedSourceRejected,
+    UdxUnknownRouteFallback,
 }
 
-/// Optional observer for a socket's raw fallback receiver.
+/// Optional observer for a socket's raw fallback and valid UDX route outcomes.
+///
+/// The callback receives no packet identity, endpoint, stream ID, or payload.
 pub type RawFallbackObserver =
     Arc<dyn Fn(RawFallbackOutcome) + Send + Sync + 'static>;
 
@@ -271,6 +280,20 @@ impl UdxSocketInner {
         }
     }
 
+    fn observe_udx_route(
+        fallback_tx: &Arc<Mutex<Option<RawFallbackSlot>>>,
+        outcome: RawFallbackOutcome,
+    ) {
+        let observer = fallback_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|slot| slot.observer.clone());
+        if let Some(observer) = observer {
+            observer(outcome);
+        }
+    }
+
     fn ensure_recv_loop(&self) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(UdxError::RuntimeGone);
@@ -305,7 +328,7 @@ impl UdxSocketInner {
                             continue;
                         }
 
-                        let stream_tx = {
+                        let (stream_tx, route_outcome, enters_raw_fallback) = {
                             let guard = streams.lock().unwrap_or_else(|e| e.into_inner());
                             match guard.get(&hdr.remote_id) {
                                 // A local stream ID is not an authentication token. Bind
@@ -314,7 +337,11 @@ impl UdxSocketInner {
                                 // reliability state. UDX has no authenticated migration
                                 // transition, so a changed source is fail-closed.
                                 Some(registration) if registration.accepts_source(addr) => {
-                                    Some(registration.ingress())
+                                    (
+                                        Some(registration.ingress()),
+                                        RawFallbackOutcome::UdxMappedSourceAdmitted,
+                                        false,
+                                    )
                                 }
                                 // A mapped UDX route with the wrong source is not raw
                                 // application traffic; drop it without side effects.
@@ -324,21 +351,34 @@ impl UdxSocketInner {
                                         rejected_source_packets.fetch_add(1, Ordering::AcqRel);
                                         rejected_source_notify.notify_one();
                                     }
-                                    None
+                                    (
+                                        None,
+                                        RawFallbackOutcome::UdxMappedSourceRejected,
+                                        false,
+                                    )
                                 }
                                 // Preserve the historic raw fallback only for an unknown,
                                 // otherwise valid, MTU-bounded UDX-looking datagram.
                                 None => {
-                                    drop(guard);
-                                    UdxSocketInner::dispatch_raw_fallback(
-                                        &fallback_tx,
-                                        buf[..len].to_vec(),
-                                        addr,
-                                    );
-                                    continue;
+                                    (
+                                        None,
+                                        RawFallbackOutcome::UdxUnknownRouteFallback,
+                                        true,
+                                    )
                                 }
                             }
                         };
+
+                        UdxSocketInner::observe_udx_route(&fallback_tx, route_outcome);
+
+                        if enters_raw_fallback {
+                            UdxSocketInner::dispatch_raw_fallback(
+                                &fallback_tx,
+                                buf[..len].to_vec(),
+                                addr,
+                            );
+                            continue;
+                        }
 
                         if let Some(tx) = stream_tx {
                             let packet = buf[..len].to_vec();
@@ -544,8 +584,9 @@ impl UdxSocket {
 
     /// Begin receiving non-stream datagrams with an optional fixed observer.
     ///
-    /// The observer follows only raw-fallback queue lifecycle. It does not run
-    /// for stream-routed packets and receives no packet metadata.
+    /// The observer reports raw-fallback lifecycle and valid UDX route outcomes
+    /// once they are classified. It never receives packet metadata and does not
+    /// report stream delivery or remote network receipt.
     pub fn recv_start_with_observer(
         &self,
         observer: Option<RawFallbackObserver>,
@@ -697,6 +738,26 @@ mod tests {
 
     fn loopback() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+    }
+
+    async fn expect_receive_outcome(
+        events: &mut tokio::sync::mpsc::UnboundedReceiver<RawFallbackOutcome>,
+        wanted: RawFallbackOutcome,
+        context: &str,
+    ) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let observed = events
+                    .recv()
+                    .await
+                    .unwrap_or_else(|| panic!("{context}: observer channel closed"));
+                if observed == wanted {
+                    return;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{context}: observation timed out"));
     }
 
     #[test]
@@ -860,6 +921,93 @@ mod tests {
         let inner = Arc::clone(&socket.inner);
         socket.close().await.expect("close");
         assert_eq!(inner.active_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn receive_observer_records_real_matched_rejected_and_unknown_udx_routes() {
+        let runtime = UdxRuntime::new().expect("runtime");
+        let receiver = runtime.create_socket().await.expect("receiver socket");
+        let sender = runtime.create_socket().await.expect("sender socket");
+        let spoof = runtime.create_socket().await.expect("spoof socket");
+        receiver.bind(loopback()).await.expect("bind receiver");
+        sender.bind(loopback()).await.expect("bind sender");
+        spoof.bind(loopback()).await.expect("bind spoof");
+        let receiver_addr = receiver.local_addr().await.expect("receiver address");
+        let sender_addr = sender.local_addr().await.expect("sender address");
+
+        let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let observer: RawFallbackObserver = Arc::new(move |outcome| {
+            let _ = events_tx.send(outcome);
+        });
+        let mut raw_rx = receiver
+            .recv_start_with_observer(Some(observer))
+            .expect("install observer");
+
+        let mapped = runtime.create_stream(101).await.expect("mapped stream");
+        mapped
+            .connect(&receiver, 202, sender_addr)
+            .await
+            .expect("register source-pinned route");
+
+        let matching = super::super::header::Header {
+            type_flags: 0,
+            data_offset: 0,
+            remote_id: 101,
+            recv_window: 0,
+            seq: 0,
+            ack: 0,
+        }
+        .encode();
+        sender
+            .send_to(&matching, receiver_addr)
+            .expect("send matched route packet");
+        expect_receive_outcome(
+            &mut events,
+            RawFallbackOutcome::UdxMappedSourceAdmitted,
+            "matched source route",
+        )
+        .await;
+
+        let rejected_before = receiver.rejected_source_packet_count();
+        spoof
+            .send_to(&matching, receiver_addr)
+            .expect("send wrong-source route packet");
+        expect_receive_outcome(
+            &mut events,
+            RawFallbackOutcome::UdxMappedSourceRejected,
+            "wrong source route",
+        )
+        .await;
+        assert_eq!(
+            receiver.rejected_source_packet_count(),
+            rejected_before + 1,
+            "the existing test-only wrong-source counter remains bound to the observed route rejection"
+        );
+
+        let unknown = super::super::header::Header {
+            remote_id: 303,
+            ..super::super::header::Header::decode(&matching).expect("decode template")
+        }
+        .encode();
+        sender
+            .send_to(&unknown, receiver_addr)
+            .expect("send unknown route packet");
+        expect_receive_outcome(
+            &mut events,
+            RawFallbackOutcome::UdxUnknownRouteFallback,
+            "unknown route",
+        )
+        .await;
+        let raw = timeout(Duration::from_secs(1), raw_rx.recv())
+            .await
+            .expect("unknown route reaches raw fallback")
+            .expect("raw fallback receiver stays open");
+        assert_eq!(raw.data, unknown);
+
+        mapped.destroy().await.expect("destroy mapped stream");
+        sender.close().await.expect("close sender");
+        spoof.close().await.expect("close spoof");
+        receiver.close().await.expect("close receiver");
     }
 
     #[tokio::test]

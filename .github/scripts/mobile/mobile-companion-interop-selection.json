@@ -8,7 +8,10 @@
         "native::socket::tests::raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata",
         "native::socket::tests::close_aborts_the_owned_reader_and_writer_tasks",
         "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain",
-        "native::stream::bounded_transport_tests::first_framed_data_retransmits_after_route_registration_and_keeps_source_pin"
+        "native::stream::bounded_transport_tests::first_framed_data_retransmits_after_route_registration_and_keeps_source_pin",
+        "native::socket::tests::receive_observer_records_real_matched_rejected_and_unknown_udx_routes",
+        "native::async_stream::tests::async_write_accepts_exactly_one_bounded_batch_then_drop_unroutes",
+        "native::stream::bounded_transport_tests::stale_route_cleanup_cannot_remove_a_replacement_stream"
       ]
     },
     "peeroxide": {
@@ -16,7 +19,13 @@
       "identities": [
         "swarm::tests::server_publication_requires_both_announcement_successes",
         "swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation",
-        "swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot"
+        "swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot",
+        "swarm::tests::pending_responder_replay_is_byte_identical_only_for_same_noise_and_source",
+        "swarm::tests::pending_responder_replay_rejects_different_noise_or_source",
+        "swarm::tests::pending_responder_cache_expires_and_stale_generation_cleanup_preserves_replacement",
+        "swarm::tests::relay_mux_guard_aborts_a_started_pre_handoff_driver",
+        "swarm::tests::raw_loopback_handshake_replays_exact_noise_once_and_rejects_fresh_noise_same_key",
+        "swarm::tests::raw_loopback_handshake_timeout_releases_generation_and_stale_close_cannot_remove_reconnect"
       ]
     },
     "dht": {
@@ -32,7 +41,8 @@
         "io::tests::deferred_handshake_reply_diagnostics_cover_queue_retry_and_expiry",
         "io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses",
         "io::tests::deferred_handshake_reply_os_completion_preserves_the_listener_tag",
-        "io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle"
+        "io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle",
+        "io::tests::raw_fallback_diagnostics_record_route_outcomes_per_socket_role"
       ]
     },
     "core": {
@@ -75,7 +85,12 @@
       "test_chunk_boundaries_do_not_duplicate_or_merge_pair_and_active_markers",
       "test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody",
       "test_os_send_completion_markers_keep_pair_active_scope_and_drop_boundaries",
-      "test_cursor_retains_prior_pair_evidence_without_counting_it_as_active"
+      "test_cursor_retains_prior_pair_evidence_without_counting_it_as_active",
+      "test_udx_route_markers_preserve_scope_role_and_terminal_outcome",
+      "test_udx_route_markers_ignore_unscoped_response_and_bound_duplicates",
+      "test_udx_route_cursor_keeps_pair_only_outcomes_out_of_active_delta",
+      "test_client_route_phase_whitelist_captures_fixed_markers_only",
+      "test_client_route_phase_whitelist_rejects_suffix_only_marker"
     ]
   },
   "sourcePaths": [
@@ -116,7 +131,8 @@
     ".github/scripts/mobile/validate-mobile-interop-selection.py",
     ".github/scripts/mobile/test_mobile_interop_selection.py",
     ".github/workflows/udx-transport-regressions.yml",
-    "SRC/vendor/libudx/src/native/async_stream.rs"
+    "SRC/vendor/libudx/src/native/async_stream.rs",
+    "SRC/vendor/peeroxide/src/connection_set.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",
