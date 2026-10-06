@@ -3719,7 +3719,6 @@ async fn gui_attach_rejects_an_oversized_close_delimited_frame() {
     server.await.unwrap();
 }
 
-
 #[cfg(feature = "cluster")]
 struct CompanionPairListenerFixture {
     runtime: Arc<crate::daemon::companion_runtime::CompanionRuntime>,
@@ -3826,7 +3825,10 @@ async fn companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audi
     .await
     .expect("fixture readiness refusal reaches the client within bound");
     assert!(
-        matches!(mint, Err(super::client::CompanionV3ClientError::Refused(503))),
+        matches!(
+            mint,
+            Err(super::client::CompanionV3ClientError::Refused(503))
+        ),
         "only a bounded, framed 503 is recoverable; got {mint:?}"
     );
     assert_eq!(
@@ -3895,7 +3897,10 @@ async fn companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_li
     .await
     .expect("fatal fixture reaches the client within bound");
     assert!(
-        matches!(mint, Err(super::client::CompanionV3ClientError::Unavailable(_))),
+        matches!(
+            mint,
+            Err(super::client::CompanionV3ClientError::Unavailable(_))
+        ),
         "observed terminal owner failure is not falsely converted to a framed 503: {mint:?}"
     );
 

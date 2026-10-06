@@ -134,8 +134,7 @@ const COMPANION_MINT_READINESS_TIMEOUT: std::time::Duration = std::time::Duratio
 /// Keep enough of the fixed mint exchange for a framed terminal response and
 /// its close after an initial-publication refusal. The readiness owner must
 /// never consume the whole lifecycle and strand the same-user client at EOF.
-const COMPANION_MINT_TERMINAL_RESERVE: std::time::Duration =
-    std::time::Duration::from_secs(2);
+const COMPANION_MINT_TERMINAL_RESERVE: std::time::Duration = std::time::Duration::from_secs(2);
 /// Cap on concurrent in-flight connections. A local process can't exhaust the
 /// daemon's FD table / task pool by holding connections open — excess
 /// connections are dropped immediately (the one-shot falls back to its
@@ -2465,9 +2464,7 @@ enum CompanionMintTerminal {
     ClientCancelled,
 }
 
-fn companion_mint_readiness_budget(
-    deadline: tokio::time::Instant,
-) -> Result<std::time::Duration> {
+fn companion_mint_readiness_budget(deadline: tokio::time::Instant) -> Result<std::time::Duration> {
     companion_mint_readiness_budget_at(deadline, tokio::time::Instant::now())
 }
 
@@ -2593,29 +2590,23 @@ mod companion_mint_budget_tests {
     #[test]
     fn readiness_keeps_terminal_reserve_inside_existing_lifecycle() {
         let now = tokio::time::Instant::now();
-        let readiness = companion_mint_readiness_budget_at(
-            now + COMPANION_MINT_READINESS_TIMEOUT,
-            now,
-        )
-        .expect("the fixed lifecycle leaves readiness time before its terminal reserve");
+        let readiness =
+            companion_mint_readiness_budget_at(now + COMPANION_MINT_READINESS_TIMEOUT, now)
+                .expect("the fixed lifecycle leaves readiness time before its terminal reserve");
         assert_eq!(
             readiness,
             std::time::Duration::from_secs(13),
             "the existing 15-second lifecycle reserves two seconds for terminal write and close"
         );
         assert!(
-            companion_mint_readiness_budget_at(
-                now + COMPANION_MINT_TERMINAL_RESERVE,
-                now,
-            )
-            .is_err(),
+            companion_mint_readiness_budget_at(now + COMPANION_MINT_TERMINAL_RESERVE, now,)
+                .is_err(),
             "a lifecycle no larger than the terminal reserve never starts readiness"
         );
         assert!(
             companion_mint_readiness_budget_at(
                 now + std::time::Duration::from_secs(1),
-                now + std::time::Duration::from_secs(1)
-                    + std::time::Duration::from_millis(1),
+                now + std::time::Duration::from_secs(1) + std::time::Duration::from_millis(1),
             )
             .is_err(),
             "an expired lifecycle never starts readiness"

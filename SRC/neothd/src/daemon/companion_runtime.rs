@@ -434,15 +434,17 @@ impl CompanionRuntime {
             ready_listener.remaining_ttl_secs,
             requested_scope,
         );
-        Ok(AuditPairInvitePreparation::Prepared(PreparedCompanionV3Invite {
-            invite: CompanionV3Invite {
-                schema_version: COMPANION_V3_SCHEMA_VERSION,
-                pair_url: url,
-                expires_in_secs: ready_listener.remaining_ttl_secs,
-                requested_scope,
+        Ok(AuditPairInvitePreparation::Prepared(
+            PreparedCompanionV3Invite {
+                invite: CompanionV3Invite {
+                    schema_version: COMPANION_V3_SCHEMA_VERSION,
+                    pair_url: url,
+                    expires_in_secs: ready_listener.remaining_ttl_secs,
+                    requested_scope,
+                },
+                pair_task_key: ready_listener.pair_task_key,
             },
-            pair_task_key: ready_listener.pair_task_key,
-        }))
+        ))
     }
 
     #[cfg(test)]
@@ -499,15 +501,12 @@ impl CompanionRuntime {
                 if let Some(fixture) = fixture_readiness {
                     return match fixture {
                         AuditPairReadinessTestOutcome::RefusedAfterOwnerSpawn => {
-                            let _ = ready_tx.send(Err(
-                                "fixture checked readiness refusal".to_owned(),
-                            ));
+                            let _ =
+                                ready_tx.send(Err("fixture checked readiness refusal".to_owned()));
                             Ok(())
                         }
                         AuditPairReadinessTestOutcome::UncertainAfterOwnerSpawn => {
-                            let _ = ready_tx.send(Err(
-                                "fixture teardown uncertainty".to_owned(),
-                            ));
+                            let _ = ready_tx.send(Err("fixture teardown uncertainty".to_owned()));
                             anyhow::bail!("fixture pair listener teardown uncertainty")
                         }
                     };
@@ -582,12 +581,10 @@ impl CompanionRuntime {
     }
 
     async fn join_proven_refused_pair_listener(&self, key: &str) -> Result<()> {
-        let owner = self
-            .pair_tasks
-            .lock()
-            .await
-            .remove(key)
-            .with_context(|| "unready pair listener owner disappeared before its terminal join")?;
+        let owner =
+            self.pair_tasks.lock().await.remove(key).with_context(
+                || "unready pair listener owner disappeared before its terminal join",
+            )?;
         owner.stop_tx.send_replace(true);
         match owner
             .task
@@ -661,10 +658,7 @@ impl CompanionRuntime {
             Ok(value) => value,
             Err(error) => {
                 diagnostics.failed("bootstrap_started");
-                report_pair_readiness(
-                    &mut readiness_tx,
-                    Err(error.to_string()),
-                );
+                report_pair_readiness(&mut readiness_tx, Err(error.to_string()));
                 return Err(error);
             }
         };
@@ -704,10 +698,7 @@ impl CompanionRuntime {
                         return Ok(());
                     }
                     Err(teardown_error) => {
-                        report_pair_readiness(
-                            &mut readiness_tx,
-                            Err(message),
-                        );
+                        report_pair_readiness(&mut readiness_tx, Err(message));
                         return Err(
                             teardown_error.context("unready companion pair listener teardown")
                         );

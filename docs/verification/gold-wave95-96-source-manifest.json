@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T14:40:31.8926192Z",
-  "validationStatus": "static-reviewed typed mint refusal and Codegraph contract; hosted final-producer validation pending",
+  "capturedUtc": "2026-10-06T14:44:38.1043187Z",
+  "validationStatus": "hosted formatter receipt imported; final producer validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -6753,13 +6753,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 110061,
-      "sha256": "F5579E7B960E1A745ABED87594AB7523E19221649B1262A8E574952FC4A69FB0"
+      "bytes": 109973,
+      "sha256": "38F70E11B7C1F0A49D82CB7D7CFF19C80FD49F45F935F77120841E3B4EA4A035"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 149723,
-      "sha256": "2D159DF6DFFBC0F96E0C09FB63C3EACD5142231C2602CAB12797ABF67F9396DA"
+      "bytes": 149790,
+      "sha256": "95D17663A2B78FCAD695F47C8BF79B91D0AACB7777C493BFE9F5539979F2F674"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/token.rs",
@@ -6843,8 +6843,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 85254,
-      "sha256": "17BA3DD59F086AF53D239825C433466B9AA895E8A0A50CD2C99E98F3FF641E41"
+      "bytes": 85051,
+      "sha256": "2680503F64D19CDE5412C2588ADB0898A8FC42732928B82756DCFEB96DA5510B"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
@@ -7503,8 +7503,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 236679,
-      "sha256": "434634F69D31DC5CE6AE5A6B22E0FB3EB5D6288033F8119173E9EE49F325D930"
+      "bytes": 236647,
+      "sha256": "EEF6B9ECD2298F3BB709346677BBDE0E69A17981CC879CD18F82AE6F7DDE076A"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",

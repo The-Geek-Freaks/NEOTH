@@ -5461,14 +5461,12 @@ fn root() { alpha(); beta(); }
         );
         for tool in tools {
             assert_eq!(
-                tool["annotations"]["readOnlyHint"],
-                true,
+                tool["annotations"]["readOnlyHint"], true,
                 "{} must declare read-only effect",
                 tool["name"]
             );
             assert_eq!(
-                tool["annotations"]["destructiveHint"],
-                false,
+                tool["annotations"]["destructiveHint"], false,
                 "{} must declare non-destructive effect",
                 tool["name"]
             );
