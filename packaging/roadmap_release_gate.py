@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -152,6 +153,27 @@ def roadmap_summary(text: str) -> RoadmapSummary:
     )
 
 
+def open_items_inventory(text: str) -> dict[str, object]:
+    """Return the ordered release-blocking work queue without changing gating."""
+
+    summary = roadmap_summary(text)
+    items = open_items(text)
+    return {
+        "schema": "neoth-roadmap-open-items/v1",
+        "roadmap_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "summary": summary.__dict__,
+        "items": [
+            {
+                "line": item.line,
+                "state": item.state,
+                "identifier": item.identifier,
+                "body": item.body,
+            }
+            for item in items
+        ],
+    }
+
+
 def published_summary(text: str) -> RoadmapSummary:
     """Read the single dashboard count marker maintained by the roadmap."""
 
@@ -221,12 +243,21 @@ def parser() -> argparse.ArgumentParser:
             "is created by the release workflow itself"
         ),
     )
-    result.add_argument(
+    output = result.add_mutually_exclusive_group()
+    output.add_argument(
         "--summary-json",
         action="store_true",
         help=(
             "print machine-readable checkbox and release-blocker counts without "
             "requiring the roadmap to be complete"
+        ),
+    )
+    output.add_argument(
+        "--open-items-json",
+        action="store_true",
+        help=(
+            "print ordered unchecked/partial task records and count semantics "
+            "without requiring the roadmap to be complete"
         ),
     )
     return result
@@ -235,7 +266,10 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        text = args.roadmap.read_text(encoding="utf-8")
+        text = args.roadmap.read_bytes().decode("utf-8")
+        if args.open_items_json:
+            print(json.dumps(open_items_inventory(text), sort_keys=True))
+            return 0
         if args.summary_json:
             print(json.dumps(roadmap_summary(text).__dict__, sort_keys=True))
             return 0

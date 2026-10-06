@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
 import unittest
 
 
@@ -14,6 +18,7 @@ from roadmap_release_gate import (  # noqa: E402
     RELEASE_GENERATED_ID,
     RoadmapReleaseGateError,
     open_items,
+    open_items_inventory,
     published_summary,
     require_release_ready,
     roadmap_summary,
@@ -27,6 +32,131 @@ RELEASE_ITEM = (
 
 
 class RoadmapReleaseGateTests(unittest.TestCase):
+    def test_open_items_inventory_preserves_parser_order_and_count_semantics(
+        self,
+    ) -> None:
+        text = (
+            "- [x] **GOLD-DONE-01** complete\n"
+            "> - [ ] **GOLD-OPEN-01** quoted\n"
+            "- [~] **GOLD-PARTIAL-01** partial\n"
+            "- [ ] anonymous pending\n"
+            "- [ ] **GOLD-OPEN-01** duplicate\n"
+            "```md\n"
+            "- [ ] **GOLD-HIDDEN-01** example only\n"
+            "```\n"
+        )
+
+        inventory = open_items_inventory(text)
+
+        self.assertEqual(inventory["schema"], "neoth-roadmap-open-items/v1")
+        self.assertEqual(
+            inventory["roadmap_sha256"],
+            hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(
+            inventory["summary"],
+            {
+                "total": 5,
+                "complete": 1,
+                "open": 3,
+                "partial": 1,
+                "raw_blockers": 4,
+                "release_tag_blockers": 4,
+                "release_generated_items": 0,
+            },
+        )
+        self.assertEqual(
+            inventory["items"],
+            [
+                {
+                    "line": 2,
+                    "state": " ",
+                    "identifier": "GOLD-OPEN-01",
+                    "body": "quoted",
+                },
+                {
+                    "line": 3,
+                    "state": "~",
+                    "identifier": "GOLD-PARTIAL-01",
+                    "body": "partial",
+                },
+                {
+                    "line": 4,
+                    "state": " ",
+                    "identifier": None,
+                    "body": "anonymous pending",
+                },
+                {
+                    "line": 5,
+                    "state": " ",
+                    "identifier": "GOLD-OPEN-01",
+                    "body": "duplicate",
+                },
+            ],
+        )
+
+    def test_open_items_json_cli_emits_exact_inventory(self) -> None:
+        for raw in (
+            b"- [ ] **GOLD-OPEN-01** pending\n",
+            b"- [ ] **GOLD-OPEN-01** pending\r\n",
+        ):
+            with self.subTest(raw=raw):
+                with TemporaryDirectory() as directory:
+                    roadmap = Path(directory) / "roadmap.md"
+                    roadmap.write_bytes(raw)
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "packaging" / "roadmap_release_gate.py"),
+                            "--roadmap",
+                            str(roadmap),
+                            "--open-items-json",
+                        ],
+                        check=False,
+                        capture_output=True,
+                        encoding="utf-8",
+                    )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload, open_items_inventory(raw.decode("utf-8")))
+                self.assertEqual(
+                    payload["roadmap_sha256"],
+                    hashlib.sha256(raw).hexdigest(),
+                )
+
+    def test_open_items_json_cli_rejects_malformed_input_without_output(self) -> None:
+        with TemporaryDirectory() as directory:
+            roadmap = Path(directory) / "roadmap.md"
+            roadmap.write_text("- [?] **GOLD-OPEN-01** invalid\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "packaging" / "roadmap_release_gate.py"),
+                    "--roadmap",
+                    str(roadmap),
+                    "--open-items-json",
+                ],
+                check=False,
+                capture_output=True,
+                encoding="utf-8",
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("unknown task state", result.stderr)
+
+    def test_open_items_inventory_rejects_unknown_state_and_unterminated_fence(
+        self,
+    ) -> None:
+        for text in (
+            "- [?] **GOLD-OPEN-01** invalid\n",
+            "```md\n- [ ] **GOLD-HIDDEN-01** pending\n",
+        ):
+            with self.subTest(text=text):
+                with self.assertRaises(RoadmapReleaseGateError):
+                    open_items_inventory(text)
+
     def test_summary_uses_the_same_release_generated_exception_as_the_gate(
         self,
     ) -> None:

@@ -1,0 +1,93 @@
+{
+  "schema": "neoth.wave2442.delivery-optimization.v1",
+  "date": "2026-10-06",
+  "baseProducer": "1f5ffae0f79d4b49234ce1088861e81a66b7a66e",
+  "scope": "Completion workflow and evidence consistency; no product Rust or Slint edits",
+  "observations": {
+    "coldHostBuild": {
+      "run": "37443425500",
+      "seconds": 643
+    },
+    "priorCacheBytes": 1328726407,
+    "roadmap": {
+      "total": 1324,
+      "complete": 1081,
+      "open": 241,
+      "partial": 2,
+      "rawBlockers": 243,
+      "preTagBlockers": 242,
+      "percentMeaning": "Checkbox inventory only; not release readiness"
+    }
+  },
+  "implemented": {
+    "canonicalSelection": {
+      "manifest": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "rustCases": 35,
+      "collectorCases": 4,
+      "sourceBindings": 36,
+      "rustSelectionUnchanged": true,
+      "rootDerivesAdmissionFromProducerManifest": true,
+      "earlyChecks": [
+        "unique canonical sources and test identities",
+        "actual unittest discovery set",
+        "workflow step and protected input mapping",
+        "raw source hashes"
+      ],
+      "actualRustResolution": "Existing --locked exact Cargo executions and individual one-pass terminals remain required"
+    },
+    "roadmapInventory": {
+      "command": "python3 packaging/roadmap_release_gate.py --open-items-json",
+      "parser": "Existing release-gate parser",
+      "preserves": [
+        "source order",
+        "anonymous tasks",
+        "duplicate task text",
+        "partial states",
+        "all raw blockers",
+        "raw UTF-8 digest including CRLF"
+      ],
+      "releaseGateUnchanged": true
+    },
+    "hostedFeedback": {
+      "libudxBeforeProductBuild": "Already implemented in W2441",
+      "stableCache": "OS, Rust 1.91, build policy j1-i0-d0, schema2 and both lockfiles; no per-commit key",
+      "migrationFallback": "Existing W2441 combined-path, two-lock prefix",
+      "allBuildTestRestoreConditionsRetained": true,
+      "speedupMeasured": false
+    },
+    "preflightInventory": {
+      "artifact": "preflight-delivery-inventory",
+      "paths": [
+        "roadmap-open-items.json",
+        "selection-custody.json"
+      ],
+      "generatedByHostedPreflight": true,
+      "runtimeOrReleaseAcceptance": false
+    }
+  },
+  "researchSources": [
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching",
+    "https://doc.rust-lang.org/cargo/commands/cargo-test.html",
+    "https://doc.rust-lang.org/cargo/reference/timings.html"
+  ],
+  "deferred": [
+    "Cache-domain split until measurements justify migration",
+    "Compiler parallelism or incremental-policy changes without timing evidence",
+    "Universal roadmap evidence ledger; existing acceptance records remain authoritative"
+  ],
+  "validation": {
+    "localExecutableValidationRan": false,
+    "localChecks": "Bounded text, JSON, SHA-256, Git diff and independent static review",
+    "requiredHosted": "Existing push Preflight runs selection and roadmap regression suites, validates current selection and exports full open-item inventory",
+    "productAcceptance": "Still requires actual pair/status/chat/revoke and strict API/log/raw-blob/archive/receipt/drain admission",
+    "nativeDeviceAndReleaseAcceptance": false
+  },
+  "protected": {
+    "localBsodHold": true,
+    "claudePolling": false,
+    "slintEdits": false,
+    "unrelatedGitignoreAndPhysicalCargoLockPreserved": true,
+    "singleRootDispatchStream": true,
+    "rawPlanBacklogPreserved": true
+  }
+}

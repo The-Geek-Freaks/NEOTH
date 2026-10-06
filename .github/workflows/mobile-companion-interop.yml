@@ -25,6 +25,16 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with: { fetch-depth: 1, persist-credentials: false }
+      - name: Validate and materialize canonical interop selection
+        id: selection_contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          selection_dir="$RUNNER_TEMP/mobile-interop-selection"
+          python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"
+          cp .github/scripts/mobile/mobile-companion-interop-selection.json "$selection_dir/mobile-companion-interop-selection.json"
+          test -s "$selection_dir/selection-custody.json"
+          for group in libudx peeroxide dht core no_cluster bridge collector; do test -s "$selection_dir/$group.txt"; done
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with: { toolchain: 1.91.0 }
       - name: Restore mobile-interop Cargo checkpoint
@@ -37,11 +47,9 @@ jobs:
             ~/.cargo/git/db/
             SRC/target/
             bridges/companion-native/target/
-          key: ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-
-            ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
-            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
       - name: Run bounded scoped diagnostics collector regressions
         timeout-minutes: 2
         run: python3 -m unittest discover -s .github/scripts/mobile -p 'test_hosted_mobile_interop_diagnostics.py' -v
@@ -103,18 +111,16 @@ jobs:
             test "$(sed -n '/^name = "libudx"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc "$dependency")" -eq 1
           done
 
+          mapfile -t libudx_identities < "$RUNNER_TEMP/mobile-interop-selection/libudx.txt"
+          test "${#libudx_identities[@]}" -gt 0
           ordinal=0
-          for identity in \
-            native::socket::tests::observed_raw_datagram_writer_reports_success_failure_and_teardown_once \
-            native::socket::tests::raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata \
-            native::socket::tests::close_aborts_the_owned_reader_and_writer_tasks \
-            native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain
+          for identity in "${libudx_identities[@]}"
           do
             ordinal=$((ordinal + 1))
             cargo test -p libudx --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 4
+          test "$ordinal" -eq "${#libudx_identities[@]}"
       - name: Build exact host debug CLI and cdylib
         id: exact_host_build
         timeout-minutes: 25
@@ -206,36 +212,26 @@ jobs:
           test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "serde_json",')" -eq 1
           test "$(sed -n '/^name = "peeroxide-dht"$/,/^\[\[package\]\]$/p' "$root_lock" | grep -Fxc ' "tracing-subscriber",')" -eq 1
 
+          mapfile -t peeroxide_identities < "$RUNNER_TEMP/mobile-interop-selection/peeroxide.txt"
+          test "${#peeroxide_identities[@]}" -gt 0
           ordinal=0
-          for identity in \
-            swarm::tests::server_publication_requires_both_announcement_successes \
-            swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation \
-            swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot
+          for identity in "${peeroxide_identities[@]}"
           do
             ordinal=$((ordinal + 1))
             cargo test -p peeroxide --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 3
+          test "$ordinal" -eq "${#peeroxide_identities[@]}"
+          mapfile -t dht_identities < "$RUNNER_TEMP/mobile-interop-selection/dht.txt"
+          test "${#dht_identities[@]}" -gt 0
           dht_ordinal=0
-          for identity in \
-            router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination \
-            router::tests::handshake_reply_peer_metadata_never_replaces_request_destination \
-            hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase \
-            hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener \
-            io::tests::would_block_reply_egress_retains_owned_bytes_until_retry_succeeds \
-            io::tests::reply_egress_queue_is_bounded_and_expired_reply_is_terminal \
-            rpc::tests::deferred_handshake_reply_diagnostics_ignore_non_handshake_replies \
-            io::tests::deferred_handshake_reply_diagnostics_cover_queue_retry_and_expiry \
-            io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses \
-            io::tests::deferred_handshake_reply_os_completion_preserves_the_listener_tag \
-            io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle
+          for identity in "${dht_identities[@]}"
           do
             dht_ordinal=$((dht_ordinal + 1))
             cargo test -p peeroxide-dht --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/dht-$dht_ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/dht-$dht_ordinal.log"
           done
-          test "$dht_ordinal" -eq 11
+          test "$dht_ordinal" -eq "${#dht_identities[@]}"
       - name: Prove both transient test overlays restored before cache admission
         id: overlay_restored
         shell: bash
@@ -253,7 +249,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p neoth --no-default-features --lib --locked daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-no-cluster-regression.log"
+          readarray -t no_cluster_identities < "$RUNNER_TEMP/mobile-interop-selection/no_cluster.txt"
+          test "${#no_cluster_identities[@]}" -eq 1
+          cargo test -p neoth --no-default-features --lib --locked "${no_cluster_identities[0]}" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-no-cluster-regression.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-no-cluster-regression.log"
       - name: Run exact companion RPC and shutdown regressions
         id: exact_companion_rpc_shutdown
@@ -266,29 +264,16 @@ jobs:
           set -euo pipefail
           proof_dir="$RUNNER_TEMP/companion-rpc-regressions"
           mkdir -p "$proof_dir"
+          mapfile -t core_identities < "$RUNNER_TEMP/mobile-interop-selection/core.txt"
+          test "${#core_identities[@]}" -gt 0
           ordinal=0
-          for identity in \
-            daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body \
-            daemon::audit_rpc::client::tests::rpc_response_requires_one_exact_content_length \
-            daemon::audit_rpc::client::tests::rpc_response_rejects_malformed_status_and_headers \
-            daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly \
-            daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join \
-            daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes \
-            daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication \
-            daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness \
-            daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join \
-            cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown \
-            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht \
-            cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation \
-            cluster::hyperswarm::tests::public_rendezvous_requires_and_wires_the_expected_remote_static_key \
-            cluster::hyperswarm::tests::v3_public_rendezvous_retains_the_supplied_daemon_noise_key \
-            cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn
+          for identity in "${core_identities[@]}"
           do
             ordinal=$((ordinal + 1))
             cargo test -p neoth --lib --locked "$identity" -- --exact --nocapture 2>&1 | tee "$proof_dir/$ordinal.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
-          test "$ordinal" -eq 15
+          test "$ordinal" -eq "${#core_identities[@]}"
       - name: Run exact bridge public result regression
         id: exact_bridge_public_result
         timeout-minutes: 5
@@ -297,7 +282,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
+          test "${#bridge_identities[@]}" -eq 1
+          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "${bridge_identities[0]}" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-result-regression.log"
       - name: Run fixed isolated-home pair/status/chat/revoke
         timeout-minutes: 10
@@ -318,7 +305,7 @@ jobs:
             ~/.cargo/git/db/
             SRC/target/
             bridges/companion-native/target/
-          key: ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ always() }}
         with:
@@ -326,5 +313,7 @@ jobs:
           path: |
             ${{ runner.temp }}/w2328-stage/host-interop-manifest.json
             ${{ runner.temp }}/w2328-receipt.json
+            ${{ runner.temp }}/mobile-interop-selection/selection-custody.json
+            ${{ runner.temp }}/mobile-interop-selection/mobile-companion-interop-selection.json
           if-no-files-found: warn
           retention-days: 14

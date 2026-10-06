@@ -130,6 +130,7 @@ jobs:
 
       - name: Run offline packaging and release contracts
         run: |
+          python3 .github/scripts/mobile/test_mobile_interop_selection.py
           python3 packaging/tests/test_ci_cadence_contract.py
           python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py
           python3 packaging/tests/test_preview_windows_workflow_contract.py
@@ -146,6 +147,26 @@ jobs:
           python3 scripts/test_lost_feature_integrity.py
           python3 -m unittest scripts/test_extract_openclaw_channel_schema.py
           bash packaging/linux/test-contracts.sh
+      - name: Generate delivery inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          selection_dir="$RUNNER_TEMP/mobile-interop-selection"
+          inventory_dir="$RUNNER_TEMP/neoth-delivery-inventory"
+          mkdir -p "$inventory_dir"
+          python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"
+          python3 packaging/roadmap_release_gate.py --open-items-json > "$inventory_dir/roadmap-open-items.json"
+          cp "$selection_dir/selection-custody.json" "$inventory_dir/selection-custody.json"
+          test -s "$inventory_dir/roadmap-open-items.json"
+          test -s "$inventory_dir/selection-custody.json"
+      - name: Upload delivery inventory
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: preflight-delivery-inventory
+          path: ${{ runner.temp }}/neoth-delivery-inventory
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Validate checked-in shell syntax
         shell: bash

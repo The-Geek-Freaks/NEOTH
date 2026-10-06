@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-06T09:54:15.0821057Z",
-  "validationStatus": "wave2441-static-reviewed-hosted-pending",
+  "capturedUtc": "2026-10-06T10:30:06.6369026Z",
+  "validationStatus": "W2442 static-reviewed canonical selection and full open-item inventory; hosted Preflight pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -52,9 +52,24 @@
       "sha256": "8A95FA02F7DD34A530754022C9495F8E7B4BDC6D3FDE01596464D123E47DC35C"
     },
     {
+      "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "bytes": 6827,
+      "sha256": "4AE625DDA542BC3FF493CA6CA21A000F7697CF5F2BACBCFFA886A31D88814D27"
+    },
+    {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
       "bytes": 6897,
       "sha256": "9203DEEFAB42DC3B5C6D51222BE16E353ED56607290A783134F78656FDF311A2"
+    },
+    {
+      "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+      "bytes": 6813,
+      "sha256": "7AAB1B91FDB257DFE8B73413EB72E13370BB650EE8DEF505D73713FDA322224A"
+    },
+    {
+      "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
+      "bytes": 14635,
+      "sha256": "AF99B7A292D7A3B5336BA325D0E8F93C1F42FAEEFA2503D6BC052E0D4CC7A0B9"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -133,8 +148,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 20707,
-      "sha256": "636441446D83D6AFBDC91408F732784063F6DB5FCBF98A4EA0794FD3A32EC899"
+      "bytes": 18883,
+      "sha256": "6A499CB0FC3827EA2EA8D452A83EB1DF55A8F1738CC1E65AEE446FFC98DA0971"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -208,8 +223,8 @@
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 6508,
-      "sha256": "0A68215E47A9B631F976B4B706B65BC1F0366E5C7C607F1A77C835F9F8D64DC1"
+      "bytes": 7613,
+      "sha256": "DB87C97368F25771F555019E649F0CA3DD1B809AC644A5673421B484AF86CE6F"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -3732,6 +3747,11 @@
       "sha256": "1A4C5048BFFA9540C315D746189A0696C3089AF535CEEAF3D8433BBB0A151126"
     },
     {
+      "path": "docs/verification/gold-wave2442-delivery-optimization.json",
+      "bytes": 3523,
+      "sha256": "AC7F6FCBF9E140740E80DE42A52CC34B101C4AA6AFDA10BC4AF724CF51B2511A"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -4662,6 +4682,11 @@
       "sha256": "3FE2F20B89AD8D2040818E59B2818D40DB1B3BD9AEBFC6895EE66EDED140D886"
     },
     {
+      "path": "packaging/roadmap_release_gate.py",
+      "bytes": 9180,
+      "sha256": "2C8C34BBB321750C6EFA01DFC0CC79E1A0277015D4F8C392FC29675AF254B9A1"
+    },
+    {
       "path": "packaging/rust-license-snapshots.json",
       "bytes": 1348423,
       "sha256": "527EF42DBC8B7B34150DE11E6D148744D91177B94EF7EB86BAC9B0D83C0BD3D5"
@@ -4693,8 +4718,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 52329,
-      "sha256": "26FCE658AE44F89E87DB9846D180DF71650796EEB2EF2924869AE351E6114FD3"
+      "bytes": 55312,
+      "sha256": "124B1415207D6337FD263AEEBAFAB69A66EDB370C6AFE030669A335F38812BF8"
     },
     {
       "path": "packaging/tests/test_converted_channel_relink_product_canary.py",
@@ -4787,6 +4812,11 @@
       "sha256": "89EDB5A0B194C41F1D0F0178583F95A0B36CCAF8EFFB7DDF13DECF3F56BFBC40"
     },
     {
+      "path": "packaging/tests/test_roadmap_release_gate.py",
+      "bytes": 11463,
+      "sha256": "B46923B0E0C4287F37330425605FE9B2A7D37118423700C0617B62A64EA8A6F8"
+    },
+    {
       "path": "packaging/tests/test_workflow_replay_gate.py",
       "bytes": 12480,
       "sha256": "717AB69CEC9FFAF2E31D83CBBA384431EBF59682795F2C6AE75625871A2C1F52"
@@ -4873,8 +4903,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2430913,
-      "sha256": "986EBB1AC9FE170EF346C4B430CEC59951DA66403591D2A050B1F909EF93752B"
+      "bytes": 2433585,
+      "sha256": "0467B0417345523C627BE35FD74730AD69A5405EF5EE992798BD5764D5138AE1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

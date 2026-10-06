@@ -366,6 +366,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 ),
                 "\n".join(
                     [
+                        "python3 .github/scripts/mobile/test_mobile_interop_selection.py",
                         "python3 packaging/tests/test_ci_cadence_contract.py",
                         "python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py",
                         "python3 packaging/tests/test_preview_windows_workflow_contract.py",
@@ -382,6 +383,19 @@ class CiCadenceContractTests(unittest.TestCase):
                         "python3 scripts/test_lost_feature_integrity.py",
                         "python3 -m unittest scripts/test_extract_openclaw_channel_schema.py",
                         "bash packaging/linux/test-contracts.sh",
+                    ]
+                ),
+                "\n".join(
+                    [
+                        "set -euo pipefail",
+                        'selection_dir="$RUNNER_TEMP/mobile-interop-selection"',
+                        'inventory_dir="$RUNNER_TEMP/neoth-delivery-inventory"',
+                        'mkdir -p "$inventory_dir"',
+                        'python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"',
+                        'python3 packaging/roadmap_release_gate.py --open-items-json > "$inventory_dir/roadmap-open-items.json"',
+                        'cp "$selection_dir/selection-custody.json" "$inventory_dir/selection-custody.json"',
+                        'test -s "$inventory_dir/roadmap-open-items.json"',
+                        'test -s "$inventory_dir/selection-custody.json"',
                     ]
                 ),
                 "\n".join(
@@ -415,8 +429,42 @@ class CiCadenceContractTests(unittest.TestCase):
                     "actions/upload-artifact",
                     "ea165f8d65b6e75b540449e92b4886f43607fa02",
                 ),
+                (
+                    "actions/upload-artifact",
+                    "ea165f8d65b6e75b540449e92b4886f43607fa02",
+                ),
             ],
         )
+
+    def test_preflight_exports_delivery_inventory_after_offline_contracts(self) -> None:
+        preflight = workflow_jobs(PREFLIGHT_TEXT)["static-contracts"]
+        steps = workflow_steps(preflight)
+        inventory = steps["Generate delivery inventory"]
+        upload = steps["Upload delivery inventory"]
+        self.assertEqual(direct_mapping_keys(inventory, 8), ["shell", "run"])
+        self.assertEqual(
+            step_run_command(inventory),
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    'selection_dir="$RUNNER_TEMP/mobile-interop-selection"',
+                    'inventory_dir="$RUNNER_TEMP/neoth-delivery-inventory"',
+                    'mkdir -p "$inventory_dir"',
+                    'python3 .github/scripts/mobile/validate-mobile-interop-selection.py --output-dir "$selection_dir"',
+                    'python3 packaging/roadmap_release_gate.py --open-items-json > "$inventory_dir/roadmap-open-items.json"',
+                    'cp "$selection_dir/selection-custody.json" "$inventory_dir/selection-custody.json"',
+                    'test -s "$inventory_dir/roadmap-open-items.json"',
+                    'test -s "$inventory_dir/selection-custody.json"',
+                ]
+            ),
+        )
+        self.assertEqual(direct_mapping_keys(upload, 8), ["if", "uses", "with"])
+        self.assertIn("if: ${{ success() }}", upload)
+        self.assertIn("name: preflight-delivery-inventory", upload)
+        self.assertIn("path: ${{ runner.temp }}/neoth-delivery-inventory", upload)
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertLess(preflight.index("Run offline packaging and release contracts"), preflight.index("Generate delivery inventory"))
+        self.assertLess(preflight.index("Generate delivery inventory"), preflight.index("Upload delivery inventory"))
 
     def test_preflight_keeps_format_gate_failing_while_exporting_its_exact_receipt(self) -> None:
         preflight = workflow_jobs(PREFLIGHT_TEXT)["static-contracts"]

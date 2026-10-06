@@ -1,0 +1,124 @@
+{
+  "schema": "neoth.mobile-interop-selection.v1",
+  "groups": {
+    "libudx": {
+      "step": "Run exact locked libudx OS-send completion regression",
+      "identities": [
+        "native::socket::tests::observed_raw_datagram_writer_reports_success_failure_and_teardown_once",
+        "native::socket::tests::raw_fallback_observer_tracks_enqueue_full_and_closed_without_metadata",
+        "native::socket::tests::close_aborts_the_owned_reader_and_writer_tasks",
+        "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
+      ]
+    },
+    "peeroxide": {
+      "step": "Run exact locked server publication regressions",
+      "identities": [
+        "swarm::tests::server_publication_requires_both_announcement_successes",
+        "swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation",
+        "swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot"
+      ]
+    },
+    "dht": {
+      "step": "Run exact locked server publication regressions",
+      "identities": [
+        "router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination",
+        "router::tests::handshake_reply_peer_metadata_never_replaces_request_destination",
+        "hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase",
+        "hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener",
+        "io::tests::would_block_reply_egress_retains_owned_bytes_until_retry_succeeds",
+        "io::tests::reply_egress_queue_is_bounded_and_expired_reply_is_terminal",
+        "rpc::tests::deferred_handshake_reply_diagnostics_ignore_non_handshake_replies",
+        "io::tests::deferred_handshake_reply_diagnostics_cover_queue_retry_and_expiry",
+        "io::tests::client_handshake_response_diagnostics_distinguish_handshake_from_other_responses",
+        "io::tests::deferred_handshake_reply_os_completion_preserves_the_listener_tag",
+        "io::tests::raw_fallback_diagnostics_cover_client_and_server_queue_lifecycle"
+      ]
+    },
+    "core": {
+      "step": "Run exact companion RPC and shutdown regressions",
+      "identities": [
+        "daemon::audit_rpc::client::tests::companion_v3_response_decodes_the_http_enveloped_invite_body",
+        "daemon::audit_rpc::client::tests::rpc_response_requires_one_exact_content_length",
+        "daemon::audit_rpc::client::tests::rpc_response_rejects_malformed_status_and_headers",
+        "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
+        "daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join",
+        "daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes",
+        "daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication",
+        "daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness",
+        "daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join",
+        "cluster::hyperswarm::tests::public_rendezvous_leave_retains_actor_owner_until_checked_shutdown",
+        "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_stops_for_owned_pair_cancellation_without_constructing_a_dht",
+        "cluster::hyperswarm::tests::public_pending_bootstrap_receipt_wakes_on_late_owned_pair_cancellation",
+        "cluster::hyperswarm::tests::public_rendezvous_requires_and_wires_the_expected_remote_static_key",
+        "cluster::hyperswarm::tests::v3_public_rendezvous_retains_the_supplied_daemon_noise_key",
+        "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn"
+      ]
+    },
+    "no_cluster": {
+      "step": "Run exact no-cluster companion refusal regression",
+      "identities": [
+        "daemon::companion_runtime::tests::no_cluster_prepare_pair_invite_refuses_before_any_invite_exists"
+      ]
+    },
+    "bridge": {
+      "step": "Run exact bridge public result regression",
+      "identities": [
+        "tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text"
+      ]
+    }
+  },
+  "collector": {
+    "module": "test_hosted_mobile_interop_diagnostics",
+    "class": "ScopedCollectorTests",
+    "identities": [
+      "test_chunk_boundaries_do_not_duplicate_or_merge_pair_and_active_markers",
+      "test_reply_boundary_markers_preserve_exact_scope_and_chunk_custody",
+      "test_os_send_completion_markers_keep_pair_active_scope_and_drop_boundaries",
+      "test_cursor_retains_prior_pair_evidence_without_counting_it_as_active"
+    ]
+  },
+  "sourcePaths": [
+    ".github/workflows/mobile-companion-interop.yml",
+    ".github/scripts/mobile/build-host-interop-bridge.sh",
+    ".github/scripts/mobile/hosted-mobile-interop.py",
+    "bridges/companion-native/Cargo.toml",
+    "bridges/companion-native/src/lib.rs",
+    "bridges/companion-native/include/neoth_companion_bridge.h",
+    "SRC/neothd/src/daemon/companion_protocol.rs",
+    "SRC/Cargo.lock",
+    "bridges/companion-native/Cargo.lock",
+    "SRC/neothd/src/daemon/audit_rpc/client.rs",
+    "SRC/neothd/src/cli/serve_tasks.rs",
+    "SRC/neothd/src/daemon/companion_runtime.rs",
+    "SRC/vendor/peeroxide/src/peer_discovery.rs",
+    "SRC/vendor/peeroxide/src/swarm.rs",
+    "SRC/neothd/src/cluster/hyperswarm.rs",
+    "SRC/neothd/src/daemon/audit_rpc/server.rs",
+    "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+    "SRC/vendor/peeroxide/src/error.rs",
+    "SRC/vendor/peeroxide/src/lib.rs",
+    "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
+    "SRC/vendor/peeroxide-dht/src/router.rs",
+    ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+    "SRC/vendor/peeroxide-dht/src/io.rs",
+    "SRC/vendor/peeroxide-dht/src/rpc.rs",
+    "SRC/vendor/libudx/src/native/socket.rs",
+    "SRC/vendor/peeroxide-dht/src/messages.rs",
+    "SRC/vendor/peeroxide-dht/src/hyperdht_messages.rs",
+    "SRC/Cargo.toml",
+    "SRC/vendor/libudx/Cargo.toml",
+    "SRC/vendor/libudx/src/lib.rs",
+    "SRC/vendor/libudx/src/native/mod.rs",
+    "SRC/vendor/libudx/src/native/header.rs",
+    "SRC/vendor/libudx/src/native/stream.rs",
+    ".github/scripts/mobile/mobile-companion-interop-selection.json",
+    ".github/scripts/mobile/validate-mobile-interop-selection.py",
+    ".github/scripts/mobile/test_mobile_interop_selection.py"
+  ],
+  "dispatchHashSources": {
+    "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",
+    "bridge_lib_sha256": "bridges/companion-native/src/lib.rs",
+    "bridge_header_sha256": "bridges/companion-native/include/neoth_companion_bridge.h",
+    "canonical_protocol_sha256": "SRC/neothd/src/daemon/companion_protocol.rs"
+  }
+}
