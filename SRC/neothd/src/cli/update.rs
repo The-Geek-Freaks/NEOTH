@@ -872,8 +872,7 @@ mod tests {
         join.await
             .expect("seed writer supervisor")
             .expect("seed writer outcome");
-        let base_before_consumer =
-            std::fs::read(&base).expect("read pre-existing base segment");
+        let base_before_consumer = std::fs::read(&base).expect("read pre-existing base segment");
 
         append_owned_self_update_audit_at_home(home.path(), b"consumer-d2", 0xD2)
             .await

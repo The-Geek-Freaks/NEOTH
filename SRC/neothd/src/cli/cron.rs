@@ -1050,10 +1050,7 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
 
 async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    with_manual_cron_owner(&home, || {
-        run_one_transaction(&home, id, file, output)
-    })
-    .await
+    with_manual_cron_owner(&home, || run_one_transaction(&home, id, file, output)).await
 }
 
 /// Execute the actual manual-Cron transaction under the daemon startup lock.
@@ -1086,7 +1083,8 @@ async fn run_one_transaction(
         .with_context(|| format!("load jobs from {}", path.display()))?;
     let job = find_job(&jobs, id)?;
 
-    let config = FreedomConfig::load_from_path(&home.join("freedom.yaml")).context("load freedom.yaml")?;
+    let config =
+        FreedomConfig::load_from_path(&home.join("freedom.yaml")).context("load freedom.yaml")?;
     let provider = crate::providers::fallback_chain_from_config(&config, &home, None)
         .await
         .context("construct the provider chain for the job")?;
@@ -1099,11 +1097,9 @@ async fn run_one_transaction(
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "cron-run");
-    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
-        segment,
-        home.clone(),
-    )
-    .context("open a one-shot WAL writer")?;
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.clone())
+            .context("open a one-shot WAL writer")?;
 
     let authorizer = bind_manual_cron_left_authorizer(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
@@ -1430,7 +1426,7 @@ mod tests {
         let config = w302_cron_config("w302-cron-allowed");
         std::fs::write(
             home.path().join("freedom.yaml"),
-            config.public_yaml().unwrap()
+            config.public_yaml().unwrap(),
         )
         .unwrap();
 
@@ -1446,8 +1442,7 @@ mod tests {
         let outcome = with_manual_cron_owner(home.path(), || async move {
             let wd = hp.join("wal");
             std::fs::create_dir_all(&wd).unwrap();
-            let segment =
-                crate::wal::writer::unique_standalone_segment_path(&wd, "w2457-cron");
+            let segment = crate::wal::writer::unique_standalone_segment_path(&wd, "w2457-cron");
             let (writer, completion) =
                 crate::wal::writer::spawn_for_home_with_completion(segment, hp.clone()).unwrap();
             let child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1498,7 +1493,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(!home.path().join("proactive_queue.json").exists());
     }
-#[test]
+    #[test]
     fn jobs_path_defaults_under_neoth_home() {
         let p = jobs_path(None);
         assert!(

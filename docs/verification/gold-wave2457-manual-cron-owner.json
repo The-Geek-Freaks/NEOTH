@@ -60,5 +60,12 @@
   "localExecutableValidationRan": false,
   "hostedAcceptance": false,
   "nativeDeviceReleaseAccepted": false,
-  "allStandaloneWalCallersMigrated": false
+  "allStandaloneWalCallersMigrated": false,
+  "hostedFormatting": {
+    "run": "37515857225",
+    "producer": "5ce2a8d4bdf9d96faf2a1b99fd5fbf859a587523",
+    "artifact": "11436788769",
+    "custodySha256": "CA32F2BA527BCF2F0E770AAA8B23D0C35B71003B1E2A4ABCF1F9BA70849802AD",
+    "localFormatterRan": false
+  }
 }

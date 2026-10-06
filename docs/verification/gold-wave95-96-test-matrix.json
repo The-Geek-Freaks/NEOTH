@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2457-W2462-OWNER-AND-AUTHENTICATED-ROTATION-HOSTED-PENDING",
+  "status": "W2457-W2462-HOSTED-FORMATTED-EXECUTABLE-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 398038,
-    "sha256": "8C1B8F31C62709D4E6E43CF0B700CD5E331A3340774780134636920AA2471B6D"
+    "bytes": 398026,
+    "sha256": "F52A8F7589EBABF1ABD0F4DDDC031FA277607EED01E607A58A26F894C316A0C3"
   },
   "sourceInputs": 2175,
   "requiredNativeTests": [
@@ -5898,7 +5898,7 @@
     {
       "test": "cli::cron::tests::w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
@@ -15708,13 +15708,13 @@
     {
       "test": "cli::cron::tests::edit_updates_name_and_timeout",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::full_crud_roundtrip_preserves_and_can_clear_every_gold_contract_field",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
@@ -16693,7 +16693,7 @@
     {
       "test": "cli::update::tests::w2452_consumer_offline_d2_then_de_continues_preexisting_rotated_tail",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+      "sourceSha256": "6A0E7F56A7D9591B148E882DC34F3BC8A39F2B0500375260A3BF870B43A17469",
       "junitClass": "neoth"
     },
     {
@@ -16705,25 +16705,25 @@
     {
       "test": "cli::update::tests::w2452_applied_audit_failure_blocks_render_and_restart_gate",
       "sourcePath": "SRC/neothd/src/cli/update.rs",
-      "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+      "sourceSha256": "6A0E7F56A7D9591B148E882DC34F3BC8A39F2B0500375260A3BF870B43A17469",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_runs_real_job_and_drains_writer_once",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_refuses_live_daemon_before_work_factory",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
       "test": "cli::cron::tests::w2457_manual_cron_owner_runs_exactly_one_offline_work_transaction",
       "sourcePath": "SRC/neothd/src/cli/cron.rs",
-      "sourceSha256": "6FD22699A55D5B5154BA7DF74C050806DB413F4CCC60884F177C82D82A694287",
+      "sourceSha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
       "junitClass": "neoth"
     },
     {
@@ -19130,7 +19130,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+        "sourceSha256": "6A0E7F56A7D9591B148E882DC34F3BC8A39F2B0500375260A3BF870B43A17469",
         "junitClass": "neoth"
       }
     ],
@@ -19540,7 +19540,7 @@
       {
         "test": "cli::update::tests::w2452_consumer_connected_postwrite_eof_never_creates_offline_segment",
         "sourcePath": "SRC/neothd/src/cli/update.rs",
-        "sourceSha256": "2CE51E1593A55B2A1944671F6AE6DFCEFA156CCE870BB249EB4EA16BC9D0C71D",
+        "sourceSha256": "6A0E7F56A7D9591B148E882DC34F3BC8A39F2B0500375260A3BF870B43A17469",
         "junitClass": "neoth"
       }
     ]
@@ -77263,6 +77263,38 @@
       }
     ],
     "note": "Reviewed ManualCron PID lease through real writer completion; six portable regressions. Correct authenticated rotated fixture from exact failed39147 run;41 focused cases pending. BSOD hold honored.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2462HostedFormatting": {
+    "base": "5ce2a8d4bdf9d96faf2a1b99fd5fbf859a587523",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2457-manual-cron-owner.json",
+        "bytes": 2897,
+        "sha256": "BFB3708F75F2D59146BAD05A18057EC1CB7FE0701216FDF43AA2E59DAE63209C",
+        "blob": "b31fc1cdcc0b6a68fb239c234b40b5854ad998d1"
+      },
+      {
+        "path": "docs/verification/gold-wave2462-authenticated-rotation.json",
+        "bytes": 2057,
+        "sha256": "D1062F1005D9BF09F06A7193177709F65F6A39B859EE10711A05D9051A76714E",
+        "blob": "29fe9a08b7b7e244f9e9ed34a44129dc97cb161b"
+      },
+      {
+        "path": "SRC/neothd/src/cli/cron.rs",
+        "bytes": 64599,
+        "sha256": "7EA293FD555683CDCE300F3F08282D565827AE9F67476F9116025DF58277BB33",
+        "blob": "4556a56d9c50a784921b51ee141305819ad5d271"
+      },
+      {
+        "path": "SRC/neothd/src/cli/update.rs",
+        "bytes": 45619,
+        "sha256": "6A0E7F56A7D9591B148E882DC34F3BC8A39F2B0500375260A3BF870B43A17469",
+        "blob": "b91589a9af80e7023bca1b51c50869584f0c3a1d"
+      }
+    ],
+    "note": "Only original authenticated hosted formatting patch applied to two owned Rust files; no local formatter.41case focused/product pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
