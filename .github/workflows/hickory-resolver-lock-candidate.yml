@@ -1,0 +1,285 @@
+name: Hickory resolver lock candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_head:
+        description: Exact main commit whose SRC/Cargo.lock is the baseline
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hickory-resolver-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ inputs.source_head }}
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_head }}
+          persist-credentials: false
+      - name: Require exact main producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Resolve and retain actual Hickory lock output
+        id: resolve
+        shell: bash
+        run: |
+          set -uo pipefail
+          scratch="$RUNNER_TEMP/hickory-resolver-lock-source"
+          evidence="$RUNNER_TEMP/hickory-resolver-lock"
+          mkdir -p "$scratch" "$evidence"
+          cp -a SRC "$scratch/SRC"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          git rev-parse "$EXPECTED_HEAD:SRC/Cargo.lock" > "$evidence/source-lock-blob.txt"
+          sha256sum SRC/Cargo.lock > "$evidence/source-lock.SHA256SUMS"
+          cp SRC/Cargo.lock "$evidence/baseline-Cargo.lock"
+
+          solver_log="$RUNNER_TEMP/hickory-resolver-solver.log"
+          set +e
+          cargo update --manifest-path "$scratch/SRC/Cargo.toml" \
+            -p hickory-resolver@0.26.1 --precise 0.26.2 \
+            > "$solver_log" 2>&1
+          solver_exit=$?
+          set -e
+          printf '%s\n' "$solver_exit" > "$evidence/solver-exit.txt"
+          tail -c 65536 "$solver_log" > "$evidence/solver-tail.log" || true
+          patch_exit=127
+          if test -f "$scratch/SRC/Cargo.lock"; then
+            cp "$scratch/SRC/Cargo.lock" "$evidence/resolved-Cargo.lock"
+            patch_exit=0
+            git diff --no-index --binary --full-index -- \
+              "$evidence/baseline-Cargo.lock" "$evidence/resolved-Cargo.lock" \
+              > "$evidence/Cargo.lock.patch" || patch_exit=$?
+          fi
+          printf '%s\n' "$patch_exit" > "$evidence/patch-exit.txt"
+
+          python3 - "$evidence/baseline-Cargo.lock" "$evidence/resolved-Cargo.lock" \
+            "$evidence/package-delta.json" <<'PY'
+          from __future__ import annotations
+          from hashlib import sha256
+          from pathlib import Path
+          import json
+          import sys
+          import tomllib
+
+          baseline_path, resolved_path, output_path = map(Path, sys.argv[1:])
+          permitted = lambda name: name == "hickory-resolver" or name.startswith("hickory-")
+
+          def records(path: Path) -> tuple[str, list[tuple[dict[str, object], str]]]:
+              source = path.read_text(encoding="utf-8")
+              pieces = source.split("[[package]]\n")
+              if len(pieces) < 2:
+                  raise ValueError("Cargo.lock has no package records")
+              result = []
+              for suffix in pieces[1:]:
+                  raw = "[[package]]\n" + suffix
+                  package = tomllib.loads(raw).get("package")
+                  if not isinstance(package, list) or len(package) != 1 or not isinstance(package[0], dict):
+                      raise ValueError("non-singular Cargo.lock package record")
+                  record = package[0]
+                  if not isinstance(record.get("name"), str) or not isinstance(record.get("version"), str):
+                      raise ValueError("package record without name/version")
+                  result.append((record, raw))
+              return pieces[0], result
+
+          def keyed(items: list[tuple[dict[str, object], str]]) -> dict[tuple[str, str], tuple[dict[str, object], str]]:
+              result = {}
+              for package, raw in items:
+                  key = (str(package["name"]), str(package["version"]))
+                  if key in result:
+                      raise ValueError(f"duplicate identity {key[0]}@{key[1]}")
+                  result[key] = (package, raw)
+              return result
+
+          def describe(key: tuple[str, str], entry: tuple[dict[str, object], str] | None) -> dict[str, object]:
+              if entry is None:
+                  return {"name": key[0], "version": key[1], "present": False}
+              package, raw = entry
+              item: dict[str, object] = {
+                  "name": key[0], "version": key[1], "present": True,
+                  "recordSha256": sha256(raw.encode()).hexdigest(),
+                  "dependencies": package.get("dependencies", []),
+              }
+              for field in ("source", "checksum"):
+                  value = package.get(field)
+                  if isinstance(value, str):
+                      item[field] = value
+              return item
+
+          result: dict[str, object] = {
+              "baselineLockPresent": baseline_path.is_file(),
+              "resolvedLockPresent": resolved_path.is_file(),
+              "allowedPackageRule": "hickory-resolver or hickory-* only",
+              "allowlistAccepted": False,
+          }
+          try:
+              baseline_header, baseline_records = records(baseline_path)
+              before = keyed(baseline_records)
+              result["baselineLockSha256"] = sha256(baseline_path.read_bytes()).hexdigest()
+              if not resolved_path.is_file():
+                  result["classification"] = "solver_did_not_leave_a_resolved_lock"
+              else:
+                  resolved_header, resolved_records = records(resolved_path)
+                  after = keyed(resolved_records)
+                  result["resolvedLockSha256"] = sha256(resolved_path.read_bytes()).hexdigest()
+                  removed = sorted(set(before) - set(after))
+                  added = sorted(set(after) - set(before))
+                  changed = sorted(key for key in set(before) & set(after) if before[key][1] != after[key][1])
+                  result["headerUnchanged"] = baseline_header == resolved_header
+                  result["removed"] = [describe(key, before[key]) for key in removed]
+                  result["added"] = [describe(key, after[key]) for key in added]
+                  result["changed"] = [
+                      {
+                          "identity": {"name": key[0], "version": key[1]},
+                          "before": describe(key, before[key]),
+                          "after": describe(key, after[key]),
+                      }
+                      for key in changed
+                  ]
+                  affected = removed + added + changed
+                  affected_names = sorted({name for name, _ in affected})
+                  result["changedDependencyEdges"] = [
+                      {
+                          "name": name,
+                          "before": [describe(key, before[key]) for key in sorted(before) if key[0] == name],
+                          "after": [describe(key, after[key]) for key in sorted(after) if key[0] == name],
+                      }
+                      for name in affected_names
+                  ]
+                  unexpected = [key for key in affected if not permitted(key[0])]
+                  resolver = sorted(key for key in after if key[0] == "hickory-resolver")
+                  result["unexpectedPackages"] = [f"{name}@{version}" for name, version in unexpected]
+                  result["resolvedHickoryResolver"] = [f"{name}@{version}" for name, version in resolver]
+                  result["allowlistAccepted"] = (
+                      baseline_header == resolved_header
+                      and not unexpected
+                      and resolver == [("hickory-resolver", "0.26.2")]
+                      and ("hickory-resolver", "0.26.1") not in after
+                  )
+                  result["classification"] = "allowlist_accepted" if result["allowlistAccepted"] else "allowlist_rejected"
+          except Exception as error:
+              result["classification"] = "delta_parse_failed"
+              result["parseError"] = type(error).__name__
+          output_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+          metadata_exit=127
+          lock_hash_exit=127
+          if test "$solver_exit" -eq 0 && test -f "$evidence/resolved-Cargo.lock"; then
+            sha256sum "$scratch/SRC/Cargo.lock" > "$evidence/resolved-lock-before-metadata.SHA256SUMS"
+            set +e
+            metadata_log="$RUNNER_TEMP/hickory-resolver-metadata.log"
+            cargo metadata --manifest-path "$scratch/SRC/Cargo.toml" --locked --all-features --format-version 1 \
+              > "$evidence/metadata.json" 2> "$metadata_log"
+            metadata_exit=$?
+            set -e
+            printf '%s\n' "$metadata_exit" > "$evidence/metadata-exit.txt"
+            tail -c 65536 "$metadata_log" > "$evidence/metadata-tail.log" || true
+            set +e
+            (cd "$evidence" && sha256sum -c resolved-lock-before-metadata.SHA256SUMS)
+            lock_hash_exit=$?
+            set -e
+            printf '%s\n' "$lock_hash_exit" > "$evidence/resolved-lock-hash-check-exit.txt"
+          fi
+
+          python3 - "$evidence" "$solver_exit" "$metadata_exit" "$lock_hash_exit" "$patch_exit" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+
+          evidence = Path(sys.argv[1])
+          solver_exit, metadata_exit, lock_hash_exit, patch_exit = map(int, sys.argv[2:])
+          delta = json.loads((evidence / "package-delta.json").read_text(encoding="utf-8"))
+          metadata_ok = False
+          metadata_path = evidence / "metadata.json"
+          if metadata_exit == 0 and metadata_path.is_file():
+              try:
+                  metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                  matches = [p for p in metadata["packages"] if p["name"] == "hickory-resolver"]
+                  metadata_ok = (
+                      len(matches) == 1
+                      and matches[0].get("version") == "0.26.2"
+                      and matches[0].get("source") == "registry+https://github.com/rust-lang/crates.io-index"
+                  )
+              except Exception:
+                  metadata_ok = False
+          required = [
+              "source-head.txt", "source-lock-blob.txt", "source-lock.SHA256SUMS",
+              "baseline-Cargo.lock", "resolved-Cargo.lock", "Cargo.lock.patch", "patch-exit.txt",
+              "solver-exit.txt", "solver-tail.log", "package-delta.json",
+              "metadata.json", "metadata-exit.txt", "metadata-tail.log",
+              "resolved-lock-before-metadata.SHA256SUMS", "resolved-lock-hash-check-exit.txt",
+          ]
+          missing = [name for name in required if not (evidence / name).is_file()]
+          accepted = (
+              solver_exit == 0
+              and metadata_exit == 0
+              and lock_hash_exit == 0
+              and patch_exit in (0, 1)
+              and bool(delta.get("allowlistAccepted"))
+              and metadata_ok
+              and not missing
+          )
+          verdict = {
+              "accepted": accepted,
+              "solverExit": solver_exit,
+              "metadataExit": metadata_exit,
+              "resolvedLockHashCheckExit": lock_hash_exit,
+              "patchExit": patch_exit,
+              "allowlistAccepted": bool(delta.get("allowlistAccepted")),
+              "metadataAccepted": metadata_ok,
+              "missingSuccessOnlyOutputs": missing,
+              "classification": "accepted" if accepted else "diagnostic_only_rejected",
+          }
+          (evidence / "acceptance.json").write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          printf '%s\n' \
+            'Hosted lock-resolution evidence only; no compilation or product tests ran.' \
+            'An artifact with accepted=false is diagnostic only and must not be imported.' \
+            > "$evidence/validation.txt"
+          (cd "$evidence" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+      - name: Upload actual candidate or rejection custody
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hickory-resolver-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/hickory-resolver-lock
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Fail unaccepted resolution after custody upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/hickory-resolver-lock/acceptance.json" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+
+          path = Path(sys.argv[1])
+          if not path.is_file():
+              raise SystemExit("missing acceptance verdict after attempted resolution")
+          if not json.loads(path.read_text(encoding="utf-8")).get("accepted"):
+              raise SystemExit("Hickory resolution is diagnostic-only; see uploaded custody artifact")
+          PY

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2431-static-reviewed-hosted-pending",
+  "status": "wave2434-static-approved-resolution-pending-v3-failed",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 391647,
-    "sha256": "F18BEF915DC2823D527D8D7307E87AAA563E9EF2F6EA4527C354ACF30055C824"
+    "bytes": 392243,
+    "sha256": "C19F9119FD9670FB3BF71323B28332B73F2D8EEAE1A2E7BE25B99C0A9D467C48"
   },
-  "sourceInputs": 2141,
+  "sourceInputs": 2144,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -75845,6 +75845,38 @@
       }
     ],
     "note": "W2430 actual V3 failure retained; W2431 adds bounded server reply/client strict-response diagnostics with 29 selected vendor/core/bridge Rust cases and three collector cases. No local executable validation; no product acceptance inferred.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2434HickoryProducerAnd2435V3Result": {
+    "base": "31882570b51be7da5e4897237efaa6474f50be65",
+    "sources": [
+      {
+        "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+        "bytes": 13675,
+        "sha256": "9D937EFF829EECBE0FDA56D6D881816100C54FE8284DA03B54DA862CFF0932DE",
+        "blob": "f8419ab1e2bec2f0ae571ac66481af4da480bff1"
+      },
+      {
+        "path": "docs/verification/gold-wave2434-hickory-lock-candidate.json",
+        "bytes": 1826,
+        "sha256": "608AE47A6632FC76033804BB0743F1C4FBBB9705CF4379E6B4268E81C3EC12A1",
+        "blob": "624236f1304ae26fd491ced3724449dd3496b941"
+      },
+      {
+        "path": "docs/verification/gold-wave2435-v3-reply-boundary-result.json",
+        "bytes": 3696,
+        "sha256": "55C6EC3D920E0F2219661779F49FC195812EBF3E83AE278E392965885E21EC0F",
+        "blob": "5a15248debc5cacb83f1d55d391bb90d962fa8c3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2424624,
+        "sha256": "0246013EBD86B0598149804A2E812022D4770BBD6716F6A229660622A0C7F386",
+        "blob": "0a65a956888fa1e41812921bc2fc08ae18d9a7e1"
+      }
+    ],
+    "note": "Reviewed hosted Hickory resolution producer; original V3 run37433802979 admitted only29Rust/3collector/27sources, actual reconnect remains failed. Protected physical lock unchanged; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,53 @@
+{
+  "schema": "neoth.wave2434.hickory-lock-candidate.v1",
+  "base": "31882570b51be7da5e4897237efaa6474f50be65",
+  "status": "static-reviewed-hosted-resolution-pending",
+  "problem": "Three active dependency alerts affect committed hickory-resolver 0.26.1; all identify 0.26.2 as the first fixed version.",
+  "alerts": [
+    {
+      "severity": "high",
+      "number": 41,
+      "advisory": "GHSA-5j98-2g5x-46v6"
+    },
+    {
+      "severity": "high",
+      "number": 42,
+      "advisory": "GHSA-6w6g-hm98-mhgm"
+    },
+    {
+      "severity": "medium",
+      "number": 43,
+      "advisory": "GHSA-6f2x-v7q7-m7m5"
+    }
+  ],
+  "baselineLock": {
+    "sha256": "8C51757F1E0CF49885A7EF653237C49C6E3D72E3CA2544E869F094AFF9EA2B20",
+    "blob": "b6dd58f2d54055ccc2c09887de248936ecf28b99",
+    "physicalDirtyLockIsInput": false
+  },
+  "workflow": {
+    "actualRejectedOutputsRetained": true,
+    "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+    "patchExitMustBeZeroOrOne": true,
+    "sha256": "5EF9311B7BF614871331CD9F9A3DAA224B9BBF5E3BD7CEE6D191855F4DCD40E2",
+    "manualLockReconstruction": false,
+    "nonHickoryRecordDriftRejected": true,
+    "sourceHeadMustMatchMain": true,
+    "operation": "Hosted scratch Cargo update of hickory-resolver@0.26.1 to 0.26.2; locked all-features metadata; no build/test"
+  },
+  "review": {
+    "sha256": "9C818061AFBA5F47693D74295DE8E7A24BFAA801281EBD672B3E298607BB03F3",
+    "status": "approved-static",
+    "path": "work/gold-20260906/wave2434-hickory-lock-candidate/review/R3_STATIC_REVIEW.md"
+  },
+  "acceptance": {
+    "localExecutableValidationRan": false,
+    "lockImported": false,
+    "v4Accepted": false,
+    "releaseReady": false,
+    "v3Accepted": false,
+    "compatibilityTested": false,
+    "generatedLockAdmitted": false,
+    "resolutionDispatched": false
+  }
+}
