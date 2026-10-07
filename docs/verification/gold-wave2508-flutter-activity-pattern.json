@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.gold.wave2508.flutter-activity-pattern.v1",
+  "status": "FLUTTER-GUARD-REPAIR-HOSTED-PENDING",
+  "base": "c4a04fb5b57d3ec05f2c6ee5e0a5bc611009fd29",
+  "mobileAcceptance": {
+    "producer": "c4a04fb5b57d3ec05f2c6ee5e0a5bc611009fd29",
+    "run": "37641280086",
+    "rustCases": 99,
+    "collectorCases": 25,
+    "sourceBindings": 50,
+    "actualLiveToolActivity": true,
+    "exactlyOneToolExecution": true,
+    "bothRevokes": true,
+    "cleanShutdown": true,
+    "proofPath": "work/gold-20260906/wave2507-final-interop-admission/ROOT_INTEROP_ADMISSION.json",
+    "proofSha256": "0D90E5E082DD2DAD19E0CD28823FCE7505E2913D5FC5F32ECDA3C3AF34D2F340"
+  },
+  "nativeFailure": {
+    "run": "37642719422",
+    "job": "112865082514",
+    "phase": "flutter analyze",
+    "diagnostics": [
+      "non_bool_operand",
+      "unnecessary_null_check_pattern",
+      "argument_type_not_assignable"
+    ],
+    "source": "apps/neoth_companion/lib/main.dart:182",
+    "nativeJobs": "skipped",
+    "widgetTestsExecuted": false,
+    "logSha256": "84C0ACEB95E1C6E5BC821E4DF306BAE510210D4193A12D15EAFD8F187CB90492"
+  },
+  "repair": "Split pending boolean and nullable activity pattern into nested collection-if elements; preserve visibility rule and promoted snapshot type.",
+  "validation": {
+    "staticDiffChecked": true,
+    "coreRustChanges": false,
+    "protocolChanges": false,
+    "runtimeBridgeChanges": false,
+    "newTestSourcesAdded": false,
+    "hostedFlutterAnalyzeAndExistingWidgetControllerSuite": "pending",
+    "deviceAccepted": false,
+    "releaseReady": false,
+    "localRuntimeExecuted": false
+  }
+}
