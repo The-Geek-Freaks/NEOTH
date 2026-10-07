@@ -77,5 +77,21 @@
     "Full CI",
     "native/device/package",
     "signing and release"
-  ]
+  ],
+  "hostedFormatFollowup": {
+    "schema": "neoth.wave2484.hosted-format-custody.v1",
+    "producer": "2d6254a328f40f687da541e8662d27749c201c4a",
+    "run": "37585044199",
+    "artifactId": "11466233098",
+    "archiveSha256": "20D2EF9D392E8B75510CE29E07006C810E38C64B99117227C1D86A2FD898F2F2",
+    "originalEntryCount": 3,
+    "sourceHeadVerified": true,
+    "internalChecksumVerified": true,
+    "patchSha256": "340E0281920F4EE13698F59AB6E5727174CE3AFE99F6CA6817A636ED0DA4403A",
+    "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+    "preimageBlob": "b83015834365057608fa6e6d6375680864d0e10d",
+    "postimageBlob": "455e2510ca4bd5a02ab2533f085ae4cf926b5728",
+    "review": "Full patch inspected: Rust line wrapping and assertion layout only",
+    "localFormatterRan": false
+  }
 }

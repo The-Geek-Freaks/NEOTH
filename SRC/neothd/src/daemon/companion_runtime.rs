@@ -732,11 +732,8 @@ impl CompanionRuntime {
                 .await;
             }
             PairReadinessWait::CallerCancelled => {
-                return settle_pair_readiness_stop(
-                    &mut diagnostics,
-                    rendezvous.shutdown_checked(),
-                )
-                .await;
+                return settle_pair_readiness_stop(&mut diagnostics, rendezvous.shutdown_checked())
+                    .await;
             }
         }
 
@@ -2235,19 +2232,29 @@ mod tests {
             last_failed_phase: None,
         };
         let (settled_tx, settled_rx) = oneshot::channel();
-        assert!(settle_pair_readiness_error(
-            &mut settled,
-            &mut Some(settled_tx),
-            anyhow::anyhow!("typed discovery refusal"),
-            async { Ok(()) },
-        )
-        .await
-        .is_ok());
-        assert!(settled.emitted & (1 << 8) != 0, "cleanup start is observable");
-        assert!(settled.emitted & (1 << 9) != 0, "settled cleanup is observable");
+        assert!(
+            settle_pair_readiness_error(
+                &mut settled,
+                &mut Some(settled_tx),
+                anyhow::anyhow!("typed discovery refusal"),
+                async { Ok(()) },
+            )
+            .await
+            .is_ok()
+        );
+        assert!(
+            settled.emitted & (1 << 8) != 0,
+            "cleanup start is observable"
+        );
+        assert!(
+            settled.emitted & (1 << 9) != 0,
+            "settled cleanup is observable"
+        );
         assert_eq!(settled.last_failed_phase, None);
         assert_eq!(
-            settled_rx.await.expect("settled readiness result is reported"),
+            settled_rx
+                .await
+                .expect("settled readiness result is reported"),
             Err("typed discovery refusal".to_owned())
         );
 
@@ -2266,15 +2273,23 @@ mod tests {
         )
         .await;
         assert!(failure.is_err(), "unproven cleanup remains listener-fatal");
-        assert!(unproven.emitted & (1 << 8) != 0, "cleanup start is observable");
-        assert!(unproven.emitted & (1 << 21) != 0, "cleanup failure is observable");
+        assert!(
+            unproven.emitted & (1 << 8) != 0,
+            "cleanup start is observable"
+        );
+        assert!(
+            unproven.emitted & (1 << 21) != 0,
+            "cleanup failure is observable"
+        );
         assert_eq!(
             unproven.last_failed_phase,
             Some("initial_discovery_started"),
             "the failed marker names the fixed readiness boundary, never raw error text"
         );
         assert_eq!(
-            unproven_rx.await.expect("unproven readiness result is still reported"),
+            unproven_rx
+                .await
+                .expect("unproven readiness result is still reported"),
             Err("typed discovery refusal".to_owned())
         );
 
@@ -2284,11 +2299,19 @@ mod tests {
             last_phase: "initial_discovery_started",
             last_failed_phase: None,
         };
-        assert!(settle_pair_readiness_stop(&mut cancelled, async { Ok(()) })
-            .await
-            .is_ok());
-        assert!(cancelled.emitted & (1 << 24) != 0, "caller-stop cleanup is observable");
-        assert!(cancelled.emitted & (1 << 9) != 0, "caller-stop settled cleanup is observable");
+        assert!(
+            settle_pair_readiness_stop(&mut cancelled, async { Ok(()) })
+                .await
+                .is_ok()
+        );
+        assert!(
+            cancelled.emitted & (1 << 24) != 0,
+            "caller-stop cleanup is observable"
+        );
+        assert!(
+            cancelled.emitted & (1 << 9) != 0,
+            "caller-stop settled cleanup is observable"
+        );
 
         let mut cancelled_unproven = CompanionPairDiagnostics {
             enabled: true,
@@ -2296,12 +2319,13 @@ mod tests {
             last_phase: "initial_discovery_started",
             last_failed_phase: None,
         };
-        assert!(settle_pair_readiness_stop(
-            &mut cancelled_unproven,
-            async { anyhow::bail!("injected stop cleanup failure") },
-        )
-        .await
-        .is_err());
+        assert!(
+            settle_pair_readiness_stop(&mut cancelled_unproven, async {
+                anyhow::bail!("injected stop cleanup failure")
+            },)
+            .await
+            .is_err()
+        );
         assert!(cancelled_unproven.emitted & (1 << 21) != 0);
         assert_eq!(
             cancelled_unproven.last_failed_phase,

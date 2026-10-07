@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T06:59:45.3188253Z",
-  "validationStatus": "REVIEWED-READINESS-DIAGNOSTICS-AND-PORT-PIPELINE-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T07:05:11.9629544Z",
+  "validationStatus": "REVIEWED-HOSTED-FORMAT-FINAL-PRODUCER-VALIDATION-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3863,8 +3863,8 @@
     },
     {
       "path": "docs/verification/gold-wave2484-pair-readiness-and-jarvis-pipeline.json",
-      "bytes": 3656,
-      "sha256": "AFA62C4EDFC1FF83FDC04E72F0D9505AA211F461CD867FAC798B76532CC9ABBB"
+      "bytes": 4442,
+      "sha256": "CC940DA96EB79D2D5A79540DDE0487399027EEB05E058792BFF523379E4F1FC9"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -6933,8 +6933,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 92791,
-      "sha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4"
+      "bytes": 93112,
+      "sha256": "9E6E3E2D839B7FDD9F8653D1EEFF0A6C378B735E0259DEFC341705E39476FCAE"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
