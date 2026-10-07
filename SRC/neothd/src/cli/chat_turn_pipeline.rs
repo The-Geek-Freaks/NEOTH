@@ -477,6 +477,46 @@ pub(crate) async fn run_prepared_chat_turn(
     .await
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ChatTurnFailureStage {
+    WalSession,
+    Checkpoint,
+    Attachments,
+    PromptBundle,
+    Preflight,
+    RequestBudget,
+    CodeMapAudit,
+    Provider,
+}
+
+#[derive(Debug)]
+pub(crate) struct ChatTurnFailureContext {
+    #[cfg_attr(not(any(test, feature = "cluster")), allow(dead_code))]
+    pub(crate) stage: ChatTurnFailureStage,
+    message: String,
+}
+
+impl std::fmt::Display for ChatTurnFailureContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ChatTurnFailureContext {}
+
+pub(crate) fn tag_chat_turn_failure(
+    error: anyhow::Error,
+    stage: ChatTurnFailureStage,
+) -> anyhow::Error {
+    // Keep the existing user-visible top-level message and all typed causes.
+    // Companion diagnostics inspect only the enum, never this message.
+    let context = ChatTurnFailureContext {
+        stage,
+        message: error.to_string(),
+    };
+    error.context(context)
+}
+
 pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     prepared: &mut PreparedChatTurn,
     provider: &dyn crate::providers::Provider,
@@ -494,7 +534,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     // including provider retries, fallbacks, and post-reply work.
     prepared
         .mint_wal_session_after_writer_home_initialization()
-        .context("bind admitted chat turn to initialized WAL home")?;
+        .context("bind admitted chat turn to initialized WAL home")
+        .map_err(|error| tag_chat_turn_failure(error, ChatTurnFailureStage::WalSession))?;
     let PreparedChatTurn {
         input,
         preparation:
@@ -594,7 +635,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         writer
             .append(hdr, payload)
             .await
-            .context("persist session-start checkpoint")?;
+            .context("persist session-start checkpoint")
+            .map_err(|error| tag_chat_turn_failure(error, ChatTurnFailureStage::Checkpoint))?;
         emit_chat_notice(
             output,
             args.stream,
@@ -619,7 +661,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Ok(contexts) => contexts,
         Err(error) => {
             drop(writer);
-            return Err(error);
+            return Err(tag_chat_turn_failure(error, ChatTurnFailureStage::Attachments));
         }
     };
 
@@ -869,7 +911,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             }),
         },
     )
-    .await?;
+    .await
+    .map_err(|error| tag_chat_turn_failure(error, ChatTurnFailureStage::PromptBundle))?;
 
     let replay_selected_skill = replay_context.as_ref().and_then(|_| {
         (skill_route_report.outcome == crate::skills::resolver::SkillRouteOutcome::Match)
@@ -1023,7 +1066,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         session_canary,
         output,
     )
-    .await;
+    .await
+    .map_err(|error| tag_chat_turn_failure(error, ChatTurnFailureStage::Preflight));
 
     let (
         writer,
@@ -1181,7 +1225,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     }
 
     let route_cap =
-        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home)?;
+        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home)
+            .map_err(|error| tag_chat_turn_failure(error, ChatTurnFailureStage::RequestBudget))?;
     let budgeted = match finalize_provider_request(
         budget_items,
         &final_prompt,
@@ -1200,7 +1245,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Ok(request) => request,
         Err(error) => {
             drop(writer);
-            return Err(error);
+            return Err(tag_chat_turn_failure(error, ChatTurnFailureStage::RequestBudget));
         }
     };
     let BudgetedProviderRequest {
@@ -1225,8 +1270,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Ok(binding) => binding,
         Err(error) => {
             drop(writer);
-            let audit_error = error
-                .context("code-map context audit failed; provider dispatch refused before egress");
+            let audit_error = tag_chat_turn_failure(
+                error.context("code-map context audit failed; provider dispatch refused before egress"),
+                ChatTurnFailureStage::CodeMapAudit,
+            );
             return Err(preserve_code_map_audit_and_writer_failure(audit_error).await);
         }
     };
@@ -1334,7 +1381,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             // The adapter returned after a transport attempt. Its exact commit
             // cannot be disproven here, so recovery classifies it indeterminate
             // and blocks every fallback/new external leaf for this turn.
-            return Err(error);
+            return Err(tag_chat_turn_failure(error, ChatTurnFailureStage::Provider));
         }
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {
             return Err(anyhow::anyhow!(

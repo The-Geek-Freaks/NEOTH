@@ -147,11 +147,25 @@ impl std::error::Error for PlainChatFailureStage {}
 #[cfg(any(test, feature = "cluster"))]
 fn companion_failure_diagnostics(error: &anyhow::Error) -> (&'static str, &'static str) {
     use crate::wal::error::WalError;
+    use chat_turn_pipeline::{ChatTurnFailureContext, ChatTurnFailureStage};
 
-    let stage = error
-        .downcast_ref::<PlainChatFailureStage>()
-        .map(|stage| stage.label())
-        .unwrap_or("unknown");
+    let stage = if let Some(stage) = error.downcast_ref::<ChatTurnFailureContext>() {
+        match stage.stage {
+            ChatTurnFailureStage::WalSession => "engine_wal_session",
+            ChatTurnFailureStage::Checkpoint => "engine_checkpoint",
+            ChatTurnFailureStage::Attachments => "engine_attachments",
+            ChatTurnFailureStage::PromptBundle => "engine_prompt_bundle",
+            ChatTurnFailureStage::Preflight => "engine_preflight",
+            ChatTurnFailureStage::RequestBudget => "engine_request_budget",
+            ChatTurnFailureStage::CodeMapAudit => "engine_code_map_audit",
+            ChatTurnFailureStage::Provider => "engine_provider",
+        }
+    } else {
+        error
+            .downcast_ref::<PlainChatFailureStage>()
+            .map(|stage| stage.label())
+            .unwrap_or("unknown")
+    };
     let kind = if let Some(cause) = error.downcast_ref::<WalError>() {
         match cause {
             WalError::WriterClosed => "wal_writer_closed",
@@ -166,6 +180,11 @@ fn companion_failure_diagnostics(error: &anyhow::Error) -> (&'static str, &'stat
             WalError::PolicyNotImplemented { .. } => "wal_policy",
             _ => "wal_other",
         }
+    } else if error
+        .downcast_ref::<crate::providers::cost_authorization::ProviderAuthorizationError>()
+        .is_some()
+    {
+        "provider_authorization"
     } else if let Some(cause) = error.downcast_ref::<std::io::Error>() {
         match cause.kind() {
             std::io::ErrorKind::TimedOut => "io_timeout",
@@ -938,6 +957,16 @@ mod tests {
         assert_eq!(
             companion_failure_diagnostics(&error),
             ("engine", "wal_writer_closed")
+        );
+        let original_message = error.to_string();
+        let error = chat_turn_pipeline::tag_chat_turn_failure(
+            error,
+            chat_turn_pipeline::ChatTurnFailureStage::Checkpoint,
+        );
+        assert_eq!(error.to_string(), original_message);
+        assert_eq!(
+            companion_failure_diagnostics(&error),
+            ("engine_checkpoint", "wal_writer_closed")
         );
         assert!(matches!(
             error.downcast_ref::<crate::wal::error::WalError>(),

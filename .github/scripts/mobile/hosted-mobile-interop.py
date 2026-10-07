@@ -47,12 +47,14 @@ RUST_PANIC_SITE_RE = re.compile(
 )
 CHAT_FAILURE_STAGES = frozenset((
     "request", "consent", "preparation", "engine", "output", "terminal", "response", "unknown",
+    "engine_wal_session", "engine_checkpoint", "engine_attachments", "engine_prompt_bundle",
+    "engine_preflight", "engine_request_budget", "engine_code_map_audit", "engine_provider",
 ))
 CHAT_FAILURE_KINDS = frozenset((
     "wal_writer_closed", "wal_backpressure", "wal_quota", "wal_io", "wal_hlc", "wal_header",
     "wal_payload", "wal_auth", "wal_state", "wal_policy", "wal_other",
     "io_timeout", "io_permission", "io_other", "http_timeout", "http_connect", "http_status",
-    "http_other", "unknown",
+    "http_other", "provider_authorization", "unknown",
 ))
 CHAT_FAILURE_RE = re.compile(
     rb"(?m)^NEOTH_COMPANION_CHAT_FAILURE=([a-z_]{1,24}):([a-z_]{1,24})\n"

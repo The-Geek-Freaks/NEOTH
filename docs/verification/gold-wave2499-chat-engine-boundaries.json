@@ -1,0 +1,57 @@
+{
+  "schema": "neoth.gold.wave2499.chat-engine-boundaries.v1",
+  "status": "DIAGNOSTIC-LOCALIZATION-HOSTED-PENDING-NO-CHAT-REPAIR-CLAIM",
+  "base": "897fd11f2a67802939789119f2c8837555cebad0",
+  "priorFailure": {
+    "run": "37617894011",
+    "attempt": 1,
+    "job": "112780612991",
+    "archiveId": "11480399643",
+    "archiveSha256": "69B8389A13BE2775267C2428C56252A6BC6EC63E381B7A9698577E98ADF2E0D8",
+    "collectorPassed": 23,
+    "cliAndBridgeBuildPassed": true,
+    "chatStage": "engine",
+    "chatKind": "unknown",
+    "terminal": "indeterminate",
+    "fullMobileAcceptance": false
+  },
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "baseSha256": "F14BA5DC7D30F86BF274EA70727C698856ED2FA3C145E11C7A7821DB53C1B858",
+      "candidateSha256": "3DC4A6000E0A09D44225074D50DCC12D95588C5B58E258D2335924C8FD68DF25"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "baseSha256": "6DE90FEE36A8F93435B06E70739EDAD52E5A3318AABED2404A25C0A0B3F85839",
+      "candidateSha256": "7FADE5D15B6C368895D6ABF76B5C385F14D8C626047B90D68054CD872E96C247"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseSha256": "638A1336146970EEA12C89D3226DC40A647145D3FEBFCEE4DCF78C9FD12CAAC5",
+      "candidateSha256": "A6F45F46447D93BEF20DE85F958F8516B6025EED26726C6B60E44B3FC97D7BA8"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseSha256": "1A574F0AE5E1956CD761E07DA6020B5DDCC8DFEE2EFEEB516DE1EE3EA21F21A7",
+      "candidateSha256": "411B2AEFB7E8C7D4E8B59C3771BDE0DDFCE625C3345D9861EBB80356827189F9"
+    }
+  ],
+  "changes": [
+    "Eight typed engine failure boundaries preserve the existing top-level error display and original downcasts.",
+    "Recognize typed provider authorization separately; retain only finite allowlisted diagnostic categories.",
+    "Extend existing diagnostic regression sources to check nested stage selection, display preservation and the collector allowlist."
+  ],
+  "registration": {
+    "portableRust": 2826,
+    "mobileRust": 92,
+    "collector": 23,
+    "mobileSources": 50
+  },
+  "localExecutableValidationRan": false,
+  "independentAgentUsed": false,
+  "chatRootCauseProven": false,
+  "nativeDeviceAccepted": false,
+  "releaseAccepted": false,
+  "whatsapp": "W2498 owner/race repair and W2496 hosted lane prepared in isolated candidates; unimported and unexecuted."
+}

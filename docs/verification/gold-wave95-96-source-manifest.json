@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T11:55:04.0467966Z",
-  "validationStatus": "W2497-HOSTED-FORMAT-APPLIED-PREFLIGHT-PENDING",
+  "capturedUtc": "2026-10-07T12:14:09.7102768Z",
+  "validationStatus": "W2499-ENGINE-LOCALIZATION-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 58133,
-      "sha256": "638A1336146970EEA12C89D3226DC40A647145D3FEBFCEE4DCF78C9FD12CAAC5"
+      "bytes": 58345,
+      "sha256": "A6F45F46447D93BEF20DE85F958F8516B6025EED26726C6B60E44B3FC97D7BA8"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 38781,
-      "sha256": "1A574F0AE5E1956CD761E07DA6020B5DDCC8DFEE2EFEEB516DE1EE3EA21F21A7"
+      "bytes": 39124,
+      "sha256": "411B2AEFB7E8C7D4E8B59C3771BDE0DDFCE625C3345D9861EBB80356827189F9"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
@@ -3922,6 +3922,11 @@
       "sha256": "6F3F71D653DBA43195D2E68470A17BDF46340FC5FCFCEA07C535E3749AEEFD07"
     },
     {
+      "path": "docs/verification/gold-wave2499-chat-engine-boundaries.json",
+      "bytes": 2436,
+      "sha256": "273901E647AF27F5489F9FC871B5A3866BB1281B518A732053580D2A2770C61E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5068,8 +5073,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 19936,
-      "sha256": "5388EBA9E6278E3092AD88051ADB47AED7AD968E4FA037652A8B34F578D00DAB"
+      "bytes": 21068,
+      "sha256": "18A6CFE7AE71ED7541771EB535F6FF269E8246F8636FAB6B996CD5F77CB620EB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5078,8 +5083,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2484259,
-      "sha256": "A7B982CB0C2CE9F1120AEABA86A1962782BB4284DD13E1B52953E5FDE8D4B448"
+      "bytes": 2485391,
+      "sha256": "EE22C49C69CC980DF4C9D80B16C9C7BE00499F6BDD43626B1E1AD7F6A54D05D9"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5998,8 +6003,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 174223,
-      "sha256": "F14BA5DC7D30F86BF274EA70727C698856ED2FA3C145E11C7A7821DB53C1B858"
+      "bytes": 175959,
+      "sha256": "3DC4A6000E0A09D44225074D50DCC12D95588C5B58E258D2335924C8FD68DF25"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -6963,8 +6968,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 77694,
-      "sha256": "6DE90FEE36A8F93435B06E70739EDAD52E5A3318AABED2404A25C0A0B3F85839"
+      "bytes": 79057,
+      "sha256": "7FADE5D15B6C368895D6ABF76B5C385F14D8C626047B90D68054CD872E96C247"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",

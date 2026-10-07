@@ -79,6 +79,10 @@ class ScopedCollectorTests(unittest.TestCase):
             self.assertNotIn("private", repr(snapshot))
         snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([invalid[1] + marker])).snapshot(5)
         self.assertEqual(snapshot["chat_failure"], expected)
+        for stage in INTEROP.CHAT_FAILURE_STAGES:
+            raw = f"NEOTH_COMPANION_CHAT_FAILURE={stage}:provider_authorization\n".encode("ascii")
+            snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([raw])).snapshot(5)
+            self.assertEqual(snapshot["chat_failure"], {"stage": stage, "kind": "provider_authorization"})
         # Put a marker-shaped suffix exactly at the retained tail boundary.
         overlap = collector.overlap
         fake_line = b"private-prefix" + marker
