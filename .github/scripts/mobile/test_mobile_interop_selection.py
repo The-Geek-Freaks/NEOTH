@@ -49,8 +49,8 @@ class SelectionContractTests(unittest.TestCase):
         expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 40, "no_cluster": 1, "bridge": 10}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 19,
-            "sources": 49,
+            "collector": 22,
+            "sources": 50,
             "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
@@ -98,6 +98,9 @@ class SelectionContractTests(unittest.TestCase):
             "test_chat_failure_terminal_outcome_accepts_only_closed_failure_enum",
             "test_chat_start_failure_records_poll_code_terminal_enum_and_closes_bridge",
             "test_pair_readiness_terminal_markers_are_closed_and_secret_free",
+            "test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters",
+            "test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once",
+            "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

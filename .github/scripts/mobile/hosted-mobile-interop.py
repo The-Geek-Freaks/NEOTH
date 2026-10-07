@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """W2328 R8 hosted real-CLI/cdylib interop runner; never run under local hold."""
 from __future__ import annotations
-import argparse, ctypes, hashlib, http.server, json, os, pathlib, re, secrets
+import argparse, ctypes, hashlib, http.server, json, os, pathlib, re, secrets, uuid
 import signal, socket, socketserver, subprocess, sys, tempfile, threading, time
 import urllib.request
 from typing import Any, Callable
 
-PENDING, OK, FAILED = 0, 1, 3
+PENDING, OK, FAILED, BUFFER_TOO_SMALL, ACTIVITY = 0, 1, 3, 5, 6
 MAX_PUBLIC, PAIR_JSON_MAX, PAIR_URL_MAX, DEADLINE = 80 * 1024, 8 * 1024, 512, 140.0
 HOSTED_STEP_SECONDS, CLEANUP_RESERVE_SECONDS, START_MARGIN_SECONDS = 600.0, 180.0, 30.0
 WORK_SECONDS = HOSTED_STEP_SECONDS - CLEANUP_RESERVE_SECONDS - START_MARGIN_SECONDS
@@ -18,6 +18,9 @@ class CliFailure(RuntimeError):
         self.category = category
         self.parse_subtype = parse_subtype
 REPLY = "W2328 deterministic loopback reply"
+V2_REPLY = "W2491 deterministic held-tool reply"
+V2_PROMPT = "W2491 held tool activity interop canary"
+ACTIVITY_SERVER = "w2491-activity-fixture"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
@@ -236,11 +239,29 @@ class Provider(http.server.BaseHTTPRequestHandler):
             self.send_error(404); return
         length = int(self.headers.get("Content-Length", "0"))
         if length > 65536: self.send_error(413); return
-        self.rfile.read(length)
-        self.server.request_count += 1
+        request_body=self.rfile.read(length)
+        with self.server.provider_lock:
+            self.server.request_count += 1
+            if self.server.v2_mode:
+                self.server.v2_request_count += 1
+                if self.server.v2_request_count == 1:
+                    try:
+                        messages=json.loads(request_body).get("messages")
+                        exact_prompt=isinstance(messages,list) and bool(messages) and messages[-1] == {"role":"user","content":V2_PROMPT}
+                    except (UnicodeDecodeError,json.JSONDecodeError,AttributeError): exact_prompt=False
+                    if not exact_prompt:
+                        self.send_error(400); return
+                    self.server.v2_prompt_verified = True
+                    content = "```mcp-tool-call\n{\"server\":\"w2491-activity-fixture\",\"tool\":\"read\",\"arguments\":{}}\n```"
+                elif self.server.v2_request_count == 2:
+                    content = V2_REPLY
+                else:
+                    self.send_error(500); return
+            else:
+                content = REPLY
         body = json.dumps({"id":"w2328-loopback","object":"chat.completion",
           "model":"w2328-loopback-model","choices":[{"index":0,
-          "message":{"role":"assistant","content":REPLY},
+          "message":{"role":"assistant","content":content},
           "finish_reason":"stop"}]}, separators=(",", ":")).encode()
         self.send_response(200); self.send_header("Content-Type","application/json")
         self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -250,21 +271,50 @@ class Loopback:
     def __enter__(self) -> "Loopback":
         self.server = socketserver.TCPServer(("127.0.0.1", 0), Provider)
         self.server.request_count = 0
+        self.server.v2_request_count = 0
+        self.server.v2_prompt_verified = False
+        self.server.v2_mode = False
+        self.server.provider_lock = threading.Lock()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"; return self
     def __exit__(self, *_: Any) -> None:
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
+    def begin_v2_activity_journey(self) -> int:
+        with self.server.provider_lock:
+            if self.server.v2_mode: raise RuntimeError("v2 loopback journey already selected")
+            self.server.v2_mode = True
+            return self.server.request_count
 
 def write_config(home: pathlib.Path, provider_url: str, health_port: int, companion_port: int) -> pathlib.Path:
     config = home / "freedom.yaml"
     config.write_text(
       f"operator_id: w2328-hosted\nonboarding_complete: true\nsecrets_backend: file\nprovider_kind: openai_compat\n"
       f"provider_endpoint: {provider_url}\nprovider_model: w2328-loopback-model\n"
-      f"observability_listen: 127.0.0.1:{health_port}\ncompanion:\n  enabled: true\n"
+      f"observability_listen: 127.0.0.1:{health_port}\nsecurity:\n  smart_approve: true\ncompanion:\n  enabled: true\n"
       f"  port: {companion_port}\n  p2p_enabled: true\n", encoding="utf-8")
     # Local canary value only. It is never emitted and the provider ignores it.
     (home / "credentials.yaml").write_text("provider_key: w2328-loopback-only\n", encoding="utf-8")
     return config
+
+def write_activity_fixture_config(home: pathlib.Path, counter: pathlib.Path, entered: pathlib.Path, release: pathlib.Path) -> pathlib.Path:
+    fixture = pathlib.Path(__file__).resolve().parents[3] / "SRC" / "neothd" / "tests" / "fixtures" / "mcp_stdio_held_activity_fixture.py"
+    if not fixture.is_file(): raise RuntimeError("held activity fixture unavailable")
+    values = [str(fixture), str(counter), str(entered), str(release)]
+    quoted = ", ".join(json.dumps(value) for value in values)
+    target = home / "mcp_servers.yaml"
+    target.write_text(
+      "servers:\n"
+      f"  - id: {ACTIVITY_SERVER}\n"
+      "    description: hosted activity acceptance fixture\n"
+      f"    command: {json.dumps(sys.executable)}\n"
+      f"    args: [{quoted}]\n"
+      "    env: {}\n"
+      "    enabled: true\n"
+      "    allow_tools: [read]\n"
+      "    trust_all_tools: false\n"
+      "    smart_approve: true\n"
+      "    autonomy_gate: null\n", encoding="utf-8")
+    return target
 
 def pair_cli_failure_category(stderr: bytes) -> str:
     # Keep daemon/client diagnostics private: classify fixed public source
@@ -388,8 +438,10 @@ class Bridge:
         self.lib.neoth_companion_pair_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_reconnect_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_chat_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
-        for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start"): getattr(self.lib,name).restype=ptr
+        self.lib.neoth_companion_chat_start_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
+        for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start","neoth_companion_chat_start_v2"): getattr(self.lib,name).restype=ptr
         self.lib.neoth_companion_operation_poll.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll.restype=ctypes.c_int32
+        self.lib.neoth_companion_operation_poll_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll_v2.restype=ctypes.c_int32
         self.lib.neoth_companion_operation_cancel.argtypes=[ptr]; self.lib.neoth_companion_operation_free.argtypes=[ptr]; self.lib.neoth_companion_bridge_free.argtypes=[ptr]
         self.seed=(u8*32).from_buffer_copy(secrets.token_bytes(32)); self.handle=self.lib.neoth_companion_bridge_new(self.seed,32)
         if not self.handle: raise RuntimeError("bridge_new rejected transient seed")
@@ -420,6 +472,98 @@ class Bridge:
                 if self.lib.neoth_companion_operation_poll(op,None,0,ctypes.byref(required)) != PENDING: break
                 time.sleep(.125)
             raise WorkDeadline(f"{name} work deadline exhausted")
+        finally:
+            self.lib.neoth_companion_operation_free(op)
+            for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
+
+    def call_chat_v2_live_activity(self, descriptor: str, device_id: str, message: str,
+                                   counter: pathlib.Path, entered: pathlib.Path, release: pathlib.Path,
+                                   timeout: float = DEADLINE) -> tuple[int,bytes,dict[str,Any]]:
+        values=(descriptor,device_id,message)
+        buffers=[(ctypes.c_ubyte*len(value.encode())).from_buffer_copy(value.encode()) for value in values]
+        op=self.lib.neoth_companion_chat_start_v2(self.handle,buffers[0],len(buffers[0]),buffers[1],len(buffers[1]),buffers[2],len(buffers[2]),1)
+        if not op: raise RuntimeError("chat_start_v2 returned null")
+        observed={"v2_started":True,"activity_code6_seen":False,"activity_request_id_valid":False,
+                  "activity_started_seen":False,"activity_event_max_seq":0,"fixture_call_count":0,
+                  "fixture_release_after_activity":False,"terminal_request_id_matched":False,
+                  "fixture_call_count_after_terminal":0}
+        activity_request_id: str | None = None
+        cancelled=False
+        def poll_payload(deadline: float) -> tuple[int,bytes]:
+            if time.monotonic() >= deadline: raise WorkDeadline("v2 poll deadline exhausted")
+            required=ctypes.c_size_t(); code=self.lib.neoth_companion_operation_poll_v2(op,None,0,ctypes.byref(required))
+            if code == PENDING: return code,b""
+            if code != BUFFER_TOO_SMALL or not 0 < required.value <= MAX_PUBLIC:
+                raise RuntimeError(f"unexpected v2 poll probe code={code} required={required.value}")
+            while True:
+                if time.monotonic() >= deadline: raise WorkDeadline("v2 poll resize deadline exhausted")
+                capacity=required.value; out=(ctypes.c_ubyte*capacity)()
+                code=self.lib.neoth_companion_operation_poll_v2(op,out,capacity,ctypes.byref(required))
+                if code == BUFFER_TOO_SMALL:
+                    if not capacity < required.value <= MAX_PUBLIC: raise RuntimeError("v2 resize invalid")
+                    continue
+                if required.value > capacity: raise RuntimeError("v2 returned length exceeds buffer")
+                return code,bytes(out[:required.value])
+        def drain_until_terminal() -> None:
+            drain_until=time.monotonic()+15.0
+            while time.monotonic()<drain_until:
+                code,_=poll_payload(drain_until)
+                if code not in (PENDING,ACTIVITY,BUFFER_TOO_SMALL): return
+                time.sleep(.125)
+        def release_fixture_after_started() -> None:
+            if not observed["activity_started_seen"] or release.exists(): return
+            try: call_count=int(counter.read_text(encoding="utf-8").strip())
+            except (OSError,ValueError): return
+            if not entered.is_file(): return
+            if call_count != 1: raise RuntimeError("held fixture call count invalid")
+            release.write_text("release\n",encoding="ascii")
+            observed["fixture_call_count"]=call_count; observed["fixture_release_after_activity"]=True
+        try:
+            until=time.monotonic()+timeout
+            while time.monotonic()<until:
+                code,raw=poll_payload(until)
+                release_fixture_after_started()
+                if code == PENDING:
+                    time.sleep(.125); continue
+                if code == ACTIVITY:
+                    activity=cli_json(raw,"activity snapshot")
+                    if not isinstance(activity,dict) or activity.get("activity_schema_version") != 1:
+                        raise RuntimeError("activity snapshot schema invalid")
+                    try: uuid.UUID(activity.get("request_id"))
+                    except (ValueError,TypeError,AttributeError): raise RuntimeError("activity request id invalid")
+                    if activity_request_id is None: activity_request_id=activity["request_id"]
+                    elif activity["request_id"] != activity_request_id: raise RuntimeError("activity request id changed")
+                    events=activity.get("events")
+                    if not isinstance(activity.get("incomplete"),bool) or not isinstance(events,list) or not 0 < len(events) <= 16 or activity.get("max_event_seq") != events[-1].get("event_seq"):
+                        raise RuntimeError("activity snapshot bounds invalid")
+                    prior_seq=0
+                    for event in events:
+                        if not isinstance(event,dict) or event.get("event_seq") <= prior_seq or not isinstance(event.get("ordinal"),int) or event["ordinal"] <= 0 or event.get("phase") not in ("started","succeeded","failed","rejected","unknown") or event.get("label") != "Tool call":
+                            raise RuntimeError("activity event invalid")
+                        prior_seq=event["event_seq"]
+                    observed["activity_code6_seen"]=True; observed["activity_request_id_valid"]=True
+                    observed["activity_event_max_seq"]=prior_seq
+                    observed["activity_started_seen"] = observed["activity_started_seen"] or any(event["phase"] == "started" for event in events)
+                    release_fixture_after_started()
+                    continue
+                if observed["activity_started_seen"] and not observed["fixture_release_after_activity"]:
+                    raise RuntimeError("terminal arrived before held fixture release")
+                if activity_request_id is not None:
+                    terminal_value=cli_json(raw,"v2 terminal")
+                    if not isinstance(terminal_value,dict) or terminal_value.get("request_id") != activity_request_id:
+                        raise RuntimeError("terminal request id differs from activity")
+                    observed["terminal_request_id_matched"]=True
+                    try: terminal_call_count=int(counter.read_text(encoding="utf-8").strip())
+                    except (OSError,ValueError): raise RuntimeError("held fixture counter missing after terminal")
+                    if terminal_call_count != 1: raise RuntimeError("held fixture call count changed after terminal")
+                    observed["fixture_call_count_after_terminal"]=terminal_call_count
+                return code,raw,observed
+            self.lib.neoth_companion_operation_cancel(op); cancelled=True; drain_until_terminal()
+            raise WorkDeadline("chat_start_v2 work deadline exhausted")
+        except Exception:
+            if not cancelled:
+                self.lib.neoth_companion_operation_cancel(op); cancelled=True; drain_until_terminal()
+            raise
         finally:
             self.lib.neoth_companion_operation_free(op)
             for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
@@ -558,6 +702,29 @@ def run_chat_pair_and_start(
     finally:
         chat_bridge.close()
 
+def run_chat_pair_and_start_v2(
+    factory: Callable[[pathlib.Path], Any], library: pathlib.Path, pair_url_value: str,
+    counter: pathlib.Path, entered: pathlib.Path, release: pathlib.Path,
+    receipt: dict[str,Any], timeout: Callable[[], float],
+) -> tuple[dict[str,Any],dict[str,Any]]:
+    chat_bridge=factory(library)
+    try:
+        receipt["stage"]="pair_chat_v2_start"
+        code,raw=chat_bridge.call("neoth_companion_pair_start",pair_url_value,"w2491-chat-v2",timeout=timeout())
+        if code != OK: raise RuntimeError("v2 chat pair rejected")
+        chat_pair=terminal(raw,"paired")
+        receipt["steps"]["chat_v2_pair"]={"code":code,"validated":True}
+        receipt["stage"]="chat_v2_start"
+        code,raw,activity=chat_bridge.call_chat_v2_live_activity(
+            json.dumps(chat_pair["descriptor"],separators=(",",":")),chat_pair["device_id"],
+            V2_PROMPT,counter,entered,release,timeout=timeout())
+        receipt["steps"]["chat_v2_activity"]=activity
+        if code != OK: raise RuntimeError("v2 chat rejected")
+        chat=terminal(raw,"chat")
+        return chat_pair,chat
+    finally:
+        chat_bridge.close()
+
 def main() -> int:
     process_started=time.monotonic()
     work_deadline=process_started+WORK_SECONDS
@@ -578,8 +745,11 @@ def main() -> int:
         receipt["scheduler_margin_seconds"]=int(START_MARGIN_SECONDS)
         home=pathlib.Path(base)/"home"; home.mkdir(mode=0o700); health_port,companion_port=port(),port()
         config=write_config(home,provider.url,health_port,companion_port)
+        fixture_counter,fixture_entered,fixture_release=(home/"activity-counter",home/"activity-entered",home/"activity-release")
+        fixture_config=write_activity_fixture_config(home,fixture_counter,fixture_entered,fixture_release)
         receipt["isolated_config_sha256"]=sha(config)
-        env={**os.environ,"NEOTH_HOME":str(home),"NEOTH_COMPANION_DIAGNOSTICS":"1"}
+        receipt["isolated_mcp_config_sha256"]=sha(fixture_config)
+        env={**os.environ,"NEOTH_HOME":str(home),"NEOTH_COMPANION_DIAGNOSTICS":"1","NEOTH_MCP_AUTOROUTE":"1"}
         # Bind consent to this isolated loopback route through the public CLI.
         # The running daemon still rechecks that durable grant before dispatch.
         invoke([str(binary),"--output","json","consent","grant","openai_compat"],env,budget(work_deadline,20.0))
@@ -685,6 +855,35 @@ def main() -> int:
                     raise RuntimeError("durable revoke state/revision proof missing")
                 if provider.server.request_count != 1: raise RuntimeError("provider count changed after revoke")
                 receipt["steps"]["revoke"]={"revoked":True,"grant_state":"revoked","revision_advanced":True,"loopback_request_count":1}
+                receipt["stage"]="pair_chat_v2_mint"
+                v2_pair_url=pair_url(mint_pair("chat-send","pair_chat_v2_send_mint"))
+                v2_provider_before=provider.begin_v2_activity_journey()
+                v2_pair,v2_chat=run_chat_pair_and_start_v2(
+                    Bridge,library,v2_pair_url,fixture_counter,fixture_entered,fixture_release,
+                    receipt,lambda: budget(work_deadline))
+                v2_activity=receipt["steps"].get("chat_v2_activity",{})
+                v2_records=v2_chat.get("records",[])
+                if (v2_provider_before != 1 or provider.server.request_count != 3 or provider.server.v2_request_count != 2 or not provider.server.v2_prompt_verified
+                    or not v2_activity.get("activity_code6_seen") or not v2_activity.get("activity_request_id_valid")
+                    or not v2_activity.get("activity_started_seen") or not v2_activity.get("fixture_release_after_activity")
+                    or not v2_activity.get("terminal_request_id_matched") or v2_activity.get("fixture_call_count") != 1
+                    or v2_activity.get("fixture_call_count_after_terminal") != 1 or receipt["steps"].get("chat_v2_pair",{}).get("code") != OK or v2_chat.get("outcome") != "accepted"
+                    or not any(isinstance(record,dict) and record.get("text") == V2_REPLY for record in v2_records)):
+                    raise RuntimeError("held fixture v2 activity/terminal proof missing")
+                receipt["steps"]["chat_v2"]={"code":OK,"outcome":v2_chat.get("outcome"),"record_count":len(v2_records),"loopback_request_delta":2,"loopback_request_count":3,"fixture_call_count":1,"fixture_call_count_after_terminal":1,"reply_sha256":hashlib.sha256(V2_REPLY.encode()).hexdigest().upper()}
+                receipt["stage"]="device_v2_revoke"
+                v2_revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",v2_pair["device_id"]],env,budget(work_deadline,20.0)),"v2 revoke")
+                if v2_revoke != {"revoked": True}: raise RuntimeError("v2 revoke result was not exact success")
+                receipt["stage"]="device_v2_status_readback"
+                v2_views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",v2_pair["device_id"]],env,budget(work_deadline,20.0)),"v2 device status")
+                if not isinstance(v2_views,list) or len(v2_views) != 1 or not isinstance(v2_views[0],dict):
+                    raise RuntimeError("v2 device status was not one public view")
+                v2_view=v2_views[0]; v2_revision=v2_pair.get("revision")
+                if (v2_view.get("device_id") != v2_pair["device_id"] or v2_view.get("grant_state") != "revoked"
+                    or not isinstance(v2_revision,int) or v2_view.get("revision") != v2_revision + 1
+                    or provider.server.request_count != 3):
+                    raise RuntimeError("v2 revoke/provider boundary missing")
+                receipt["steps"]["revoke_v2"]={"revoked":True,"grant_state":"revoked","revision_advanced":True,"loopback_request_count":3}
             finally: bridge.close()
             receipt["outcome"]="passed"
         except WorkDeadline:

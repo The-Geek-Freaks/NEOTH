@@ -1430,8 +1430,9 @@ impl CompanionRuntime {
                                     ActivityOwnerResolution::RetireAfterCleanup => unreachable!("successful activity result cannot retire"),
                                 }
                             }
-                            other @ InFlightActivityOutcome::ActivityWriteFailed { ref error, .. } => {
+                            InFlightActivityOutcome::ActivityWriteFailed { error, terminal } => {
                                 tracing::debug!(%error, "companion activity frame made carrier indeterminate before terminal");
+                                let other = InFlightActivityOutcome::ActivityWriteFailed { error, terminal };
                                 let ActivityOwnerResolution::RetireAfterCleanup =
                                     resolve_activity_owner_terminal(other, &cancellation, &mut chat).await
                                 else { unreachable!("activity write failure must retire"); };

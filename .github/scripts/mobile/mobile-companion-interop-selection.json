@@ -144,7 +144,10 @@
       "test_panic_site_rejects_paths_payloads_zero_and_suffixes",
       "test_chat_failure_terminal_outcome_accepts_only_closed_failure_enum",
       "test_chat_start_failure_records_poll_code_terminal_enum_and_closes_bridge",
-      "test_pair_readiness_terminal_markers_are_closed_and_secret_free"
+      "test_pair_readiness_terminal_markers_are_closed_and_secret_free",
+      "test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters",
+      "test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once",
+      "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once"
     ]
   },
   "sourcePaths": [
@@ -196,7 +199,8 @@
     "SRC/neothd/src/mcp/gate.rs",
     "SRC/neothd/src/cli/chat.rs",
     "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-    "SRC/neothd/src/daemon/chat_runtime.rs"
+    "SRC/neothd/src/daemon/chat_runtime.rs",
+    "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

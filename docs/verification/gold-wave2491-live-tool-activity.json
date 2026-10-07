@@ -1,0 +1,58 @@
+{
+  "schema": "neoth.wave2491.live-tool-activity-source.v1",
+  "capturedUtc": "2026-10-07T10:44:01.7020645Z",
+  "baseProducer": "26641588e872105641a6b6b08c06feafcbf05c2e",
+  "status": "STATIC-REVIEWED-SOURCE-INTEGRATED-HOSTED-PENDING",
+  "hostedFailureAddressed": {
+    "run": 37607345253,
+    "job": 112745956995,
+    "logSha256": "20415095A3EC8453C5BAD600E3F05665BEC3B324D26957CA32F23A30E526D5A1",
+    "errors": [
+      "E0505: destructure and rebuild activity failure after debug borrow",
+      "E0061: existing chat fixture supplies absent activity sink"
+    ],
+    "reviewSha256": "0B1F1DA1DD9C2C047D338AA33907A846B20F48354487D20C135D5F81BFCCEFC9",
+    "focusedTestsRan": false
+  },
+  "liveJourney": {
+    "sourceReviewSha256": "A7BE39690403297A43ED237FE2270D0C9E72DDA48E89A635C4D0479FDE4CD498",
+    "admissionReviewSha256": "76725615AA4987C7BCBDDD2941C41FEE8A96B9DE88036E3DCB86C72E7CF1E9CA",
+    "path": "real loopback provider fenced MCP call -> normal configured read-only stdio tool -> retained encrypted code6 activity -> release held real call -> same-request terminal -> exact device revoke",
+    "originalV1JourneyPreserved": true,
+    "workSeconds": 390,
+    "cleanupSeconds": 180,
+    "realFixtureCallsExpected": 1,
+    "providerDeltaExpected": 2,
+    "syntheticActivityUsed": false
+  },
+  "registration": {
+    "portableRust": 2824,
+    "focusedOwner": 40,
+    "focusedCompanion": 42,
+    "mobileRust": 90,
+    "collector": 22,
+    "mobileSourceBindings": 50,
+    "ffiExports": 10,
+    "addedCollectorCases": [
+      "test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters",
+      "test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once",
+      "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once"
+    ]
+  },
+  "checks": {
+    "gitDiffWhitespace": "passed",
+    "sourceAndCandidateHashes": "verified",
+    "hostedExecution": "pending",
+    "actualLiveToolActivityAccepted": false,
+    "nativeDeviceAccepted": false,
+    "releaseAccepted": false,
+    "localRuntimeExecuted": false,
+    "slintChanged": false
+  },
+  "heldParallelCandidate": {
+    "wave": "2492",
+    "scope": "WhatsApp status-edit transport",
+    "status": "not imported: retention duplicate-create review finding under repair",
+    "realLifecycleWiring": "pending"
+  }
+}

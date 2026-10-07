@@ -1187,6 +1187,7 @@ mod tests {
                     },
                     chat_turn_pipeline::ChatTurnCancellation::default(),
                     gate,
+                    None,
                 )
                 .await
         });

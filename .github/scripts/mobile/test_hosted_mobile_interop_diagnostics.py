@@ -1,9 +1,11 @@
 """Hosted-only tests for bounded, scoped daemon evidence collection."""
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import pathlib
 import queue
+import tempfile
 import time
 import unittest
 
@@ -522,6 +524,136 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertEqual(failed[0].calls, ["neoth_companion_pair_start"])
         self.assertTrue(failed[0].closed)
         self.assertNotIn("chat_start_failure", failed_receipt)
+
+    def test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters(self) -> None:
+        request_id = "00000000-0000-7000-8000-000000000123"
+        started_activity = (b'{"activity_schema_version":1,"request_id":"' + request_id.encode("ascii")
+                            + b'","max_event_seq":1,"incomplete":false,"events":[{"event_seq":1,"ordinal":1,"phase":"started","label":"Tool call"}]}')
+        settled_activity = (b'{"activity_schema_version":1,"request_id":"' + request_id.encode("ascii")
+                            + b'","max_event_seq":2,"incomplete":false,"events":[{"event_seq":1,"ordinal":1,"phase":"started","label":"Tool call"},{"event_seq":2,"ordinal":1,"phase":"succeeded","label":"Tool call"}]}')
+        terminal = (b'{"kind":"chat","schema_version":3,"request_id":"' + request_id.encode("ascii")
+                    + b'","outcome":"accepted","records":[],"provider":null,"model":null}')
+        class FakeV2:
+            def __init__(self) -> None:
+                self.cancelled = self.freed = 0
+                self.events = [("probe", 8), ("sized", INTEROP.BUFFER_TOO_SMALL, started_activity),
+                               ("sized", INTEROP.ACTIVITY, started_activity), ("enter_pending",),
+                               ("probe", 8), ("sized", INTEROP.BUFFER_TOO_SMALL, settled_activity),
+                               ("sized", INTEROP.ACTIVITY, settled_activity, True),
+                               ("probe", len(settled_activity) + 32), ("sized", INTEROP.OK, terminal)]
+            def neoth_companion_chat_start_v2(self, *_args: object) -> object: return object()
+            def neoth_companion_operation_cancel(self, _op: object) -> None: self.cancelled += 1
+            def neoth_companion_operation_free(self, _op: object) -> None: self.freed += 1
+            def neoth_companion_operation_poll_v2(self, _op: object, out: object, _capacity: int, required: object) -> int:
+                event = self.events.pop(0); target = required._obj
+                if event[0] == "probe":
+                    self.assert_is_none(out); target.value = event[1]; return INTEROP.BUFFER_TOO_SMALL
+                if event[0] == "enter_pending":
+                    counter.write_text("1", encoding="ascii"); entered.write_text("entered\n", encoding="ascii"); return INTEROP.PENDING
+                self.assert_not_none(out); raw = event[2]; target.value = len(raw)
+                if event[1] == INTEROP.BUFFER_TOO_SMALL:
+                    if _capacity >= len(raw): raise AssertionError("resize response did not require a larger buffer")
+                    return event[1]
+                if _capacity < len(raw): raise AssertionError("payload delivery buffer was too small")
+                if len(event) > 3 and not release.is_file(): raise AssertionError("succeeded activity arrived before fixture release")
+                for index, byte in enumerate(raw): out[index] = byte
+                return event[1]
+            @staticmethod
+            def assert_is_none(value: object) -> None:
+                if value is not None: raise AssertionError("probe unexpectedly had a buffer")
+            @staticmethod
+            def assert_not_none(value: object) -> None:
+                if value is None: raise AssertionError("sized delivery lacked a buffer")
+        with tempfile.TemporaryDirectory() as root:
+            counter, entered, release = (pathlib.Path(root) / name for name in ("counter", "entered", "release"))
+            fake = FakeV2(); bridge = object.__new__(INTEROP.Bridge); bridge.handle = object(); bridge.lib = fake
+            sleep = INTEROP.time.sleep; INTEROP.time.sleep = lambda _seconds: None
+            try:
+                code, raw, observed = bridge.call_chat_v2_live_activity("d", "device", "prompt", counter, entered, release, timeout=1.0)
+            finally:
+                INTEROP.time.sleep = sleep
+            self.assertEqual(code, INTEROP.OK)
+            self.assertEqual(raw, terminal, "returned length must slice a shorter terminal from an old larger activity buffer")
+            self.assertTrue(release.is_file())
+            self.assertTrue(observed["activity_started_seen"])
+            self.assertTrue(observed["fixture_release_after_activity"])
+            self.assertEqual(observed["fixture_call_count"], 1)
+            self.assertEqual(fake.cancelled, 0)
+            self.assertEqual(fake.freed, 1)
+
+    def test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once(self) -> None:
+        request_id, wrong_id = "00000000-0000-7000-8000-000000000123", "00000000-0000-7000-8000-000000000124"
+        activity = (b'{"activity_schema_version":1,"request_id":"' + request_id.encode("ascii")
+                    + b'","max_event_seq":1,"incomplete":false,"events":[{"event_seq":1,"ordinal":1,"phase":"started","label":"Tool call"}]}')
+        wrong_terminal = b'{"kind":"chat","schema_version":3,"request_id":"' + wrong_id.encode("ascii") + b'","outcome":"accepted","records":[],"provider":null,"model":null}'
+        drain_terminal = b'{"state":"failed","code":"transport_closed"}'
+        class FakeV2:
+            def __init__(self) -> None:
+                self.cancelled = self.freed = 0
+                self.events = [("probe", len(activity)), ("sized", INTEROP.ACTIVITY, activity),
+                               ("probe", len(wrong_terminal)), ("sized", INTEROP.OK, wrong_terminal),
+                               ("probe", 4), ("sized", INTEROP.BUFFER_TOO_SMALL, activity), ("sized", INTEROP.ACTIVITY, activity),
+                               ("probe", len(drain_terminal)), ("sized", INTEROP.FAILED, drain_terminal)]
+            def neoth_companion_chat_start_v2(self, *_args: object) -> object: return object()
+            def neoth_companion_operation_cancel(self, _op: object) -> None: self.cancelled += 1
+            def neoth_companion_operation_free(self, _op: object) -> None: self.freed += 1
+            def neoth_companion_operation_poll_v2(self, _op: object, out: object, _capacity: int, required: object) -> int:
+                event = self.events.pop(0); target = required._obj
+                if event[0] == "probe": target.value = event[1]; return INTEROP.BUFFER_TOO_SMALL
+                raw = event[2]; target.value = len(raw)
+                if event[1] == INTEROP.BUFFER_TOO_SMALL:
+                    if _capacity >= len(raw): raise AssertionError("resize response did not require a larger buffer")
+                    return event[1]
+                if _capacity < len(raw): raise AssertionError("payload delivery buffer was too small")
+                for index, byte in enumerate(raw): out[index] = byte
+                return event[1]
+        with tempfile.TemporaryDirectory() as root:
+            counter, entered, release = (pathlib.Path(root) / name for name in ("counter", "entered", "release"))
+            counter.write_text("1", encoding="ascii"); entered.write_text("entered\n", encoding="ascii")
+            fake = FakeV2(); bridge = object.__new__(INTEROP.Bridge); bridge.handle = object(); bridge.lib = fake
+            sleep = INTEROP.time.sleep; INTEROP.time.sleep = lambda _seconds: None
+            try:
+                with self.assertRaisesRegex(RuntimeError, "terminal request id differs"):
+                    bridge.call_chat_v2_live_activity("d", "device", "prompt", counter, entered, release, timeout=1.0)
+            finally:
+                INTEROP.time.sleep = sleep
+            self.assertTrue(release.is_file())
+            self.assertEqual(fake.cancelled, 1)
+            self.assertEqual(fake.freed, 1)
+            self.assertEqual(fake.events, [], "drain must consume code-6 activity and reach an actual terminal")
+
+    def test_v2_fake_ffi_resize_deadline_cancels_and_frees_once(self) -> None:
+        class FakeV2:
+            def __init__(self) -> None:
+                self.cancelled = self.freed = self.resizes = 0
+            def neoth_companion_chat_start_v2(self, *_args: object) -> object: return object()
+            def neoth_companion_operation_cancel(self, _op: object) -> None: self.cancelled += 1
+            def neoth_companion_operation_free(self, _op: object) -> None: self.freed += 1
+            def neoth_companion_operation_poll_v2(self, _op: object, out: object, capacity: int, required: object) -> int:
+                target = required._obj
+                if out is None:
+                    target.value = 1
+                else:
+                    self.resizes += 1
+                    target.value = capacity + 1
+                return INTEROP.BUFFER_TOO_SMALL
+        with tempfile.TemporaryDirectory() as root:
+            counter, entered, release = (pathlib.Path(root) / name for name in ("counter", "entered", "release"))
+            fake = FakeV2(); bridge = object.__new__(INTEROP.Bridge); bridge.handle = object(); bridge.lib = fake
+            monotonic, sleep = INTEROP.time.monotonic, INTEROP.time.sleep
+            clock = [-1.0]
+            def fake_monotonic() -> float:
+                clock[0] += 1.0
+                return clock[0]
+            INTEROP.time.monotonic = fake_monotonic; INTEROP.time.sleep = lambda _seconds: None
+            try:
+                with self.assertRaises(INTEROP.WorkDeadline):
+                    bridge.call_chat_v2_live_activity("d", "device", "prompt", counter, entered, release, timeout=10.0)
+            finally:
+                INTEROP.time.monotonic, INTEROP.time.sleep = monotonic, sleep
+            self.assertGreater(fake.resizes, 1)
+            self.assertEqual(fake.cancelled, 1)
+            self.assertEqual(fake.freed, 1)
 
 if __name__ == "__main__":
     unittest.main()
