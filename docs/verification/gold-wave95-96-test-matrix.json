@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2507-SOURCE-REPAIR-HOSTED-PENDING",
+  "status": "W2507-EXACT-SELECTION-ALIGNED-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 403302,
-    "sha256": "7F917080C8217DF0EEC88F7BD637C0AAAE4410A15027C7B73346A526D1AE1085"
+    "bytes": 403312,
+    "sha256": "111D6A01A0AD83CA5F1C62934E14B72E1E87505558E539E8D43F928844B1B4A2"
   },
   "sourceInputs": 2202,
   "requiredNativeTests": [
@@ -78947,6 +78947,32 @@
       }
     ],
     "note": "Bounded acknowledged DHT announcement repair; prior producer 95/25 partial evidence admitted, new 99/25 hosted producer pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2507SelectionFollowup": {
+    "base": "dd33a8e88bba146417239a5a11fba784530db4e3",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 10786,
+        "sha256": "1AA4E32C4422854C105D2C6C469E2B5DA08C5A1F873005E36B1A93BE0AD329F4",
+        "blob": "b6d77f3859ec98a45c3c3bcdbea5fb9a1ed5d20c"
+      },
+      {
+        "path": "docs/verification/gold-wave2507-acknowledged-announcement.json",
+        "bytes": 3493,
+        "sha256": "714D72984B573AECA916F7FF049DBFC84871794A89EE4438C3866E6094B65D8E",
+        "blob": "393070a8905e2a2b275a2e6d6f20b62872b256cb"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 165152,
+        "sha256": "AC7E26E93702A91AAA67F2DCE98946323259C7E2E85FA5BCCB6339F62010F030",
+        "blob": "e91a294a8f446893091762506663e5b2ec1d4de1"
+      }
+    ],
+    "note": "Preflight found stale count 15 vs 19. Exact added identities retained; new 99-case producer validation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -54,5 +54,16 @@
     "Native, device, signed release and remaining WhatsApp port acceptance stay open."
   ],
   "localRuntimeExecuted": false,
-  "independentAgentUsed": false
+  "independentAgentUsed": false,
+  "preflightFollowup": {
+    "run": "37640540727",
+    "result": "failure",
+    "onlyFailure": "SelectionContractTests.test_preserves_exact_selection_and_custody_inputs",
+    "cause": "Explicit dht count remained 15 after adding four selected regressions",
+    "repair": "Keep exact 19-case DHT group and assert all four added identities; compare concurrent request membership without requiring callback polling order",
+    "formatPassed": true,
+    "codeQualityRun": "37640541241",
+    "codeQualityPassed": true,
+    "newProducerHostedPending": true
+  }
 }

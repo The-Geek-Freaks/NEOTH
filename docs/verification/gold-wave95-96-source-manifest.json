@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T14:50:59.4231486Z",
-  "validationStatus": "W2507-SOURCE-REPAIR-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T14:53:57.9711159Z",
+  "validationStatus": "W2507-EXACT-SELECTION-ALIGNED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 10341,
-      "sha256": "40813C64D8AB0B2C9C6F843BF8F4374010C1B76CD2C34E5BF7644C75EC5EBB91"
+      "bytes": 10786,
+      "sha256": "1AA4E32C4422854C105D2C6C469E2B5DA08C5A1F873005E36B1A93BE0AD329F4"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -3948,8 +3948,8 @@
     },
     {
       "path": "docs/verification/gold-wave2507-acknowledged-announcement.json",
-      "bytes": 2937,
-      "sha256": "FA701C242AA37CC84E4740A10A9FFB9DC35CD8B57D0A23037F0D742B3C3994F2"
+      "bytes": 3493,
+      "sha256": "714D72984B573AECA916F7FF049DBFC84871794A89EE4438C3866E6094B65D8E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -10953,8 +10953,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
-      "bytes": 165006,
-      "sha256": "E5E724C4E1F0BFAD048097CCB14D439AB9B6050418B38C0ED886A81A8CE071BC"
+      "bytes": 165152,
+      "sha256": "AC7E26E93702A91AAA67F2DCE98946323259C7E2E85FA5BCCB6339F62010F030"
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/io.rs",

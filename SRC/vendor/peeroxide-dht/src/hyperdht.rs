@@ -3355,13 +3355,15 @@ mod tests {
             })
         }).await;
         assert!(matches!(rejected, Err(HyperDhtError::AnnounceUnconfirmed)));
-        assert_eq!(*calls.borrow(), vec![10, 11]);
+        assert_eq!(calls.borrow().len(), 2);
+        assert!(calls.borrow().contains(&10) && calls.borrow().contains(&11));
         let empty = announce_to_closest(target, &key, &[], unusable, |_, _| {
             calls.borrow_mut().push(99);
             std::future::ready(Err(DhtError::ChannelClosed))
         }).await;
         assert!(matches!(empty, Err(HyperDhtError::AnnounceUnconfirmed)));
-        assert_eq!(*calls.borrow(), vec![10, 11]);
+        assert_eq!(calls.borrow().len(), 2);
+        assert!(calls.borrow().contains(&10) && calls.borrow().contains(&11));
 
         let confirmed = announce_to_closest(
             target,

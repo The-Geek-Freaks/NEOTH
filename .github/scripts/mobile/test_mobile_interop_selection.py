@@ -46,13 +46,19 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 45, "no_cluster": 1, "bridge": 10}
+        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 19, "core": 45, "no_cluster": 1, "bridge": 10}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
             "collector": 25,
             "sources": 50,
             "groups": expected_groups,
         })
+        self.assertEqual(custody["groups"]["dht"]["identities"][2:6], [
+            "hyperdht::tests::announcement_lookup_avoids_redundant_commit",
+            "hyperdht::tests::announcement_requires_signed_ack_and_skips_unusable_candidates",
+            "hyperdht::tests::announcement_batches_bound_concurrency_and_retained_candidates",
+            "hyperdht::tests::announcement_cancellation_drops_owned_batch_before_later_writes",
+        ])
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
             "native::stream::bounded_transport_tests::bounded_read_queue_backpressures_then_roundtrips_after_drain"
         ))
