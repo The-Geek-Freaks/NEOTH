@@ -1,0 +1,55 @@
+{
+  "schema": "neoth.gold.wave2506.protocol-test-portability.v1",
+  "status": "MOBILE-PRODUCT-AND-85-CASES-ADMITTED-BRIDGE-TEST-REPAIR-HOSTED-PENDING",
+  "base": "d1aa3ef5d10e18e246abbdc916b12c5f4f5a5504",
+  "hostedEvidence": {
+    "run": "37627293595",
+    "attempt": 1,
+    "job": "112812237352",
+    "originalArtifactId": "11486261564",
+    "originalZipSha256": "00B899DDA8D8494AD26771ABEABD7718ADDF6F895BE27576A8C4E1675A9B61FF",
+    "rootAdmissionPath": "work/gold-20260906/wave2503-interop-admission/ROOT_PARTIAL_ADMISSION.json",
+    "rootAdmissionSha256": "91545AB8287FBCBDB036A28594C44DF51848686CFE0B1848F2C1EB2EF9298179",
+    "rustPassed": 85,
+    "rustSelected": 95,
+    "collectorPassed": 25,
+    "sourceBindings": 50,
+    "v1Chat": true,
+    "liveV2ToolActivityBeforeRelease": true,
+    "exactlyOneToolExecution": true,
+    "bothRevokes": true,
+    "gracefulExit0AndWalDrained": true,
+    "completeInteropAccepted": false
+  },
+  "failure": {
+    "step": "Run exact bridge public result regression",
+    "compiler": "E0599",
+    "diagnostics": 2,
+    "source": "SRC/neothd/src/daemon/companion_protocol.rs",
+    "cause": "New shared protocol test called Uuid::new_v4, absent in the independent bridge uuid feature set."
+  },
+  "repair": {
+    "test": "jm03_capability_opt_in_is_signed_while_legacy_chat_request_bytes_stay_v3",
+    "requestId": "Same fixed Uuid::from_u128(1) for both signed requests",
+    "reason": "Needs no v4 feature and makes signing-byte difference attributable to the capability alone",
+    "productionProtocolPrefixUnchangedIgnoringLineEndings": true,
+    "dependencyOrLockChange": false,
+    "registrationCountUnchanged": 2829
+  },
+  "workflow": {
+    "change": "Move unchanged overlay-restoration and exact bridge groups before the product journey",
+    "testSelectionChanged": false,
+    "testAssertionsChanged": false,
+    "timeoutsChanged": false,
+    "cacheAdmissionChanged": false,
+    "measuredSpeedupClaimed": false
+  },
+  "additionalPreparation": [
+    "W2504 native admission corrects unsupported request input and requires four successful product jobs plus one explicitly skipped bootstrap job",
+    "W2505 isolated combined Node/Rust WhatsApp validation requires complete case execution"
+  ],
+  "localRuntimeExecuted": false,
+  "independentAgentUsed": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}

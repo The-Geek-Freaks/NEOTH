@@ -232,13 +232,6 @@ jobs:
         id: exact_host_build
         timeout-minutes: 25
         run: bash .github/scripts/mobile/build-host-interop-bridge.sh "$RUNNER_TEMP/w2328-stage"
-      - name: Run fixed isolated-home pair/status/chat/revoke
-        timeout-minutes: 10
-        run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
-      - name: Require successful-run receipt custody
-        run: |
-          test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
-          test -s "$RUNNER_TEMP/w2328-receipt.json"
       - name: Prove both transient test overlays restored before cache admission
         id: overlay_restored
         if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_libudx_os_completion.outcome == 'success' && steps.exact_server_publication.outcome == 'success' }}
@@ -248,6 +241,31 @@ jobs:
           grep -Fqx 'PEEROXIDE_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/companion-publication-regressions/restoration-success.marker"
           grep -Fqx 'LIBUDX_TEST_WORKSPACE_RESTORED=1' "$RUNNER_TEMP/libudx-os-completion-regressions/restoration-success.marker"
           echo 'restored=true' >> "$GITHUB_OUTPUT"
+      - name: Run exact bridge public result regression
+        id: exact_bridge_public_result
+        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
+        timeout-minutes: 5
+        env:
+          CARGO_TERM_COLOR: never
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
+          test "${#bridge_identities[@]}" -eq 10
+          : > "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          for identity in "${bridge_identities[@]}"; do
+            cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "$identity" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-case.log"
+            grep -Fqx "test $identity ... ok" "$RUNNER_TEMP/companion-bridge-case.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-case.log"
+            cat "$RUNNER_TEMP/companion-bridge-case.log" >> "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          done
+      - name: Run fixed isolated-home pair/status/chat/revoke
+        timeout-minutes: 10
+        run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
+      - name: Require successful-run receipt custody
+        run: |
+          test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
+          test -s "$RUNNER_TEMP/w2328-receipt.json"
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
@@ -284,24 +302,6 @@ jobs:
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$proof_dir/$ordinal.log"
           done
           test "$ordinal" -eq "${#core_identities[@]}"
-      - name: Run exact bridge public result regression
-        id: exact_bridge_public_result
-        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
-        timeout-minutes: 5
-        env:
-          CARGO_TERM_COLOR: never
-        shell: bash
-        run: |
-          set -euo pipefail
-          readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
-          test "${#bridge_identities[@]}" -eq 10
-          : > "$RUNNER_TEMP/companion-bridge-result-regression.log"
-          for identity in "${bridge_identities[@]}"; do
-            cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "$identity" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-case.log"
-            grep -Fqx "test $identity ... ok" "$RUNNER_TEMP/companion-bridge-case.log"
-            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-case.log"
-            cat "$RUNNER_TEMP/companion-bridge-case.log" >> "$RUNNER_TEMP/companion-bridge-result-regression.log"
-          done
       - name: Save mobile-interop Cargo checkpoint
         if: ${{ always() && !cancelled() && steps.mobile_interop_cache_restore.outputs.cache-hit != 'true' && steps.exact_host_build.outcome == 'success' && steps.exact_server_publication.outcome == 'success' && steps.exact_libudx_os_completion.outcome == 'success' && steps.exact_no_cluster.outcome == 'success' && steps.exact_companion_rpc_shutdown.outcome == 'success' && steps.exact_bridge_public_result.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         continue-on-error: true

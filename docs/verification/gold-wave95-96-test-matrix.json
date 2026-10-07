@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2503-MOBILE-FAILURE-COVERAGE-HOSTED-PENDING",
+  "status": "HOSTED-PRODUCT-85-RUST-25-COLLECTOR-ADMITTED-BRIDGE-REPAIR-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 402918,
-    "sha256": "84A3C22E6E885D664E487BE75AB6C9D4E4C402B86D4B7817F79933618B7BD980"
+    "bytes": 403137,
+    "sha256": "8F2E424FFBECA4B9FB2686058B4D0831D3E9CB52DDDDCE420D26C58ECDAAAA76"
   },
-  "sourceInputs": 2200,
+  "sourceInputs": 2201,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16399,13 +16399,13 @@
     {
       "test": "daemon::companion_protocol::tests::server_frames_use_only_stable_adjacent_tags_and_bounded_denials",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::validated_server_decode_rejects_bad_version_and_descriptor_in_every_body",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
@@ -16477,13 +16477,13 @@
     {
       "test": "daemon::companion_protocol::tests::chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::chat_terminal_never_exposes_records_for_nonaccepted_outcomes",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
@@ -16897,31 +16897,31 @@
     {
       "test": "daemon::companion_protocol::tests::jm03_activity_snapshot_accepts_only_bounded_monotonic_redacted_events",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::jm04_activity_snapshot_rejects_sequence_and_label_boundary_breaks",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::jm03_capability_opt_in_is_signed_while_legacy_chat_request_bytes_stay_v3",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::jm03_envelope_sibling_advertisement_preserves_frozen_challenge_body",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_protocol::tests::jm03_absent_unknown_or_malformed_advertisement_falls_back_to_legacy",
       "sourcePath": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "sourceSha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF",
+      "sourceSha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
       "junitClass": "neoth"
     },
     {
@@ -78877,6 +78877,38 @@
       }
     ],
     "note": "Independently run existing Rust groups after product failure only with admitted selection/build/transport/restored overlays. Product failure remains failure. Source runtime unchanged from 071451db; local runtime forbidden.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2506ProtocolTestPortability": {
+    "base": "d1aa3ef5d10e18e246abbdc916b12c5f4f5a5504",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 19972,
+        "sha256": "08C100CF8F741CC07D3307AA4E8222B450546DFE466EC6EAB3C9EE0183FB1FD4",
+        "blob": "d447d27707183352e96e9060faf4c7cdbda48a5b"
+      },
+      {
+        "path": "docs/verification/gold-wave2506-protocol-test-portability.json",
+        "bytes": 2359,
+        "sha256": "D0CEC9A1BB3B35D969107087E357C1CB319F58251289083DD956F2D3A1BD9A64",
+        "blob": "6f86af67fe7a6575b922e8e91ecddf08b5278627"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2492249,
+        "sha256": "EAC3AF4B5D9E0E1C6BE30979E7E0CC478EE230FC002037F0477E3E268E236DC8",
+        "blob": "bb61a165dcbd2973d2e5b150171b8d17ffcc127f"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_protocol.rs",
+        "bytes": 39963,
+        "sha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184",
+        "blob": "d50204d881e375edf4fb2354c6d6d68cd6770a3b"
+      }
+    ],
+    "note": "Prior d1aa3ef5 mobile product, live tool activity, revoke and cleanup independently admitted. Two test-only UUID v4 calls replaced by same deterministic ID; standalone bridge gate moved earlier. New producer hosted validation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

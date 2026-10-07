@@ -893,12 +893,13 @@ mod tests {
             challenge_nonce: [3; 32],
             issued_at_unix: 4,
         };
+        let request_id = Uuid::from_u128(1);
         let legacy =
-            CompanionChatRequest::signed(&challenge, Uuid::new_v4(), "hello".to_owned(), &signing)
+            CompanionChatRequest::signed(&challenge, request_id, "hello".to_owned(), &signing)
                 .unwrap();
         let opted_in = CompanionChatRequest::signed_with_tool_activity_v1(
             &challenge,
-            Uuid::new_v4(),
+            request_id,
             "hello".to_owned(),
             &signing,
         )

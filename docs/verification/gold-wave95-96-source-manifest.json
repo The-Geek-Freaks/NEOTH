@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T13:11:02.5752935Z",
-  "validationStatus": "W2503-MOBILE-FAILURE-COVERAGE-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T13:48:10.0316255Z",
+  "validationStatus": "HOSTED-PRODUCT-85-RUST-25-COLLECTOR-ADMITTED-BRIDGE-REPAIR-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -149,7 +149,7 @@
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
       "bytes": 19972,
-      "sha256": "D5E83E7E669FA86B3CEE8F8D27B91FABA569E0293BCA802D11C1D8D84C01CF72"
+      "sha256": "08C100CF8F741CC07D3307AA4E8222B450546DFE466EC6EAB3C9EE0183FB1FD4"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -3942,6 +3942,11 @@
       "sha256": "536AF8796FE8F45426DA8ACEBB7C1702BF6F50D3FC8DF46FE689EB523A4BC80F"
     },
     {
+      "path": "docs/verification/gold-wave2506-protocol-test-portability.json",
+      "bytes": 2359,
+      "sha256": "D0CEC9A1BB3B35D969107087E357C1CB319F58251289083DD956F2D3A1BD9A64"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5098,8 +5103,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2490256,
-      "sha256": "1BB1E91E149FB75018A72CFB1542705AE892B3B032DEF46767F74F2EF2DFF77A"
+      "bytes": 2492249,
+      "sha256": "EAC3AF4B5D9E0E1C6BE30979E7E0CC478EE230FC002037F0477E3E268E236DC8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6998,8 +7003,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 39926,
-      "sha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF"
+      "bytes": 39963,
+      "sha256": "1E14D87F4436E6D6DF6640C03A9FF6A56E41DCE50E5CF9892759D366275E1184"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
