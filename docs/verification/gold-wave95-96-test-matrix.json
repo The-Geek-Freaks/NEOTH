@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2509-PINNED-FLUTTER-TEST-CONTRACT-HOSTED-PENDING",
+  "status": "W2509-SEMANTICS-OWNER-FIX-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 403713,
-    "sha256": "580245F24F6D88A14FD5D083A9B421FA696E85316768AE5D0F3760577F78C382"
+    "bytes": 403704,
+    "sha256": "029D67855000DEA7AE802567917FF5B3455DD41922B32049E7D67D3226CC331D"
   },
   "sourceInputs": 2204,
   "requiredNativeTests": [
@@ -79031,6 +79031,32 @@
       }
     ],
     "note": "Pinned Flutter semantic value/read-only contract corrects two label assertions. Prior analyze33cases passed; fresh suite/native run required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2509SemanticsOwnerFollowup": {
+    "base": "c6ed009ebe227a2cb0ff3fde44f80433c9aa4b9a",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/test/companion_terminal_presentation_test.dart",
+        "bytes": 5570,
+        "sha256": "9BCBF89EF61A9AAC0C4E605776F9866B13D4AE39776A4B2A23D1A80D37B73221",
+        "blob": "e88936e5a14471e9f0089da1403356acc2010e06"
+      },
+      {
+        "path": "docs/verification/gold-wave2509-flutter-selectable-semantics.json",
+        "bytes": 2739,
+        "sha256": "C68B53DEE1E5E862BC5EC5D609D8F949770F5D2E88945BC08662AA86DBD2E9E1",
+        "blob": "46ac2ad7ca8955450112c723bac4889b9e52b91f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2496151,
+        "sha256": "575402AD805B1147F5FF7448C53D17B71158DDC39448E43ADC7149F1A169F087",
+        "blob": "96ba904f53f4458d032e58ad18134dd2df5b6db5"
+      }
+    ],
+    "note": "Dispose fixture SemanticsHandle before WidgetTester end verification; all assertions preserved. No product code change.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

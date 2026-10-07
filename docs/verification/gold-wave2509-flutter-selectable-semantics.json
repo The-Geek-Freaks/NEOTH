@@ -41,5 +41,16 @@
   "freshNativeValidation": "pending",
   "localRuntimeExecuted": false,
   "deviceAccepted": false,
-  "releaseReady": false
+  "releaseReady": false,
+  "lifecycleFollowup": {
+    "run": "37645163245",
+    "job": "112873926157",
+    "flutterAnalyze": "passed",
+    "failure": "A SemanticsHandle was active at the end of the test",
+    "boundary": "WidgetTester._endOfTestVerifications",
+    "repair": "Two fixture-owned semantics handles use try/finally within test callback; preserved every semantic/content/layout assertion",
+    "productionChanged": false,
+    "logSha256": "2E93317A87DD6BFF608BA695D24EE40CC2407CEE8A666C1C9B2D53D64CB9FCF4",
+    "source": "https://github.com/flutter/flutter/blob/3.24.5/packages/flutter_test/lib/src/widget_tester.dart#L1064-L1082"
+  }
 }

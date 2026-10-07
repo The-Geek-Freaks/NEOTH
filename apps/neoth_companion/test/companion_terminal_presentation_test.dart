@@ -35,20 +35,23 @@ void main() {
       ],
     );
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    await tester.pumpWidget(_host(terminal));
-    expect(find.text('Response output'), findsOneWidget);
-    expect(find.text('Diagnostic output'), findsOneWidget);
-    expect(find.text('NEOTH notice'), findsOneWidget);
-    expect(find.text('A bounded reply.'), findsOneWidget);
-    expect(find.text('Provider: local-provider'), findsOneWidget);
-    expect(find.bySemanticsLabel('Response output'), findsOneWidget);
-    final replyNodes = find.semantics.byValue('A bounded reply.').evaluate().toList();
-    expect(replyNodes, hasLength(1));
-    expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
-    expect(find.bySemanticsLabel('A bounded reply.'), findsNothing);
-    expect(find.byType(FilledButton), findsNothing);
-    expect(find.byType(OutlinedButton), findsNothing);
+    try {
+      await tester.pumpWidget(_host(terminal));
+      expect(find.text('Response output'), findsOneWidget);
+      expect(find.text('Diagnostic output'), findsOneWidget);
+      expect(find.text('NEOTH notice'), findsOneWidget);
+      expect(find.text('A bounded reply.'), findsOneWidget);
+      expect(find.text('Provider: local-provider'), findsOneWidget);
+      expect(find.bySemanticsLabel('Response output'), findsOneWidget);
+      final replyNodes = find.semantics.byValue('A bounded reply.').evaluate().toList();
+      expect(replyNodes, hasLength(1));
+      expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
+      expect(find.bySemanticsLabel('A bounded reply.'), findsNothing);
+      expect(find.byType(FilledButton), findsNothing);
+      expect(find.byType(OutlinedButton), findsNothing);
+    } finally {
+      semantics.dispose();
+    }
   });
 
   testWidgets('TERM-PRES-003 keeps a nonaccepted terminal private and non-retrying', (tester) async {
@@ -74,17 +77,20 @@ void main() {
       records: [CompanionChatRecord(kind: 'notice', text: longRecord)],
     );
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    await tester.pumpWidget(_host(terminal, textScaler: const TextScaler.linear(2), scrollable: true));
-    expect(tester.getSize(find.byType(Scaffold)).width, 240);
-    expect(tester.getSize(find.byType(CompanionTerminalCard)).width, lessThanOrEqualTo(240));
-    expect(MediaQuery.textScalerOf(tester.element(find.byType(CompanionTerminalCard))).scale(1), 2);
-    expect(find.bySemanticsLabel('NEOTH notice'), findsOneWidget);
-    final replyNodes = find.semantics.byValue(longRecord).evaluate().toList();
-    expect(replyNodes, hasLength(1));
-    expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
-    expect(find.bySemanticsLabel(longRecord), findsNothing);
-    expect(tester.takeException(), isNull);
+    try {
+      await tester.pumpWidget(_host(terminal, textScaler: const TextScaler.linear(2), scrollable: true));
+      expect(tester.getSize(find.byType(Scaffold)).width, 240);
+      expect(tester.getSize(find.byType(CompanionTerminalCard)).width, lessThanOrEqualTo(240));
+      expect(MediaQuery.textScalerOf(tester.element(find.byType(CompanionTerminalCard))).scale(1), 2);
+      expect(find.bySemanticsLabel('NEOTH notice'), findsOneWidget);
+      final replyNodes = find.semantics.byValue(longRecord).evaluate().toList();
+      expect(replyNodes, hasLength(1));
+      expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
+      expect(find.bySemanticsLabel(longRecord), findsNothing);
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+    }
   });
 }
 
