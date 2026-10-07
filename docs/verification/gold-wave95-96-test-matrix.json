@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2491-SOURCE-REVIEWED-HOSTED-PENDING",
+  "status": "W2495-SOURCE-REPAIRED-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 401745,
-    "sha256": "D85A96986F58015C413007964B838120A7DC11ECF68DBDA9FCECA0E2AFD9479C"
+    "bytes": 401938,
+    "sha256": "82E8223D6F51BF0BD67CFD8BC42125B9DDAFC923933D48855546ED772E1092EB"
   },
-  "sourceInputs": 2194,
+  "sourceInputs": 2195,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -78517,6 +78517,38 @@
       }
     ],
     "note": "Real held MCP activity journey and three native-poll driver regressions prepared; two hosted typecheck errors repaired. Prior run37607345253 failed; new82 and mobile90/collector22 unrun. Existing V1 and all source/custody gates retained; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2495BridgePollTypecheck": {
+    "base": "52aa2a9d43b7b32dc02bb67588aac89da49b804a",
+    "sources": [
+      {
+        "path": "bridges/companion-native/src/lib.rs",
+        "bytes": 66142,
+        "sha256": "BC05DA14BAD31A606ED781F950F1ED56E7C7A75B19E1265720DB4D84D03F1EA7",
+        "blob": "a19bfae295f841ec55c125468f4899163a53a445"
+      },
+      {
+        "path": "docs/verification/gold-wave2495-bridge-poll-typecheck.json",
+        "bytes": 1980,
+        "sha256": "AEBA5CCCCE31478BBC4D29C721F98D4E7416A780DCB40241D14D3617E977FE44",
+        "blob": "2c2c87adc9c0ba80356a6028949eb0be5032f027"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 18371,
+        "sha256": "A1539FC399C6B36117DD04DCD179857230ADBC45FADD485CA64A0B79E1126D65",
+        "blob": "07908fadf4afcacff3bdc0c02ecb8c62e70a1a76"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2482694,
+        "sha256": "5562F23866B49297BAD7E163049098BE2D7FE99E841FD4625F29EBB2B0450ECD",
+        "blob": "42325e3198926ef19ea7d6dcf3684b930631f528"
+      }
+    ],
+    "note": "One borrowed reference repairs hosted bridge E0308; prior exact82 and partial39+22 retained under52aa; live/native/device/release acceptance pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

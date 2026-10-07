@@ -1,0 +1,56 @@
+{
+  "schema": "neoth.wave2495.bridge-poll-typecheck-repair.v1",
+  "baseProducer": "52aa2a9d43b7b32dc02bb67588aac89da49b804a",
+  "status": "SOURCE-REPAIRED-HOSTED-PENDING",
+  "change": {
+    "path": "bridges/companion-native/src/lib.rs",
+    "cause": "E0308: select_poll_v2 requires &Completion; caller held MutexGuard<Completion>",
+    "repair": "Borrow the retained guard with &state",
+    "candidateSha256": "BC05DA14BAD31A606ED781F950F1ED56E7C7A75B19E1265720DB4D84D03F1EA7",
+    "lockHeld": true,
+    "terminalPrecedenceUnchanged": true,
+    "deliveryCapacityAndConsumptionUnchanged": true
+  },
+  "priorFocusedAcceptance": {
+    "run": "37610072562",
+    "producer": "52aa2a9d43b7b32dc02bb67588aac89da49b804a",
+    "ownerCases": 40,
+    "companionCases": 42,
+    "originalArchives": 3,
+    "archiveEntries": 98,
+    "proofSha256": "B9045A438404A1BA5FC71823E69D13623A0B96BA06EF74510F92CBDF066478AC"
+  },
+  "failedInterop": {
+    "run": "37613199073",
+    "job": "112765198026",
+    "producer": "52aa2a9d43b7b32dc02bb67588aac89da49b804a",
+    "error": "E0308",
+    "jobLogSha256": "BA0FBC513D2BF043CEA6236CB04D1E088DB14784F3F8DA5489A347D4211192EA",
+    "originalArchiveSha256": "3D2BBA92BBC939368BE1B156924035E7D89F9F42B8A56F562D38FC35F23C3F61",
+    "exactTransportCasesPassed": 39,
+    "collectorCasesPassed": 22,
+    "liveJourneyRan": false,
+    "fullAdmission": false
+  },
+  "registration": {
+    "portableRust": 2824,
+    "mobileRust": 90,
+    "collector": 22,
+    "mobileSources": 50,
+    "ffiExports": 10,
+    "newTestsAdded": 0
+  },
+  "checks": {
+    "sourceDiff": "exactly one borrowed reference",
+    "localRuntimeExecuted": false,
+    "actualLiveToolActivityAccepted": false,
+    "nativeDeviceAccepted": false,
+    "releaseAccepted": false,
+    "slintChanged": false
+  },
+  "parallel": {
+    "whatsappTransport": "static-reviewed, not imported",
+    "whatsappLifecycle": "isolated implementation in progress",
+    "mobileTranscript": "owner contract preparation"
+  }
+}

@@ -283,7 +283,7 @@ impl Operation {
         // terminal dominance even if the producer finishes between polls.
         let (lock, _) = &*self.completion;
         let state = lock_unpoison(lock);
-        select_poll_v2(state)
+        select_poll_v2(&state)
     }
 
     fn poll_v2_for_delivery(&self, out_len: usize) -> Result<PollV2Delivery, ()> {
