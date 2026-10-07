@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2510-HOSTED-FORMAT-IMPORTED-CONTRACTS-PENDING",
+  "status": "W2510-WHATSAPP-HOSTED-CONTRACTS-ACCEPTED",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 405661,
-    "sha256": "F6C2F67000E662DD06F47F10DEAC19CC003ACF93F3A1471863F12974880C839A"
+    "bytes": 405655,
+    "sha256": "F6FC120DE413F97244386D51C8427A34A005E86ACC10F95F45D75AE6663347C7"
   },
   "sourceInputs": 2215,
   "requiredNativeTests": [
@@ -79253,6 +79253,32 @@
       }
     ],
     "note": "Exact original Preflight format receipt; two raw Git old/postimage pairs matched. No local rustfmt/runtime. New producer requires fresh fast gates and WhatsApp contract execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2510HostedAcceptance": {
+    "base": "b625b606444378e307591ec192a664dc87d5a4f7",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2510-whatsapp-status.json",
+        "bytes": 5562,
+        "sha256": "70FAE3BD7FA0C23BF087FF0662C10034E72DA7D1B652EEB2953EAD602AF51CB6",
+        "blob": "547ea4722bb492904e5988e6410bf3091c98e24d"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 29039,
+        "sha256": "87412EA5311E3EEC59FB1B7BEEB7D96C623B5288DDBC0A81117D7FC0F2AFABAF",
+        "blob": "8b0ab3e3dcea91cec6cbb87fc6c686c639495ae3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2498336,
+        "sha256": "51E975AC0F09C7DF7BADE98A73F7977ED9FA3D2B17520F7384B4C6AF914373F8",
+        "blob": "271e6b24c383ed9de61a9ee2644b0dfa73ca28c0"
+      }
+    ],
+    "note": "Producerb625b606 run37651077395:37Node19Rust exactcases,7archiveentries24rawsources admitted. Documentation/inventory-only update; full MCP-sidecar and real WhatsApp/device boundaries remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

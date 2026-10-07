@@ -1,7 +1,7 @@
 {
   "schema": "neoth.gold.verification.v1",
   "wave": 2510,
-  "status": "SOURCE-INTEGRATED-HOSTED-PENDING",
+  "status": "HOSTED-CONTRACTS-AND-ACTUAL-ADAPTER-ACCEPTED",
   "base": "848fe3adf7db266368e7478b20a91265f579353c",
   "title": "WhatsApp observed tool status with durable final-order barrier",
   "scope": [
@@ -86,14 +86,13 @@
   ],
   "validation": {
     "localExecutableValidationRan": false,
-    "candidateRuntimeExecuted": false,
-    "hostedContractRun": "pending",
+    "hostedContractRun": "37651077395",
     "realWhatsAppDeliveryAccepted": false,
-    "fullMcpToSidecarAccepted": false
+    "fullMcpToSidecarAccepted": false,
+    "hostedNodePassed": 37,
+    "hostedRustPassed": 19
   },
   "open": [
-    "Hosted Rust formatting/typecheck/adapter test execution",
-    "Hosted full Node bridge tests",
     "Full real MCP pipeline to sidecar with final/error/cancellation",
     "Linked account delivery and visual device acceptance"
   ],
@@ -115,6 +114,22 @@
     "patchSha256": "1EE2B1856E563B2A1F9611871B1F987836B6B41C835A7669E59B4DAC0ECE6F69",
     "fullIndexPostimagesVerified": 2,
     "localRustfmtRan": false,
-    "freshFastChecks": "pending"
+    "freshFastChecks": "Preflight37650646438 and CodeQuality37650646607 success on b625b606"
+  },
+  "hostedContractAdmission": {
+    "producer": "b625b606444378e307591ec192a664dc87d5a4f7",
+    "run": "37651077395",
+    "attempt": 1,
+    "job": "112894262870",
+    "artifactId": 11496841465,
+    "originalZipSha256": "69FFC6546C70D1A2B19233EE7855A81027F67314596852333677C3D2E1A9135C",
+    "entries": 7,
+    "rawSources": 24,
+    "nodePassed": 37,
+    "rustPassed": 19,
+    "requiredNewNode": 8,
+    "requiredNewRust": 10,
+    "rootProofSha256": "CF02F256CE7DD012B1E7F5A2B92CB4B12375B511179E2E2C7F216041EDA5AD8D",
+    "boundary": "Controlled Node sockets/handlers and actual Rust adapter HTTP tests; real account delivery and full MCP-to-sidecar journey remain separate."
   }
 }

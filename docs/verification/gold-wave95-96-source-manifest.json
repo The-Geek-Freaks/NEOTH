@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T16:13:27.3512879Z",
-  "validationStatus": "W2510-HOSTED-FORMAT-IMPORTED-CONTRACTS-PENDING",
+  "capturedUtc": "2026-10-07T16:29:51.2040190Z",
+  "validationStatus": "W2510-WHATSAPP-HOSTED-CONTRACTS-ACCEPTED",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4008,8 +4008,8 @@
     },
     {
       "path": "docs/verification/gold-wave2510-whatsapp-status.json",
-      "bytes": 4892,
-      "sha256": "80218FEFF2387A6A2131E84044FF99C5605930363BE5BBBFCB424EA961EC59A5"
+      "bytes": 5562,
+      "sha256": "70FAE3BD7FA0C23BF087FF0662C10034E72DA7D1B652EEB2953EAD602AF51CB6"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5158,8 +5158,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 28550,
-      "sha256": "ABE7EA24ECB8252FA081BA8A31E51639565CAE46902666C44576F54926312680"
+      "bytes": 29039,
+      "sha256": "87412EA5311E3EEC59FB1B7BEEB7D96C623B5288DDBC0A81117D7FC0F2AFABAF"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5168,8 +5168,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2497605,
-      "sha256": "FD87A68ADACB4D20AE2F55AAF8B6C365D22A3D0204E80BA73018FEA2402CA3A2"
+      "bytes": 2498336,
+      "sha256": "51E975AC0F09C7DF7BADE98A73F7977ED9FA3D2B17520F7384B4C6AF914373F8"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
