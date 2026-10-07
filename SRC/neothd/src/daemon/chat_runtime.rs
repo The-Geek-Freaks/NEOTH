@@ -958,9 +958,15 @@ mod tests {
     fn companion_failure_diagnostics_discard_unclassified_error_text() {
         let error = anyhow::anyhow!("private token: wal_writer_closed http_timeout")
             .context("NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed");
-        assert_eq!(companion_failure_diagnostics(&error), ("unknown", "unknown"));
+        assert_eq!(
+            companion_failure_diagnostics(&error),
+            ("unknown", "unknown")
+        );
         let error = error.context(PlainChatFailureStage::Response);
-        assert_eq!(companion_failure_diagnostics(&error), ("response", "unknown"));
+        assert_eq!(
+            companion_failure_diagnostics(&error),
+            ("response", "unknown")
+        );
     }
 
     struct RuntimeProvider {
