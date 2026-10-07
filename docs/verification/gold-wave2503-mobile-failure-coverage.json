@@ -1,0 +1,45 @@
+{
+  "schema": "neoth.gold.wave2503.mobile-failure-coverage.v1",
+  "status": "INDEPENDENT-REGRESSIONS-AFTER-PRODUCT-FAILURE-HOSTED-PENDING",
+  "base": "071451dbc87a2b9056e7c99d9a37a131cbc8c461",
+  "priorFailure": {
+    "run": "37625585308",
+    "attempt": 1,
+    "job": "112806386470",
+    "artifactId": "11483524445",
+    "archiveSha256": "C6EA036766318669F92F3F4B4BB31267DE40FD6A07CFACD2254AF04ECA87484C",
+    "stage": "pair_status_read_mint",
+    "category": "companion_runtime_unavailable",
+    "readinessOwnerDeadline": true,
+    "checkedPairTeardownCompleted": true,
+    "serveExitCode": 0,
+    "walDrained": true,
+    "revokePathReached": false,
+    "fullMobileAccepted": false
+  },
+  "source": {
+    "base": "071451dbc87a2b9056e7c99d9a37a131cbc8c461",
+    "status": "ISOLATED_STATIC_CANDIDATE",
+    "path": ".github/workflows/mobile-companion-interop.yml",
+    "baseSha256": "1B55DA6826051D8B7E8FA92ED4D8859489B6BC0ED22F093FB6C5C5AAF22CB0B4",
+    "candidateSha256": "D5E83E7E669FA86B3CEE8F8D27B91FABA569E0293BCA802D11C1D8D84C01CF72",
+    "localExecutableValidationRan": false
+  },
+  "behavior": "After successful source admission, transport regressions, CLI/native build and overlay restoration, independent no-cluster/core/bridge groups run even if product journey failed. Failure remains failed; cancellation respected.",
+  "unchanged": [
+    "Product assertions and required receipt custody",
+    "Timeouts and canonical test selection",
+    "All cache admission requirements",
+    "One manual CI stream and no local execution"
+  ],
+  "registration": {
+    "portableRust": 2829,
+    "mobileRust": 95,
+    "collector": 25,
+    "mobileSources": 50
+  },
+  "localExecutableValidationRan": false,
+  "independentAgentUsed": false,
+  "measuredSpeedupClaimed": false,
+  "fullMobileAccepted": false
+}

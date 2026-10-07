@@ -241,6 +241,7 @@ jobs:
           test -s "$RUNNER_TEMP/w2328-receipt.json"
       - name: Prove both transient test overlays restored before cache admission
         id: overlay_restored
+        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_libudx_os_completion.outcome == 'success' && steps.exact_server_publication.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -249,6 +250,7 @@ jobs:
           echo 'restored=true' >> "$GITHUB_OUTPUT"
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
+        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         timeout-minutes: 15
         working-directory: SRC
         env:
@@ -262,6 +264,7 @@ jobs:
           grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-no-cluster-regression.log"
       - name: Run exact companion RPC and shutdown regressions
         id: exact_companion_rpc_shutdown
+        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         timeout-minutes: 15
         working-directory: SRC
         env:
@@ -283,6 +286,7 @@ jobs:
           test "$ordinal" -eq "${#core_identities[@]}"
       - name: Run exact bridge public result regression
         id: exact_bridge_public_result
+        if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         timeout-minutes: 5
         env:
           CARGO_TERM_COLOR: never
