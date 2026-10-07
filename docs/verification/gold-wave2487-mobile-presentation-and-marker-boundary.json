@@ -1,0 +1,92 @@
+{
+  "schema": "neoth.wave2487.mobile-presentation-and-marker-boundary.v1",
+  "capturedUtc": "2026-10-07T07:42:33.2541591+00:00",
+  "baseProducer": "228dffea3a3fb9e3b0e3c89bf9afc2243b66c2b7",
+  "status": "STATIC-REVIEWED-HOSTED-MOBILE-AND-FLUTTER-PENDING",
+  "changes": [
+    {
+      "area": "Pair marker boundary",
+      "behavior": "Match the complete emitted newline-terminated pair phase instead of accepting a longer phase name as a substring. Existing failing privacy regression unchanged.",
+      "candidateSha256": "889CFF084ACD3084C1DCF01EAFF071A899ED0DB6F64035435EB0E8B02283250E",
+      "review": "Root inspected the one-line delta, producer eprintln framing and collector overlap bounds; no runtime claim."
+    },
+    {
+      "area": "JM-02 mobile presentation",
+      "behavior": "NEOTH semantic dark theme and passive V3 terminal cards; six outcomes, three record kinds, preserved provider/model custody, accessible selectable text. No transport, permissions, retry, controller or model change.",
+      "reviewSha256": "005C2E1B8917EB25D08876E022A3DC2013EFED382DE40CFE86DFF529C41E0C05",
+      "widgetCases": [
+        "TERM-PRES-001",
+        "TERM-PRES-002",
+        "TERM-PRES-003",
+        "TERM-PRES-004"
+      ],
+      "hostedWorkflow": ".github/workflows/mobile-companion.yml",
+      "flutterVersion": "3.24.5",
+      "validation": "pending"
+    },
+    {
+      "area": "Jarvis and own WhatsApp port",
+      "behavior": "Actual archived custom WhatsApp status source recovered. JM-01/JM-06 include tool steps, Todo progress, activity/compaction, separate final answer and terminal states. Current NEOTH Baileys has no edit API; status operations must be bound to original account/chat/inbound owner.",
+      "plan": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+      "sourceRecoverySha256": "DC9C163200B75C2858C66C2D5428561667259376E658285139557FA34BA0466A",
+      "whatsappOwnerMapSha256": "66B16EFAD199A3C8EABF06EDA02DD2A9E8B078251282E102B019714EF20ED918"
+    }
+  ],
+  "precedingEvidence": {
+    "producer": "228dffea3a3fb9e3b0e3c89bf9afc2243b66c2b7",
+    "cli": {
+      "run": "37585736442",
+      "status": "independently-admitted",
+      "ownerCases": 32,
+      "companionCases": 28,
+      "originalArchiveEntries": 76,
+      "rootProofSha256": "8FFF0B719B55B19C626228DC06D550130912D6232CD7926C6A18571DF5AF6799",
+      "producerBindingRetained": true
+    },
+    "mobile": {
+      "run": "37588374332",
+      "status": "failed-collector",
+      "collectorPass": 18,
+      "collectorFail": 1,
+      "failedCase": "test_pair_readiness_terminal_markers_are_closed_and_secret_free",
+      "rustCasesExecuted": 0,
+      "productExecuted": false,
+      "originalArchiveEntries": 2,
+      "rawSourceBindings": 43,
+      "artifactId": "11467671629",
+      "archiveSha256": "FF9688B2F5D71AFFA7D4FFD20F7EFA4601998E85D999B069C83D4FBB54D70AA9",
+      "rootProofSha256": "68F7831ADA3EDA2D2C0F7672E9A920612B35199DE1841A6365CD7388A181A6CB"
+    }
+  },
+  "registration": {
+    "portableNative": 2805,
+    "mobileRust": 65,
+    "mobileCollector": 19,
+    "mobileSourceBindings": 43,
+    "newWidgetCases": 4
+  },
+  "validationPlan": [
+    "Existing push preflight and code-quality checks",
+    "Exact producer mobile interop: unchanged 65 native cases, repaired 19 collector cases, real pair/status/chat/revoke",
+    "Existing Flutter 3.24.5 native-producer lane: analyze, all widget/controller tests, Android and unsigned iOS builds"
+  ],
+  "validationReuse": {
+    "rustProductionSourcesChanged": false,
+    "dependenciesChanged": false,
+    "earlierCliProducer": "228dffea3a3fb9e3b0e3c89bf9afc2243b66c2b7",
+    "earlierCliIsNotFreshCurrentProducerRun": true
+  },
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "goldComplete": false,
+  "acceptanceOpen": [
+    "current producer Mobile interop",
+    "hosted Flutter presentation",
+    "same-enrollment restart",
+    "ToolActivity true effect-edge producer and transport",
+    "V4 rebase",
+    "WhatsApp editable status transport",
+    "remaining JM-01..JM-10",
+    "remaining Gold product/native/device/signing/release acceptance"
+  ]
+}

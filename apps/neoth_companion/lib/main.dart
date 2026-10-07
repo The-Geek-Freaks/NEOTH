@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'companion_controller.dart';
+import 'companion_terminal_presentation.dart';
+import 'companion_theme.dart';
 import 'models.dart';
 import 'native_bridge.dart';
 import 'secure_store.dart';
@@ -62,7 +64,7 @@ class _NeothCompanionAppState extends State<NeothCompanionApp> with WidgetsBindi
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'NEOTH Companion',
-      theme: ThemeData(colorSchemeSeed: const Color(0xff6b5cff), brightness: Brightness.dark, useMaterial3: true),
+      theme: CompanionTheme.neothDark(),
       home: CompanionHome(controller: widget.controller, initialInvite: _pendingInvite),
     );
   }
@@ -179,7 +181,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                     if (widget.controller.chatLocalMessage case final message?)
                       Padding(padding: const EdgeInsets.only(top: 12), child: Text(message)),
                     if (widget.controller.chatTerminal case final terminal?)
-                      Padding(padding: const EdgeInsets.only(top: 12), child: _ChatTerminalCard(terminal: terminal)),
+                      Padding(padding: const EdgeInsets.only(top: 12), child: CompanionTerminalCard(terminal: terminal)),
                   ],
                   const SizedBox(height: 12),
                   TextButton(
@@ -228,28 +230,6 @@ class _StatusCard extends StatelessWidget {
             Text('Readiness: ${snapshot.readiness}'),
             Text(snapshot.activeTurns == null ? 'Active turns: unavailable' : 'Active turns: ${snapshot.activeTurns!.length}'),
             Text('Observed: ${DateTime.fromMillisecondsSinceEpoch(snapshot.observedAtUnix * 1000, isUtc: true).toLocal()}'),
-          ]),
-        ),
-      );
-}
-
-class _ChatTerminalCard extends StatelessWidget {
-  const _ChatTerminalCard({required this.terminal});
-  final CompanionChatTerminal terminal;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Chat: ${terminal.outcome}'),
-            if (terminal.accepted) ...[
-              Text('Provider: ${terminal.provider}'),
-              Text('Model: ${terminal.model}'),
-              const SizedBox(height: 8),
-              for (final record in terminal.records) Text(record.text),
-            ] else
-              const Text('No message is retried automatically.'),
           ]),
         ),
       );

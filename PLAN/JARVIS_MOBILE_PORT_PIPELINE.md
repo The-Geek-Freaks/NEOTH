@@ -16,12 +16,17 @@ OpenClaw-Checkouts ist MIT (2026 OpenClaw Foundation). Eine spätere konkrete
 Code-/Asset-Übernahme behält die jeweilige Attribution; Drittanbieter-Assets
 haben ihre eigenen Bedingungen.
 
-Der begrenzte Quellabgleich hat den zusätzlich angefragten eigenen
-WhatsApp-Bot-Tool-Progress/Status/Final-Message-Formatter noch nicht lokalisiert.
-Ein Planhinweis auf WhatsApp-Live-Status-Niveau belegt keine Implementierung.
-JM-01/JM-06 bleiben dafür auf Source Recovery oder einer explizit dokumentierten
-NEOTH-Implementierung; die belegte Android-Nachrichtenvorschau wird nicht als
-Ersatz gewertet.
+Der zusätzlich angefragte eigene WhatsApp-Toolstatus ist inzwischen als konkreter
+Archivcode wiedergefunden: `live-status-aba.js`, SHA-256
+`6E879EB352D051BC938F49083D2F74CE8DEFB3444C339B5DDB6A6785DDE35A71`,
+und zugehöriger Integrationspatch. Die ergänzende Quellinventur
+`work/gold-20260906/wave2485-jarvis-mobile-source/WHATSAPP_SOURCE_RECOVERY.md`
+belegt Turn-Start, Teilantwort, Tool-Start, Compaction, Finalize und sichtbare
+Endantwort als Eingänge einer editierbaren Statusblase. Dazu gehören lesbare
+Schritte, Todo-Checkliste/Fortschritt, Aktivitätsanzeige, begrenzte Edits/Rollover
+und Abschluss-, Fehler-, Limit- und Stale-Zustände. Dies ist Quellnachweis,
+kein aktueller WhatsApp-Installations- oder Zustellnachweis. Die ursprüngliche
+Quelllücke unter JM-01/JM-06 ist damit behoben; der NEOTH-Port bleibt offen.
 
 Lokale Eingangsnachweise liegen unter
 `work/gold-20260906/wave2485-jarvis-mobile-source/` (Inventar und Hashmanifest)
@@ -35,6 +40,15 @@ Cancellation und begrenzte Endergebnisse. Es besitzt noch keinen mobilen
 Tool-Ereignisstrom, keine dauerhafte mobile Chat-Historie und keinen
 WhatsApp-Inbox-Vertrag. Desktop-Chatereignisse, Tool-Records, kanonische
 Transkripte und WhatsApp-Serveradapter sind bereits vorhanden und werden genutzt.
+
+Die aktuelle WhatsApp-Baileys-Route kann neue Text-/Mediennachrichten mit dauerhaftem
+Idempotenzschutz senden, besitzt aber noch keine Edit-/Unsend-/Status-API.
+JM-06 benötigt dafür zusätzlich eine an Konto, ursprünglichen Chat und Inbound-Turn
+gebundene Status-Operation. Unklare Zustellausgänge bleiben ungeklärt und dürfen
+nicht durch erneutes Senden verdeckt werden; der bestehende Schlüssel der
+Endantwort bleibt getrennt. Ohne Edit-Fähigkeit entstehen keine zusätzlichen
+Fortschrittsnachrichten. Der Quellabgleich dazu liegt unter
+`work/gold-20260906/wave2486-whatsapp-owner-map/WHATSAPP_OWNER_MAP.md`.
 
 Der aktuelle Mobile-Produktfehler bleibt eine eigene offene Abnahme. Der letzte
 CLI-Vertrag auf diesem Stand ist mit 59 Fällen unabhängig aufgenommen; dies
@@ -50,12 +64,12 @@ als entbehrlich behandelt.
 
 | ID | Funktionsumfang und belegte Vorlage | NEOTH-Ziel und erforderliche Abnahme |
 |---|---|---|
-| JM-01 | Vollständiger Abgleich der eigenen App- und WhatsApp-Erweiterungen. Die App enthält tatsächlich Tool-Statuszeilen, Gesprächsvorschau, transiente Nachrichtenkarten und responsive Zustände. | Quellen mit Inhalts-Hash, bestehende NEOTH-Funktion, Anpassung, Test und Restabhängigkeit pro Funktion zuordnen. Die zusätzlich vom Nutzer benannte Tool-Anzeige innerhalb der eigenen WhatsApp-Funktionen separat lokalisieren; der App-Preview allein erfüllt diesen Auftrag nicht. |
+| JM-01 | Vollständiger Abgleich der eigenen App- und WhatsApp-Erweiterungen. Die App enthält tatsächlich Tool-Statuszeilen, Gesprächsvorschau, transiente Nachrichtenkarten und responsive Zustände. | Quellen mit Inhalts-Hash, bestehende NEOTH-Funktion, Anpassung, Test und Restabhängigkeit pro Funktion zuordnen. Der eigene WhatsApp-Statusmanager ist separat wiedergefunden und wird als eigener Quellstand erfasst; die App-Nachrichtenvorschau ersetzt ihn nicht. |
 | JM-02 | NEOTH-Design und mobile Darstellung. Jarvis liefert kompakte lesbare Zeilen, Statuskarten und anpassbare Panels. | `apps/neoth_companion/lib/main.dart` und vorhandene Flutter-Komponenten an die semantischen Rollen aus `SRC/neothd-gui/ui/theme.slint`, `design-system/PRODUCT.md` und `DESIGN.md` angleichen. Erste isolierte Umsetzung zeigt die bereits vorhandenen V3-Endergebnisse. Keine simulierten Tool-Aufrufe. Abnahme: reale Zustände, schmale/breite Ansichten, Textskalierung, Accessibility-Labels und erhaltene Bedienaktionen. |
-| JM-03 | Sichtbare Tool-Aufrufe mit laufend, erfolgreich, fehlgeschlagen und unbestätigt. Vorlage: `TalkModeManager.kt`, `JarvisToolDetail.kt`, `JarvisScreen.kt`, `HorizonSnapshotFactory.kt`. | Einen vorhandenen autoritativen NEOTH-Tool-Record/Ereignispfad aus `cli/chat_turn_pipeline.rs` und Daemon wählen; typisierte, begrenzte mobile Projektion durch Companion-Protokoll, Rust-Bridge und Dart. Keine stdout-Auswertung als Tool-Wahrheit und kein zweites Tool-Ledger. Abnahme: echte Aufrufe, Reihenfolge, Korrelation, verspätete/duplizierte Ereignisse, Abschluss, Abbruch, Reconnect und fehlendes Ergebnis. |
+| JM-03 | Sichtbare Tool-Aufrufe mit laufend, erfolgreich, fehlgeschlagen und unbestätigt. Vorlage: `TalkModeManager.kt`, `JarvisToolDetail.kt`, `JarvisScreen.kt`, `HorizonSnapshotFactory.kt`. | Echte Start-/Ergebnisereignisse am Aufrufpfad `mcp/dispatch_loop.rs` erzeugen und über den tatsächlichen Adapter in `cli/chat.rs` durchreichen; die bisherigen Records in `cli/chat_turn_pipeline.rs` entstehen erst nach der Antwort. Die begrenzte Fortschrittsprojektion darf Tool-Ausführung, Audit und finale Antwort auch bei einem langsamen Empfänger nicht blockieren. Anschließend berechtigter Transport durch Companion-Protokoll, Rust-Bridge und Dart. Keine stdout-Auswertung als Tool-Wahrheit und kein zweites Tool-Ledger. Abnahme: echte Aufrufe, Reihenfolge, Korrelation, verspätete/duplizierte Ereignisse, Abschluss, Abbruch, Reconnect und fehlendes Ergebnis. |
 | JM-04 | Sichere Tool-Details und begrenzte Anzeige. Jarvis zeigt kontrollierte Namen und nur ausgewählte Dateinamen/Hosts/Aktionen; keine rohen Argumente, Outputs, Fehler oder IDs. Laufende Karten bleiben sichtbar, abgeschlossene erhalten einen einmaligen kurzen Ablauf. | NEOTH-eigene Auswahlregeln vor der Darstellung, begrenzte Zeilen, monotone Fristen und textlich erkennbare Zustände. Bestehende Rechte und Audit-Belege bleiben maßgeblich. Abnahme mit sensiblen Canaries, unbekannten Tools, langen Daten, Clock/TTL, Turn-Wechsel und fehlenden Resultaten; ein unbekanntes Ende darf nicht als Erfolg erscheinen. |
 | JM-05 | Gesprächsdarstellung und Streaming. Vorlage: typisierte User/Assistant-Einträge und begrenztes Panel in `JarvisConversationPresentation.kt`; bewusstes Scrollen/Folgen. | Bestehenden NEOTH-Session-/Transcript-Owner und echte Deltas verwenden. Mobile-Protokoll und native ABI explizit versionieren, V3-Terminal nicht heimlich erweitern. Abnahme: Zuordnung zum richtigen Gespräch, Delta/Final-Zusammenführung, Scrollverhalten, Abbruch, Reconnect, History-Bounds und keine doppelte Antwort. |
-| JM-06 | Eigene WhatsApp-Verhaltensfunktionen, darunter die vom Nutzer gewünschte Tool-/Fortschrittsanzeige. | Nach Quellenabgleich an `channels/whatsapp_api.rs`, `channels/whatsapp_baileys.rs` und den bestehenden Account-/Turn-/Delivery-Owner anbinden. Dieselbe typisierte Tool-Projektion wie Mobile verwenden, soweit die Kanal-Semantik es erlaubt. Abnahme: korrekter Account/Empfänger/Turn, Reihenfolge, Zustellbeleg, Wiederanlauf, keine doppelte Nachricht, keine sensiblen Tool-Details. Ein neuer WhatsApp-Inbox-Client ist dadurch nicht impliziert. |
+| JM-06 | Eigene WhatsApp-Statusblase aus dem wiedergefundenen `live-status-aba.js`: Turn-Start, Teilantwort, Tool-Schritte, Todo-Checkliste/Fortschritt, Compaction, Aktivität/Dauer und Done/Error/Limit/Stale; begrenztes Editieren/Rollover und getrennte Endantwort. | An `channels/whatsapp_api.rs`, `channels/whatsapp_baileys.rs` und den bestehenden Account-/Turn-/Delivery-Owner anbinden. Dieselbe typisierte Tool-Projektion wie Mobile verwenden, soweit die Kanal-Semantik es erlaubt. Abnahme: korrekter Account/Empfänger/Turn, echte Tool-/Planereignisse, Reihenfolge, begrenzte Aktivitätsupdates/Edits, Transport ohne Edit-Fähigkeit, Compaction-/Limit-/Stale-Enden, Zustellbeleg, Wiederanlauf, keine doppelte Status- oder Endnachricht und keine sensiblen Tool-Details. Ein neuer WhatsApp-Inbox-Client ist dadurch nicht impliziert. |
 | JM-07 | Belegte App-Nachrichtenvorschau: WhatsApp, WhatsApp Business und Telegram; explizite Freigabe, Paket-Allowlist, Ruhezeiten, 512-Zeichen-Grenze, Deduplikation und 30-Sekunden-Karte. Vorlage: `IncomingMessageNotice.kt` und `NodeRuntime.kt`. | Als opt-in, rein lesende NEOTH-Vorschau über einen eigenen autorisierten Kanal-/Benachrichtigungs-Owner anpassen. Keine Notification-Actions, Read-Receipts oder Antworten aus dem Preview ableiten. Plattformunterschiede Android/iOS explizit behandeln. Abnahme: fehlende Freigabe, Ruhezeiten, veraltete/replayed Events, doppelte Quelle, Ablauf, Widerruf und getrennte Kanalzuständigkeit. |
 | JM-08 | Voice-/Medienzustände: zuhören, verarbeiten, sprechen, still, abgebrochen; begrenzte Gesprächs- und Mikrofon-Lebensdauer. Vorlage: `JarvisConversationLifecycle.kt` und Talk-Session-Zustände. | Mit NEOTHs bestehendem Voice-/Session-/Medien-Owner verbinden. Gerätespezifische Wake-Modelle, Echo-Sonderfälle oder OpenClaw-Realtime-APIs nicht als NEOTH-Vertrag übernehmen. Abnahme: tatsächlicher Audio-/Session-Lebenszyklus, Unterbrechung, Hintergrund/Vordergrund, Berechtigung, Cleanup und Android/iOS-spezifische Grenzen. Weitere Jarvis-Kamera-/Timer-/Home-Ansichten in JM-01 aufnehmen, bevor über ihre NEOTH-Anpassung entschieden wird. |
 | JM-09 | Einheitliche NEOTH-Bedienung über Mobile und bestehende Desktop-Oberflächen. | Gemeinsame Bedeutung für Ready/Working/Waiting/Needs-confirmation/Failed/Complete; nahe schwarze Flächen, grüne Live-/Primärrollen, cyanfarbene Nachweise, rosa Grenzen/Fehler und gelbe Arbeit/Warnung. Bestehende NEOTH-Typografie und skalierbare Abstände nutzen. Desktop-`.slint` bleibt gemäß geltender Vorgabe unverändert; dessen Tokens dienen als Referenz. Mobile-Parität nicht mit Desktop-Renderabnahme verwechseln. |

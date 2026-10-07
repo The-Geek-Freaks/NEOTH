@@ -55,7 +55,7 @@ PAIR_PHASES = (
     "readiness_owner_ended", "readiness_owner_refused",
 )
 PAIR_MARKERS = tuple(
-    (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))
+    (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}\n".encode("ascii"))
     for phase in (*PAIR_PHASES, *(f"failed.{phase}" for phase in PAIR_PHASES))
 )
 DISCOVERY_PHASES = (
