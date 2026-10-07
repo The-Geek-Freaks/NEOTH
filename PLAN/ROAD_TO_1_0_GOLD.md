@@ -18680,3 +18680,9 @@ Die native Vorbereitung ist auf den vorangegangenen Producer gebunden, aber nich
 - Only test and evidence files change. Native builds were skipped, and fresh Flutter/native validation remains required. Prior 99/25 mobile runtime admission retains producer c4a04fb5. Source: docs/verification/gold-wave2509-flutter-selectable-semantics.json. No local runtime.
 
 W2509 lifecycle follow-up: run37645163245 passes Flutter analysis and reaches end-of-test verification after the corrected semantics assertions. Both affected fixtures still held a SemanticsHandle because addTearDown runs after this verification. They now dispose their owned handle in callback-local try/finally, including assertion failure. All value/read-only/header/layout assertions remain. Native jobs still skipped; fresh run required.
+
+### W2510 — WhatsApp-Toolstatus mit dauerhafter Abschlussgrenze
+
+Der Jarvis-Port JM-06 erhält einen separat aktivierbaren, an Account/Chat/Eingangsturn gebundenen Toolstatus. Der tatsächliche Kanal-Owner leitet beobachtete MCP-Aktivität weiter; die Anzeige löst keine Tools aus und übernimmt keine privaten Argumente oder Ergebnisse. Statusänderung und endgültige Antwort bleiben geordnet. Vor der finalen Outbound-Reservierung wird der Turn im bestehenden Journal geschlossen, sodass verspätete Statusmeldungen auch nach Neustart abgewiesen werden. Unsichere Sendeergebnisse bleiben als offen erhalten und werden nicht blind wiederholt.
+
+Zehn neue Rust-Testquellen, acht neue Node-Regressionsquellen und ein serieller Hosted-Vertrag prüfen diese Grenzen mit kontrollierten HTTP- und Socket-Gegenstellen. Ihre Registrierung ist noch kein Testpass. Echte MCP-bis-Sidecar-Produktreise sowie Anzeige/Zustellung am verknüpften WhatsApp-Konto bleiben separate offene Abnahmen. Der lokale BSOD-Hold bleibt unverändert; keine lokale Runtime und keine Gold-/JM-Gesamtfreigabe.

@@ -411,6 +411,18 @@ pub type PipelineHandler = Box<
         + Sync,
 >;
 
+/// Optional authenticated tool-activity observer supplied by a channel owner.
+/// Legacy channels call this with `None`.
+pub type PipelineHandlerWithActivity = Box<
+    dyn Fn(
+            InboundMessage,
+            Option<crate::mcp::dispatch_loop::ToolActivitySink>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<OutboundMessage>>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 /// Implemented by every channel adapter. Object-safe so the daemon can hold
 /// `Box<dyn Channel>` in its registry.
 ///

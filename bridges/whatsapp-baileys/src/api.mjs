@@ -70,7 +70,14 @@ export async function createBridgeServer({ token, journal, runtime, host = "127.
         json(response, 200, {
           ...runtime.health(),
           latest_cursor: journal.latestCursor(),
-          capabilities: { text: true, media: true, cursor: true },
+          capabilities: {
+            text: true,
+            media: true,
+            cursor: true,
+            // New installs must opt in separately; this reports implementation
+            // capability only and does not make the adapter emit status traffic.
+            status_edit_v1: runtime.health().status_edit_v1 === true,
+          },
         });
         return;
       }
@@ -91,6 +98,11 @@ export async function createBridgeServer({ token, journal, runtime, host = "127.
       }
       if (request.method === "POST" && url.pathname === "/v1/messages") {
         const result = await runtime.send(await readJson(request));
+        json(response, 200, result);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/status") {
+        const result = await runtime.status(await readJson(request));
         json(response, 200, result);
         return;
       }

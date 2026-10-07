@@ -1,0 +1,111 @@
+{
+  "schema": "neoth.gold.verification.v1",
+  "wave": 2510,
+  "status": "SOURCE-INTEGRATED-HOSTED-PENDING",
+  "base": "848fe3adf7db266368e7478b20a91265f579353c",
+  "title": "WhatsApp observed tool status with durable final-order barrier",
+  "scope": [
+    "JM-06 WhatsApp tool-call status port",
+    "GOLD channel parity; no device/release closure"
+  ],
+  "changes": [
+    "Optional account/chat/inbound-bound WhatsApp tool status; closed public vocabulary.",
+    "Actual channel execution owner feeds observed MCP activity without adding an execution owner.",
+    "Owned pipeline/publisher futures; cancellation and uncertain transport stop without blind retry.",
+    "Durable final closure before outbound reservation denies late status after restart.",
+    "Final send preserves uncertain pending intents, socket/account binding and payload fingerprints."
+  ],
+  "sources": [
+    {
+      "path": "bridges/whatsapp-baileys/README.md",
+      "candidateSha256": "33F2C68F7CC89AACCAB5E5BDBDD5BEAABBBF0C9A3DFCCF21BD12D5EB9F4D95C7"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/api.mjs",
+      "candidateSha256": "24E1DA576070B8AEA6750D851CE32CCF24EA3933C13DEA718E8ED94032E5D75E"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/reconcile.mjs",
+      "candidateSha256": "5C2C1826A2A377AF32F4C5D19DD89B3CB69DE9F878275046C7975CF6C69B042E"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/runtime.mjs",
+      "candidateSha256": "A196FC63CBB88F0554B2014C8F747793EE3CBD389127A386A3852FA1A44D833D"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/server.mjs",
+      "candidateSha256": "49350AE93A306F6CA84A7E1322394EE333D161CB10C29C742308AF01EDA804D5"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/state.mjs",
+      "candidateSha256": "ECEC655B70B15F1380A2BC3F02A1AF3E0A35B6F9DD2A94932BB60CEA35C0F695"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/status_config.mjs",
+      "candidateSha256": "61CAD46BA87E59349923108AC02ADBD0B53866E358A4087A3FCA519BA0B6ABCE"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/test/bridge.test.mjs",
+      "candidateSha256": "9B434DC411F2365A633A4E431045B22CD4408EE4F8D9A959946BD7AFDCF3DB3B"
+    },
+    {
+      "path": "SRC/neothd/src/channels/mod.rs",
+      "candidateSha256": "EA9520297C4BA78B1DAB704603932D5D46BD1303B9A9DB693A5D149E59F8072F"
+    },
+    {
+      "path": "SRC/neothd/src/channels/whatsapp_baileys.rs",
+      "candidateSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "candidateSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "candidateSha256": "8A2AB4230E9C35A506D126B1EFFC3C2B3169F90D5FE4BC695DF5934400C961A7"
+    }
+  ],
+  "workflow": {
+    "path": ".github/workflows/whatsapp-bridge-contracts.yml",
+    "candidateSha256": "E14A7D912E82FB94B83ABE4E22E4282946A771F96F1B1E9A27EA39B6C33FDE11",
+    "manualExactProducer": true,
+    "hostedJobs": 1
+  },
+  "registration": {
+    "newRustSourceCases": 10,
+    "newNodeBarrierSourceCases": 8,
+    "scope": "Full Baileys adapter module and all bridge test files in hosted controlled harness"
+  },
+  "staticChecks": [
+    "Exact 12 import baseline hashes and candidate hashes",
+    "Final closure persisted before final send; restart denies delayed status",
+    "Originating account/socket checks before transport",
+    "Owned publisher and pipeline futures; no detached retry",
+    "Independent account-sidecar and daemon flags default disabled",
+    "All required regression identities present in candidate text"
+  ],
+  "validation": {
+    "localExecutableValidationRan": false,
+    "candidateRuntimeExecuted": false,
+    "hostedContractRun": "pending",
+    "realWhatsAppDeliveryAccepted": false,
+    "fullMcpToSidecarAccepted": false
+  },
+  "open": [
+    "Hosted Rust formatting/typecheck/adapter test execution",
+    "Hosted full Node bridge tests",
+    "Full real MCP pipeline to sidecar with final/error/cancellation",
+    "Linked account delivery and visual device acceptance"
+  ],
+  "priorMobileAcceptance": {
+    "producer": "848fe3adf7db266368e7478b20a91265f579353c",
+    "run": "37646594648",
+    "archives": 4,
+    "entries": 155,
+    "sourceBindings": 57,
+    "ffiExports": 10,
+    "flutterPassed": 35,
+    "proofSha256": "7C7A087F12C2AF807C84521A83429A819C347D318885D31EDE224DC44E9DE6CD",
+    "notCurrentWhatsAppProducerEvidence": true
+  }
+}

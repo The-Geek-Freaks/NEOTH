@@ -21,7 +21,7 @@ use sha2::{Digest as _, Sha256};
 use tracing::{info, warn};
 
 use crate::channels::registry::{ChannelId, ChannelRef};
-use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler};
+use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler, PipelineHandlerWithActivity};
 use crate::cli::serve::emit_required_audit;
 use crate::config::{FreedomConfig, InstancePaths};
 use crate::memory::store;
@@ -2229,6 +2229,15 @@ async fn resolve_channel_turn_route(
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
 /// reply.
 pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
+    let handler = std::sync::Arc::new(build_pipeline_handler_with_activity(deps));
+    Box::new(move |inbound| handler(inbound, None))
+}
+
+/// Activity-aware channel pipeline. Only an authenticated adapter may supply
+/// the sink; all legacy construction remains the `None` wrapper above.
+pub(crate) fn build_pipeline_handler_with_activity(
+    deps: PipelineHandlerDeps,
+) -> PipelineHandlerWithActivity {
     let PipelineHandlerDeps {
         inbound_binding,
         provider,
@@ -2276,7 +2285,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
     let channel_canary_registry =
         Arc::new(ChannelCanaryRegistry::new(CHANNEL_CANARY_REGISTRY_CAPACITY));
 
-    Box::new(move |inbound: InboundMessage| {
+    Box::new(move |inbound: InboundMessage, tool_activity_sink| {
         let provider = Arc::clone(&provider);
         let inbound_binding = Arc::clone(&inbound_binding);
         let live_channel = live_channel.as_ref().map(Arc::clone);
@@ -2311,6 +2320,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // GOLD-CCPARITY-ONCE: clone the session Arc so the async future owns it.
         let session_fired_once = Arc::clone(&session_fired_once_arc);
         let channel_canary_registry = Arc::clone(&channel_canary_registry);
+        let tool_activity_sink = tool_activity_sink.clone();
         Box::pin(async move {
             let Some(mut inbound) = admit_bound_inbound(&inbound_binding, inbound) else {
                 return Ok(None);
@@ -4991,7 +5001,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     let loop_req = req.clone();
                     let mut compaction_budget =
                         crate::mcp::dispatch_loop::CompactionBudget::default();
-                    match crate::cli::chat::run_mcp_dispatch_loop(
+                    match crate::cli::chat::run_mcp_dispatch_loop_with_activity(
                         &authorized_provider,
                         loop_req,
                         &mcp_servers_for_loop,
@@ -5063,6 +5073,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         config_for_handler.code_map.enrichment_selectors.clone(),
                         config_for_handler.code_map.impact_policy,
                         config_for_handler.code_map.requested_context_policy()?,
+                        tool_activity_sink.as_ref(),
                     )
                     .await
                     {

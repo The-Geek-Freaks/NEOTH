@@ -1,0 +1,210 @@
+name: WhatsApp Baileys Bridge Contracts
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  bridge-contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      CI: 'true'
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - name: Bind the exact producer and bridge source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/whatsapp-contracts"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          paths = subprocess.check_output([
+              "git", "ls-files", "-z", "--",
+              ".github/workflows/whatsapp-bridge-contracts.yml", "bridges/whatsapp-baileys",
+              "SRC/Cargo.toml", "SRC/Cargo.lock", "SRC/neothd/Cargo.toml",
+              "SRC/neothd/src/channels/mod.rs", "SRC/neothd/src/channels/whatsapp_baileys.rs",
+              "SRC/neothd/src/cli/serve_pipeline.rs", "SRC/neothd/src/cli/serve_tasks.rs",
+              "SRC/neothd/src/mcp/dispatch_loop.rs", "SRC/neothd/src/mcp/gate.rs",
+          ]).decode("utf-8").split("\0")
+          sources = []
+          for relative in sorted(p for p in paths if p):
+              path = root / relative
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit("bound bridge source is not a regular file")
+              data = path.read_bytes()
+              oid = subprocess.check_output(["git", "rev-parse", "HEAD:" + relative], text=True).strip()
+              if subprocess.check_output(["git", "hash-object", "--no-filters", "--", relative], text=True).strip() != oid:
+                  raise SystemExit("bound checkout bytes differ from producer blob")
+              sources.append({"path": relative, "blob": oid, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest().upper()})
+          if not sources or not any(s["path"].endswith("test/bridge.test.mjs") for s in sources):
+              raise SystemExit("bridge tests absent from custody")
+          receipt = {"schema": "neoth.whatsapp-bridge.contracts.v1", "producer": os.environ["GITHUB_SHA"],
+                     "run": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                     "node": "22.16.0", "pnpm": "10.32.1", "sources": sources,
+                     "scope": "Node bridge contracts and Rust Baileys adapter tests with controlled sockets, handlers and local HTTP; not real WhatsApp delivery or complete MCP pipeline acceptance"}
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-contracts/source-custody.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: '22.16.0' }
+      - name: Enable pinned pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          test "$(node --version)" = v22.16.0
+          test "$(pnpm --version)" = 10.32.1
+      - name: Install frozen bridge dependencies without lifecycle scripts
+        working-directory: bridges/whatsapp-baileys
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run all bridge contracts with retained TAP
+        id: contracts
+        working-directory: bridges/whatsapp-baileys
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap test/*.test.mjs | tee "$RUNNER_TEMP/whatsapp-contracts/bridge.tap"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-contracts"
+          tap = (proof / "bridge.tap").read_text()
+          counts = {}
+          for key in ["tests", "pass", "fail", "cancelled", "skipped", "todo"]:
+              matches = re.findall(r"^# " + key + r" ([0-9]+)$", tap, re.M)
+              if len(matches) != 1:
+                  raise SystemExit("missing or duplicate TAP summary: " + key)
+              counts[key] = int(matches[0])
+          if counts["tests"] < 1 or counts["tests"] != counts["pass"] or any(counts[k] for k in ["fail", "cancelled", "skipped", "todo"]):
+              raise SystemExit("Node suite contains unexecuted or unsuccessful cases")
+          required = [
+              "final reply HTTP barrier rejects a delayed status after final send and after restart",
+              "journal closure survives concurrent append and restart without relying on status cache",
+              "uncertain final send leaves status closed and outbound intent pending",
+              "final status binding refuses wrong account, recipient, namespace and unretained turn",
+              "durable final closure failure halts before any queued transport write",
+              "account rotation after durable final closure cannot write through replacement socket",
+              "status vocabulary distinguishes denied and unknown from successful tools",
+              "bound final refuses legacy dedup rows without an authenticated payload fingerprint",
+          ]
+          for name in required:
+              if len(re.findall(r"^ok [0-9]+ - " + re.escape(name) + r"$", tap, re.M)) != 1:
+                  raise SystemExit("required final-order Node terminal absent: " + name)
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "counts": counts,
+                   "requiredFinalBarrierCases": required,
+                   "tapSha256": hashlib.sha256((proof / "bridge.tap").read_bytes()).hexdigest().upper()}
+          (proof / "node-cases.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Set up Rust 1.91.0
+        id: rust_setup
+        if: ${{ always() && !cancelled() && steps.source.outcome == 'success' }}
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: '1.91.0' }
+      - name: Restore admitted Cargo checkpoint
+        id: rust_cache
+        if: ${{ always() && !cancelled() && steps.rust_setup.outcome == 'success' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
+      - name: Discover and run the complete Rust Baileys adapter suite
+        id: rust_contracts
+        if: ${{ always() && !cancelled() && steps.source.outcome == 'success' && steps.rust_setup.outcome == 'success' }}
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/whatsapp-contracts"
+          timeout --kill-after=10s 2400s cargo test -p neoth --lib --locked channels::whatsapp_baileys::tests:: -- --list 2>&1 | tee "$proof/rust-discovery.log"
+          timeout --kill-after=10s 300s cargo test -p neoth --lib --locked channels::whatsapp_baileys::tests:: -- --test-threads=1 2>&1 | tee "$proof/rust-execution.log"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-contracts"
+          discovery = (proof / "rust-discovery.log").read_text()
+          execution = (proof / "rust-execution.log").read_text()
+          prefix = "channels::whatsapp_baileys::tests::"
+          required = {
+              prefix + name for name in [
+                  "status_actual_channel_owner_gates_activity_and_binds_final_after_status",
+                  "status_final_reply_carries_turn_binding_and_preserves_legacy_wire",
+                  "status_owner_publishes_preexisting_activity_then_edit_from_real_observer",
+                  "status_owner_drop_retires_pipeline_and_publisher_without_detached_task",
+                  "status_owner_uncertain_http_failure_stops_without_revision_retry",
+                  "status_daemon_opt_in_requires_the_exact_separate_value",
+                  "status_writer_keeps_the_admitted_tuple_and_revision_in_its_key",
+                  "status_projection_distinguishes_rejection_and_unknown_without_private_details",
+                  "status_owner_cancellation_joins_without_an_http_status_send",
+                  "status_client_posts_only_the_closed_v1_activity_body",
+              ]
+          }
+          found = re.findall(r"^(channels::whatsapp_baileys::tests::[a-z0-9_]+): test$", discovery, re.M)
+          passed = re.findall(r"^test (channels::whatsapp_baileys::tests::[a-z0-9_]+) \.\.\. ok$", execution, re.M)
+          if not found or len(set(found)) != len(found) or len(set(passed)) != len(passed):
+              raise SystemExit("empty or duplicate Rust case set")
+          if not required.issubset(found) or set(found) != set(passed):
+              raise SystemExit("Rust discovery/execution or required status cases differ")
+          if len(re.findall(r"^test result: ok\. " + str(len(found)) + r" passed; 0 failed; 0 ignored;", execution, re.M)) != 1:
+              raise SystemExit("Rust exact suite terminal missing")
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "identities": sorted(passed),
+                   "requiredStatusIdentities": sorted(required),
+                   "discoverySha256": hashlib.sha256((proof / "rust-discovery.log").read_bytes()).hexdigest().upper(),
+                   "executionSha256": hashlib.sha256((proof / "rust-execution.log").read_bytes()).hexdigest().upper()}
+          (proof / "rust-cases.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Save admitted WhatsApp Cargo checkpoint
+        if: ${{ always() && !cancelled() && steps.rust_contracts.outcome == 'success' && steps.rust_cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+      - name: Retain execution outcome
+        if: always()
+        shell: bash
+        env:
+          CONTRACT_OUTCOME: ${{ steps.contracts.outcome }}
+          RUST_CONTRACT_OUTCOME: ${{ steps.rust_contracts.outcome }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-contracts"
+          output.mkdir(exist_ok=True)
+          tap = output / "bridge.tap"
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "contractStepOutcome": os.environ["CONTRACT_OUTCOME"], "rustContractStepOutcome": os.environ["RUST_CONTRACT_OUTCOME"],
+                   "tapSha256": hashlib.sha256(tap.read_bytes()).hexdigest().upper() if tap.is_file() else None}
+          (output / "execution.json").write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: whatsapp-bridge-contracts-${{ github.sha }}
+          path: ${{ runner.temp }}/whatsapp-contracts/
+          if-no-files-found: error
+          retention-days: 7

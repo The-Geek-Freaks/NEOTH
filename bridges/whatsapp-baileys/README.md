@@ -91,6 +91,38 @@ Tailscale Serve endpoint in front; configure NEOTH with that `https://` URL.
   key. A pending intent is persisted before the network send and the result is
   persisted before it is reported to NEOTH. If the bridge crashes in between,
   that key returns HTTP 409 instead of risking a duplicate send.
+- Editable status transport is a separate, disabled-by-default v1 capability.
+  Set `NEOTH_WA_STATUS_EDIT_V1=1` only after the NEOTH adapter has separately
+  opted in for an admitted inbound turn. `GET /v1/health` then advertises
+  `capabilities.status_edit_v1=true`; this capability alone never sends a
+  status message. Existing `/v1/messages` and final `wa-reply` behavior do
+  not change.
+- `POST /v1/status` accepts only the fixed redacted v1 activity vocabulary,
+  never free-form detail, arguments, errors, or output. Every create/edit is
+  bound to the exact linked account recorded at inbound arrival and the
+  admitted retained `(account_id,chat_id,inbound_id)`. Legacy retained events
+  without that immutable arrival account remain v1-deliverable but cannot
+  create or edit a status. A revision is required. The sidecar stores the full
+  Baileys message key after create
+  and uses that stored key for edits; callers cannot nominate another message
+  or recipient. Account rotation, a missing retained inbound, a mismatched
+  chat, unsupported activity fields, or a stale revision fail closed.
+  The sidecar snapshots the originating socket account before queued ingestion;
+  an unknown socket account stays status-ineligible. It rechecks the pinned live socket/account immediately before each status
+  write. A rotation after reservation sends nothing and keeps the operation
+  pending for explicit reconciliation.
+- Status keys must use `neoth-wa-status-`; they are distinct from final
+  `neoth-wa-reply-` keys. A status operation is idempotent only when the same
+  key has the exact same tuple, revision, and rendered-vocabulary payload.
+  A pending create or edit blocks every later operation on that tuple, even a
+  new key, until explicit offline reconciliation. This prevents a delayed
+  retry or rollover from creating a second visible status bubble.
+- Status records live in `status-operations.json` independently of ordinary
+  outbound dedup records. At most 5,000 fully resolved turn records and 64
+  committed operation receipts per retained turn are kept; unresolved records
+  are never TTL- or size-pruned. Reconcile a pending status operation only
+  after WhatsApp inspection: `pnpm reconcile -- status '<key>' sent
+  '<full-message-key-json>'` or `pnpm reconcile -- status '<key>' not-sent`.
 - Unknown-outcome (`pending`) tombstones are never TTL- or size-pruned. After
   checking WhatsApp, stop the service and resolve one explicitly with
   `pnpm reconcile -- '<key>' sent '<whatsapp-message-id>'` or
@@ -121,3 +153,20 @@ Tests cover authenticated API access, atomic auth/key restart, durable cursor
 replay and crash-tail repair, cursor-expiry fail-closed behavior, inbound
 restart dedup and persistence fail-stop, concurrent-send serialization, and
 outbound sent/pending idempotency plus manual reconciliation across restart.
+
+### Final reply ordering with live status
+
+With both status opt-ins enabled, the daemon binds final replies to the exact
+account, chat and inbound ID using `status_turn`. The sidecar verifies the
+existing deterministic `neoth-wa-reply-` key and includes the tuple in payload
+deduplication. It durably marks that retained inbound as status-closed before
+reserving or sending the final answer. Delayed status creates/edits are then
+refused, including after restart or pruning of the separate status cache.
+Journal closure shares the append queue, and storage ambiguity halts the bridge
+before a final send. A changed socket/account cannot receive the bound reply.
+An uncertain final send retains the pending outbound record; it is never
+silently retried as a new operation. Legacy sends omit `status_turn`.
+
+Denied tools display `Not allowed`, and uncertain tool outcomes display
+`Outcome unknown`; neither is rendered as completed. Status messages remain
+limited to the fixed public vocabulary and contain no arguments or results.

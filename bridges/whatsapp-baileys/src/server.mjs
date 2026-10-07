@@ -2,7 +2,8 @@ import os from "node:os";
 import path from "node:path";
 import { createBridgeServer } from "./api.mjs";
 import { BaileysRuntime } from "./runtime.mjs";
-import { EventJournal, OutboundDedupStore } from "./state.mjs";
+import { EventJournal, OutboundDedupStore, StatusOperationStore } from "./state.mjs";
+import { statusEditEnabledFromEnv } from "./status_config.mjs";
 
 const stateDirectory = path.resolve(
   process.env.NEOTH_WA_STATE_DIR || path.join(os.homedir(), ".neoth", "whatsapp-baileys-bridge"),
@@ -14,7 +15,20 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("NEOTH_
 
 const journal = await EventJournal.open(stateDirectory);
 const outboundStore = await OutboundDedupStore.open(stateDirectory);
-const runtime = new BaileysRuntime({ stateDirectory, journal, outboundStore });
+// This store is opened only by the sidecar. It gives status edits their own
+// durable tuple/message-key binding and leaves v1 text/media send semantics
+// unchanged.
+// Transport support is inert until the operator explicitly enables it. The
+// Rust adapter must still see health capability and opt in for the admitted
+// account/turn; this flag alone never emits a WhatsApp status message.
+const statusEditEnabled = statusEditEnabledFromEnv();
+const statusStore = statusEditEnabled ? await StatusOperationStore.open(stateDirectory) : null;
+const runtime = new BaileysRuntime({
+  stateDirectory,
+  journal,
+  outboundStore,
+  statusStore,
+});
 runtime.start();
 const server = await createBridgeServer({ token, journal, runtime, host, port });
 console.log(`NEOTH WhatsApp Baileys bridge listening on http://${host}:${server.address.port}`);

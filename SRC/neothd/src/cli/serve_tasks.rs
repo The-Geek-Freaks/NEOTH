@@ -15,9 +15,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::channels::registry::ChannelRef;
-use crate::channels::{Channel, ChannelKind, PipelineHandler};
+use crate::channels::{Channel, ChannelKind, PipelineHandler, PipelineHandlerWithActivity};
 use crate::cli::serve_pipeline::{
     AuthenticatedInboundBinding, PipelineHandlerDeps, build_pipeline_handler,
+    build_pipeline_handler_with_activity,
 };
 use crate::daemon::channel_live_registry::ChannelLiveRegistry;
 
@@ -7976,7 +7977,7 @@ pub(crate) async fn spawn_channel_adapters(
                 neoth_home.join("channel-state/whatsapp-baileys-cursor.json"),
             ) {
                 Ok(channel) => {
-                    let handler: PipelineHandler = build_channel_handler(
+                    let handler: PipelineHandlerWithActivity = build_channel_handler_with_activity(
                         AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
                             ChannelKind::WhatsAppBaileys,
                         )),
@@ -7992,13 +7993,22 @@ pub(crate) async fn spawn_channel_adapters(
                         confirm_bus.clone(),
                         views_executor.clone(),
                     );
-                    spawn_channel_run(
-                        channel.with_gate_writer(writer.clone()),
-                        handler,
-                        ChannelKind::WhatsAppBaileys,
-                        "WhatsApp Baileys",
-                        channel_tasks,
-                    );
+                    let channel = channel.with_gate_writer(writer.clone());
+                    let task = tokio::spawn(async move {
+                        if let Err(error) = channel
+                            .run_with_activity(
+                                handler,
+                                crate::channels::whatsapp_baileys::status_daemon_opted_in(),
+                            )
+                            .await
+                        {
+                            tracing::error!(error = %error, "WhatsApp Baileys channel task exited with error");
+                        }
+                    });
+                    channel_tasks
+                        .entry(ChannelRef::default_account(ChannelKind::WhatsAppBaileys))
+                        .or_default()
+                        .push(task);
                     info!(
                         channel = "whatsapp_baileys",
                         status = "STARTING",
@@ -8337,6 +8347,45 @@ fn build_channel_handler_inner(
         inbound_binding: binding,
         provider,
         live_channel,
+        writer: writer.clone(),
+        operator_id: config.operator_id.clone(),
+        goal_max_turns: config.goal.max_turns,
+        meter: provider_meter.clone(),
+        rate_limiter: Arc::clone(rate_limiter),
+        segment_path: segment_path.to_path_buf(),
+        neoth_home: neoth_home.to_path_buf(),
+        profile_config: config.profile.clone(),
+        reload_controller: Arc::clone(reload_controller),
+        views_conn: shared_views_conn.clone(),
+        views_executor,
+        confirm_bus,
+        #[cfg(test)]
+        abliterated_loader: None,
+    })
+}
+
+/// Narrow activity-aware variant used only by the Baileys turn owner. It keeps
+/// every existing channel registration on the legacy wrapper while forwarding
+/// the authenticated per-turn sink to the real MCP dispatch loop.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_channel_handler_with_activity(
+    binding: AuthenticatedInboundBinding,
+    provider: Arc<dyn Provider>,
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+    provider_meter: &crate::providers::meter::Meter,
+    rate_limiter: &Arc<crate::channels::rate_limit::RateLimiter>,
+    segment_path: &std::path::Path,
+    neoth_home: &std::path::Path,
+    shared_views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    reload_controller: &Arc<crate::config::reload::ReloadController>,
+    confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
+    views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
+) -> PipelineHandlerWithActivity {
+    build_pipeline_handler_with_activity(PipelineHandlerDeps {
+        inbound_binding: binding,
+        provider,
+        live_channel: None,
         writer: writer.clone(),
         operator_id: config.operator_id.clone(),
         goal_max_turns: config.goal.max_turns,

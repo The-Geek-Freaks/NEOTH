@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T15:38:01.5072119Z",
-  "validationStatus": "W2509-SEMANTICS-OWNER-FIX-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T16:06:14.6015948Z",
+  "validationStatus": "W2510-WHATSAPP-SOURCE-INTEGRATED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -287,6 +287,11 @@
       "sha256": "5952392D3F779DABB9A1D5C639A76BB758586579A8C27FD000CBC3EE523C029A"
     },
     {
+      "path": ".github/workflows/whatsapp-bridge-contracts.yml",
+      "bytes": 12566,
+      "sha256": "E14A7D912E82FB94B83ABE4E22E4282946A771F96F1B1E9A27EA39B6C33FDE11"
+    },
+    {
       "path": ".github/workflows/windows-storage-regressions.yml",
       "bytes": 170236,
       "sha256": "4AC7D624FDA2126FBF08ED3C99FBAE3877F67369DBAF6E52371E31D2D4B3CEFC"
@@ -475,6 +480,46 @@
       "path": "bridges/companion-native/TEST_PLAN.md",
       "bytes": 1529,
       "sha256": "A0A8BD61787685A275EF7CAEBCC315A4839CAE6565D84E83A4C01C3FF62B8972"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/README.md",
+      "bytes": 9071,
+      "sha256": "33F2C68F7CC89AACCAB5E5BDBDD5BEAABBBF0C9A3DFCCF21BD12D5EB9F4D95C7"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/api.mjs",
+      "bytes": 5060,
+      "sha256": "24E1DA576070B8AEA6750D851CE32CCF24EA3933C13DEA718E8ED94032E5D75E"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/reconcile.mjs",
+      "bytes": 1248,
+      "sha256": "5C2C1826A2A377AF32F4C5D19DD89B3CB69DE9F878275046C7975CF6C69B042E"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/runtime.mjs",
+      "bytes": 26183,
+      "sha256": "A196FC63CBB88F0554B2014C8F747793EE3CBD389127A386A3852FA1A44D833D"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/server.mjs",
+      "bytes": 1976,
+      "sha256": "49350AE93A306F6CA84A7E1322394EE333D161CB10C29C742308AF01EDA804D5"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/state.mjs",
+      "bytes": 24077,
+      "sha256": "ECEC655B70B15F1380A2BC3F02A1AF3E0A35B6F9DD2A94932BB60CEA35C0F695"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/src/status_config.mjs",
+      "bytes": 320,
+      "sha256": "61CAD46BA87E59349923108AC02ADBD0B53866E358A4087A3FCA519BA0B6ABCE"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/test/bridge.test.mjs",
+      "bytes": 38589,
+      "sha256": "9B434DC411F2365A633A4E431045B22CD4408EE4F8D9A959946BD7AFDCF3DB3B"
     },
     {
       "path": "design-system/AUDIT_CHECKLIST.md",
@@ -3962,6 +4007,11 @@
       "sha256": "C68B53DEE1E5E862BC5EC5D609D8F949770F5D2E88945BC08662AA86DBD2E9E1"
     },
     {
+      "path": "docs/verification/gold-wave2510-whatsapp-status.json",
+      "bytes": 4496,
+      "sha256": "482D448D6B38142657726C5D12053CA260CC016FF91CF39C6407020DEF6B7E1E"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5108,8 +5158,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 27464,
-      "sha256": "1757C38C96BF45A0EAB2D5CA0F29992882E8812C3BBE72F2B02FE5F6FD64EE81"
+      "bytes": 28550,
+      "sha256": "ABE7EA24ECB8252FA081BA8A31E51639565CAE46902666C44576F54926312680"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5118,8 +5168,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2496151,
-      "sha256": "575402AD805B1147F5FF7448C53D17B71158DDC39448E43ADC7149F1A169F087"
+      "bytes": 2497234,
+      "sha256": "9D8DF12B74103BA5A73922E589B07912407B11ABB44373DA49452D532B046871"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5878,8 +5928,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/mod.rs",
-      "bytes": 44064,
-      "sha256": "1229933CACA5E13C5741EE3318D27972033B6DB229AB29046C717C03BAA4A6E9"
+      "bytes": 44491,
+      "sha256": "EA9520297C4BA78B1DAB704603932D5D46BD1303B9A9DB693A5D149E59F8072F"
     },
     {
       "path": "SRC/neothd/src/channels/nostr.rs",
@@ -5935,6 +5985,11 @@
       "path": "SRC/neothd/src/channels/telegram.rs",
       "bytes": 85974,
       "sha256": "53503928B5CDB203EAD92FB77F3AD92BF1A19099F6AD52353B9B8EE51BD9DDAF"
+    },
+    {
+      "path": "SRC/neothd/src/channels/whatsapp_baileys.rs",
+      "bytes": 67727,
+      "sha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041"
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
@@ -6398,13 +6453,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 561018,
-      "sha256": "DB1D4A96106A80205DA2FB7B658CB232170AD97F0A31DD070FA747326C1560E2"
+      "bytes": 561601,
+      "sha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 582093,
-      "sha256": "F95D7DA36BA6E655E33EAFFCF949AADA130F56FA294E1052B7CB08652F8BF41E"
+      "bytes": 584404,
+      "sha256": "8A2AB4230E9C35A506D126B1EFFC3C2B3169F90D5FE4BC695DF5934400C961A7"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",

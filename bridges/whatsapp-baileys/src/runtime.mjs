@@ -13,6 +13,8 @@ import { openDurableAuthState } from "./auth-state.mjs";
 const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_BACKOFF_MS = 30_000;
+const STATUS_LABELS_V1 = new Set(["Read file", "Write file", "List files", "Search code", "Tool call"]);
+const STATUS_PHASES_V1 = new Set(["start", "tool_start", "tool_finish", "tool_rejected", "unknown", "finalize", "done", "error", "limit", "stale"]);
 
 const logger = {
   level: "silent",
@@ -79,6 +81,13 @@ function mediaMime(value) {
   return mime;
 }
 
+function finalReplyKey(inboundId) {
+  const bytes = Buffer.from(inboundId, "utf8");
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(bytes.length));
+  return `neoth-wa-reply-${createHash("sha256").update("wa-reply").update(length).update(bytes).digest("hex")}`;
+}
+
 function payloadFingerprint(recipient, fields) {
   const hash = createHash("sha256");
   for (const value of [recipient, fields.kind, fields.text, fields.mime, fields.filename]) {
@@ -137,11 +146,91 @@ function replyTo(message) {
   return parts.find((part) => part?.contextInfo?.stanzaId)?.contextInfo?.stanzaId ?? null;
 }
 
+function statusError(code, statusCode, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function statusIdentifier(value, field) {
+  if (typeof value !== "string" || !value || value.length > 512 || /[\r\n\0]/.test(value)) {
+    throw statusError("invalid_status_binding", 400, `${field} must be 1..512 characters without controls`);
+  }
+  return value;
+}
+
+function statusKey(value) {
+  if (typeof value !== "string" || !value.startsWith("neoth-wa-status-") || value.length > 200 || /[\r\n\0]/.test(value)) {
+    throw statusError("invalid_status_operation", 400, "idempotency_key must use the reserved neoth-wa-status- namespace");
+  }
+  return value;
+}
+
+function canonicalStatusActivity(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw statusError("invalid_status_activity", 400, "activity must be an object");
+  }
+  const allowed = new Set(["phase", "label", "step", "total"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw statusError("invalid_status_activity", 400, "activity contains unsupported fields");
+  }
+  const phase = value.phase;
+  if (!STATUS_PHASES_V1.has(phase)) {
+    throw statusError("invalid_status_activity", 400, "activity.phase is not in the v1 status vocabulary");
+  }
+  const label = value.label === undefined ? null : value.label;
+  if (label !== null && !STATUS_LABELS_V1.has(label)) {
+    throw statusError("invalid_status_activity", 400, "activity.label is not in the v1 status vocabulary");
+  }
+  if ((["tool_start", "tool_finish", "tool_rejected"].includes(phase)) !== Boolean(label)) {
+    throw statusError("invalid_status_activity", 400, "tool activity phases require a fixed v1 label only");
+  }
+  const step = value.step === undefined ? null : value.step;
+  const total = value.total === undefined ? null : value.total;
+  if ((step === null) !== (total === null) || (step !== null && (!Number.isSafeInteger(step) || !Number.isSafeInteger(total) || step < 0 || total < 1 || total > 16 || step > total))) {
+    throw statusError("invalid_status_activity", 400, "activity step/total must be bounded v1 counters");
+  }
+  const progress = step === null ? "" : ` (${step}/${total})`;
+  const text = {
+    start: "Working",
+    tool_start: `Working: ${label}`,
+    tool_finish: `Completed: ${label}`,
+    tool_rejected: `Not allowed: ${label}`,
+    unknown: "Outcome unknown",
+    finalize: "Finalizing",
+    done: "Done",
+    error: "Stopped",
+    limit: "Limit reached",
+    stale: "Connection stale",
+  }[phase] + progress;
+  return { phase, label, step, total, text };
+}
+
+function statusFingerprint(tuple, operation, activity) {
+  return createHash("sha256")
+    .update(JSON.stringify({ tuple, operation, activity }))
+    .digest("hex");
+}
+
+function fullStatusMessageKey(key, chatId) {
+  if (!key || typeof key.id !== "string" || !key.id || key.remoteJid !== chatId || key.fromMe !== true) {
+    throw statusError("status_message_key_invalid", 502, "Baileys did not return a full outbound status message key");
+  }
+  return {
+    id: key.id,
+    remoteJid: key.remoteJid,
+    fromMe: true,
+    ...(typeof key.participant === "string" && key.participant ? { participant: key.participant } : {}),
+  };
+}
+
 export class BaileysRuntime {
-  constructor({ stateDirectory, journal, outboundStore }) {
+  constructor({ stateDirectory, journal, outboundStore, statusStore = null }) {
     this.authDirectory = path.join(stateDirectory, "auth");
     this.journal = journal;
     this.outboundStore = outboundStore;
+    this.statusStore = statusStore;
     this.socket = null;
     this.connected = false;
     this.accountId = null;
@@ -177,6 +266,7 @@ export class BaileysRuntime {
       connected: this.connected,
       linked: Boolean(this.accountId),
       account_id: this.accountId,
+      status_edit_v1: Boolean(this.statusStore),
     };
   }
 
@@ -242,7 +332,10 @@ export class BaileysRuntime {
     });
     socket.ev.on("messages.upsert", ({ messages, type }) => {
       if (type !== "notify" && type !== "append") return;
-      this.handleInboundBatch(messages, socket);
+      // Bind before this batch joins ingestChain or awaits media download. A
+      // later QR rotation must not relabel an already-received A message as B.
+      const arrivalAccount = this.#arrivalAccountFor(socket);
+      this.handleInboundBatch(messages, socket, arrivalAccount);
     });
     if (socket.ws && typeof socket.ws.on === "function") {
       socket.ws.on("error", (error) => console.error(`Baileys websocket error: ${String(error)}`));
@@ -279,7 +372,14 @@ export class BaileysRuntime {
     });
   }
 
-  async #ingest(rawMessage, socket) {
+  #arrivalAccountFor(socket) {
+    const socketAccount = normalizePhoneJid(socket?.user?.id ?? "");
+    // A global current account can already belong to a replacement socket.
+    // Unknown originating-socket identity must stay status-ineligible.
+    return socketAccount || null;
+  }
+
+  async #ingest(rawMessage, socket, arrivalAccount) {
     const remoteJid = rawMessage?.key?.remoteJid;
     const rawId = rawMessage?.key?.id;
     if (!remoteJid || !rawId || rawMessage?.key?.fromMe || remoteJid === "status@broadcast") return;
@@ -316,6 +416,7 @@ export class BaileysRuntime {
     await this.journal.append({
       id: `${remoteJid}:${rawId}`,
       chat_id: remoteJid,
+      ...(arrivalAccount ? { account_id: arrivalAccount } : {}),
       sender_id: normalizePhoneJid(senderJid),
       sender_display: rawMessage.pushName || null,
       timestamp_ms: timestampMs(rawMessage.messageTimestamp),
@@ -326,13 +427,13 @@ export class BaileysRuntime {
     });
   }
 
-  handleInboundBatch(messages, socket = this.socket) {
+  handleInboundBatch(messages, socket = this.socket, arrivalAccount = this.#arrivalAccountFor(socket)) {
     if (this.fatalError) return this.ingestChain;
     const ingest = async () => {
       if (this.fatalError) return;
       for (const message of messages ?? []) {
         if (this.fatalError) return;
-        await this.#ingest(message, socket);
+        await this.#ingest(message, socket, arrivalAccount);
       }
     };
     // Baileys may emit another batch while journal fsync is pending. Serialize
@@ -369,11 +470,96 @@ export class BaileysRuntime {
     return await this.sendChain;
   }
 
+  async status(request) {
+    if (!this.statusStore) throw statusError("status_edit_unsupported", 409, "status edit transport is not enabled");
+    if (this.fatalError) {
+      throw statusError(this.fatalError.code, 503, `bridge is halted: ${this.fatalError.code}`);
+    }
+    const send = () => this.#statusOnce(request);
+    this.sendChain = this.sendChain.then(send, send);
+    return await this.sendChain;
+  }
+
+  async #statusOnce(request) {
+    const socket = this.socket;
+    const currentAccount = this.accountId;
+    if (!this.connected || !socket || !currentAccount) {
+      throw statusError("status_unavailable", 503, "WhatsApp is not connected");
+    }
+    const accountId = statusIdentifier(request?.account_id, "account_id");
+    const chatId = statusIdentifier(request?.chat_id, "chat_id");
+    const inboundId = statusIdentifier(request?.inbound_id, "inbound_id");
+    const idempotencyKey = statusKey(request?.idempotency_key);
+    const kind = request?.op;
+    const revision = request?.revision;
+    if (!['create', 'edit'].includes(kind) || !Number.isSafeInteger(revision) || revision < 0) {
+      throw statusError("invalid_status_operation", 400, "op and non-negative revision are required");
+    }
+    if (accountId !== currentAccount) {
+      throw statusError("status_account_mismatch", 409, "status account does not match the linked account");
+    }
+    if (!this.journal.hasStatusAdmission(accountId, inboundId, chatId)) {
+      throw statusError("status_inbound_not_retained", 409, "status inbound tuple is not retained in the admitted journal");
+    }
+    const activity = canonicalStatusActivity(request?.activity);
+    const tuple = { accountId, chatId, inboundId };
+    const operation = {
+      kind,
+      idempotencyKey,
+      revision,
+      fingerprint: statusFingerprint(tuple, { kind, revision }, activity),
+    };
+    await this.statusStore.pruneResolvedWithoutAdmission((bound) => (
+      this.journal.hasStatusAdmission(bound.accountId, bound.inboundId, bound.chatId)
+    ));
+    if (!this.statusStore.hasCapacityForNewTuple(tuple)) {
+      throw statusError("status_capacity_exhausted", 409, "status capacity is occupied by retained inbound turns");
+    }
+    const prepared = await this.statusStore.reserve(tuple, operation);
+    if (prepared.deduplicated) {
+      return { message_id: prepared.entry.messageKey.id, deduplicated: true };
+    }
+    if (kind === 'create') {
+      this.#requireStatusSocketOwnership(socket, currentAccount);
+      const sent = await socket.sendMessage(chatId, { text: activity.text });
+      const messageKey = fullStatusMessageKey(sent?.key, chatId);
+      const entry = await this.statusStore.complete(tuple, idempotencyKey, messageKey);
+      return { message_id: entry.messageKey.id, deduplicated: false };
+    }
+    const current = prepared.entry.messageKey;
+    if (!current || current.remoteJid !== chatId) {
+      throw statusError("status_binding_invalid", 409, "status edit lacks its bound Baileys message key");
+    }
+    this.#requireStatusSocketOwnership(socket, currentAccount);
+    await socket.sendMessage(chatId, { text: activity.text, edit: current });
+    const entry = await this.statusStore.complete(tuple, idempotencyKey);
+    return { message_id: entry.messageKey.id, deduplicated: false };
+  }
+
+  #requireStatusSocketOwnership(socket, accountId) {
+    if (!this.connected || this.socket !== socket || this.accountId !== accountId) {
+      throw statusError("status_connection_changed", 409, "linked account changed before status send; outcome remains unresolved");
+    }
+  }
+
   async #sendOnce(request) {
     if (!this.connected || !this.socket) throw Object.assign(new Error("WhatsApp is not connected"), { statusCode: 503 });
     const recipient = outboundJid(request?.to);
     const key = typeof request?.idempotency_key === "string" ? request.idempotency_key.trim() : "";
     if (!key || key.length > 200) throw Object.assign(new Error("idempotency_key is required (max 200 characters)"), { statusCode: 400 });
+    let statusTurn = null;
+    const statusSocket = this.socket;
+    if (request.status_turn !== undefined) {
+      if (!this.statusStore) throw statusError("status_edit_unsupported", 409, "status turn transport is not enabled");
+      statusTurn = {
+        accountId: statusIdentifier(request.status_turn?.account_id, "account_id"),
+        chatId: statusIdentifier(request.status_turn?.chat_id, "chat_id"),
+        inboundId: statusIdentifier(request.status_turn?.inbound_id, "inbound_id"),
+      };
+      if (statusTurn.accountId !== this.accountId || statusTurn.chatId !== recipient || key !== finalReplyKey(statusTurn.inboundId)) {
+        throw statusError("status_final_binding_mismatch", 409, "final reply does not match its status turn");
+      }
+    }
     let content;
     let fingerprint;
     if (request.media) {
@@ -406,8 +592,11 @@ export class BaileysRuntime {
       fingerprint = payloadFingerprint(recipient, { kind: "text", text });
     }
 
+    if (statusTurn) {
+      fingerprint = createHash("sha256").update(fingerprint).update(JSON.stringify(statusTurn)).digest("hex");
+    }
     const previous = this.outboundStore.lookup(key);
-    if (previous?.fingerprint && previous.fingerprint !== fingerprint) {
+    if (previous && (statusTurn ? previous.fingerprint !== fingerprint : previous.fingerprint && previous.fingerprint !== fingerprint)) {
       const error = new Error("idempotency key was already reserved for a different payload");
       error.statusCode = 409;
       error.code = "idempotency_payload_mismatch";
@@ -425,10 +614,21 @@ export class BaileysRuntime {
       throw error;
     }
 
+    if (statusTurn) {
+      try {
+        await this.journal.closeStatusAdmission(statusTurn.accountId, statusTurn.inboundId, statusTurn.chatId);
+      } catch (error) {
+        // Missing authority is an ordinary refusal; ambiguous durable closure
+        // must halt before any final reply can cross the write boundary.
+        if (error?.code !== "status_inbound_not_retained") this.#failStop("status_close_persistence_failed", error);
+        throw error;
+      }
+    }
     // Persist intent before crossing the network boundary. A crash after this
     // point leaves `pending`, so a retry fails closed instead of double-sending.
     await this.outboundStore.reserve(key, Date.now(), fingerprint);
-    const sent = await this.socket.sendMessage(recipient, content);
+    if (statusTurn) this.#requireStatusSocketOwnership(statusSocket, statusTurn.accountId);
+    const sent = await (statusTurn ? statusSocket : this.socket).sendMessage(recipient, content);
     const messageId = sent?.key?.id;
     if (!messageId) throw Object.assign(new Error("Baileys did not return an outbound message id"), { statusCode: 502 });
     await this.outboundStore.complete(key, messageId);

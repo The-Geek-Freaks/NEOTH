@@ -158,6 +158,45 @@ export class EventJournal {
     return String(this.nextSequence - 1);
   }
 
+  // The status path may only act for an inbound turn still retained by this
+  // durable journal. It does not accept a caller-supplied recipient alone.
+  hasInboundAdmission(inboundId, chatId) {
+    return this.events.some(({ event }) => event?.id === inboundId && event?.chat_id === chatId);
+  }
+
+  // Status creation is additionally bound to the account that received the
+  // inbound turn.  Do not infer it while reading old records: an entry from
+  // before this binding existed is intentionally ineligible for status sends.
+  hasStatusAdmission(accountId, inboundId, chatId) {
+    return this.events.some(({ event }) => (
+      event?.id === inboundId
+      && event?.chat_id === chatId
+      && event?.account_id === accountId
+      && (event.status_closed === undefined || event.status_closed === false)
+    ));
+  }
+
+  // Closing the existing retained inbound needs no separately evictable
+  // tombstone. Serialize with appends so an ingest cannot overwrite closure.
+  async closeStatusAdmission(accountId, inboundId, chatId) {
+    const close = async () => {
+      const record = this.events.find(({ event }) => (
+        event?.id === inboundId && event?.chat_id === chatId && event?.account_id === accountId
+      ));
+      if (!record) throw statusError("status_inbound_not_retained", 409, "final reply has no retained inbound binding");
+      if (record.event.status_closed === true) return;
+      record.event = { ...record.event, status_closed: true };
+      record.bytes = Buffer.byteLength(`${JSON.stringify({ seq: record.seq, event: record.event })}\n`);
+      const body = this.events.map(({ seq, event }) => `${JSON.stringify({ seq, event })}\n`).join("");
+      // On ambiguous persistence failure keep memory closed; caller halts.
+      await atomicWrite(this.journalPath, body);
+      await this.#pruneIfNeeded();
+    };
+    const result = this.appendTail.then(close, close);
+    this.appendTail = result.catch(() => {});
+    return await result;
+  }
+
   async append(event) {
     const append = () => this.#append(event);
     const result = this.appendTail.then(append, append);
@@ -369,4 +408,208 @@ export class OutboundDedupStore {
       this.entries.delete(sentKeys.shift());
     }
   }
+}
+
+// Status operations deliberately use a store separate from normal outbound
+// sends. A sent outbound-dedup record may age out; a status message key must
+// remain bound to its admitted inbound turn for every later edit. Pending
+// records never expire and block that tuple until an explicit reconciliation.
+export class StatusOperationStore {
+  static async open(directory, options = {}) {
+    await ensurePrivateDirectory(directory);
+    const store = new StatusOperationStore(directory, options);
+    await store.#load();
+    return store;
+  }
+
+  constructor(directory, options) {
+    this.file = path.join(directory, "status-operations.json");
+    this.maxStatuses = positiveInteger(options.maxStatuses, DEFAULT_MAX_OUTBOUND);
+    this.maxCommittedOperations = positiveInteger(options.maxCommittedOperations, 64);
+    this.entries = new Map();
+  }
+
+  async #load() {
+    const rows = await readJson(this.file, []);
+    if (!Array.isArray(rows)) throw new Error("status-operations.json must be an array");
+    for (const row of rows) {
+      const tuple = row?.tuple;
+      if (!validStatusTuple(tuple) || !Array.isArray(row.operations)) {
+        throw new Error("status-operations.json has an invalid status binding");
+      }
+      const key = statusTupleKey(tuple);
+      if (key !== row.key || this.entries.has(key)) {
+        throw new Error("status-operations.json has duplicate or mismatched status binding");
+      }
+      const revision = Number(row.revision);
+      if (!Number.isSafeInteger(revision) || revision < -1) {
+        throw new Error("status-operations.json has an invalid revision");
+      }
+      const operations = row.operations.map((operation) => validStatusOperation(operation));
+      const entry = {
+        tuple: { ...tuple },
+        revision,
+        messageKey: row.messageKey ? validStatusMessageKey(row.messageKey) : null,
+        operations,
+        updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : 0,
+      };
+      if ((entry.revision >= 0) !== Boolean(entry.messageKey)) {
+        throw new Error("status-operations.json has an incomplete committed binding");
+      }
+      this.entries.set(key, entry);
+    }
+  }
+
+  lookup(tuple) {
+    const entry = this.entries.get(statusTupleKey(tuple));
+    return entry ? cloneStatusEntry(entry) : null;
+  }
+
+  // A resolved tuple may be discarded only once its corresponding inbound is
+  // no longer retained/admittable. Time/LRU order is unsafe: an old turn can
+  // receive a new edit while a newer retained turn would otherwise be evicted
+  // and allowed to create a duplicate visible status.
+  async pruneResolvedWithoutAdmission(isRetained) {
+    if (typeof isRetained !== "function") throw new Error("status admission predicate is required");
+    for (const [key, entry] of this.entries) {
+      if (entry.operations.some((item) => item.state === "pending")) continue;
+      if (!isRetained(entry.tuple)) this.entries.delete(key);
+    }
+    await this.#persist();
+  }
+
+  hasCapacityForNewTuple(tuple) {
+    return this.entries.has(statusTupleKey(tuple)) || this.entries.size < this.maxStatuses;
+  }
+
+  async reserve(tuple, operation, now = Date.now()) {
+    const key = statusTupleKey(tuple);
+    let entry = this.entries.get(key);
+    if (entry) {
+      // A later uncertain edit means this entire visible status is
+      // indeterminate. Even a previously committed key must not make the
+      // caller infer a usable status state until offline reconciliation.
+      if (entry.operations.some((item) => item.state === "pending")) {
+        throw statusError("outbound_outcome_unknown", 409, "an earlier status operation is unresolved for this turn");
+      }
+      const existing = entry.operations.find((item) => item.idempotencyKey === operation.idempotencyKey);
+      if (existing) {
+        if (!sameStatusOperation(existing, operation)) throw statusError("idempotency_payload_mismatch", 409, "status idempotency key is bound to a different operation");
+        return { entry: cloneStatusEntry(entry), deduplicated: true };
+      }
+      if (operation.kind === "create") {
+        throw statusError("status_already_created", 409, "a status message is already bound to this turn");
+      }
+      if (entry.revision < 0 || !entry.messageKey) throw statusError("status_binding_invalid", 409, "status binding is incomplete");
+      if (operation.revision !== entry.revision + 1) {
+        throw statusError("status_revision_conflict", 409, "status revision must strictly advance by one");
+      }
+    } else {
+      if (operation.kind !== "create" || operation.revision !== 0) {
+        throw statusError("status_not_created", 409, "status edits require a committed create for this turn");
+      }
+      entry = { tuple: { ...tuple }, revision: -1, messageKey: null, operations: [], updatedAt: now };
+      this.entries.set(key, entry);
+    }
+    entry.operations.push({ ...operation, state: "pending", createdAt: now });
+    entry.updatedAt = now;
+    await this.#persist();
+    return { entry: cloneStatusEntry(entry), deduplicated: false };
+  }
+
+  async complete(tuple, idempotencyKey, messageKey = null, now = Date.now()) {
+    const entry = this.entries.get(statusTupleKey(tuple));
+    const operation = entry?.operations.find((item) => item.idempotencyKey === idempotencyKey);
+    if (!entry || !operation || operation.state !== "pending") {
+      throw new Error("cannot complete an unknown or resolved status operation");
+    }
+    if (operation.kind === "create") {
+      entry.messageKey = validStatusMessageKey(messageKey);
+    } else if (!entry.messageKey) {
+      throw new Error("cannot complete an edit without a stored status message key");
+    }
+    operation.state = "committed";
+    entry.revision = operation.revision;
+    entry.updatedAt = now;
+    this.#trimOperations(entry);
+    await this.#persist();
+    return cloneStatusEntry(entry);
+  }
+
+  async resolvePending(idempotencyKey, resolution, messageKey = null, now = Date.now()) {
+    for (const [key, entry] of this.entries) {
+      const operation = entry.operations.find((item) => item.idempotencyKey === idempotencyKey);
+      if (!operation) continue;
+      if (operation.state !== "pending") throw new Error("status operation is already resolved");
+      if (resolution === "sent") return await this.complete(entry.tuple, idempotencyKey, messageKey, now);
+      if (resolution !== "not-sent") throw new Error("resolution must be `sent` or `not-sent`");
+      entry.operations = entry.operations.filter((item) => item !== operation);
+      entry.updatedAt = now;
+      if (entry.revision < 0 && entry.operations.length === 0) this.entries.delete(key);
+      await this.#persist();
+      return;
+    }
+    throw new Error(`no status operation exists for idempotency key ${idempotencyKey}`);
+  }
+
+  async #persist() {
+    const rows = [...this.entries].map(([key, value]) => ({ key, ...cloneStatusEntry(value) }));
+    await atomicWrite(this.file, `${JSON.stringify(rows)}\n`);
+  }
+
+  #trimOperations(entry) {
+    const committed = entry.operations.filter((item) => item.state === "committed");
+    if (committed.length <= this.maxCommittedOperations) return;
+    const retain = new Set(committed.slice(-this.maxCommittedOperations));
+    entry.operations = entry.operations.filter((item) => item.state === "pending" || retain.has(item));
+  }
+
+}
+
+function statusTupleKey(tuple) {
+  return JSON.stringify([tuple.accountId, tuple.chatId, tuple.inboundId]);
+}
+
+function validStatusTuple(value) {
+  return value && ["accountId", "chatId", "inboundId"].every((field) => typeof value[field] === "string" && value[field].length > 0 && value[field].length <= 512);
+}
+
+function validStatusMessageKey(value) {
+  if (!value || typeof value.id !== "string" || !value.id || typeof value.remoteJid !== "string" || !value.remoteJid || value.fromMe !== true) {
+    throw new Error("status message key must include id, remoteJid, and fromMe=true");
+  }
+  return {
+    id: value.id,
+    remoteJid: value.remoteJid,
+    fromMe: true,
+    ...(typeof value.participant === "string" && value.participant ? { participant: value.participant } : {}),
+  };
+}
+
+function validStatusOperation(value) {
+  if (!value || !["create", "edit"].includes(value.kind) || typeof value.idempotencyKey !== "string" || !value.idempotencyKey || typeof value.fingerprint !== "string" || !value.fingerprint || !Number.isSafeInteger(value.revision) || value.revision < 0 || !["pending", "committed"].includes(value.state)) {
+    throw new Error("status-operations.json has an invalid operation");
+  }
+  return { kind: value.kind, idempotencyKey: value.idempotencyKey, fingerprint: value.fingerprint, revision: value.revision, state: value.state, createdAt: Number(value.createdAt) || 0 };
+}
+
+function sameStatusOperation(left, right) {
+  return left.kind === right.kind && left.revision === right.revision && left.fingerprint === right.fingerprint;
+}
+
+function cloneStatusEntry(entry) {
+  return {
+    tuple: { ...entry.tuple },
+    revision: entry.revision,
+    messageKey: entry.messageKey ? { ...entry.messageKey } : null,
+    operations: entry.operations.map((item) => ({ ...item })),
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function statusError(code, statusCode, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
 }
