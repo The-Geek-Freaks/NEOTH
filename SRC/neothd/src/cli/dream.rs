@@ -473,11 +473,9 @@ async fn emit_dream_composed_at_with_lifecycle_signals(
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create dream WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-composed");
-    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
-        segment,
-        home.to_path_buf(),
-    )
-    .context("spawn completion-owning DREAM_COMPOSED WAL writer")?;
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+            .context("spawn completion-owning DREAM_COMPOSED WAL writer")?;
     #[cfg(test)]
     let writer = match ack_gate {
         Some(gate) => writer.with_test_ack_gate(gate),
@@ -563,7 +561,6 @@ async fn emit_dream_composed_at_with_lifecycle_signals(
     caller_lifecycle.disarm();
     result
 }
-
 
 struct DreamAuditCallerLifecycle {
     cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
@@ -900,18 +897,18 @@ mod tests {
         emit_dream_composed_at(home.path(), &dream_report(), Duration::from_secs(1))
             .await
             .expect("best-effort helper must complete a healthy writer before returning");
-        let entries = std::fs::read_dir(home.path().join("wal"))
-            .unwrap()
-            .count();
-        assert!(entries > 0, "completed standalone writer publishes its WAL segment");
+        let entries = std::fs::read_dir(home.path().join("wal")).unwrap().count();
+        assert!(
+            entries > 0,
+            "completed standalone writer publishes its WAL segment"
+        );
     }
 
     #[tokio::test]
     async fn dream_audit_absolute_deadline_aborts_pending_append_ack() {
         let home = tempdir().unwrap();
-        let gate = crate::wal::writer::TestAckGate::once(
-            crate::wal::events::EVENT_TYPE_DREAM_COMPOSED,
-        );
+        let gate =
+            crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED);
         let (writer_reaped_tx, writer_reaped_rx) = tokio::sync::oneshot::channel();
         let task = tokio::spawn({
             let home = home.path().to_path_buf();
@@ -966,9 +963,7 @@ mod tests {
         let retained_writer = append_admitted_rx
             .await
             .expect("real append must be admitted before the deadline fixture holds its writer");
-        let result = task
-            .await
-            .expect("deadline fixture supervisor must finish");
+        let result = task.await.expect("deadline fixture supervisor must finish");
         assert!(
             result
                 .expect_err("retained writer must exhaust the absolute deadline")
@@ -1011,12 +1006,15 @@ mod tests {
             .expect("writer owner supervisor must report terminal cleanup");
         drop(retained_writer);
         let wal_dir = home.path().join("wal");
-        let replacement = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-after-cancel");
+        let replacement =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-after-cancel");
         let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
             replacement,
             home.path().to_path_buf(),
         )
-        .expect("cancelled supervisor must release its real writer before another standalone writer");
+        .expect(
+            "cancelled supervisor must release its real writer before another standalone writer",
+        );
         drop(writer);
         completion
             .wait_bounded(Duration::from_secs(1))

@@ -1,6 +1,6 @@
 {
   "schema": "neoth.wave2480.bounded-owners-and-chat-diagnostics.v1",
-  "capturedUtc": "2026-10-06T22:34:25.1165966+00:00",
+  "capturedUtc": "2026-10-07T00:34:25.1165966+02:00",
   "baseProducer": "83a5d15207fc38cbedff83826f6974ba369a77ad",
   "status": "STATIC-REVIEWED-HOSTED-VALIDATION-PENDING",
   "changes": [
@@ -102,5 +102,12 @@
     "claudePolling": false,
     "hostedForThisBatch": "pending after publication",
     "releaseAccepted": false
+  },
+  "hostedFormat": {
+    "producer": "f343356342119701c518e3cd23fdd7ac8527f6df",
+    "run": "37541761551",
+    "artifactId": "11449570544",
+    "rootCustodySha256": "1A69C982996E2AC1595C4F3A5BCE712CB73B0CFF2DA2C8822615344443DB2570",
+    "status": "Original hosted patch admitted; two source postimage blobs verified; executable validation pending on next producer"
   }
 }

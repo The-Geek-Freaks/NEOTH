@@ -54,7 +54,10 @@ fn parse_outbound_wait_secs(value: &str) -> std::result::Result<u64, String> {
 }
 
 fn validate_outbound_wait_secs(secs: u64) -> Result<u64> {
-    anyhow::ensure!(secs > 0 && secs <= MAX_OUTBOUND_WAIT_SECS, "wait-secs must be in 1..={MAX_OUTBOUND_WAIT_SECS}");
+    anyhow::ensure!(
+        secs > 0 && secs <= MAX_OUTBOUND_WAIT_SECS,
+        "wait-secs must be in 1..={MAX_OUTBOUND_WAIT_SECS}"
+    );
     Ok(secs)
 }
 
@@ -109,7 +112,8 @@ where
                 anyhow::ensure!(
                     status.operation_id == operation_id
                         && status.task_id == task_id
-                        && status.state == crate::cluster::membership::OutboundTaskDelegateState::Indeterminate,
+                        && status.state
+                            == crate::cluster::membership::OutboundTaskDelegateState::Indeterminate,
                     "outbound status is not the submitted indeterminate operation"
                 );
                 return Ok(OutboundCliWaitOutcome::Indeterminate(status));
@@ -2153,14 +2157,16 @@ async fn run_task_delegate_assignment(
                     OutputFormat::Jsonl => println!("{}", serde_json::to_string(&outcome)?),
                     OutputFormat::Table => match outcome {
                         OutboundCliWaitOutcome::Result(result) => println!(
-                            "operation_id={} outbound_task_result={:?}", result.operation_id, result.body
+                            "operation_id={} outbound_task_result={:?}",
+                            result.operation_id, result.body
                         ),
                         OutboundCliWaitOutcome::Indeterminate(status) => println!(
                             "operation_id={} outbound_task_state=indeterminate recovery=outbound-result",
                             status.operation_id
                         ),
                         OutboundCliWaitOutcome::WaitExpired { operation_id } => println!(
-                            "operation_id={} outbound_task_wait=expired recovery=outbound-result", operation_id
+                            "operation_id={} outbound_task_wait=expired recovery=outbound-result",
+                            operation_id
                         ),
                     },
                 }
@@ -7354,8 +7360,8 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test]
     async fn outbound_wait_calls_the_scripted_dispatch_once_and_returns_its_exact_result() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_dispatch = Arc::clone(&calls);
@@ -7367,7 +7373,10 @@ mod tests {
             move |submitted| {
                 let calls = Arc::clone(&calls_for_dispatch);
                 async move {
-                    assert_eq!((submitted.operation_id.as_str(), submitted.task_id.as_str()), ("wait-op", "wait-task"));
+                    assert_eq!(
+                        (submitted.operation_id.as_str(), submitted.task_id.as_str()),
+                        ("wait-op", "wait-task")
+                    );
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(wait_test_receipt("wait-op", "wait-task"))
                 }
@@ -7388,8 +7397,8 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test]
     async fn outbound_wait_returns_indeterminate_without_redispatch() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_dispatch = Arc::clone(&calls);
@@ -7412,14 +7421,16 @@ mod tests {
         .expect("indeterminate result");
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(matches!(outcome, OutboundCliWaitOutcome::Indeterminate(status) if status.operation_id == "wait-indeterminate"));
+        assert!(
+            matches!(outcome, OutboundCliWaitOutcome::Indeterminate(status) if status.operation_id == "wait-indeterminate")
+        );
     }
 
     #[cfg(feature = "cluster")]
     #[tokio::test(start_paused = true)]
     async fn outbound_wait_timeout_keeps_the_operation_id_for_read_only_recovery() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::sync::oneshot;
 
         let calls = Arc::new(AtomicUsize::new(0));
@@ -7462,8 +7473,8 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test(start_paused = true)]
     async fn outbound_wait_does_not_observe_or_accept_a_late_result_after_expiry() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::sync::oneshot;
 
         let observations = Arc::new(AtomicUsize::new(0));
