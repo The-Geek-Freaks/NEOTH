@@ -110,6 +110,84 @@ pub(crate) enum CompanionChatTurnError {
     Indeterminate,
 }
 
+// Typed contexts retain the original cause without exposing its display text.
+#[derive(Clone, Copy, Debug)]
+enum PlainChatFailureStage {
+    Request,
+    Consent,
+    Preparation,
+    Engine,
+    Output,
+    Terminal,
+    Response,
+}
+
+impl PlainChatFailureStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Consent => "consent",
+            Self::Preparation => "preparation",
+            Self::Engine => "engine",
+            Self::Output => "output",
+            Self::Terminal => "terminal",
+            Self::Response => "response",
+        }
+    }
+}
+
+impl std::fmt::Display for PlainChatFailureStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl std::error::Error for PlainChatFailureStage {}
+
+#[cfg(any(test, feature = "cluster"))]
+fn companion_failure_diagnostics(error: &anyhow::Error) -> (&'static str, &'static str) {
+    use crate::wal::error::WalError;
+
+    let stage = error
+        .downcast_ref::<PlainChatFailureStage>()
+        .map(|stage| stage.label())
+        .unwrap_or("unknown");
+    let kind = if let Some(cause) = error.downcast_ref::<WalError>() {
+        match cause {
+            WalError::WriterClosed => "wal_writer_closed",
+            WalError::WriterBackpressured { .. } => "wal_backpressure",
+            WalError::QuotaExceeded { .. } => "wal_quota",
+            WalError::Io(_) => "wal_io",
+            WalError::Hlc(_) => "wal_hlc",
+            WalError::Header(_) => "wal_header",
+            WalError::PayloadTooLarge(..) => "wal_payload",
+            WalError::CompactionAuthFailed { .. } => "wal_auth",
+            WalError::CompactionStateUnavailable { .. } => "wal_state",
+            WalError::PolicyNotImplemented { .. } => "wal_policy",
+            _ => "wal_other",
+        }
+    } else if let Some(cause) = error.downcast_ref::<std::io::Error>() {
+        match cause.kind() {
+            std::io::ErrorKind::TimedOut => "io_timeout",
+            std::io::ErrorKind::PermissionDenied => "io_permission",
+            _ => "io_other",
+        }
+    } else if let Some(cause) = error.downcast_ref::<reqwest::Error>() {
+        if cause.is_timeout() {
+            "http_timeout"
+        } else if cause.is_connect() {
+            "http_connect"
+        } else if cause.is_status() {
+            "http_status"
+        } else {
+            "http_other"
+        }
+    } else {
+        "unknown"
+    };
+    (stage, kind)
+}
+
 impl DaemonChatRuntime {
     /// Mobile companion entrypoint. It reuses the daemon's only admission,
     /// provider snapshot, durable-consent, WAL and close/drain path; callers
@@ -147,6 +225,12 @@ impl DaemonChatRuntime {
             )
             .await;
         cancellation.close();
+        if std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1") {
+            if let Err(error) = &result {
+                let (stage, kind) = companion_failure_diagnostics(error);
+                eprintln!("NEOTH_COMPANION_CHAT_FAILURE={stage}:{kind}");
+            }
+        }
         match result {
             Ok(response) => Ok(response),
             Err(error)
@@ -586,10 +670,11 @@ impl DaemonChatRuntime {
         effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
         tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
     ) -> Result<DaemonPlainChatResponse> {
-        validate_request(&request)?;
+        validate_request(&request).context(PlainChatFailureStage::Request)?;
         let config = accepted.config();
         crate::consent::ensure_all_still_granted(&self.selected_home, config.as_ref())
-            .context("recheck durable consent for daemon chat turn")?;
+            .context("recheck durable consent for daemon chat turn")
+            .context(PlainChatFailureStage::Consent)?;
 
         let mut sink = PlainChatSink::default();
         let prepared = crate::cli::chat::prepare_daemon_plain_chat_turn(
@@ -602,9 +687,13 @@ impl DaemonChatRuntime {
             cancellation.clone(),
             &mut sink,
         )
-        .await?;
+        .await
+        .context(PlainChatFailureStage::Preparation)?;
         let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepared else {
-            anyhow::bail!("daemon plain chat unexpectedly completed during preparation");
+            return Err(anyhow::anyhow!(
+                "daemon plain chat unexpectedly completed during preparation"
+            )
+            .context(PlainChatFailureStage::Preparation));
         };
         let engine_result = chat_turn_pipeline::run_prepared_chat_turn_with_effect_gate(
             &mut prepared,
@@ -617,14 +706,16 @@ impl DaemonChatRuntime {
         )
         .await;
         cancellation.close();
-        let deferred = engine_result?;
+        let deferred = engine_result.context(PlainChatFailureStage::Engine)?;
         if let Some(output) = deferred {
-            sink.accept_output(output)?;
+            sink.accept_output(output)
+                .context(PlainChatFailureStage::Output)?;
         }
         let mut terminal = prepared
             .deferred_terminal
             .take()
-            .context("daemon plain chat engine returned without a success terminal")?;
+            .context("daemon plain chat engine returned without a success terminal")
+            .context(PlainChatFailureStage::Terminal)?;
         let feedback_eligible_agent_receipt = prepared.take_feedback_eligible_agent_receipt();
         self.attach_response_feedback_after_flush(
             &mut terminal,
@@ -636,10 +727,13 @@ impl DaemonChatRuntime {
             records: sink.records,
             terminal: terminal.into(),
         };
-        let encoded = serde_json::to_vec(&response).context("serialize daemon chat response")?;
+        let encoded = serde_json::to_vec(&response)
+            .context("serialize daemon chat response")
+            .context(PlainChatFailureStage::Response)?;
         validate_daemon_plain_chat_response(&response, encoded.len())
             .map_err(anyhow::Error::msg)
-            .context("validate daemon chat response bounds")?;
+            .context("validate daemon chat response bounds")
+            .context(PlainChatFailureStage::Response)?;
         Ok(response)
     }
 }
@@ -835,6 +929,39 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[test]
+    fn companion_failure_diagnostics_are_closed_and_preserve_wal_cause() {
+        let error = anyhow::Error::new(crate::wal::error::WalError::WriterClosed)
+            .context("private canary: home, credentials and request must not escape")
+            .context(PlainChatFailureStage::Engine);
+        assert_eq!(
+            companion_failure_diagnostics(&error),
+            ("engine", "wal_writer_closed")
+        );
+        assert!(matches!(
+            error.downcast_ref::<crate::wal::error::WalError>(),
+            Some(crate::wal::error::WalError::WriterClosed)
+        ));
+        let io_error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private file path",
+        ))
+        .context(PlainChatFailureStage::Preparation);
+        assert_eq!(
+            companion_failure_diagnostics(&io_error),
+            ("preparation", "io_permission")
+        );
+    }
+
+    #[test]
+    fn companion_failure_diagnostics_discard_unclassified_error_text() {
+        let error = anyhow::anyhow!("private token: wal_writer_closed http_timeout")
+            .context("NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed");
+        assert_eq!(companion_failure_diagnostics(&error), ("unknown", "unknown"));
+        let error = error.context(PlainChatFailureStage::Response);
+        assert_eq!(companion_failure_diagnostics(&error), ("response", "unknown"));
+    }
 
     struct RuntimeProvider {
         calls: AtomicUsize,

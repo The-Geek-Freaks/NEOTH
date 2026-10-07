@@ -45,6 +45,18 @@ RUST_PANIC_MARKERS = (b"[neoth panic]", b"panicked at")
 RUST_PANIC_SITE_RE = re.compile(
     rb"(?:^|\n)NEOTH_PANIC_SITE=([A-Za-z0-9_.-]{1,96}:[1-9][0-9]{0,6})\n"
 )
+CHAT_FAILURE_STAGES = frozenset((
+    "request", "consent", "preparation", "engine", "output", "terminal", "response", "unknown",
+))
+CHAT_FAILURE_KINDS = frozenset((
+    "wal_writer_closed", "wal_backpressure", "wal_quota", "wal_io", "wal_hlc", "wal_header",
+    "wal_payload", "wal_auth", "wal_state", "wal_policy", "wal_other",
+    "io_timeout", "io_permission", "io_other", "http_timeout", "http_connect", "http_status",
+    "http_other", "unknown",
+))
+CHAT_FAILURE_RE = re.compile(
+    rb"(?m)^NEOTH_COMPANION_CHAT_FAILURE=([a-z_]{1,24}):([a-z_]{1,24})\n"
+)
 PAIR_PHASES = (
     "bootstrap_started", "bootstrap_ready", "topic_joined", "awaiting_connection",
     "connection_received", "psk_verified", "proof_read", "response_written",
@@ -125,6 +137,7 @@ class ShutdownMarkerCollector:
         self.rust_panic_observed = False
         self.rust_panic_site: str | None = None
         self.rust_panic_floor: int | None = None
+        self.chat_failure: dict[str, str] | None = None
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.connect_observed = {name: False for name, _ in CONNECT_MARKERS}
@@ -165,6 +178,15 @@ class ShutdownMarkerCollector:
                         for site in RUST_PANIC_SITE_RE.finditer(window):
                             if window_start + site.start() >= self.rust_panic_floor:
                                 self.rust_panic_site = site.group(1).decode("ascii")
+                                break
+                    if self.chat_failure is None:
+                        for failure in CHAT_FAILURE_RE.finditer(window):
+                            # A retained tail beginning mid-line cannot prove a line boundary.
+                            if window_start > 0 and failure.start() == 0:
+                                continue
+                            stage, kind = (part.decode("ascii") for part in failure.groups())
+                            if stage in CHAT_FAILURE_STAGES and kind in CHAT_FAILURE_KINDS:
+                                self.chat_failure = {"stage": stage, "kind": kind}
                                 break
                     for name, marker in PAIR_MARKERS:
                         if marker in window:
@@ -224,6 +246,7 @@ class ShutdownMarkerCollector:
                 "markers": dict(self.observed),
                 "rust_panic_observed": self.rust_panic_observed,
                 "rust_panic_site": self.rust_panic_site,
+                "chat_failure": dict(self.chat_failure) if self.chat_failure is not None else None,
                 "pair_markers": dict(self.pair_observed),
                 "discovery_markers": dict(self.discovery_observed),
                 "connect_markers": dict(self.connect_observed),

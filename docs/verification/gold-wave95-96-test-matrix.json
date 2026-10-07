@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2495-SOURCE-REPAIRED-HOSTED-PENDING",
+  "status": "W2497-DIAGNOSTICS-SOURCE-REVIEWED-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 401938,
-    "sha256": "82E8223D6F51BF0BD67CFD8BC42125B9DDAFC923933D48855546ED772E1092EB"
+    "bytes": 402146,
+    "sha256": "1F615985645CC1BFC4CA85FBB2DB2D3F9833C3BEFF7F743D159D0744669FEC54"
   },
-  "sourceInputs": 2195,
+  "sourceInputs": 2196,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1758,13 +1758,13 @@
     {
       "test": "daemon::chat_runtime::tests::admitted_plain_daemon_turn_preserves_one_nonzero_wal_session",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::chat_runtime::tests::generic_gui_lifecycle_remains_unattributed_without_an_admitted_turn",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     },
     {
@@ -2802,7 +2802,7 @@
     {
       "test": "daemon::chat_runtime::tests::w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     },
     {
@@ -8076,7 +8076,7 @@
     {
       "test": "daemon::chat_runtime::tests::w703_admitted_gui_session_scopes_real_transcript_and_isolates_incognito",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     },
     {
@@ -16513,7 +16513,7 @@
     {
       "test": "daemon::chat_runtime::tests::companion_revoke_between_effect_intent_and_provider_start_launches_nothing",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     },
     {
@@ -16970,6 +16970,18 @@
       "test": "daemon::companion_runtime::tests::jm04_actual_owner_resolution_allows_exactly_one_terminal_writer_after_success",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
       "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::chat_runtime::tests::companion_failure_diagnostics_are_closed_and_preserve_wal_cause",
+      "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::chat_runtime::tests::companion_failure_diagnostics_discard_unclassified_error_text",
+      "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "sourceSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
       "junitClass": "neoth"
     }
   ],
@@ -17688,8 +17700,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 72863,
-      "sha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC"
+      "bytes": 77626,
+      "sha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -78549,6 +78561,62 @@
       }
     ],
     "note": "One borrowed reference repairs hosted bridge E0308; prior exact82 and partial39+22 retained under52aa; live/native/device/release acceptance pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2497ChatFailureDiagnostics": {
+    "base": "b29ba382c4e951d934d57fe5a8dba2deaa4b28d4",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 58133,
+        "sha256": "638A1336146970EEA12C89D3226DC40A647145D3FEBFCEE4DCF78C9FD12CAAC5",
+        "blob": "beddeaf10620f833772f0abac0856b30d41bea93"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 14663,
+        "sha256": "4C6FB943D387EC17C349DEB6F5E5C3E8144D3FC8D9D806ED0FE048AA1EFD6C9A",
+        "blob": "618d143c3289614f9399fce205405b99cbf2f1c0"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 38781,
+        "sha256": "1A574F0AE5E1956CD761E07DA6020B5DDCC8DFEE2EFEEB516DE1EE3EA21F21A7",
+        "blob": "19652ff32aff37e73d3f0626b789c3afcea3b08d"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 10169,
+        "sha256": "55C46CDA168BA7BE90F5A2291AADEDEFBD6F461E8A33E3FB32942281C7879B6E",
+        "blob": "38a0e75817cdb66a97c8d02cf828dd141ee56009"
+      },
+      {
+        "path": "docs/verification/gold-wave2497-chat-failure-diagnostics.json",
+        "bytes": 2959,
+        "sha256": "6F3F71D653DBA43195D2E68470A17BDF46340FC5FCFCEA07C535E3749AEEFD07",
+        "blob": "72aaf9abb0f258fd710099b12ddf65b26eb4dd40"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 19936,
+        "sha256": "5388EBA9E6278E3092AD88051ADB47AED7AD968E4FA037652A8B34F578D00DAB",
+        "blob": "f4bdec00a90eda945b0e081c31218bd6ed988690"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2484259,
+        "sha256": "A7B982CB0C2CE9F1120AEABA86A1962782BB4284DD13E1B52953E5FDE8D4B448",
+        "blob": "62dad790f8da047d4f06f1b5792837cf410c75cf"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+        "bytes": 77626,
+        "sha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC",
+        "blob": "165c59540fc4edf8f2a7ff207982513f6ac8ce6e"
+      }
+    ],
+    "note": "Content-free failure localization only; mobile chat cause remains unproven; 92 Rust and 23 collector cases registered; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -46,10 +46,10 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 40, "no_cluster": 1, "bridge": 10}
+        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 42, "no_cluster": 1, "bridge": 10}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 22,
+            "collector": 23,
             "sources": 50,
             "groups": expected_groups,
         })
@@ -101,6 +101,7 @@ class SelectionContractTests(unittest.TestCase):
             "test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters",
             "test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once",
             "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once",
+            "test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

@@ -1,0 +1,70 @@
+{
+  "schema": "neoth.gold.wave2497.chat-failure-diagnostics.v1",
+  "status": "SOURCE-REVIEWED-HOSTED-PENDING-CHAT-CAUSE-UNPROVEN",
+  "base": "b29ba382c4e951d934d57fe5a8dba2deaa4b28d4",
+  "failedInterop": {
+    "run": "37614438523",
+    "job": "112769276357",
+    "attempt": 1,
+    "nativeBridgeBuilt": true,
+    "pairAndStatusPassed": true,
+    "chatTerminal": "indeterminate",
+    "countedChatCompletionsDelta": 0,
+    "providerCounterCoversOnlyExpectedPath": true,
+    "v2LiveToolJourneyReached": false,
+    "serveExitCode": 1,
+    "walDrained": true,
+    "fullAdmission": false
+  },
+  "changes": [
+    "Preserve typed plain-chat failure stage and cause for opt-in content-free companion diagnostics.",
+    "Retain only the first complete line with an allowlisted stage and kind in the bounded hosted collector.",
+    "Keep public terminal mapping, timeout downcasts, consent, admission, execution and cleanup behavior unchanged."
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "baseSha256": "0E1DC58D79AE2CF7CF347664570C649F8D60CD22A2B32E26C4889B223D7E53FC",
+      "candidateSha256": "E0982ADB43D722F6FFE6A1DE512BAA9653C9B8F846561F68F6F9BB90DDC0FEAC"
+    },
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseSha256": "598330AF6058FDAA6DEE6C6EAA906205E84290C0A71F04BD7866AAB1E851D1D9",
+      "candidateSha256": "638A1336146970EEA12C89D3226DC40A647145D3FEBFCEE4DCF78C9FD12CAAC5"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseSha256": "ED8F2E61870A0A95AC74FF0F9F52FC4357C33E9D68534EB1333A1A8B0F30F087",
+      "candidateSha256": "1A574F0AE5E1956CD761E07DA6020B5DDCC8DFEE2EFEEB516DE1EE3EA21F21A7"
+    },
+    {
+      "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "baseSha256": "B629310D014030316AFB6181D0D3B498D6B37FF3832095A96A65A37277815CB0",
+      "candidateSha256": "4C6FB943D387EC17C349DEB6F5E5C3E8144D3FC8D9D806ED0FE048AA1EFD6C9A"
+    },
+    {
+      "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+      "baseSha256": "41E37858AD75470D815DDE956C05ED57A6AB99E2569E008F82A3563860246484",
+      "candidateSha256": "55C46CDA168BA7BE90F5A2291AADEDEFBD6F461E8A33E3FB32942281C7879B6E"
+    }
+  ],
+  "registration": {
+    "portableRust": 2826,
+    "mobileRust": 92,
+    "collector": 23,
+    "mobileSources": 50,
+    "ffiExports": 10
+  },
+  "checks": {
+    "staticReview": "Root serial review; no independent agent under workstation CPU restriction",
+    "newRustTestSources": 2,
+    "newCollectorTestSources": 1,
+    "localExecutableValidationRan": false,
+    "actualChatRepairProven": false,
+    "actualLiveToolActivityAccepted": false,
+    "nativeDeviceAccepted": false,
+    "releaseAccepted": false,
+    "slintChanged": false
+  },
+  "localExecutionLimit": "Serial bounded text/JSON/Git/GitHub only; command process Idle and affinity 1; no local runtimes or parallel agents."
+}

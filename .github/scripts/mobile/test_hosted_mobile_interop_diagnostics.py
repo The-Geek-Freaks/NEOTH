@@ -53,6 +53,39 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free(self) -> None:
+        marker = b"NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed\n"
+        expected = {"stage": "engine", "kind": "wal_writer_closed"}
+        for split in range(1, len(marker)):
+            collector = INTEROP.ShutdownMarkerCollector(ChunkStream([
+                b"private-canary\n" + marker[:split], marker[split:],
+                b"NEOTH_COMPANION_CHAT_FAILURE=response:unknown\n",
+            ]))
+            snapshot = collector.snapshot(5)
+            self.assertTrue(snapshot["reader_closed"])
+            self.assertFalse(snapshot["reader_error"])
+            self.assertEqual(snapshot["chat_failure"], expected)
+            self.assertNotIn("private-canary", repr(snapshot))
+        invalid = (
+            b"private-prefix" + marker,
+            b"NEOTH_COMPANION_CHAT_FAILURE=private:wal_writer_closed\n",
+            b"NEOTH_COMPANION_CHAT_FAILURE=engine:private_canary\n",
+            b"NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed_suffix\n",
+            b"NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed/private\n",
+        )
+        for raw in invalid:
+            snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([raw])).snapshot(5)
+            self.assertIsNone(snapshot["chat_failure"])
+            self.assertNotIn("private", repr(snapshot))
+        snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([invalid[1] + marker])).snapshot(5)
+        self.assertEqual(snapshot["chat_failure"], expected)
+        # Put a marker-shaped suffix exactly at the retained tail boundary.
+        overlap = collector.overlap
+        fake_line = b"private-prefix" + marker
+        raw = fake_line + b"x" * (overlap - len(marker))
+        snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([raw, b"\n"])).snapshot(5)
+        self.assertIsNone(snapshot["chat_failure"])
+
     def test_pair_rpc_parse_subtype_uses_complete_fixed_display_strings(self) -> None:
         delimiter = b"companion v3 daemon unavailable: malformed RPC response"
         header = b"companion v3 daemon unavailable: malformed RPC response header"
