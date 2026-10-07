@@ -2685,7 +2685,9 @@ mod tests {
             id,
             DeviceListenerOwner {
                 stop_tx,
-                task: Some(tokio::spawn(async { anyhow::bail!("unproven listener teardown") })),
+                task: Some(tokio::spawn(async {
+                    anyhow::bail!("unproven listener teardown")
+                })),
             },
         )]));
         assert!(join_retained_device_listener(&tasks, id).await.is_err());
