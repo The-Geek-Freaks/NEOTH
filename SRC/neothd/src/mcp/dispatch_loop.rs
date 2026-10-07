@@ -21,8 +21,10 @@
 //! keep its full request-building logic + this module can unit-test
 //! the loop against a mock provider.
 
+use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -43,6 +45,154 @@ use crate::wal::writer::WalWriterHandle;
 /// summarise → write reply); operators who need more chain depth lift
 /// via [`run_tool_loop_with_cap`].
 pub const DEFAULT_MAX_ITERATIONS: u32 = 5;
+
+/// The mobile/channel projection is intentionally a small lossy view of facts
+/// already decided by dispatch.  It is neither an audit stream nor a control
+/// plane for tool execution.
+pub const MAX_TOOL_ACTIVITY_ROWS: usize = 16;
+pub const MAX_TOOL_ACTIVITY_LABEL_BYTES: usize = 96;
+pub const MAX_TOOL_ACTIVITY_TURN_ID_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolActivityPhase { Started, Succeeded, Failed, Rejected, Unknown }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolActivity {
+    pub turn_id: String,
+    pub event_seq: u64,
+    pub ordinal: u32,
+    pub phase: ToolActivityPhase,
+    pub label: String,
+    /// This first producer deliberately has no detail leaf.
+    pub detail: Option<String>,
+}
+
+#[derive(Debug)]
+struct ToolActivityState {
+    next_sequence: u64,
+    next_ordinal: u32,
+    events: VecDeque<ToolActivity>,
+    incomplete: bool,
+}
+
+/// Opt-in, nonblocking, per-authenticated-turn observer.  Construction
+/// refuses an invalid identity instead of truncating it, because the identity
+/// is an authentication boundary and must remain exact.
+#[derive(Debug, Clone)]
+pub struct ToolActivitySink {
+    turn_id: String,
+    state: Arc<Mutex<ToolActivityState>>,
+    contention_or_loss: Arc<AtomicBool>,
+}
+
+impl ToolActivitySink {
+    pub fn new_authenticated(turn_id: String) -> std::result::Result<Self, &'static str> {
+        if turn_id.is_empty() || turn_id.len() > MAX_TOOL_ACTIVITY_TURN_ID_BYTES {
+            return Err("tool activity turn identity must be nonempty and at most 128 UTF-8 bytes");
+        }
+        Ok(Self {
+            turn_id,
+            state: Arc::new(Mutex::new(ToolActivityState {
+                next_sequence: 1,
+                next_ordinal: 1,
+                events: VecDeque::with_capacity(MAX_TOOL_ACTIVITY_ROWS),
+                incomplete: false,
+            })),
+            contention_or_loss: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub(crate) fn try_observe(&self, call: &ParsedToolCall) -> Option<ToolActivityCall> {
+        let Ok(mut state) = self.state.try_lock() else {
+            self.contention_or_loss.store(true, Ordering::Relaxed);
+            return None;
+        };
+        if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS {
+            state.incomplete = true;
+            return None;
+        }
+        let ordinal = state.next_ordinal;
+        state.next_ordinal = state.next_ordinal.saturating_add(1);
+        Some(ToolActivityCall {
+            sink: self.clone(),
+            ordinal,
+            label: safe_tool_activity_label(call),
+            started: AtomicBool::new(false),
+            terminal: AtomicBool::new(false),
+        })
+    }
+
+    fn try_emit(&self, ordinal: u32, phase: ToolActivityPhase, label: &str) {
+        let Ok(mut state) = self.state.try_lock() else {
+            self.contention_or_loss.store(true, Ordering::Relaxed);
+            return;
+        };
+        if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS || label.len() > MAX_TOOL_ACTIVITY_LABEL_BYTES {
+            state.incomplete = true;
+            return;
+        }
+        let event_seq = state.next_sequence;
+        state.next_sequence = state.next_sequence.saturating_add(1);
+        state.events.push_back(ToolActivity {
+            turn_id: self.turn_id.clone(), event_seq, ordinal, phase,
+            label: label.to_owned(), detail: None,
+        });
+    }
+
+    pub fn snapshot(&self) -> (Vec<ToolActivity>, bool) {
+        let Ok(state) = self.state.try_lock() else { return (Vec::new(), true); };
+        (state.events.iter().cloned().collect(), state.incomplete || self.contention_or_loss.load(Ordering::Relaxed))
+    }
+}
+
+/// Per-call RAII observation.  It is allocated before gate entry but cannot
+/// publish `Started` until the client reaches the post-permit write edge.
+/// Dropping while a write/read future is outstanding settles the visible fact
+/// as `Unknown`; it never touches the real result, audit, WAL or cancellation.
+#[derive(Debug)]
+pub(crate) struct ToolActivityCall {
+    sink: ToolActivitySink,
+    ordinal: u32,
+    label: String,
+    started: AtomicBool,
+    terminal: AtomicBool,
+}
+
+impl ToolActivityCall {
+    pub(crate) fn started_at_write_edge(&self) {
+        if !self.started.swap(true, Ordering::AcqRel) { self.sink.try_emit(self.ordinal, ToolActivityPhase::Started, &self.label); }
+    }
+    pub(crate) fn settled_from_result(&self, is_error: bool) {
+        if self.started.load(Ordering::Acquire) && !self.terminal.swap(true, Ordering::AcqRel) {
+            self.sink.try_emit(self.ordinal, if is_error { ToolActivityPhase::Failed } else { ToolActivityPhase::Succeeded }, &self.label);
+        }
+    }
+}
+
+impl Drop for ToolActivityCall {
+    fn drop(&mut self) {
+        if !self.terminal.swap(true, Ordering::AcqRel) {
+            self.sink.try_emit(self.ordinal, if self.started.load(Ordering::Acquire) { ToolActivityPhase::Unknown } else { ToolActivityPhase::Rejected }, &self.label);
+        }
+    }
+}
+
+fn safe_tool_activity_label(call: &ParsedToolCall) -> String {
+    match (call.server.as_str(), call.tool.as_str()) {
+        ("filesystem", "read_file") => "Read file".to_owned(),
+        ("filesystem", "write_file") => "Write file".to_owned(),
+        ("filesystem", "list_directory") => "List files".to_owned(),
+        ("neoth-codegraph", "codegraph_recall_v1") => "Search code".to_owned(),
+        _ => "Tool call".to_owned(),
+    }
+}
+
+fn begin_tool_activity_for_parsed_call(
+    sink: Option<&ToolActivitySink>,
+    call: &ParsedToolCall,
+) -> Option<ToolActivityCall> {
+    sink.and_then(|sink| sink.try_observe(call))
+}
 
 /// Compact per-call record accumulated while the dispatch loop runs.
 /// Passed to `skills::auto_extract::maybe_extract_skill` so the distilling
@@ -313,6 +463,7 @@ where
         enrichment_selectors,
         impact_policy,
         requested_context_policy,
+        None,
     )
     .await
 }
@@ -393,6 +544,8 @@ pub(crate) async fn run_tool_loop_with_budget_and_skill_policy<D, P>(
     // W59: accepted once at the outer turn boundary; never reload config in
     // the provider loop or in dispatch.
     requested_context_policy: crate::config::RequestedContextPolicy,
+    // Optional mobile/channel projection; default callers retain no observer.
+    activity_sink: Option<&ToolActivitySink>,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -641,6 +794,10 @@ where
         let mut iteration_has_tool_error_output = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
+            // Reserve once for every parsed call before scope, inspection,
+            // budget and permit gates. Any rejected outer branch drops this
+            // guard as `Rejected`; it still cannot fabricate `Started`.
+            let activity = begin_tool_activity_for_parsed_call(activity_sink, call);
             if max_tool_calls.is_some_and(|budget| {
                 u64::from(successful_calls) + u64::from(failed_calls) >= budget
             }) {
@@ -1219,6 +1376,7 @@ where
                 &enrichment_selectors,
                 impact_policy,
                 requested_context_policy,
+                activity,
             )
             .await
             {
@@ -2204,6 +2362,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     enrichment_selectors: &[crate::config::ConfiguredMcpPathRead],
     impact_policy: crate::config::CodeMapImpactPolicy,
     requested_context_policy: crate::config::RequestedContextPolicy,
+    activity: Option<ToolActivityCall>,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -2318,6 +2477,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
                         mcp_ifc,
                         turn_effect_gate.clone(),
                         pre_tool_use,
+                        activity.as_ref(),
                     )
                     .await
                 }
@@ -2376,6 +2536,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         mcp_ifc,
         turn_effect_gate,
         pre_tool_use,
+        activity.as_ref(),
     )
     .await
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
@@ -2472,6 +2633,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         &[],
         impact_policy,
         requested_context_policy,
+        None,
     )
     .await
 }
@@ -3019,6 +3181,18 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn contended_activity_view_is_sticky_loss_without_a_call_handle() {
+        let sink = ToolActivitySink::new_authenticated("contended-turn".into()).unwrap();
+        let call = ParsedToolCall { server: "filesystem".into(), tool: "read_file".into(), arguments: serde_json::json!({}) };
+        let held = sink.state.lock().unwrap();
+        assert!(begin_tool_activity_for_parsed_call(Some(&sink), &call).is_none());
+        drop(held);
+        let (events, incomplete) = sink.snapshot();
+        assert!(events.is_empty());
+        assert!(incomplete);
+    }
+
     fn model_reply(value: &str) -> crate::pipeline::RenderedUntrustedContext {
         render_model_output(value, 1, "test")
     }
@@ -3125,6 +3299,7 @@ mod tests {
             crate::config::CodeMapConfig::default()
                 .requested_context_policy()
                 .expect("default requested-context policy"),
+            None,
         )
         .await
         .err()
@@ -3160,11 +3335,13 @@ mod tests {
         let mut compaction_budget = CompactionBudget::default();
         let once = crate::hooks::SessionOnceGuard::new();
 
-        let outcome = run_tool_loop_with_budget(
+        let activity_sink = ToolActivitySink::new_authenticated("actual-loop-ifc-reject".into()).unwrap();
+        let outcome = run_tool_loop_with_budget_and_skill_policy(
             &mut driver,
             "do not disclose private content".into(),
             &servers,
             AutonomyLevel::Full,
+            None,
             None,
             None,
             &McpToolScope::default(),
@@ -3196,6 +3373,7 @@ mod tests {
             crate::config::CodeMapConfig::default()
                 .requested_context_policy()
                 .expect("default requested context policy"),
+            Some(&activity_sink),
         )
         .await
         .expect("IFC refusal is rendered as a failed tool result");
@@ -3212,6 +3390,11 @@ mod tests {
         assert_eq!(outcome.tool_call_records[0].tool, "read");
         assert!(!outcome.tool_call_records[0].success);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
+        let (events, incomplete) = activity_sink.snapshot();
+        assert!(!incomplete);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].phase, ToolActivityPhase::Rejected);
+        assert_eq!(events[0].label, "Tool call");
     }
 
     /// A private home whose HMAC identity lets SmartApprove verify and pin the

@@ -4041,6 +4041,76 @@ async fn companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audi
 
 #[cfg(feature = "cluster")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn companion_pair_mint_proven_deadline_returns_503_and_keeps_audit_listener_live() {
+    let home = tempdir().expect("create deadline listener home");
+    let fixture = companion_pair_listener_fixture(home.path()).await;
+    fixture
+        .runtime
+        .set_next_audit_pair_readiness_for_test(
+            crate::daemon::companion_runtime::AuditPairReadinessTestOutcome::DeadlineAfterOwnerStop,
+        )
+        .await;
+
+    let token = init_rpc_token(home.path()).expect("mint same-user RPC token");
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: fixture.writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        membership: None,
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        conversation_runtime: None,
+        companion_runtime: Some(Arc::clone(&fixture.runtime)),
+        webchat: None,
+        updater_status: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state)
+        .await
+        .expect("bind real audit-RPC listener");
+    let _endpoint_owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let mint = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        companion_v3_mint_pair(
+            home.path(),
+            crate::daemon::companion_protocol::CompanionScope::StatusRead,
+        ),
+    )
+    .await
+    .expect("proven deadline reaches client within bound");
+    assert!(
+        matches!(
+            mint,
+            Err(super::client::CompanionV3ClientError::Refused(503))
+        ),
+        "a proven deadline is a framed unavailable response, never an EOF: {mint:?}"
+    );
+    assert_eq!(
+        fixture.runtime.audit_pair_owner_count_for_test().await,
+        0,
+        "deadline stops and joins the exact retained owner before 503"
+    );
+    assert_eq!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            raw_post_path(&endpoint, "/health", Some(&token), "{}"),
+        )
+        .await
+        .expect("same listener health completes within bound")
+        .0,
+        200,
+        "a proven deadline does not kill the shared audit-RPC listener"
+    );
+    listener.abort();
+    let _ = listener.await;
+    finish_companion_pair_listener_fixture(fixture).await;
+}
+
+#[cfg(feature = "cluster")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener() {
     let home = tempdir().expect("create W2449 fatal listener home");
     let fixture = companion_pair_listener_fixture(home.path()).await;

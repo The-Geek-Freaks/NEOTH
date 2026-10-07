@@ -54,9 +54,11 @@ const MAX_DEVICE_LISTENERS: usize = 128;
 type PairListenerReadiness = std::result::Result<(), String>;
 
 #[cfg(test)]
+#[derive(Clone, Copy)]
 pub(crate) enum AuditPairReadinessTestOutcome {
     RefusedAfterOwnerSpawn,
     UncertainAfterOwnerSpawn,
+    DeadlineAfterOwnerStop,
 }
 
 enum PairReadinessWait {
@@ -515,6 +517,15 @@ impl CompanionRuntime {
         let (pair_stop_tx, pair_stop_rx) = watch::channel(false);
         #[cfg(test)]
         let fixture_readiness = self.next_audit_pair_readiness.lock().await.take();
+        #[cfg(test)]
+        let readiness_deadline = if matches!(
+            fixture_readiness,
+            Some(AuditPairReadinessTestOutcome::DeadlineAfterOwnerStop)
+        ) {
+            tokio::time::Instant::now()
+        } else {
+            readiness_deadline
+        };
         {
             let mut tasks = self.pair_tasks.lock().await;
             if tasks.len() >= MAX_DEVICE_LISTENERS || tasks.contains_key(&key) {
@@ -533,6 +544,22 @@ impl CompanionRuntime {
                         AuditPairReadinessTestOutcome::UncertainAfterOwnerSpawn => {
                             let _ = ready_tx.send(Err("fixture teardown uncertainty".to_owned()));
                             anyhow::bail!("fixture pair listener teardown uncertainty")
+                        }
+                        AuditPairReadinessTestOutcome::DeadlineAfterOwnerStop => {
+                            // Keep readiness open until the owner receives the
+                            // real stop, so the outer deadline wins rather than
+                            // a closed-ready-channel race.
+                            let _ready_tx = ready_tx;
+                            let mut pair_stop_rx = pair_stop_rx;
+                            pair_stop_rx
+                                .changed()
+                                .await
+                                .context("fixture pair owner stop sender disappeared")?;
+                            anyhow::ensure!(
+                                *pair_stop_rx.borrow(),
+                                "fixture pair owner observed a non-terminal stop"
+                            );
+                            Ok(())
                         }
                     };
                 }
@@ -605,8 +632,16 @@ impl CompanionRuntime {
             }
             _ = tokio::time::sleep_until(readiness_deadline) => {
                 emit_pair_owner_phase("readiness_owner_deadline");
-                self.join_failed_pair_listener(&key).await?;
-                anyhow::bail!("companion pair mint deadline expired before readiness")
+                // The retained owner receives stop before this join. A clean
+                // terminal proves its exact route/admission is retired, so the
+                // daemon may send the ordinary bounded unavailable response.
+                // Any join error remains an unproven ownership failure.
+                match self.join_failed_pair_listener(&key).await {
+                    Ok(()) => Ok(PairListenerPreparation::Refused),
+                    Err(error) => Err(error.context(
+                        "companion pair mint deadline expired before readiness and owner terminal was unproven",
+                    )),
+                }
             }
         }
     }

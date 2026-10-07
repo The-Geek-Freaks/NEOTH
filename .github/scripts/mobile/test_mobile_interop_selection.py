@@ -46,7 +46,7 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 14, "dht": 15, "core": 26, "no_cluster": 1, "bridge": 1}
+        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 27, "no_cluster": 1, "bridge": 1}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
             "collector": 19,

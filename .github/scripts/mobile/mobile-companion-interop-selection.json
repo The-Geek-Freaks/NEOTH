@@ -19,6 +19,8 @@
       "identities": [
         "swarm::tests::server_publication_requires_both_announcement_successes",
         "swarm::tests::initial_server_publication_keeps_split_outcome_after_waiter_cancellation",
+        "peer_discovery::tests::server_announcements_start_together_wait_for_both_and_keep_split_outcomes",
+        "peer_discovery::tests::initial_refresh_cancellation_drops_both_pending_server_announcements",
         "swarm::tests::outbound_discovery_event_pin_rejects_before_peer_state_queue_or_slot",
         "swarm::tests::pending_responder_replay_is_byte_identical_only_for_same_noise_and_source",
         "swarm::tests::pending_responder_replay_rejects_different_noise_or_source",
@@ -73,6 +75,7 @@
         "cluster::hyperswarm::tests::active_public_rendezvous_binds_the_active_diagnostic_scope_before_spawn",
         "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
         "daemon::audit_rpc::tests::companion_pair_mint_proven_readiness_refusal_returns_503_and_keeps_audit_listener_live",
+        "daemon::audit_rpc::tests::companion_pair_mint_proven_deadline_returns_503_and_keeps_audit_listener_live",
         "daemon::audit_rpc::tests::companion_pair_mint_observed_unproven_readiness_teardown_fails_audit_listener",
         "daemon::audit_rpc::server::companion_mint_budget_tests::readiness_keeps_terminal_reserve_inside_existing_lifecycle",
         "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",

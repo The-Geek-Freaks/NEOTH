@@ -42,7 +42,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Source-only gate: all Flutter checks use the checked-out app source before
+  # either native producer begins. The native materialization below remains the
+  # complete artifact/FFI/CodeQL gate.
+  flutter-source-qa:
+    if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+      - name: Fetch pinned Flutter SDK 3.24.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) archive='flutter_macos_arm64_3.24.5-stable.zip' ;;
+            x86_64) archive='flutter_macos_3.24.5-stable.zip' ;;
+            *) echo "unsupported macOS runner architecture: $(uname -m)" >&2; exit 64 ;;
+          esac
+          curl --fail --location --retry 3 --retry-delay 2 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive" --output "$RUNNER_TEMP/flutter-3.24.5.zip"
+          ditto -x -k "$RUNNER_TEMP/flutter-3.24.5.zip" "$RUNNER_TEMP"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version | grep -F 'Flutter 3.24.5'
+      - name: Verify approved lock and run Flutter source QA
+        shell: pwsh
+        env:
+          FLUTTER_PUBSPEC_LOCK_SHA256: ${{ inputs.flutter_pubspec_lock_sha256 }}
+        run: |
+          $flutter = Join-Path $env:RUNNER_TEMP 'flutter/bin/flutter'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'apps/neoth_companion'
+          if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw 'Flutter source directory missing' }
+          Push-Location $source
+          try {
+            if ($env:FLUTTER_PUBSPEC_LOCK_SHA256 -notmatch '^[0-9A-Fa-f]{64}$') { throw 'Expected Flutter lock hash must be a SHA-256.' }
+            if ((Get-FileHash -LiteralPath 'pubspec.lock' -Algorithm SHA256).Hash -ne $env:FLUTTER_PUBSPEC_LOCK_SHA256.ToUpperInvariant()) { throw 'source application pubspec.lock hash mismatch before pub get' }
+            & $flutter pub get
+            if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed with exit code $LASTEXITCODE" }
+            if ((Get-FileHash -LiteralPath 'pubspec.lock' -Algorithm SHA256).Hash -ne $env:FLUTTER_PUBSPEC_LOCK_SHA256.ToUpperInvariant()) { throw 'flutter pub get changed the approved pubspec.lock' }
+            & $flutter analyze
+            if ($LASTEXITCODE -ne 0) { throw "flutter analyze failed with exit code $LASTEXITCODE" }
+            & $flutter test
+            if ($LASTEXITCODE -ne 0) { throw "flutter test failed with exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
   android-native:
+    needs: [flutter-source-qa]
     if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
     runs-on: ubuntu-24.04
     env:
@@ -77,6 +123,7 @@ jobs:
           retention-days: 14
 
   ios-native:
+    needs: [flutter-source-qa]
     if: github.ref == 'refs/heads/main' && inputs.bootstrap_locks != true
     runs-on: macos-15
     env:

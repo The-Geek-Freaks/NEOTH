@@ -1,0 +1,85 @@
+{
+  "schema": "neoth.wave2488.mobile-readiness-and-tool-activity.v1",
+  "capturedUtc": "2026-10-07T09:08:50.6092876Z",
+  "baseProducer": "e8669455e199e89a92b433e399f18365ca0a2a80",
+  "status": "SOURCE-INTEGRATED-HOSTED-VALIDATION-PENDING",
+  "previousMobile": {
+    "run": "37589731656",
+    "producer": "e8669455e199e89a92b433e399f18365ca0a2a80",
+    "conclusion": "failure",
+    "stage": "pair_status_read_mint",
+    "observed": "readiness owner deadline, stop requested, teardown completed without failure, daemon exit1, framed RPC response absent",
+    "rustPassed": 37,
+    "collectorPassed": 19,
+    "laterRustSkipped": 28,
+    "originalArtifact": "11468153183",
+    "archiveSha256": "0E1168B4BD16931623FDFA8C82D59E5B5E5A6CCA9990187A76A4FFDBA55EBE27",
+    "archiveEntries": 4,
+    "rawSourceBindings": 43,
+    "rootPartialProofSha256": "BF3BC1D5479361671B07F87281A61984EC986DABB7B64DEC1A9C7108DC69B222"
+  },
+  "changes": [
+    {
+      "area": "Pair deadline",
+      "behavior": "Retained owner proven stopped and joined becomes existing Refused503; unproven cleanup stays fatal. Real RPC regression also requires owner count zero and same-listener health200.",
+      "reviewSha256": "15C7687F46E6888D349741639D0B8B033BF9C918D6E4E0EFA90791ADCC7A57C4"
+    },
+    {
+      "area": "JM03 real ToolActivity producer",
+      "behavior": "Optional bounded nonblocking per-turn projection, Started after effect permit at write edge, decoded success/failure, pre-edge rejected and dropped started call unknown. Fixed public labels/no detail. Capacity/contention incomplete without affecting actual effect, WAL, result or authorization. Compatible Provider wrapper plus opt-in adapter.",
+      "reviewSha256": "F8640E66FF43554CF287EA4490F072065237EFAE8955FF48F3647B9EBACC3E4B",
+      "newPortableCases": 5,
+      "extendedRealFixtureCases": 3,
+      "mobileStreamingImplemented": false,
+      "whatsappStatusDeliveryImplemented": false
+    },
+    {
+      "area": "Initial peer publication",
+      "behavior": "Initial refresh observes leave cancellation; independent topic/self-key announcements overlap but await both before existing strict readiness receipt. Same actor and congestion/deadline/retry rules.",
+      "candidateSha256": "37EBADC68E20D731D440ADE3A817E287298BA9B646672BE36CC145891D809454",
+      "review": "Independent static approval including bounded fixture waits; executable proof pending",
+      "hostedPerformanceClaim": false,
+      "publicDhtFailureCauseClaim": false,
+      "reviewSha256": "B4021AB5F63A2D6E947B3FD6F1007495CB891800ACDE02CEC8849E7AEDE7CE35"
+    },
+    {
+      "area": "Flutter fail-fast",
+      "behavior": "Pinned Flutter3.24.5 raw package lock verification, analyze and unfiltered tests before both native producers; native/materialization/bootstrap/CodeQL gates preserved.",
+      "reviewSha256": "CD151B3B5761CB7C26EDC101F268380BA634A7C960536622AAA6316B984D84E3",
+      "claim": "Earlier feedback on failures only, no claimed successful-duration gain"
+    },
+    {
+      "area": "Actual narrow-layout widget coverage",
+      "behavior": "TERM-PRES-004 now sets actual test view240dp, asserts scaffold width and effective2x text scale below MaterialApp, uses scrollable placement and resets overrides. Four cases retained.",
+      "sourceSha256": "5EF93E08DF15D8D5E1E43CF9F8E169CD99FB870E33DC2FEFF15654FB97860376",
+      "runtime": "not-run"
+    }
+  ],
+  "registration": {
+    "portableNative": 2811,
+    "ownerAndActivityFocused": 40,
+    "companionFocusedUnion": 29,
+    "mobileRust": 68,
+    "mobileCollector": 19,
+    "mobileRawSources": 43,
+    "widgetCases": 4,
+    "peerVendorCasesIncludedInMobileNotPortable": true
+  },
+  "validationPlan": [
+    "Fast push gates and hosted format patch if necessary",
+    "One Root exact-source CLI lane including eight ToolActivity cases, canonical companion union and slim Clippy/default test typecheck",
+    "Same-producer mobile interop including two peer publication regressions and real pair/status/chat/revoke",
+    "Native/mobile workflow with early Flutter gate, native artifacts and unsigned Android/iOS app checks"
+  ],
+  "downstream": {
+    "plan": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+    "jm03jm04": "Authorized request sink -> compatible versioned snapshot on same peer connection -> existing native operation -> Dart controller -> passive pending view remains in progress",
+    "jm06": "Account/chat/turn bound WhatsApp edit/status API remains open",
+    "jm05jm07jm08": "Transcript, notification preview, voice/media remain open",
+    "jm09jm10": "GUI parity, device and signed release acceptance remain open"
+  },
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "deviceAccepted": false,
+  "releaseAccepted": false
+}

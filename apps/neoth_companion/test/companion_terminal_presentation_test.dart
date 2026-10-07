@@ -59,6 +59,10 @@ void main() {
   });
 
   testWidgets('TERM-PRES-004 preserves narrow high-scale terminal semantics', (tester) async {
+    tester.view.physicalSize = const Size(480, 1600);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final longRecord = List.filled(128, 'bounded terminal text').join(' ');
     final terminal = CompanionChatTerminal(
       requestId: '00000000-0000-0000-0000-000000000003', outcome: 'accepted', provider: 'local-provider', model: 'neoth-model',
@@ -66,15 +70,31 @@ void main() {
     );
     final semantics = tester.ensureSemantics();
     addTearDown(semantics.dispose);
-    await tester.pumpWidget(MediaQuery(
-      data: const MediaQueryData(textScaler: TextScaler.linear(2)), child: SizedBox(width: 240, child: _host(terminal)),
-    ));
+    await tester.pumpWidget(_host(terminal, textScaler: const TextScaler.linear(2), scrollable: true));
+    expect(tester.getSize(find.byType(Scaffold)).width, 240);
+    expect(tester.getSize(find.byType(CompanionTerminalCard)).width, lessThanOrEqualTo(240));
+    expect(MediaQuery.textScalerOf(tester.element(find.byType(CompanionTerminalCard))).scale(1), 2);
     expect(find.bySemanticsLabel('NEOTH notice'), findsOneWidget);
     expect(find.bySemanticsLabel(longRecord), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
 
-Widget _host(CompanionChatTerminal terminal) => MaterialApp(
-      theme: CompanionTheme.neothDark(), home: Scaffold(body: CompanionTerminalCard(terminal: terminal)),
+Widget _host(
+  CompanionChatTerminal terminal, {
+  TextScaler? textScaler,
+  bool scrollable = false,
+}) => MaterialApp(
+      theme: CompanionTheme.neothDark(),
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+                child: child!,
+              ),
+      home: Scaffold(
+        body: scrollable
+            ? ListView(children: [CompanionTerminalCard(terminal: terminal)])
+            : CompanionTerminalCard(terminal: terminal),
+      ),
     );

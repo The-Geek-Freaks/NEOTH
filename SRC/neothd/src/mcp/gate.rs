@@ -1042,6 +1042,7 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     mcp_ifc: &crate::permissions::McpInvocationProvenance,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
+    activity: Option<&crate::mcp::dispatch_loop::ToolActivityCall>,
 ) -> Result<ToolCallResult, GateError> {
     let request_binding_sha256 =
         mcp_request_binding_for_provenance(cfg, tool, &arguments, mcp_ifc)?;
@@ -1059,6 +1060,7 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
         effect_gate,
         pre_tool_use,
         false,
+        activity,
     )
     .await
     .map(|response| response.result)
@@ -1095,6 +1097,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
         None,
         pre_tool_use,
         false,
+        None,
     )
     .await
     .map(|response| response.result)
@@ -1130,6 +1133,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink_decoded(
         None,
         pre_tool_use,
         require_context_binding,
+        None,
     )
     .await
 }
@@ -1149,6 +1153,7 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
     require_context_binding: bool,
+    activity: Option<&crate::mcp::dispatch_loop::ToolActivityCall>,
 ) -> Result<DecodedToolCallResponse, GateError> {
     if !authorized.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PermissionDenied {
@@ -1238,6 +1243,7 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         effect_gate,
         authorized.request_binding_sha256.as_deref(),
         require_context_binding,
+        activity,
     )
     .await?;
     let configured_path_read_enrichment = (!response.result.is_error)
@@ -1453,6 +1459,7 @@ async fn call_tool_with_success_audit(
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     request_binding_sha256: Option<&str>,
     require_context_binding: bool,
+    activity: Option<&crate::mcp::dispatch_loop::ToolActivityCall>,
 ) -> Result<DecodedToolCallResponse, GateError> {
     let mut response = client
         .call_tool_with_effect_and_meta(
@@ -1460,8 +1467,10 @@ async fn call_tool_with_success_audit(
             arguments,
             effect_gate.as_ref(),
             request_binding_sha256.unwrap_or(""),
+            activity,
         )
         .await?;
+    settle_decoded_tool_activity(activity, &response.raw_result);
     if sink.is_present() {
         let content_bytes: usize = response
             .raw_result
@@ -1499,6 +1508,17 @@ async fn call_tool_with_success_audit(
     // elicitation, TokenJuice, untrusted wrapping, prompt assembly, or CCR.
     response.result.sanitize_external_output();
     Ok(response)
+}
+
+/// This tiny boundary exists so the `isError` regression drives the same
+/// decoded-result classification used after a real client response.
+fn settle_decoded_tool_activity(
+    activity: Option<&crate::mcp::dispatch_loop::ToolActivityCall>,
+    result: &ToolCallResult,
+) {
+    if let Some(activity) = activity {
+        activity.settled_from_result(result.is_error);
+    }
 }
 
 #[derive(Serialize)]
@@ -1833,6 +1853,55 @@ async fn emit_confirm_reject(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_mcp_is_error_settles_failed_activity() {
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("decoded-error-turn".into()).unwrap();
+        let call = crate::mcp::tool_call_parser::ParsedToolCall {
+            server: "untrusted".into(), tool: "untrusted".into(), arguments: serde_json::json!({"raw":"not projected"}),
+        };
+        let activity = sink.try_observe(&call).unwrap();
+        activity.started_at_write_edge();
+        let decoded: ToolCallResult = serde_json::from_value(serde_json::json!({
+            "content": [{"type":"text", "text":"MCP private error body"}], "isError": true
+        })).unwrap();
+        settle_decoded_tool_activity(Some(&activity), &decoded);
+        drop(activity);
+        let (events, incomplete) = sink.snapshot();
+        assert!(!incomplete);
+        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
+            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+            crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
+        ]);
+        assert_eq!(events[0].label, "Tool call");
+        assert_eq!(events[0].detail, None);
+    }
+
+    #[tokio::test]
+    async fn activity_fixture_is_error_travels_through_real_client_and_gate() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("is-error-calls.txt");
+        let cfg = crate::mcp::client::stdio_activity_fixture_config(&counter);
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("fixture-is-error-turn".into()).unwrap();
+        let parsed = crate::mcp::tool_call_parser::ParsedToolCall {
+            server: cfg.id.clone(), tool: "read".into(), arguments: serde_json::json!({"activity_is_error":true}),
+        };
+        let activity = sink.try_observe(&parsed).unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let response = call_tool_with_success_audit(
+            &mut client, &cfg, "read", parsed.arguments.clone(), "0000000000000001",
+            McpAuditSink::None, 1, None, None, false, Some(&activity),
+        ).await.unwrap();
+        assert!(response.raw_result.is_error);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+        drop(activity);
+        let (events, incomplete) = sink.snapshot();
+        assert!(!incomplete);
+        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
+            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+            crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
+        ]);
+    }
     use crate::mcp::client::{McpContent, McpTool};
     use crate::mcp::sanitizer::SanitizerVerdict;
     use std::collections::{BTreeMap, HashMap};
@@ -2443,6 +2512,7 @@ mod tests {
             None,
             permit,
             false,
+            None,
         )
         .await
         .expect_err("trusted confidential source must not reach public MCP");
@@ -2519,6 +2589,10 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
         )
         .unwrap();
+        let activity_sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("trusted-public-turn".into()).unwrap();
+        let activity_call = activity_sink.try_observe(&crate::mcp::tool_call_parser::ParsedToolCall {
+            server: cfg.id.clone(), tool: "read".into(), arguments: arguments.clone(),
+        });
         let mut client = McpClient::spawn(&cfg).await.unwrap();
         let result = invoke_authorized_with_audit_sink_effect_gate(
             &mut client,
@@ -2534,11 +2608,18 @@ mod tests {
             None,
             permit,
             false,
+            activity_call.as_ref(),
         )
         .await
         .expect("trusted public provenance must reach the actual tools/call fixture");
         assert!(!result.result.is_error);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+        let (events, incomplete) = activity_sink.snapshot();
+        assert!(!incomplete);
+        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
+            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+            crate::mcp::dispatch_loop::ToolActivityPhase::Succeeded,
+        ]);
     }
 
     #[tokio::test]
@@ -3058,6 +3139,20 @@ mod tests {
                 .unwrap();
         let counter = home.path().join("tools-call-count.txt");
         let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        // Fill the bounded presentation view before the real call. The
+        // observer then declines this call without changing the client,
+        // audit writer, or raw-result path exercised below.
+        let activity_sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("full-view-turn".into()).unwrap();
+        let synthetic = crate::mcp::tool_call_parser::ParsedToolCall {
+            server: "untrusted".into(), tool: "untrusted".into(), arguments: serde_json::json!({}),
+        };
+        for _ in 0..8 {
+            let activity = activity_sink.try_observe(&synthetic).unwrap();
+            activity.started_at_write_edge();
+            activity.settled_from_result(false);
+        }
+        let full_activity = activity_sink.try_observe(&synthetic);
+        assert!(full_activity.is_none());
         let mut client = McpClient::spawn(&cfg).await.unwrap();
         let error = call_tool_with_success_audit(
             &mut client,
@@ -3070,6 +3165,7 @@ mod tests {
             None,
             Some("binding"),
             true,
+            full_activity.as_ref(),
         )
         .await
         .expect_err(
@@ -3092,6 +3188,8 @@ mod tests {
         .unwrap();
         assert_eq!(called, 1, "the tool effect audit survives invalid metadata");
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+        let (_, incomplete) = activity_sink.snapshot();
+        assert!(incomplete, "a full presentation view is visibly incomplete");
     }
 
     #[tokio::test]

@@ -15734,6 +15734,54 @@ pub(crate) async fn run_mcp_dispatch_loop(
     autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
     skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    tool_scope: &crate::mcp::McpToolScope,
+    max_iterations: u32,
+    security_policy: &crate::config::SecurityPolicy,
+    goal_context: crate::mcp::goal_tracker::GoalContext,
+    hints_enabled: bool,
+    compaction: crate::context::compaction::CompactionPolicy,
+    compression: Option<crate::context::compress::CompressionRuntime>,
+    judge_provider: Option<&dyn crate::providers::Provider>,
+    elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
+    subject: Option<String>,
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
+    harness_cfg: &crate::config::tools::McpHarnessConfig,
+    compaction_budget: &mut crate::mcp::dispatch_loop::CompactionBudget,
+    max_tool_calls: Option<u64>,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    instance_home: &std::path::Path,
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    outline_enrichment_enabled: bool,
+    enrichment_selectors: Vec<crate::config::ConfiguredMcpPathRead>,
+    impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_context_policy: crate::config::RequestedContextPolicy,
+) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
+    run_mcp_dispatch_loop_with_activity(
+        provider, base_req, servers, autonomy_policy, skill_invocation_policy, writer,
+        wal_session, rollback_policy, tool_scope, max_iterations, security_policy,
+        goal_context, hints_enabled, compaction, compression, judge_provider,
+        elicitation_handler, subject, mcp_ifc, harness_cfg, compaction_budget,
+        max_tool_calls, turn_effect_gate, instance_home, pre_tool_hook_policy,
+        pre_tool_once_guard, pre_tool_cancellation, outline_enrichment_enabled,
+        enrichment_selectors, impact_policy, requested_context_policy, None,
+    ).await
+}
+
+/// Activity-aware chat/channel adapter. The caller must retain an exact
+/// authenticated turn identity in the supplied sink; the legacy wrapper above
+/// preserves every established caller with no projection.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_mcp_dispatch_loop_with_activity(
+    provider: &dyn crate::providers::Provider,
+    base_req: crate::providers::Request,
+    servers: &crate::mcp::McpServers,
+    autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
+    skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
+    writer: &crate::wal::writer::WalWriterHandle,
     // Capability retained from the already admitted chat/channel turn; never reconstructed from MCP data.
     wal_session: Option<crate::wal::WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
@@ -15789,6 +15837,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     enrichment_selectors: Vec<crate::config::ConfiguredMcpPathRead>,
     impact_policy: crate::config::CodeMapImpactPolicy,
     requested_context_policy: crate::config::RequestedContextPolicy,
+    activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -15886,6 +15935,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         enrichment_selectors,
         impact_policy,
         requested_context_policy,
+        activity_sink,
     )
     .await
 }

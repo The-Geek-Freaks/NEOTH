@@ -72,7 +72,14 @@ pub(crate) async fn run_discovery(
     event_tx: mpsc::Sender<DiscoveryEvent>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    do_refresh(&config, &dht, &key_pair, &relay_addresses, &event_tx).await;
+    if !initial_refresh_completed_before_cancel(
+        do_refresh(&config, &dht, &key_pair, &relay_addresses, &event_tx),
+        &mut cancel_rx,
+    )
+    .await
+    {
+        return;
+    }
 
     loop {
         let jitter_ms = rand::rng().random_range(0..REFRESH_JITTER_MS);
@@ -87,6 +94,39 @@ pub(crate) async fn run_discovery(
     }
 }
 
+/// Run the first refresh unless this topic has already been left.
+///
+/// A server refresh emits its terminal publication receipt only after both
+/// topic and self-route announcements return. Once leave has retired the
+/// topic, dropping an in-flight first refresh prevents that stale receipt (and
+/// its diagnostics) from outliving the route that owns it.
+async fn initial_refresh_completed_before_cancel<F>(
+    refresh: F,
+    cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
+) -> bool
+where
+    F: std::future::Future,
+{
+    tokio::select! {
+        biased;
+        _ = cancel_rx => false,
+        _ = refresh => true,
+    }
+}
+
+/// Start the two independent server publications together and retain each
+/// terminal outcome for the strict combined receipt.
+async fn await_both_announcements<Topic, Key>(
+    topic_announce: Topic,
+    key_announce: Key,
+) -> (Topic::Output, Key::Output)
+where
+    Topic: std::future::Future,
+    Key: std::future::Future,
+{
+    tokio::join!(topic_announce, key_announce)
+}
+
 async fn do_refresh(
     config: &PeerDiscoveryConfig,
     dht: &HyperDhtHandle,
@@ -95,34 +135,40 @@ async fn do_refresh(
     event_tx: &mpsc::Sender<DiscoveryEvent>,
 ) {
     if config.is_server {
-        let topic_announce = match dht.announce(config.topic, key_pair, relay_addresses).await {
-            Ok(r) => {
-                tracing::debug!(closest = r.closest_nodes.len(), "announce complete");
-                true
-            }
-            Err(e) => {
-                tracing::warn!(err = %e, "announce failed");
-                false
-            }
-        };
-
         // Self-announce: announce hash(publicKey) so that nodes closest to our
         // public key store a ForwardEntry. This is how PEER_HANDSHAKE requests
         // get routed — Node.js does this in persistent.js announce().
         let pk_target = hash(&key_pair.public_key);
-        let key_announce = match dht.announce(pk_target, key_pair, relay_addresses).await {
-            Ok(r) => {
-                tracing::debug!(
-                    closest = r.closest_nodes.len(),
-                    "self-announce (hash(pk)) complete"
-                );
-                true
-            }
-            Err(e) => {
-                tracing::warn!(err = %e, "self-announce (hash(pk)) failed");
-                false
-            }
-        };
+        let (topic_announce, key_announce) = await_both_announcements(
+            async {
+                match dht.announce(config.topic, key_pair, relay_addresses).await {
+                    Ok(r) => {
+                        tracing::debug!(closest = r.closest_nodes.len(), "announce complete");
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "announce failed");
+                        false
+                    }
+                }
+            },
+            async {
+                match dht.announce(pk_target, key_pair, relay_addresses).await {
+                    Ok(r) => {
+                        tracing::debug!(
+                            closest = r.closest_nodes.len(),
+                            "self-announce (hash(pk)) complete"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "self-announce (hash(pk)) failed");
+                        false
+                    }
+                }
+            },
+        )
+        .await;
 
         companion_discovery_phase(if topic_announce {
             "server_topic_announce_succeeded"
@@ -216,6 +262,10 @@ async fn do_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     #[test]
     fn relay_address_limit_is_hard_and_deterministic() {
@@ -235,6 +285,122 @@ mod tests {
         assert_eq!(
             capped[MAX_RELAY_ADDRESSES_PER_PEER - 1].port,
             (MAX_RELAY_ADDRESSES_PER_PEER - 1) as u16
+        );
+    }
+
+    #[tokio::test]
+    async fn server_announcements_start_together_wait_for_both_and_keep_split_outcomes() {
+        let (topic_entered_tx, topic_entered_rx) = tokio::sync::oneshot::channel();
+        let (key_entered_tx, key_entered_rx) = tokio::sync::oneshot::channel();
+        let (topic_release_tx, topic_release_rx) = tokio::sync::oneshot::channel();
+        let (key_release_tx, key_release_rx) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(await_both_announcements(
+            async move {
+                let _ = topic_entered_tx.send(());
+                topic_release_rx
+                    .await
+                    .expect("topic publication release remains live")
+            },
+            async move {
+                let _ = key_entered_tx.send(());
+                key_release_rx
+                    .await
+                    .expect("self-route publication release remains live")
+            },
+        ));
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            topic_entered_rx
+                .await
+                .expect("topic publication must start before any release");
+            key_entered_rx
+                .await
+                .expect("self-route publication must start before any release");
+        })
+        .await
+        .expect("both publications must enter before either release within the fixture deadline");
+        topic_release_tx
+            .send(true)
+            .expect("topic publication waiter remains live");
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "one completed announcement must not produce a combined receipt"
+        );
+        key_release_tx
+            .send(false)
+            .expect("self-route publication waiter remains live");
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), waiter)
+                .await
+                .expect("both released announcements complete within the fixture deadline")
+                .expect("combined announcement helper must not panic"),
+            (true, false),
+            "the split result remains explicit for the existing strict readiness gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_refresh_cancellation_drops_both_pending_server_announcements() {
+        struct RefreshDropProbe(Arc<AtomicBool>);
+
+        impl Drop for RefreshDropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+        let (topic_entered_tx, topic_entered_rx) = tokio::sync::oneshot::channel();
+        let (key_entered_tx, key_entered_rx) = tokio::sync::oneshot::channel();
+        let topic_dropped = Arc::new(AtomicBool::new(false));
+        let key_dropped = Arc::new(AtomicBool::new(false));
+        let topic_dropped_by_refresh = Arc::clone(&topic_dropped);
+        let key_dropped_by_refresh = Arc::clone(&key_dropped);
+        let waiter = tokio::spawn(async move {
+            initial_refresh_completed_before_cancel(
+                await_both_announcements(
+                    async move {
+                        let _probe = RefreshDropProbe(topic_dropped_by_refresh);
+                        let _ = topic_entered_tx.send(());
+                        std::future::pending::<bool>().await
+                    },
+                    async move {
+                        let _probe = RefreshDropProbe(key_dropped_by_refresh);
+                        let _ = key_entered_tx.send(());
+                        std::future::pending::<bool>().await
+                    },
+                ),
+                &mut cancel_rx,
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            topic_entered_rx
+                .await
+                .expect("topic publication must be polling before cancellation");
+            key_entered_rx
+                .await
+                .expect("self-route publication must be polling before cancellation");
+        })
+        .await
+        .expect("both publications must enter before cancellation within the fixture deadline");
+        cancel_tx
+            .send(())
+            .expect("both pending publications keep the cancellation receiver live");
+
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(3), waiter)
+                .await
+                .expect("cancelled announcements settle within the fixture deadline")
+                .expect("initial refresh/cancellation waiter must not panic"),
+            "route cancellation wins and suppresses the stale first-refresh completion"
+        );
+        assert!(
+            topic_dropped.load(Ordering::SeqCst) && key_dropped.load(Ordering::SeqCst),
+            "cancellation drops both pending publications before a late receipt can be emitted"
         );
     }
 }

@@ -124,3 +124,11 @@ JM-01..JM-10 ergänzen `GOLD-R4-12` / `GOLD-LF-002-12` (Mobile),
 (Kanäle/Voice/Account), `GOLD-LF-003-12..14` (Session/Transcript/Parität) und
 `GOLD-LF-002-19`, `GOLD-LF-003-23` (Qualität/Release). Diese Zuordnung schließt
 keinen vorhandenen Punkt. Die ursprünglichen Gold-Backlog-Zeilen bleiben erhalten.
+
+## W2488 Umsetzungsstand
+
+JM-02: Passive Terminalkarten und NEOTH-Theme sind veröffentlicht; tatsächliche Flutter-/App-Abnahme bleibt offen. Der schmale Widgetfall wurde auf eine nachgemessene 240-dp-Ansicht und wirksame 2x-Skalierung korrigiert. Frühere statische Annahmen sind kein Rendernachweis.
+
+JM-03/JM-04: Der echte ToolActivity-Producer ist als geprüfter Quell-Slice integriert. Seine Start-/Ergebnis-/Abbruchfakten kommen aus dem realen MCP-Pfad, nicht aus Textinterpretation. Der begrenzte Sink bleibt von Ausführung und Audit unabhängig. Der nachfolgende vertikale Pfad führt vom autorisierten Companion-Request über separat versionierte Activity-Snapshots auf derselben Verbindung zur vorhandenen nativen Operation und deren Dart-Controller. Terminal V3 bleibt getrennte finale Autorität. Dieser Protokoll-/Bridge-/UI-Pfad ist noch in Arbeit; seine Existenz wird nicht aus dem Producer oder dem Layout abgeleitet.
+
+JM-06: Eigene WhatsApp-Vorlage und NEOTH-Kanalzuständigkeit sind zugeordnet. Die erforderliche editierbare, Account-/Chat-/Turn-gebundene Statusoperation bleibt umzusetzen; ein normaler Finalsend ersetzt sie nicht. JM-05/JM-07/JM-08 sowie native Geräte- und signierte Release-Nachweise bleiben ebenfalls offen.
