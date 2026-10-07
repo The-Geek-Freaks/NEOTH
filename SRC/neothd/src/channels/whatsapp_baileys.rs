@@ -404,7 +404,8 @@ impl BridgeClient {
         media: Option<BridgeSendMedia>,
         idempotency_key: &str,
     ) -> Result<MessageId, BridgeError> {
-        self.send_with_status(recipient, text, media, idempotency_key, None).await
+        self.send_with_status(recipient, text, media, idempotency_key, None)
+            .await
     }
 
     async fn send_with_status(
@@ -788,7 +789,11 @@ impl WhatsAppBaileysChannel {
         let mut backoff = 1u64;
         let mut last_error = None;
         for attempt in 0..SEND_ATTEMPTS {
-            match self.bridge.send_with_status(recipient, Some(text), None, &key, status_turn).await {
+            match self
+                .bridge
+                .send_with_status(recipient, Some(text), None, &key, status_turn)
+                .await
+            {
                 Ok(id) => return Ok(id),
                 Err(error) if error.is_fatal() => return Err(error),
                 Err(BridgeError::RateLimited(seconds)) if attempt + 1 < SEND_ATTEMPTS => {
@@ -890,18 +895,23 @@ impl WhatsAppBaileysChannel {
                     Ok(inbound) => inbound,
                     Err(error) => {
                         warn!(message_id = %raw.id, error = %error, "malformed authenticated Baileys event dropped");
-                        self.audit_rejection(&raw.sender_id, "malformed_bridge_event").await;
+                        self.audit_rejection(&raw.sender_id, "malformed_bridge_event")
+                            .await;
                         continue;
                     }
                 };
                 if !self.allowed_senders.contains(&inbound.sender_id) {
-                    self.audit_rejection(&inbound.sender_id, "not_on_allowlist").await;
+                    self.audit_rejection(&inbound.sender_id, "not_on_allowlist")
+                        .await;
                     continue;
                 }
                 if raw.is_group
-                    && !self.allowed_groups.contains(&normalize_sender_id(&raw.chat_id))
+                    && !self
+                        .allowed_groups
+                        .contains(&normalize_sender_id(&raw.chat_id))
                 {
-                    self.audit_rejection(&inbound.sender_id, "group_not_on_allowlist").await;
+                    self.audit_rejection(&inbound.sender_id, "group_not_on_allowlist")
+                        .await;
                     continue;
                 }
 
@@ -983,9 +993,18 @@ fn status_turn_identity(account_id: &str, inbound_id: &str) -> String {
     format!("wa-status:{}", hex::encode(digest.finalize()))
 }
 
-fn status_idempotency_key(account_id: &str, chat_id: &str, inbound_id: &str, revision: u64) -> String {
+fn status_idempotency_key(
+    account_id: &str,
+    chat_id: &str,
+    inbound_id: &str,
+    revision: u64,
+) -> String {
     let mut digest = Sha256::new();
-    for part in [account_id.as_bytes(), chat_id.as_bytes(), inbound_id.as_bytes()] {
+    for part in [
+        account_id.as_bytes(),
+        chat_id.as_bytes(),
+        inbound_id.as_bytes(),
+    ] {
         digest.update(part);
         digest.update([0]);
     }
@@ -993,7 +1012,9 @@ fn status_idempotency_key(account_id: &str, chat_id: &str, inbound_id: &str, rev
     format!("neoth-wa-status-{}", hex::encode(digest.finalize()))
 }
 
-fn status_activity(event: &crate::mcp::dispatch_loop::ToolActivity) -> Option<BridgeStatusActivity<'_>> {
+fn status_activity(
+    event: &crate::mcp::dispatch_loop::ToolActivity,
+) -> Option<BridgeStatusActivity<'_>> {
     use crate::mcp::dispatch_loop::ToolActivityPhase;
     match event.phase {
         ToolActivityPhase::Started => Some(BridgeStatusActivity {
@@ -1008,9 +1029,15 @@ fn status_activity(event: &crate::mcp::dispatch_loop::ToolActivity) -> Option<Br
             phase: "tool_rejected",
             label: Some(event.label.as_str()),
         }),
-        ToolActivityPhase::Failed => Some(BridgeStatusActivity { phase: "error", label: None }),
+        ToolActivityPhase::Failed => Some(BridgeStatusActivity {
+            phase: "error",
+            label: None,
+        }),
         // Report uncertainty explicitly, without suggesting completion.
-        ToolActivityPhase::Unknown => Some(BridgeStatusActivity { phase: "unknown", label: None }),
+        ToolActivityPhase::Unknown => Some(BridgeStatusActivity {
+            phase: "unknown",
+            label: None,
+        }),
     }
 }
 
@@ -1061,7 +1088,11 @@ async fn publish_turn_status(
         if incomplete || revision >= MAX_STATUS_REVISIONS {
             return;
         }
-        let Some(event) = events.into_iter().rev().find(|event| event.event_seq > last_event_seq) else {
+        let Some(event) = events
+            .into_iter()
+            .rev()
+            .find(|event| event.event_seq > last_event_seq)
+        else {
             continue;
         };
         last_event_seq = event.event_seq;
@@ -1090,7 +1121,11 @@ async fn publish_turn_status(
             return;
         }
         revision = revision.saturating_add(1);
-        if matches!(event.phase, crate::mcp::dispatch_loop::ToolActivityPhase::Failed | crate::mcp::dispatch_loop::ToolActivityPhase::Unknown) {
+        if matches!(
+            event.phase,
+            crate::mcp::dispatch_loop::ToolActivityPhase::Failed
+                | crate::mcp::dispatch_loop::ToolActivityPhase::Unknown
+        ) {
             return;
         }
     }
@@ -1104,11 +1139,8 @@ impl Channel for WhatsAppBaileysChannel {
 
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         let handler = std::sync::Arc::new(handler);
-        self.run_with_activity(
-            Box::new(move |inbound, _| handler(inbound)),
-            false,
-        )
-        .await
+        self.run_with_activity(Box::new(move |inbound, _| handler(inbound)), false)
+            .await
     }
 
     async fn send_text(
@@ -1350,7 +1382,10 @@ mod tests {
     #[tokio::test]
     async fn status_actual_channel_owner_gates_activity_and_binds_final_after_status() {
         use crate::mcp::tool_call_parser::ParsedToolCall;
-        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
         use wiremock::matchers::{header, method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1363,20 +1398,28 @@ mod tests {
         ] {
             let server = Arc::new(MockServer::start().await);
             let auth = format!("Bearer {}", token().expose());
-            Mock::given(method("GET")).and(path("/v1/health"))
+            Mock::given(method("GET"))
+                .and(path("/v1/health"))
                 .and(header("authorization", auth.clone()))
                 .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "status": "ok", "connected": true, "linked": true,
                     "account_id": "+491701234567", "latest_cursor": "0",
                     "capabilities": { "text": true, "cursor": true, "status_edit_v1": capability }
-                }))).mount(&server).await;
-            Mock::given(method("GET")).and(path("/v1/messages")).and(query_param("cursor", "0"))
+                })))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/v1/messages"))
+                .and(query_param("cursor", "0"))
                 .and(header("authorization", auth.clone()))
                 .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "cursor": "1", "messages": [{ "id": "120@g.us:in-1", "chat_id": "120@g.us",
                         "sender_id": "+491701234567", "timestamp_ms": 1000, "is_group": true,
                         "text": "private-inbound-canary" }]
-                }))).expect(1).mount(&server).await;
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
             // End the real adapter only after it has completed the first turn
             // and advanced the durable cursor; no dropped detached test task.
             Mock::given(method("GET")).and(path("/v1/messages")).and(query_param("cursor", "1"))
@@ -1384,77 +1427,127 @@ mod tests {
                     "error": "cursor_expired", "message": "test terminal", "earliest_cursor": "2", "latest_cursor": "2"
                 }))).expect(1).mount(&server).await;
             for route in ["/v1/status", "/v1/messages"] {
-                Mock::given(method("POST")).and(path(route)).and(header("authorization", auth.clone()))
-                    .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "message_id": "reply" })))
-                    .mount(&server).await;
+                Mock::given(method("POST"))
+                    .and(path(route))
+                    .and(header("authorization", auth.clone()))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_json(serde_json::json!({ "message_id": "reply" })),
+                    )
+                    .mount(&server)
+                    .await;
             }
             let count = Arc::new(AtomicUsize::new(0));
             let handler_count = Arc::clone(&count);
             let handler_server = Arc::clone(&server);
-            let handler: PipelineHandlerWithActivity = Box::new(move |inbound, sink| {
-                let count = Arc::clone(&handler_count);
-                let server = Arc::clone(&handler_server);
-                Box::pin(async move {
-                    count.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(sink.is_some(), daemon && capability);
-                    if let Some(sink) = sink {
-                        let call = sink.try_observe(&ParsedToolCall {
+            let handler: PipelineHandlerWithActivity =
+                Box::new(move |inbound, sink| {
+                    let count = Arc::clone(&handler_count);
+                    let server = Arc::clone(&handler_server);
+                    Box::pin(async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(sink.is_some(), daemon && capability);
+                        if let Some(sink) = sink {
+                            let call = sink.try_observe(&ParsedToolCall {
                             server: "filesystem".into(), tool: "read_file".into(),
                             arguments: serde_json::json!({ "path": "private-argument-canary" }),
                         }).unwrap();
-                        call.started_at_write_edge();
-                        for expected in [1, 2] {
-                            loop {
-                                let seen = server.received_requests().await.unwrap().iter()
-                                    .filter(|request| request.url.path() == "/v1/status").count();
-                                if seen >= expected { break; }
-                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            call.started_at_write_edge();
+                            for expected in [1, 2] {
+                                loop {
+                                    let seen = server
+                                        .received_requests()
+                                        .await
+                                        .unwrap()
+                                        .iter()
+                                        .filter(|request| request.url.path() == "/v1/status")
+                                        .count();
+                                    if seen >= expected {
+                                        break;
+                                    }
+                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                }
+                                if expected == 1 {
+                                    call.settled_from_result(false);
+                                }
                             }
-                            if expected == 1 { call.settled_from_result(false); }
                         }
-                    }
-                    Ok(Some(crate::channels::OutboundMessage { recipient_id: inbound.chat_id, text: "final".into() }))
-                })
-            });
+                        Ok(Some(crate::channels::OutboundMessage {
+                            recipient_id: inbound.chat_id,
+                            text: "final".into(),
+                        }))
+                    })
+                });
             let home = tempfile::tempdir().unwrap();
             let channel = WhatsAppBaileysChannel::new(
-                server.uri(), token(),
-                if sender_allowed { "+491701234567" } else { "+491709999999" },
-                Some(if group_allowed { "120@g.us" } else { "999@g.us" }),
+                server.uri(),
+                token(),
+                if sender_allowed {
+                    "+491701234567"
+                } else {
+                    "+491709999999"
+                },
+                Some(if group_allowed {
+                    "120@g.us"
+                } else {
+                    "999@g.us"
+                }),
                 home.path().join("cursor.json"),
-            ).unwrap();
-            let result = tokio::time::timeout(Duration::from_secs(5), channel.run_with_activity(handler, daemon))
-                .await.expect("bounded real adapter turn");
-            assert!(matches!(result.unwrap_err().downcast_ref::<BridgeError>(), Some(BridgeError::Cursor(_))));
+            )
+            .unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                channel.run_with_activity(handler, daemon),
+            )
+            .await
+            .expect("bounded real adapter turn");
+            assert!(matches!(
+                result.unwrap_err().downcast_ref::<BridgeError>(),
+                Some(BridgeError::Cursor(_))
+            ));
             let admitted = sender_allowed && group_allowed;
             assert_eq!(count.load(Ordering::SeqCst), usize::from(admitted));
             let requests = server.received_requests().await.unwrap();
-            let posts = requests.iter().filter(|request| request.method.as_str() == "POST").collect::<Vec<_>>();
+            let posts = requests
+                .iter()
+                .filter(|request| request.method.as_str() == "POST")
+                .collect::<Vec<_>>();
             let active = admitted && daemon && capability;
             assert_eq!(posts.len(), if active { 3 } else { usize::from(admitted) });
             if admitted {
                 let final_request = posts.last().unwrap();
                 assert_eq!(final_request.url.path(), "/v1/messages");
                 let body: serde_json::Value = serde_json::from_slice(&final_request.body).unwrap();
-                assert_eq!(body["idempotency_key"], idempotency_key("wa-reply", &[b"120@g.us:in-1"]));
+                assert_eq!(
+                    body["idempotency_key"],
+                    idempotency_key("wa-reply", &[b"120@g.us:in-1"])
+                );
                 if active {
                     assert_eq!(posts[0].url.path(), "/v1/status");
                     assert_eq!(posts[1].url.path(), "/v1/status");
-                    assert_eq!(body["status_turn"], serde_json::json!({
-                        "account_id": "+491701234567", "chat_id": "120@g.us", "inbound_id": "120@g.us:in-1"
-                    }));
+                    assert_eq!(
+                        body["status_turn"],
+                        serde_json::json!({
+                            "account_id": "+491701234567", "chat_id": "120@g.us", "inbound_id": "120@g.us:in-1"
+                        })
+                    );
                 } else {
                     assert!(body.get("status_turn").is_none());
                 }
             }
-            for request in posts { assert!(!String::from_utf8_lossy(&request.body).contains("private-")); }
+            for request in posts {
+                assert!(!String::from_utf8_lossy(&request.body).contains("private-"));
+            }
             server.verify().await;
         }
     }
 
     #[tokio::test]
     async fn status_final_reply_carries_turn_binding_and_preserves_legacy_wire() {
-        assert_eq!(idempotency_key("wa-reply", &[b"120@g.us:in-1"]), "neoth-wa-reply-c578494e4757bea8f44d9d22c8ec9a314c99b594f97880d423a66bfb6d82e007");
+        assert_eq!(
+            idempotency_key("wa-reply", &[b"120@g.us:in-1"]),
+            "neoth-wa-reply-c578494e4757bea8f44d9d22c8ec9a314c99b594f97880d423a66bfb6d82e007"
+        );
         use wiremock::matchers::{body_json, header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1468,18 +1561,38 @@ mod tests {
         ] {
             Mock::given(method("POST"))
                 .and(path("/v1/messages"))
-                .and(header("authorization", format!("Bearer {}", token().expose())))
+                .and(header(
+                    "authorization",
+                    format!("Bearer {}", token().expose()),
+                ))
                 .and(body_json(body))
-                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "message_id": "reply" })))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "message_id": "reply" })),
+                )
                 .expect(1)
                 .mount(&server)
                 .await;
         }
         let client = BridgeClient::new(server.uri(), token()).unwrap();
-        client.send_with_status("120@g.us", Some("final"), None, "neoth-wa-reply-bound", Some(BridgeStatusTurn {
-            account_id: "+491", chat_id: "120@g.us", inbound_id: "inbound",
-        })).await.unwrap();
-        client.send("120@g.us", Some("legacy"), None, "legacy-key").await.unwrap();
+        client
+            .send_with_status(
+                "120@g.us",
+                Some("final"),
+                None,
+                "neoth-wa-reply-bound",
+                Some(BridgeStatusTurn {
+                    account_id: "+491",
+                    chat_id: "120@g.us",
+                    inbound_id: "inbound",
+                }),
+            )
+            .await
+            .unwrap();
+        client
+            .send("120@g.us", Some("legacy"), None, "legacy-key")
+            .await
+            .unwrap();
         server.verify().await;
     }
 
@@ -1506,34 +1619,49 @@ mod tests {
                 .await;
         }
         let sink = ToolActivitySink::new_authenticated("held-turn".into()).unwrap();
-        let call = sink.try_observe(&ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(),
-            arguments: serde_json::json!({"path": "private-canary-not-projected"}),
-        }).unwrap();
+        let call = sink
+            .try_observe(&ParsedToolCall {
+                server: "filesystem".into(),
+                tool: "read_file".into(),
+                arguments: serde_json::json!({"path": "private-canary-not-projected"}),
+            })
+            .unwrap();
         // Deliberately emit before the owner/publisher is ever polled.
         call.started_at_write_edge();
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let (finish_tx, finish_rx) = tokio::sync::oneshot::channel::<()>();
         let publisher = publish_turn_status(
-            BridgeClient::new(server.uri(), token()).unwrap(), sink,
-            "+491".into(), "491@s.whatsapp.net".into(), "held-inbound".into(), cancel_rx,
+            BridgeClient::new(server.uri(), token()).unwrap(),
+            sink,
+            "+491".into(),
+            "491@s.whatsapp.net".into(),
+            "held-inbound".into(),
+            cancel_rx,
         );
         let mut owner = Box::pin(run_status_owned_pipeline(
-            async { finish_rx.await.expect("pipeline release") }, publisher, cancel_tx,
+            async { finish_rx.await.expect("pipeline release") },
+            publisher,
+            cancel_tx,
         ));
         let progress = async {
             for expected in [1, 2] {
                 loop {
-                    if server.received_requests().await.unwrap().len() >= expected { break; }
+                    if server.received_requests().await.unwrap().len() >= expected {
+                        break;
+                    }
                     tokio::task::yield_now().await;
                 }
-                if expected == 1 { call.settled_from_result(false); }
+                if expected == 1 {
+                    call.settled_from_result(false);
+                }
             }
             finish_tx.send(()).unwrap();
         };
         tokio::time::timeout(Duration::from_secs(5), async {
             tokio::join!(&mut owner, progress);
-        }).await.expect("actual status HTTP create/edit and owned shutdown");
+        })
+        .await
+        .expect("actual status HTTP create/edit and owned shutdown");
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 2);
         for request in requests {
@@ -1544,11 +1672,16 @@ mod tests {
     #[tokio::test]
     async fn status_owner_drop_retires_pipeline_and_publisher_without_detached_task() {
         use std::future::Future as _;
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
 
         struct DropWitness(Arc<AtomicBool>);
         impl Drop for DropWitness {
-            fn drop(&mut self) { self.0.store(true, Ordering::SeqCst); }
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
         }
         let pipeline_dropped = Arc::new(AtomicBool::new(false));
         let publisher_dropped = Arc::new(AtomicBool::new(false));
@@ -1567,7 +1700,8 @@ mod tests {
         std::future::poll_fn(|cx| {
             assert!(owner.as_mut().poll(cx).is_pending());
             std::task::Poll::Ready(())
-        }).await;
+        })
+        .await;
         drop(owner);
         assert!(pipeline_dropped.load(Ordering::SeqCst));
         assert!(publisher_dropped.load(Ordering::SeqCst));
@@ -1587,16 +1721,28 @@ mod tests {
             .mount(&server)
             .await;
         let sink = ToolActivitySink::new_authenticated("uncertain-turn".into()).unwrap();
-        let call = sink.try_observe(&ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(),
-            arguments: serde_json::json!({}),
-        }).unwrap();
+        let call = sink
+            .try_observe(&ParsedToolCall {
+                server: "filesystem".into(),
+                tool: "read_file".into(),
+                arguments: serde_json::json!({}),
+            })
+            .unwrap();
         call.started_at_write_edge();
         let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        tokio::time::timeout(Duration::from_secs(5), publish_turn_status(
-            BridgeClient::new(server.uri(), token()).unwrap(), sink,
-            "+491".into(), "491@s.whatsapp.net".into(), "in-uncertain".into(), cancel_rx,
-        )).await.expect("failed HTTP terminates the publisher without retry");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            publish_turn_status(
+                BridgeClient::new(server.uri(), token()).unwrap(),
+                sink,
+                "+491".into(),
+                "491@s.whatsapp.net".into(),
+                "in-uncertain".into(),
+                cancel_rx,
+            ),
+        )
+        .await
+        .expect("failed HTTP terminates the publisher without retry");
         call.settled_from_result(false);
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
@@ -1624,16 +1770,29 @@ mod tests {
     fn status_projection_distinguishes_rejection_and_unknown_without_private_details() {
         use crate::mcp::dispatch_loop::{ToolActivity, ToolActivityPhase};
         let started = ToolActivity {
-            turn_id: "turn".into(), event_seq: 1, ordinal: 1,
-            phase: ToolActivityPhase::Started, label: "Read file".into(), detail: None,
+            turn_id: "turn".into(),
+            event_seq: 1,
+            ordinal: 1,
+            phase: ToolActivityPhase::Started,
+            label: "Read file".into(),
+            detail: None,
         };
-        let failed = ToolActivity { phase: ToolActivityPhase::Failed, ..started.clone() };
-        let unknown = ToolActivity { phase: ToolActivityPhase::Unknown, ..started.clone() };
+        let failed = ToolActivity {
+            phase: ToolActivityPhase::Failed,
+            ..started.clone()
+        };
+        let unknown = ToolActivity {
+            phase: ToolActivityPhase::Unknown,
+            ..started.clone()
+        };
         let start = status_activity(&started).unwrap();
         assert_eq!(start.phase, "tool_start");
         assert_eq!(start.label, Some("Read file"));
         assert_eq!(status_activity(&failed).unwrap().phase, "error");
-        let rejected = ToolActivity { phase: ToolActivityPhase::Rejected, ..started.clone() };
+        let rejected = ToolActivity {
+            phase: ToolActivityPhase::Rejected,
+            ..started.clone()
+        };
         assert_eq!(status_activity(&rejected).unwrap().phase, "tool_rejected");
         let uncertainty = status_activity(&unknown).unwrap();
         assert_eq!(uncertainty.phase, "unknown");
@@ -1647,15 +1806,28 @@ mod tests {
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let server = wiremock::MockServer::start().await;
         let client = BridgeClient::new(server.uri(), token()).unwrap();
-        let call = sink.try_observe(&crate::mcp::tool_call_parser::ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(),
-            arguments: serde_json::json!({}),
-        }).unwrap();
+        let call = sink
+            .try_observe(&crate::mcp::tool_call_parser::ParsedToolCall {
+                server: "filesystem".into(),
+                tool: "read_file".into(),
+                arguments: serde_json::json!({}),
+            })
+            .unwrap();
         call.started_at_write_edge();
         cancel_tx.send(true).unwrap();
-        tokio::time::timeout(Duration::from_secs(5), publish_turn_status(
-            client, sink, "+491".into(), "491@s.whatsapp.net".into(), "in-1".into(), cancel_rx,
-        )).await.expect("cancellation beats ready activity without HTTP");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            publish_turn_status(
+                client,
+                sink,
+                "+491".into(),
+                "491@s.whatsapp.net".into(),
+                "in-1".into(),
+                cancel_rx,
+            ),
+        )
+        .await
+        .expect("cancellation beats ready activity without HTTP");
         assert!(server.received_requests().await.unwrap().is_empty());
     }
 
@@ -1667,20 +1839,38 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/status"))
-            .and(header("authorization", format!("Bearer {}", token().expose())))
+            .and(header(
+                "authorization",
+                format!("Bearer {}", token().expose()),
+            ))
             .and(body_json(serde_json::json!({
                 "op":"create", "account_id":"+491", "chat_id":"491@s.whatsapp.net",
                 "inbound_id":"in-1", "idempotency_key":"neoth-wa-status-test",
                 "revision":0, "activity":{"phase":"tool_start","label":"Read file"}
             })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"message_id":"status-1"})))
-            .mount(&server).await;
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message_id":"status-1"})),
+            )
+            .mount(&server)
+            .await;
         let request = BridgeStatusRequest {
-            op: "create", account_id: "+491", chat_id: "491@s.whatsapp.net", inbound_id: "in-1",
-            idempotency_key: "neoth-wa-status-test".into(), revision: 0,
-            activity: BridgeStatusActivity { phase: "tool_start", label: Some("Read file") },
+            op: "create",
+            account_id: "+491",
+            chat_id: "491@s.whatsapp.net",
+            inbound_id: "in-1",
+            idempotency_key: "neoth-wa-status-test".into(),
+            revision: 0,
+            activity: BridgeStatusActivity {
+                phase: "tool_start",
+                label: Some("Read file"),
+            },
         };
-        BridgeClient::new(server.uri(), token()).unwrap().status(&request).await.unwrap();
+        BridgeClient::new(server.uri(), token())
+            .unwrap()
+            .status(&request)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

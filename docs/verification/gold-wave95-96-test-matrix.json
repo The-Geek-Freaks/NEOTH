@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2510-WHATSAPP-SOURCE-INTEGRATED-HOSTED-PENDING",
+  "status": "W2510-HOSTED-FORMAT-IMPORTED-CONTRACTS-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 405662,
-    "sha256": "CD0871F05E9E75E18F221B38B5CC2E1EB2AB784C89C3AFDD3A7BDC8C3146B55A"
+    "bytes": 405661,
+    "sha256": "F6C2F67000E662DD06F47F10DEAC19CC003ACF93F3A1471863F12974880C839A"
   },
   "sourceInputs": 2215,
   "requiredNativeTests": [
@@ -246,7 +246,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -258,7 +258,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -846,19 +846,19 @@
     {
       "test": "cli::serve_pipeline::tests::authenticated_channel_policy_cannot_inject_a_disabled_subject_skill",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::channel_delegate_to_uses_authorized_installed_skill_real_agent_loader_and_child_scope",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_required_attachment_data",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -1716,37 +1716,37 @@
     {
       "test": "cli::serve_pipeline::tests::admitted_channel_wal_identity_is_bound_conversation_only_and_length_delimited",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::admitted_channel_wal_identity_rejects_oversize_native_ids_before_context_mint",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::configured_a_and_b_remain_isolated_from_pipeline_ingress_through_live_wal",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::rate_limit_allows_first_then_drops_with_audit_frame",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::release_channel_reply_allows_at_standard_and_emits_recall_egress",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::w60_prepared_binding_precedes_actual_channel_release_without_claiming_delivery",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -4014,7 +4014,7 @@
     {
       "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_admitted_repo_context_for_its_receipt",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -4386,31 +4386,31 @@
     {
       "test": "cli::serve_pipeline::tests::counterparty_consent_request_bypasses_normal_ingress_and_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::malformed_counterparty_consent_never_receipts_or_reaches_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::counterparty_consent_pipeline_grant_then_revoke_tracks_real_status",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::counterparty_consent_pending_grant_audit_recovers_from_exact_input_receipt",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::counterparty_consent_pending_revoke_audit_recovers_without_restoring_consent",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -4842,7 +4842,7 @@
     {
       "test": "cli::serve_pipeline::tests::emit_ingress_writes_raw_text_and_channel_ingress_and_returns_event_id",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -7878,7 +7878,7 @@
     {
       "test": "cli::serve_pipeline::tests::mapped_slack_ingress_separates_identical_vendor_sender_chat_and_claimed_identity",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -9672,13 +9672,13 @@
     {
       "test": "cli::serve_pipeline::tests::channel_canary_registry_reuses_per_conversation_and_evicts_at_capacity",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -15372,7 +15372,7 @@
     {
       "test": "cli::serve_pipeline::tests::channel_authorized_named_skill_instance_keeps_exact_compat_leaf_through_mcp_rounds",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8",
+      "sourceSha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
       "junitClass": "neoth"
     },
     {
@@ -17005,61 +17005,61 @@
     {
       "test": "channels::whatsapp_baileys::tests::status_actual_channel_owner_gates_activity_and_binds_final_after_status",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_final_reply_carries_turn_binding_and_preserves_legacy_wire",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_owner_publishes_preexisting_activity_then_edit_from_real_observer",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_owner_drop_retires_pipeline_and_publisher_without_detached_task",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_owner_uncertain_http_failure_stops_without_revision_retry",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_daemon_opt_in_requires_the_exact_separate_value",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_writer_keeps_the_admitted_tuple_and_revision_in_its_key",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_projection_distinguishes_rejection_and_unknown_without_private_details",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_owner_cancellation_joins_without_an_http_status_send",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     },
     {
       "test": "channels::whatsapp_baileys::tests::status_client_posts_only_the_closed_v1_activity_body",
       "sourcePath": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "sourceSha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041",
+      "sourceSha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
       "junitClass": "neoth"
     }
   ],
@@ -79221,6 +79221,38 @@
       }
     ],
     "note": "Optional actual channel MCP activity owner, account/chat/turn-bound status transport and durable final barrier; 10 new Rust and 8 Node sources; hosted and real delivery unaccepted. Prior848 mobile proof stays producer-specific.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2510HostedFormat": {
+    "base": "482f5b8c7737c4feb115462e5cf0bd1381ab10f1",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2510-whatsapp-status.json",
+        "bytes": 4892,
+        "sha256": "80218FEFF2387A6A2131E84044FF99C5605930363BE5BBBFCB424EA961EC59A5",
+        "blob": "bd354059a81d3130eb332e77cb96d49a34b49658"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2497605,
+        "sha256": "FD87A68ADACB4D20AE2F55AAF8B6C365D22A3D0204E80BA73018FEA2402CA3A2",
+        "blob": "ba147484ed551a8296dd7c37a65014f163073233"
+      },
+      {
+        "path": "SRC/neothd/src/channels/whatsapp_baileys.rs",
+        "bytes": 70912,
+        "sha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD",
+        "blob": "8492f250fffb10e2f54ddaa0929f933989b7d0f9"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+        "bytes": 561608,
+        "sha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C",
+        "blob": "968dfb7f5382beeda554183c3a2f78262049cc24"
+      }
+    ],
+    "note": "Exact original Preflight format receipt; two raw Git old/postimage pairs matched. No local rustfmt/runtime. New producer requires fresh fast gates and WhatsApp contract execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

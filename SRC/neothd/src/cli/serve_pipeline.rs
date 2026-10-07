@@ -21,7 +21,9 @@ use sha2::{Digest as _, Sha256};
 use tracing::{info, warn};
 
 use crate::channels::registry::{ChannelId, ChannelRef};
-use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler, PipelineHandlerWithActivity};
+use crate::channels::{
+    InboundMessage, OutboundMessage, PipelineHandler, PipelineHandlerWithActivity,
+};
 use crate::cli::serve::emit_required_audit;
 use crate::config::{FreedomConfig, InstancePaths};
 use crate::memory::store;

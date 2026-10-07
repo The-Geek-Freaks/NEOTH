@@ -107,5 +107,14 @@
     "flutterPassed": 35,
     "proofSha256": "7C7A087F12C2AF807C84521A83429A819C347D318885D31EDE224DC44E9DE6CD",
     "notCurrentWhatsAppProducerEvidence": true
+  },
+  "hostedFormatting": {
+    "producer": "482f5b8c7737c4feb115462e5cf0bd1381ab10f1",
+    "run": "37649793082",
+    "originalZipSha256": "64628CF3471A7321AECCA3287AE5D48226969605EF4EC215794DA0CF407F984A",
+    "patchSha256": "1EE2B1856E563B2A1F9611871B1F987836B6B41C835A7669E59B4DAC0ECE6F69",
+    "fullIndexPostimagesVerified": 2,
+    "localRustfmtRan": false,
+    "freshFastChecks": "pending"
   }
 }

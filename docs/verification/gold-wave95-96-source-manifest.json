@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T16:06:14.6015948Z",
-  "validationStatus": "W2510-WHATSAPP-SOURCE-INTEGRATED-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T16:13:27.3512879Z",
+  "validationStatus": "W2510-HOSTED-FORMAT-IMPORTED-CONTRACTS-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4008,8 +4008,8 @@
     },
     {
       "path": "docs/verification/gold-wave2510-whatsapp-status.json",
-      "bytes": 4496,
-      "sha256": "482D448D6B38142657726C5D12053CA260CC016FF91CF39C6407020DEF6B7E1E"
+      "bytes": 4892,
+      "sha256": "80218FEFF2387A6A2131E84044FF99C5605930363BE5BBBFCB424EA961EC59A5"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5168,8 +5168,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2497234,
-      "sha256": "9D8DF12B74103BA5A73922E589B07912407B11ABB44373DA49452D532B046871"
+      "bytes": 2497605,
+      "sha256": "FD87A68ADACB4D20AE2F55AAF8B6C365D22A3D0204E80BA73018FEA2402CA3A2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5988,8 +5988,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/whatsapp_baileys.rs",
-      "bytes": 67727,
-      "sha256": "CCF060CB5B5AE0FB24D4C17B17876B1FAFED6979000C97041FF4CE6999D51041"
+      "bytes": 70912,
+      "sha256": "CE2B71D07182E4FFE3CE5EFE97045A189E9757246372334808E238E986ED4FAD"
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
@@ -6453,8 +6453,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 561601,
-      "sha256": "0D419EDE588DB37ED88CC0474CD25DA0054360BF67E52666A69CD7683F344CB8"
+      "bytes": 561608,
+      "sha256": "B0F4FC7CA965852833E791C6C2C5B9FA0390468D4A2F37EAD23764D3C4C9886C"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
