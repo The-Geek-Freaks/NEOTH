@@ -1,0 +1,58 @@
+{
+  "schema": "neoth.gold.wave2507.acknowledged-announcement.v1",
+  "status": "SOURCE-REPAIR-REVIEWED-HOSTED-PENDING",
+  "base": "f71730bffcb301d4886d840d31a13fb9ea0e6a28",
+  "priorRun": {
+    "run": "37632084577",
+    "attempt": 1,
+    "job": "112828681981",
+    "result": "failure",
+    "stage": "pair_status_read_mint",
+    "category": "companion_runtime_unavailable",
+    "readinessOwnerDeadline": true,
+    "checkedTeardown": true,
+    "serveExit": 0,
+    "walDrained": true,
+    "rustPassed": 95,
+    "collectorPassed": 25,
+    "rawSourceBindings": 50,
+    "originalEntries": 4,
+    "rootAdmission": "work/gold-20260906/wave2506-interop-admission/ROOT_UNIT_SOURCE_FAILURE_ADMISSION.json",
+    "rootAdmissionSha256": "419751AB64FF27A2FD53E1F81258E693688A510054FE43C55639DCD2AB0C6C42",
+    "completeInteropAccepted": false
+  },
+  "findings": [
+    "ANNOUNCE first used commit-enabled LOOKUP; Query::flush reissued LOOKUP rather than signing a publication.",
+    "ANNOUNCE then awaited every selected node in sequence.",
+    "All ANNOUNCE response errors were ignored; even an empty or wholly unconfirmed set produced success.",
+    "Per-route terminal diagnostics were delayed until both independent publications finished."
+  ],
+  "repair": [
+    "Token discovery uses non-commit LOOKUP; the signed ANNOUNCE remains the write.",
+    "At most K=20 candidates and four borrowed request futures per batch; no spawned task, dependency or lock change.",
+    "Only successful error-code-zero ANNOUNCE responses populate the result; no acknowledged node returns AnnounceUnconfirmed.",
+    "Both topic and public-key-route acknowledgements remain mandatory before pairing readiness.",
+    "Individual fixed diagnostic outcomes emit as each branch completes; the combined publication receipt still waits for both."
+  ],
+  "tests": [
+    "hyperdht::tests::announcement_lookup_avoids_redundant_commit",
+    "hyperdht::tests::announcement_requires_signed_ack_and_skips_unusable_candidates",
+    "hyperdht::tests::announcement_batches_bound_concurrency_and_retained_candidates",
+    "hyperdht::tests::announcement_cancellation_drops_owned_batch_before_later_writes"
+  ],
+  "selection": {
+    "rust": 99,
+    "collector": 25,
+    "rawSources": 50,
+    "portableCoreRegistrationUnchanged": 2829
+  },
+  "limits": [
+    "Observed deadline failure is not conclusively attributed to one lower DHT operation.",
+    "No measured latency improvement or current product acceptance claimed before hosted validation.",
+    "Cancellation regression proves ownership of borrowed futures and no later batch; already submitted UDP requests retain the existing DHT IO timeout lifecycle.",
+    "Injected request regressions preserve real signature construction but do not prove public-network delivery.",
+    "Native, device, signed release and remaining WhatsApp port acceptance stay open."
+  ],
+  "localRuntimeExecuted": false,
+  "independentAgentUsed": false
+}

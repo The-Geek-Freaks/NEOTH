@@ -40,6 +40,10 @@
       "identities": [
         "router::tests::discovered_reply_without_forward_metadata_is_direct_at_selected_destination",
         "router::tests::handshake_reply_peer_metadata_never_replaces_request_destination",
+        "hyperdht::tests::announcement_lookup_avoids_redundant_commit",
+        "hyperdht::tests::announcement_requires_signed_ack_and_skips_unusable_candidates",
+        "hyperdht::tests::announcement_batches_bound_concurrency_and_retained_candidates",
+        "hyperdht::tests::announcement_cancellation_drops_owned_batch_before_later_writes",
         "hyperdht::tests::outgoing_connect_diagnostics_are_fresh_per_owner_and_once_per_phase",
         "hyperdht::tests::companion_diagnostic_state_is_fresh_per_outgoing_operation_and_listener",
         "io::tests::would_block_reply_egress_retains_owned_bytes_until_retry_succeeds",

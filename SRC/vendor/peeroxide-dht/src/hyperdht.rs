@@ -38,7 +38,7 @@ use crate::persistent::{
 use crate::protomux::Mux;
 use crate::query::QueryReply;
 use crate::router::{ForwardEntry, HandshakeAction, HolepunchAction, Router};
-use crate::rpc::{DhtConfig, DhtError, DhtHandle, UserQueryParams, UserRequestParams};
+use crate::rpc::{DhtConfig, DhtError, DhtHandle, ResponseData, UserQueryParams, UserRequestParams};
 use crate::secret_stream::{SecretStream, SecretStreamError};
 use crate::secure_payload::SecurePayload;
 use crate::socket_pool::SocketPool;
@@ -380,6 +380,9 @@ pub enum HyperDhtError {
     /// No peer was found for the requested target.
     #[error("peer not found")]
     PeerNotFound,
+    /// No selected node acknowledged the signed announcement.
+    #[error("no DHT node acknowledged the announcement")]
+    AnnounceUnconfirmed,
     /// No relay nodes were available for the operation.
     #[error("no relay nodes available")]
     NoRelayNodes,
@@ -590,7 +593,7 @@ pub struct LookupResult {
 /// Result from an ANNOUNCE operation.
 #[non_exhaustive]
 pub struct AnnounceResult {
-    /// Closest nodes contacted during the announce.
+    /// Closest nodes that acknowledged the signed announcement.
     pub closest_nodes: Vec<Ipv4Peer>,
 }
 
@@ -918,6 +921,105 @@ pub struct HyperDhtHandle {
     admin_tx: mpsc::UnboundedSender<AdminRequest>,
 }
 
+// Discovery supplies tokens; the signed ANNOUNCE below is the write. A
+// commit-enabled LOOKUP would only repeat the read against the closest nodes.
+fn announcement_lookup(target: [u8; 32]) -> UserQueryParams {
+    UserQueryParams {
+        target,
+        command: LOOKUP,
+        value: None,
+        commit: false,
+        concurrency: None,
+    }
+}
+
+const ANNOUNCE_CONCURRENCY: usize = 4;
+
+async fn await_announcement<SendRequest, Pending>(
+    request: Option<(UserRequestParams, Ipv4Peer)>,
+    send: &SendRequest,
+) -> Option<Ipv4Peer>
+where
+    SendRequest: Fn(UserRequestParams, Ipv4Peer) -> Pending,
+    Pending: std::future::Future<Output = Result<ResponseData, DhtError>>,
+{
+    let (params, to) = request?;
+    match send(params, to.clone()).await {
+        Ok(response) if response.error == 0 => Some(to),
+        _ => None,
+    }
+}
+
+async fn announce_to_closest<SendRequest, Pending>(
+    target: [u8; 32],
+    key_pair: &KeyPair,
+    relay_addresses: &[Ipv4Peer],
+    replies: Vec<QueryReply>,
+    send: SendRequest,
+) -> Result<AnnounceResult, HyperDhtError>
+where
+    SendRequest: Fn(UserRequestParams, Ipv4Peer) -> Pending,
+    Pending: std::future::Future<Output = Result<ResponseData, DhtError>>,
+{
+    let peer = HyperPeer {
+        public_key: key_pair.public_key,
+        relay_addresses: relay_addresses.iter().take(3).cloned().collect(),
+    };
+    let peer_encoded = encode_hyper_peer_to_bytes(&peer)?;
+    let mut requests = Vec::new();
+    for reply in replies.into_iter().take(crate::routing_table::K) {
+        let (Some(token), Some(node_id)) = (reply.token, reply.from_id) else {
+            continue;
+        };
+        if reply.error != 0 {
+            continue;
+        }
+        let signature = sign_detached(
+            &ann_signable(&target, &token, &node_id, &peer_encoded, &[], &NS_ANNOUNCE),
+            &key_pair.secret_key,
+        );
+        let value = encode_announce_to_bytes(&AnnounceMessage {
+            peer: Some(peer.clone()),
+            refresh: None,
+            signature: Some(signature),
+            bump: 0,
+        })?;
+        requests.push((
+            UserRequestParams {
+                token: Some(token),
+                command: ANNOUNCE,
+                target: Some(target),
+                value: Some(value),
+            },
+            reply.from,
+        ));
+    }
+
+    // Four borrowed futures per batch; no spawned child can outlive the
+    // discovery owner. Wait for all selected destinations, preserving the
+    // replication attempt while avoiding a serial timeout per DHT node.
+    let mut requests = requests.into_iter();
+    let mut closest_nodes = Vec::new();
+    loop {
+        let pending: [_; ANNOUNCE_CONCURRENCY] = std::array::from_fn(|_| requests.next());
+        let [first, second, third, fourth] = pending;
+        if first.is_none() {
+            break;
+        }
+        let batch = tokio::join!(
+            await_announcement(first, &send),
+            await_announcement(second, &send),
+            await_announcement(third, &send),
+            await_announcement(fourth, &send),
+        );
+        closest_nodes.extend([batch.0, batch.1, batch.2, batch.3].into_iter().flatten());
+    }
+    if closest_nodes.is_empty() {
+        return Err(HyperDhtError::AnnounceUnconfirmed);
+    }
+    Ok(AnnounceResult { closest_nodes })
+}
+
 impl HyperDhtHandle {
     // ── WIRE STATS ────────────────────────────────────────────────────────────
 
@@ -980,65 +1082,11 @@ impl HyperDhtHandle {
         key_pair: &KeyPair,
         relay_addresses: &[Ipv4Peer],
     ) -> Result<AnnounceResult, HyperDhtError> {
-        let replies = self
-            .dht
-            .query(UserQueryParams {
-                target,
-                command: LOOKUP,
-                value: None,
-                commit: true,
-                concurrency: None,
-            })
-            .await?;
-
-        let mut closest_nodes = Vec::new();
-
-        for reply in &replies {
-            closest_nodes.push(reply.from.clone());
-
-            let token = match &reply.token {
-                Some(t) => *t,
-                None => continue,
-            };
-            let node_id = match &reply.from_id {
-                Some(id) => *id,
-                None => continue,
-            };
-
-            let peer = HyperPeer {
-                public_key: key_pair.public_key,
-                relay_addresses: relay_addresses.iter().take(3).cloned().collect(),
-            };
-
-            let peer_encoded = encode_hyper_peer_to_bytes(&peer)?;
-            let signable =
-                ann_signable(&target, &token, &node_id, &peer_encoded, &[], &NS_ANNOUNCE);
-            let signature = sign_detached(&signable, &key_pair.secret_key);
-
-            let ann = AnnounceMessage {
-                peer: Some(peer),
-                refresh: None,
-                signature: Some(signature),
-                bump: 0,
-            };
-            let ann_bytes = encode_announce_to_bytes(&ann)?;
-
-            let _ = self
-                .dht
-                .request(
-                    UserRequestParams {
-                        token: Some(token),
-                        command: ANNOUNCE,
-                        target: Some(target),
-                        value: Some(ann_bytes),
-                    },
-                    &reply.from.host,
-                    reply.from.port,
-                )
-                .await;
-        }
-
-        Ok(AnnounceResult { closest_nodes })
+        let replies = self.dht.query(announcement_lookup(target)).await?;
+        announce_to_closest(target, key_pair, relay_addresses, replies, |params, to| async move {
+            self.dht.request(params, &to.host, to.port).await
+        })
+        .await
     }
 
     // ── FIND_PEER ─────────────────────────────────────────────────────────────
@@ -3240,6 +3288,192 @@ fn to_hex(bytes: impl AsRef<[u8]>) -> String {
 mod tests {
     use super::*;
     use crate::hyperdht_messages::{FIREWALL_CONSISTENT, FIREWALL_RANDOM};
+
+    fn announcement_reply(port: u16) -> QueryReply {
+        QueryReply {
+            from: Ipv4Peer { host: "127.0.0.1".to_owned(), port },
+            from_id: Some([port as u8; 32]),
+            token: Some([port as u8; 32]),
+            closer_nodes: Vec::new(),
+            error: 0,
+            value: None,
+            rtt: Duration::ZERO,
+        }
+    }
+
+    fn announcement_response(from: Ipv4Peer, error: u64) -> ResponseData {
+        ResponseData {
+            from,
+            id: None,
+            token: None,
+            closer_nodes: Vec::new(),
+            error,
+            value: None,
+            rtt: Duration::ZERO,
+        }
+    }
+
+    struct AnnouncementProbe<'a>(&'a std::sync::atomic::AtomicUsize);
+
+    impl Drop for AnnouncementProbe<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn announcement_lookup_avoids_redundant_commit() {
+        let target = [17; 32];
+        let query = announcement_lookup(target);
+        assert_eq!(query.target, target);
+        assert_eq!(query.command, LOOKUP);
+        assert!(query.value.is_none());
+        assert!(!query.commit, "only the signed ANNOUNCE is a write");
+        assert!(query.concurrency.is_none());
+    }
+
+    #[tokio::test]
+    async fn announcement_requires_signed_ack_and_skips_unusable_candidates() {
+        let key = KeyPair::from_seed([12; 32]);
+        let target = [18; 32];
+        let mut no_token = announcement_reply(1);
+        no_token.token = None;
+        let mut no_id = announcement_reply(2);
+        no_id.from_id = None;
+        let mut rejected_lookup = announcement_reply(3);
+        rejected_lookup.error = 1;
+        let unusable = vec![no_token, no_id, rejected_lookup];
+        let mut replies = unusable.clone();
+        replies.extend([announcement_reply(10), announcement_reply(11)]);
+        let calls = std::cell::RefCell::new(Vec::new());
+        let rejected = announce_to_closest(target, &key, &[], replies, |_, to| {
+            calls.borrow_mut().push(to.port);
+            std::future::ready(if to.port == 10 {
+                Err(DhtError::RequestFailed("fixture timeout".to_owned()))
+            } else {
+                Ok(announcement_response(to, 1))
+            })
+        }).await;
+        assert!(matches!(rejected, Err(HyperDhtError::AnnounceUnconfirmed)));
+        assert_eq!(*calls.borrow(), vec![10, 11]);
+        let empty = announce_to_closest(target, &key, &[], unusable, |_, _| {
+            calls.borrow_mut().push(99);
+            std::future::ready(Err(DhtError::ChannelClosed))
+        }).await;
+        assert!(matches!(empty, Err(HyperDhtError::AnnounceUnconfirmed)));
+        assert_eq!(*calls.borrow(), vec![10, 11]);
+
+        let confirmed = announce_to_closest(
+            target,
+            &key,
+            &[],
+            vec![announcement_reply(12)],
+            |params, to| {
+                assert_eq!(params.command, ANNOUNCE);
+                assert_eq!(params.target, Some(target));
+                assert_eq!(params.token, Some([12; 32]));
+                let announcement = crate::hyperdht_messages::decode_announce_from_bytes(
+                    params.value.as_deref().expect("signed payload"),
+                ).expect("valid announcement");
+                let peer = announcement.peer.expect("peer identity");
+                assert_eq!(peer.public_key, key.public_key);
+                assert!(verify_detached(
+                    &announcement.signature.expect("signature"),
+                    &ann_signable(
+                        &target, &[12; 32], &[12; 32],
+                        &encode_hyper_peer_to_bytes(&peer).expect("peer encoding"),
+                        &[], &NS_ANNOUNCE,
+                    ),
+                    &key.public_key,
+                ));
+                std::future::ready(Ok(announcement_response(to, 0)))
+            },
+        ).await.expect("one confirmed publication");
+        assert_eq!(confirmed.closest_nodes, vec![announcement_reply(12).from]);
+    }
+
+    #[tokio::test]
+    async fn announcement_batches_bound_concurrency_and_retained_candidates() {
+        use std::sync::atomic::AtomicUsize;
+        let key = KeyPair::from_seed([12; 32]);
+        let active = AtomicUsize::new(0);
+        let maximum = AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
+        let gate = Semaphore::new(0);
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let replies = (1..=23).map(announcement_reply).collect();
+        let mut publication = Box::pin(announce_to_closest([18; 32], &key, &[], replies, |_, to| {
+            let active = &active;
+            let maximum = &maximum;
+            let calls = &calls;
+            let gate = &gate;
+            let started = &started;
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                let _probe = AnnouncementProbe(active);
+                maximum.fetch_max(count, Ordering::SeqCst);
+                started.send(()).expect("owner observes start");
+                gate.acquire().await.expect("fixture release").forget();
+                Ok(announcement_response(to, 0))
+            }
+        }));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::select! {
+                result = &mut publication => panic!("publication escaped held acknowledgements: {result:?}"),
+                _ = async {
+                    for _ in 0..ANNOUNCE_CONCURRENCY {
+                        starts.recv().await.expect("each first-batch request starts");
+                    }
+                } => {}
+            }
+        }).await.expect("first batch starts together");
+        assert_eq!(active.load(Ordering::SeqCst), ANNOUNCE_CONCURRENCY);
+        assert!(starts.try_recv().is_err(), "a fifth request must wait for the next batch");
+        gate.add_permits(crate::routing_table::K);
+        let result = tokio::time::timeout(Duration::from_secs(3), &mut publication)
+            .await.expect("all selected writes finish").expect("acknowledged");
+        assert_eq!(result.closest_nodes.len(), crate::routing_table::K);
+        assert_eq!(calls.load(Ordering::SeqCst), crate::routing_table::K);
+        assert_eq!(maximum.load(Ordering::SeqCst), ANNOUNCE_CONCURRENCY);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn announcement_cancellation_drops_owned_batch_before_later_writes() {
+        use std::sync::atomic::AtomicUsize;
+        let key = KeyPair::from_seed([12; 32]);
+        let active = AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let replies = (1..=8).map(announcement_reply).collect();
+        let mut publication = Box::pin(announce_to_closest([18; 32], &key, &[], replies, |_, _| {
+            let active = &active;
+            let calls = &calls;
+            let started = &started;
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                active.fetch_add(1, Ordering::SeqCst);
+                let _probe = AnnouncementProbe(active);
+                started.send(()).expect("owner observes start");
+                std::future::pending::<Result<ResponseData, DhtError>>().await
+            }
+        }));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::select! {
+                result = &mut publication => panic!("pending writes unexpectedly finished: {result:?}"),
+                _ = async {
+                    for _ in 0..ANNOUNCE_CONCURRENCY {
+                        starts.recv().await.expect("batch request starts");
+                    }
+                } => {}
+            }
+        }).await.expect("owned batch starts");
+        drop(publication);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), ANNOUNCE_CONCURRENCY);
+        assert!(starts.try_recv().is_err());
+    }
 
     #[tokio::test]
     async fn relay_task_keeps_control_socket_until_owner_drop_then_aborts() {

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T13:48:10.0316255Z",
-  "validationStatus": "HOSTED-PRODUCT-85-RUST-25-COLLECTOR-ADMITTED-BRIDGE-REPAIR-PENDING",
+  "capturedUtc": "2026-10-07T14:50:59.4231486Z",
+  "validationStatus": "W2507-SOURCE-REPAIR-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 15157,
-      "sha256": "2637B23C25239CD938716EEC04452788D45CD1AD064C1777AD4490BCCE409822"
+      "bytes": 15503,
+      "sha256": "3C9F47C6F5A6EDE45C91D896DE2F86E82648D2E98847C95F04D033A64E8009B8"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
@@ -3947,6 +3947,11 @@
       "sha256": "D0CEC9A1BB3B35D969107087E357C1CB319F58251289083DD956F2D3A1BD9A64"
     },
     {
+      "path": "docs/verification/gold-wave2507-acknowledged-announcement.json",
+      "bytes": 2937,
+      "sha256": "FA701C242AA37CC84E4740A10A9FFB9DC35CD8B57D0A23037F0D742B3C3994F2"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5103,8 +5108,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2492249,
-      "sha256": "EAC3AF4B5D9E0E1C6BE30979E7E0CC478EE230FC002037F0477E3E268E236DC8"
+      "bytes": 2493577,
+      "sha256": "89FD0D372BA17DB3059613AB419B1EA1A0279B7EADC61FDDD98B1C3E2DB84900"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -10948,8 +10953,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
-      "bytes": 155031,
-      "sha256": "7B62BE8619DDADFE142554845DACB109C04AC23BE92D8C86306A341B12AB8B02"
+      "bytes": 165006,
+      "sha256": "E5E724C4E1F0BFAD048097CCB14D439AB9B6050418B38C0ED886A81A8CE071BC"
     },
     {
       "path": "SRC/vendor/peeroxide-dht/src/io.rs",
@@ -10988,8 +10993,8 @@
     },
     {
       "path": "SRC/vendor/peeroxide/src/peer_discovery.rs",
-      "bytes": 14951,
-      "sha256": "37EBADC68E20D731D440ADE3A817E287298BA9B646672BE36CC145891D809454"
+      "bytes": 15108,
+      "sha256": "7455D85CD37BA98CE16DB8A4824B93AE3315E422FD8FF9CC18AF93DF15C446C8"
     },
     {
       "path": "SRC/vendor/peeroxide/src/swarm.rs",

@@ -141,7 +141,7 @@ async fn do_refresh(
         let pk_target = hash(&key_pair.public_key);
         let (topic_announce, key_announce) = await_both_announcements(
             async {
-                match dht.announce(config.topic, key_pair, relay_addresses).await {
+                let succeeded = match dht.announce(config.topic, key_pair, relay_addresses).await {
                     Ok(r) => {
                         tracing::debug!(closest = r.closest_nodes.len(), "announce complete");
                         true
@@ -150,10 +150,16 @@ async fn do_refresh(
                         tracing::warn!(err = %e, "announce failed");
                         false
                     }
-                }
+                };
+                companion_discovery_phase(if succeeded {
+                    "server_topic_announce_succeeded"
+                } else {
+                    "server_topic_announce_failed"
+                });
+                succeeded
             },
             async {
-                match dht.announce(pk_target, key_pair, relay_addresses).await {
+                let succeeded = match dht.announce(pk_target, key_pair, relay_addresses).await {
                     Ok(r) => {
                         tracing::debug!(
                             closest = r.closest_nodes.len(),
@@ -165,21 +171,16 @@ async fn do_refresh(
                         tracing::warn!(err = %e, "self-announce (hash(pk)) failed");
                         false
                     }
-                }
+                };
+                companion_discovery_phase(if succeeded {
+                    "server_key_announce_succeeded"
+                } else {
+                    "server_key_announce_failed"
+                });
+                succeeded
             },
         )
         .await;
-
-        companion_discovery_phase(if topic_announce {
-            "server_topic_announce_succeeded"
-        } else {
-            "server_topic_announce_failed"
-        });
-        companion_discovery_phase(if key_announce {
-            "server_key_announce_succeeded"
-        } else {
-            "server_key_announce_failed"
-        });
 
         companion_discovery_phase(if topic_announce && key_announce {
             "announce_success"
