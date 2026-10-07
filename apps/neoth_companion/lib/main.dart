@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'companion_controller.dart';
+import 'companion_activity_presentation.dart';
 import 'companion_terminal_presentation.dart';
 import 'companion_theme.dart';
 import 'models.dart';
@@ -178,6 +179,8 @@ class _CompanionHomeState extends State<CompanionHome> {
                         icon: const Icon(Icons.stop_circle_outlined),
                         label: Text(widget.controller.chatCancelRequested ? 'Stopping wait…' : 'Stop waiting'),
                       ),
+                    if (widget.controller.chatPending && widget.controller.chatActivity case final activity?)
+                      Padding(padding: const EdgeInsets.only(top: 12), child: CompanionActivityCard(snapshot: activity)),
                     if (widget.controller.chatLocalMessage case final message?)
                       Padding(padding: const EdgeInsets.only(top: 12), child: Text(message)),
                     if (widget.controller.chatTerminal case final terminal?)

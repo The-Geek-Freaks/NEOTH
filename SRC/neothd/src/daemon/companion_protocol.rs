@@ -17,6 +17,9 @@ pub const COMPANION_V3_MAX_FRAME_BYTES: usize = 8 * 1024;
 pub const COMPANION_V3_MAX_CHAT_TERMINAL_BYTES: usize = 80 * 1024;
 pub const COMPANION_V3_MAX_CHAT_MESSAGE_BYTES: usize = 640;
 pub const COMPANION_V3_MAX_CHAT_RECORDS: usize = 64;
+pub const COMPANION_ACTIVITY_SCHEMA_VERSION: u8 = 1;
+pub const COMPANION_ACTIVITY_MAX_EVENTS: usize = 16;
+pub const COMPANION_ACTIVITY_MAX_LABEL_BYTES: usize = 96;
 pub const COMPANION_V3_MAX_LABEL_BYTES: usize = 64;
 pub const COMPANION_V3_MAX_ACTIVE_TURNS: usize = 8;
 pub const COMPANION_V3_STATUS_SCOPE: &str = "companion.status.read";
@@ -24,6 +27,13 @@ pub const COMPANION_V3_CHAT_SCOPE: &str = "companion.chat.send";
 const ENROLL_DOMAIN: &[u8] = b"NEOTH/companion/v3/enroll";
 const STATUS_DOMAIN: &[u8] = b"NEOTH/companion/v3/status";
 const CHAT_DOMAIN: &[u8] = b"NEOTH/companion/v3/chat";
+
+/// Schema v1 carries only these producer-owned presentation labels. Any new
+/// label requires a coordinated schema revision instead of projecting tool
+/// names, paths, arguments, or error text through the companion boundary.
+pub fn is_companion_activity_label_v1(label: &str) -> bool {
+    matches!(label, "Read file" | "Write file" | "List files" | "Search code" | "Tool call")
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,7 +137,29 @@ pub struct CompanionChatRequest {
     pub challenge_nonce: [u8; 32],
     pub request_id: Uuid,
     pub message: String,
+    /// Deliberately request-scoped.  Absent preserves the exact v3 request
+    /// encoding and signing transcript, so an installed v3 bridge can only
+    /// ever receive its single terminal frame.
+    #[serde(default, skip_serializing_if = "CompanionChatCapabilities::is_empty")]
+    pub capabilities: CompanionChatCapabilities,
     pub signature: Vec<u8>,
+}
+
+/// Explicit client opt-in for server-to-client frames which are not part of
+/// the original v3 one-terminal conversation.  New flags require their own
+/// signed transcript extension; an empty value is omitted for wire- and
+/// signature-compatibility with already paired v3 clients.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatCapabilities {
+    #[serde(default)]
+    pub tool_activity_v1: bool,
+}
+
+impl CompanionChatCapabilities {
+    pub const fn is_empty(&self) -> bool {
+        !self.tool_activity_v1
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -165,6 +197,37 @@ pub struct CompanionChatTerminal {
     pub records: Vec<CompanionChatRecord>,
     pub provider: Option<String>,
     pub model: Option<String>,
+}
+
+/// A bounded redacted snapshot for a capability-negotiated companion chat.
+/// It is intentionally separate from the v3 terminal record contract.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionToolActivityPhase {
+    Started,
+    Succeeded,
+    Failed,
+    Rejected,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionToolActivityEvent {
+    pub event_seq: u64,
+    pub ordinal: u32,
+    pub phase: CompanionToolActivityPhase,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionChatActivitySnapshot {
+    pub activity_schema_version: u8,
+    pub request_id: Uuid,
+    pub max_event_seq: u64,
+    pub incomplete: bool,
+    pub events: Vec<CompanionToolActivityEvent>,
 }
 
 /// A server-minted, in-memory, one-use challenge.  It is bound to the exact
@@ -219,6 +282,7 @@ pub enum ServerFrame {
     StatusChallenge(StatusChallenge),
     StatusSnapshot(CompanionStatusSnapshot),
     ChatChallenge(ChatChallenge),
+    ChatActivitySnapshot(CompanionChatActivitySnapshot),
     ChatTerminal(CompanionChatTerminal),
     Denied(CompanionDenied),
 }
@@ -376,6 +440,10 @@ impl ChatChallenge {
 }
 
 impl CompanionChatRequest {
+    pub const fn requests_tool_activity_v1(&self) -> bool {
+        self.capabilities.tool_activity_v1
+    }
+
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_version(self.schema_version)?;
         if self.daemon_boot_id.is_empty() || self.daemon_boot_id.len() > 128
@@ -406,6 +474,12 @@ impl CompanionChatRequest {
         push_field(&mut out, &self.challenge_nonce);
         push_field(&mut out, self.request_id.as_bytes());
         push_field(&mut out, self.message.as_bytes());
+        // Do not append an empty capability field: those exact bytes are the
+        // already-deployed v3 signing transcript.  A requested capability is
+        // bound to the request and cannot be introduced by a relay.
+        if self.requests_tool_activity_v1() {
+            push_field(&mut out, b"tool_activity_v1");
+        }
         Ok(out)
     }
 
@@ -425,8 +499,24 @@ impl CompanionChatRequest {
             challenge_nonce: challenge.challenge_nonce,
             request_id,
             message,
+            capabilities: CompanionChatCapabilities::default(),
             signature: Vec::new(),
         };
+        result.signature = signing_key
+            .sign(&result.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
+        Ok(result)
+    }
+
+    pub fn signed_with_tool_activity_v1(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
+        let mut result = Self::signed(challenge, request_id, message, signing_key)?;
+        result.capabilities.tool_activity_v1 = true;
         result.signature = signing_key
             .sign(&result.signing_bytes()?)
             .to_bytes()
@@ -566,6 +656,34 @@ impl CompanionChatTerminal {
     }
 }
 
+impl CompanionChatActivitySnapshot {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.activity_schema_version != COMPANION_ACTIVITY_SCHEMA_VERSION
+            || self.events.len() > COMPANION_ACTIVITY_MAX_EVENTS
+        {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        let mut previous = 0u64;
+        for event in &self.events {
+            if event.event_seq == 0
+                || event.event_seq <= previous
+                || event.ordinal == 0
+                || event.label.is_empty()
+                || event.label.len() > COMPANION_ACTIVITY_MAX_LABEL_BYTES
+                || event.label.chars().any(char::is_control)
+                || !is_companion_activity_label_v1(&event.label)
+            {
+                return Err(ProtocolError::InvalidFrame);
+            }
+            previous = event.event_seq;
+        }
+        if self.max_event_seq != previous {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+}
+
 impl ServerFrame {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         match self {
@@ -576,6 +694,7 @@ impl ServerFrame {
             Self::StatusChallenge(value) => value.validate(),
             Self::StatusSnapshot(value) => value.validate(),
             Self::ChatChallenge(value) => value.validate(),
+            Self::ChatActivitySnapshot(value) => value.validate(),
             Self::ChatTerminal(value) => value.validate(),
             Self::Denied(value) => value.validate(),
         }
@@ -599,6 +718,57 @@ pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError
         ServerFrame::ChatTerminal(_) => encode_chat_terminal(frame),
         _ => encode_frame(frame),
     }
+}
+
+/// Advertise optional activity support without changing the frozen
+/// `ChatChallenge` body. Older adjacent-tag enum decoders ignore this
+/// top-level sibling and retain their existing challenge/terminal exchange.
+pub fn encode_chat_challenge_with_activity_advertisement(
+    challenge: &ChatChallenge,
+    tool_activity_v1: bool,
+) -> Result<Vec<u8>, ProtocolError> {
+    challenge.validate()?;
+    let mut envelope = serde_json::Map::new();
+    envelope.insert("type".into(), serde_json::Value::String("chat_challenge".into()));
+    envelope.insert(
+        "body".into(),
+        serde_json::to_value(challenge).map_err(|_| ProtocolError::InvalidFrame)?,
+    );
+    if tool_activity_v1 {
+        envelope.insert(
+            "capabilities".into(),
+            serde_json::json!({"tool_activity_v1": true}),
+        );
+    }
+    encode_frame(&serde_json::Value::Object(envelope))
+}
+
+/// Decode the frozen challenge body plus the optional envelope advertisement.
+/// Absent, unknown, false, or malformed capability values deliberately fall
+/// back to legacy request signing. A malformed challenge itself remains an
+/// error rather than being mistaken for legacy support.
+pub fn decode_chat_challenge_with_activity_advertisement(
+    bytes: &[u8],
+) -> Result<(ChatChallenge, bool), ProtocolError> {
+    if bytes.is_empty() || bytes.len() > COMPANION_V3_MAX_FRAME_BYTES {
+        return Err(ProtocolError::InvalidFrame);
+    }
+    let envelope: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    let frame: ServerFrame =
+        serde_json::from_value(envelope.clone()).map_err(|_| ProtocolError::InvalidFrame)?;
+    let ServerFrame::ChatChallenge(challenge) = frame else {
+        return Err(ProtocolError::InvalidFrame);
+    };
+    challenge.validate()?;
+    let advertised = envelope
+        .get("capabilities")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|capabilities| {
+            capabilities.len() == 1
+                && capabilities.get("tool_activity_v1") == Some(&serde_json::Value::Bool(true))
+        });
+    Ok((challenge, advertised))
 }
 
 pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
@@ -654,6 +824,125 @@ fn signature_bytes(bytes: &[u8]) -> Result<Signature, ProtocolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jm03_activity_snapshot_accepts_only_bounded_monotonic_redacted_events() {
+        let snapshot = CompanionChatActivitySnapshot {
+            activity_schema_version: COMPANION_ACTIVITY_SCHEMA_VERSION,
+            request_id: Uuid::nil(),
+            max_event_seq: 2,
+            incomplete: false,
+            events: vec![
+                CompanionToolActivityEvent {
+                    event_seq: 1,
+                    ordinal: 1,
+                    phase: CompanionToolActivityPhase::Started,
+                    label: "Read file".to_owned(),
+                },
+                CompanionToolActivityEvent {
+                    event_seq: 2,
+                    ordinal: 1,
+                    phase: CompanionToolActivityPhase::Succeeded,
+                    label: "Read file".to_owned(),
+                },
+            ],
+        };
+        assert_eq!(snapshot.validate(), Ok(()));
+    }
+
+    #[test]
+    fn jm04_activity_snapshot_rejects_sequence_and_label_boundary_breaks() {
+        let mut snapshot = CompanionChatActivitySnapshot {
+            activity_schema_version: COMPANION_ACTIVITY_SCHEMA_VERSION,
+            request_id: Uuid::nil(),
+            max_event_seq: 1,
+            incomplete: true,
+            events: vec![CompanionToolActivityEvent {
+                event_seq: 1,
+                ordinal: 1,
+                phase: CompanionToolActivityPhase::Unknown,
+                label: "Tool call".to_owned(),
+            }],
+        };
+        snapshot.events[0].label = "x".repeat(COMPANION_ACTIVITY_MAX_LABEL_BYTES + 1);
+        assert!(snapshot.validate().is_err());
+        snapshot.events[0].label = "Tool call".to_owned();
+        snapshot.events.push(snapshot.events[0].clone());
+        snapshot.max_event_seq = 1;
+        assert!(snapshot.validate().is_err());
+        snapshot.events.truncate(1);
+        snapshot.events[0].label = "C:\\private\\secret-token".to_owned();
+        assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
+    fn jm03_capability_opt_in_is_signed_while_legacy_chat_request_bytes_stay_v3() {
+        let signing = SigningKey::from_bytes(&[7; 32]);
+        let challenge = ChatChallenge {
+            schema_version: COMPANION_V3_SCHEMA_VERSION,
+            device_id: CompanionDeviceId(Uuid::nil()),
+            revision: 1,
+            listener_generation: 2,
+            daemon_boot_id: "boot".to_owned(),
+            challenge_nonce: [3; 32],
+            issued_at_unix: 4,
+        };
+        let legacy = CompanionChatRequest::signed(
+            &challenge, Uuid::new_v4(), "hello".to_owned(), &signing,
+        ).unwrap();
+        let opted_in = CompanionChatRequest::signed_with_tool_activity_v1(
+            &challenge, Uuid::new_v4(), "hello".to_owned(), &signing,
+        ).unwrap();
+
+        assert!(!legacy.requests_tool_activity_v1());
+        assert!(!serde_json::to_string(&legacy).unwrap().contains("capabilities"));
+        assert!(opted_in.requests_tool_activity_v1());
+        assert!(serde_json::to_string(&opted_in).unwrap().contains("tool_activity_v1"));
+        legacy.verify_with(&signing.verifying_key().to_bytes()).unwrap();
+        opted_in.verify_with(&signing.verifying_key().to_bytes()).unwrap();
+        assert_ne!(legacy.signing_bytes().unwrap(), opted_in.signing_bytes().unwrap());
+    }
+
+    #[test]
+    fn jm03_envelope_sibling_advertisement_preserves_frozen_challenge_body() {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", content = "body", rename_all = "snake_case")]
+        enum FrozenLegacyServerFrame {
+            ChatChallenge(ChatChallenge),
+        }
+        let challenge = ChatChallenge {
+            schema_version: COMPANION_V3_SCHEMA_VERSION,
+            device_id: CompanionDeviceId(Uuid::nil()),
+            revision: 1,
+            listener_generation: 2,
+            daemon_boot_id: "boot".to_owned(),
+            challenge_nonce: [4; 32],
+            issued_at_unix: 5,
+        };
+        let bytes = encode_chat_challenge_with_activity_advertisement(&challenge, true).unwrap();
+        let legacy: FrozenLegacyServerFrame = serde_json::from_slice(&bytes).unwrap();
+        let FrozenLegacyServerFrame::ChatChallenge(legacy_body) = legacy;
+        assert_eq!(legacy_body, challenge);
+        let (decoded, advertised) = decode_chat_challenge_with_activity_advertisement(&bytes).unwrap();
+        assert_eq!(decoded, challenge);
+        assert!(advertised);
+    }
+
+    #[test]
+    fn jm03_absent_unknown_or_malformed_advertisement_falls_back_to_legacy() {
+        let body = r#"{"schema_version":3,"device_id":"00000000-0000-0000-0000-000000000000","revision":1,"listener_generation":2,"daemon_boot_id":"boot","challenge_nonce":[4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],"issued_at_unix":5}"#;
+        for suffix in [
+            "".to_owned(),
+            ",\"capabilities\":{\"unknown\":true}".to_owned(),
+            ",\"capabilities\":{\"tool_activity_v1\":\"yes\"}".to_owned(),
+        ] {
+            let bytes = format!("{{\"type\":\"chat_challenge\",\"body\":{body}{suffix}}}");
+            assert!(!decode_chat_challenge_with_activity_advertisement(bytes.as_bytes()).unwrap().1);
+        }
+        assert!(decode_chat_challenge_with_activity_advertisement(
+            br#"{"type":"chat_challenge","body":{"schema_version":2}}"#
+        ).is_err());
+    }
 
     #[test]
     fn chat_request_is_signed_to_a_fresh_challenge_and_rejects_slashes_or_overlong_text() {

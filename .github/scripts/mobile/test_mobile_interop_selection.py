@@ -46,11 +46,11 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 27, "no_cluster": 1, "bridge": 1}
+        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 15, "core": 40, "no_cluster": 1, "bridge": 10}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
             "collector": 19,
-            "sources": 43,
+            "sources": 49,
             "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["libudx"]["identities"][3], (
@@ -63,17 +63,17 @@ class SelectionContractTests(unittest.TestCase):
             "swarm::tests::authenticated_remote_topic_registration_requires_joined_server_topic",
             "swarm::tests::authenticated_remote_topic_admission_capacity_is_bounded",
         ])
-        self.assertEqual(custody["groups"]["core"]["identities"][-7:-4], [
+        self.assertEqual(custody["groups"]["core"]["identities"][20:23], [
             "cluster::hyperswarm::tests::shared_route_shutdown_fence_rejects_a_late_open_before_transport_work",
             "cluster::hyperswarm::tests::shared_dispatch_adapter_keeps_two_active_routes_after_pair_retirement_and_shutdown_drains",
             "cluster::hyperswarm::tests::shared_carrier_actor_join_failure_is_sticky_across_shutdown_calls",
         ])
-        self.assertEqual(custody["groups"]["core"]["identities"][-4:-1], [
+        self.assertEqual(custody["groups"]["core"]["identities"][23:26], [
             "cli::serve::tests::completed_audit_listener_is_consumed_before_abort_drain",
             "cli::serve::tests::audit_listener_error_is_consumed_before_fatal_classification",
             "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain",
         ])
-        self.assertEqual(custody["groups"]["core"]["identities"][-1], (
+        self.assertEqual(custody["groups"]["core"]["identities"][26], (
             "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals"
         ))
         self.assertIn("SRC/neothd/src/cli/serve.rs", custody["sourceSha256"])

@@ -203,3 +203,45 @@ int _positiveInt(Object? value) {
   if (value is! int || value < 1) throw const FormatException('invalid revision');
   return value;
 }
+
+enum CompanionToolActivityPhase { started, succeeded, failed, rejected, unknown }
+
+class CompanionToolActivityEvent {
+  const CompanionToolActivityEvent({required this.eventSeq, required this.ordinal, required this.phase, required this.label});
+  final int eventSeq;
+  final int ordinal;
+  final CompanionToolActivityPhase phase;
+  final String label;
+
+  factory CompanionToolActivityEvent.fromJson(Map<String, Object?> value, int prior) {
+    const keys = {'event_seq', 'ordinal', 'phase', 'label'};
+    if (value.length != keys.length || !value.keys.toSet().containsAll(keys)) throw const FormatException('unexpected activity event');
+    final sequence = value['event_seq']; final ordinal = value['ordinal']; final phase = value['phase']; final label = value['label'];
+    const labels = {'Read file', 'Write file', 'List files', 'Search code', 'Tool call'};
+    if (sequence is! int || sequence <= prior || ordinal is! int || ordinal < 1 || phase is! String || label is! String ||
+        !labels.contains(label) || utf8.encode(label).length > 96 || label.runes.any((rune) => rune < 0x20 || rune == 0x7f)) {
+      throw const FormatException('invalid activity event');
+    }
+    final parsed = switch (phase) {
+      'started' => CompanionToolActivityPhase.started, 'succeeded' => CompanionToolActivityPhase.succeeded,
+      'failed' => CompanionToolActivityPhase.failed, 'rejected' => CompanionToolActivityPhase.rejected,
+      'unknown' => CompanionToolActivityPhase.unknown, _ => throw const FormatException('invalid activity phase'),
+    };
+    return CompanionToolActivityEvent(eventSeq: sequence, ordinal: ordinal, phase: parsed, label: label);
+  }
+}
+
+class CompanionChatActivitySnapshot {
+  const CompanionChatActivitySnapshot({required this.requestId, required this.maxEventSeq, required this.incomplete, required this.events});
+  final String requestId; final int maxEventSeq; final bool incomplete; final List<CompanionToolActivityEvent> events;
+  factory CompanionChatActivitySnapshot.fromBridgeJson(Map<String, Object?> value) {
+    const keys = {'kind', 'activity_schema_version', 'request_id', 'max_event_seq', 'incomplete', 'events'};
+    if (value.length != keys.length || !value.keys.toSet().containsAll(keys) || value['kind'] != 'chat_activity_snapshot' || value['activity_schema_version'] != 1) throw const FormatException('unexpected activity snapshot');
+    final maximum = value['max_event_seq']; final incomplete = value['incomplete']; final raw = value['events'];
+    if (maximum is! int || maximum < 0 || incomplete is! bool || raw is! List || raw.length > 16) throw const FormatException('invalid activity snapshot');
+    var prior = 0; final events = <CompanionToolActivityEvent>[];
+    for (final entry in raw) { if (entry is! Map<String, Object?>) throw const FormatException('invalid activity event'); final parsed = CompanionToolActivityEvent.fromJson(entry, prior); prior = parsed.eventSeq; events.add(parsed); }
+    if (maximum != prior) throw const FormatException('invalid activity maximum');
+    return CompanionChatActivitySnapshot(requestId: _uuid(value['request_id']), maxEventSeq: maximum, incomplete: incomplete, events: List.unmodifiable(events));
+  }
+}

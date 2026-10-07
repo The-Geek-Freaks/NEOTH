@@ -120,6 +120,7 @@ impl DaemonChatRuntime {
         request: DaemonPlainChatRequest,
         cancellation: chat_turn_pipeline::ChatTurnCancellation,
         effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate>,
+        tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
     ) -> std::result::Result<DaemonPlainChatResponse, CompanionChatTurnError> {
         validate_request(&request).map_err(|_| CompanionChatTurnError::Denied)?;
         let admission = self
@@ -142,6 +143,7 @@ impl DaemonChatRuntime {
                 Arc::clone(&admission.accepted),
                 cancellation.clone(),
                 Some(effect_gate),
+                tool_activity_sink,
             )
             .await;
         cancellation.close();
@@ -327,6 +329,7 @@ impl DaemonChatRuntime {
             &self.active_segment_path,
             sink,
             effect_gate,
+            None,
         )
         .await?;
         cancellation.close();
@@ -493,6 +496,7 @@ impl DaemonChatRuntime {
                 Arc::clone(&admission.accepted),
                 admission.cancellation.clone(),
                 None,
+                None,
             )
             .await;
         match turn_result {
@@ -580,6 +584,7 @@ impl DaemonChatRuntime {
         accepted: Arc<AcceptedConfigSnapshot>,
         cancellation: chat_turn_pipeline::ChatTurnCancellation,
         effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+        tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
     ) -> Result<DaemonPlainChatResponse> {
         validate_request(&request)?;
         let config = accepted.config();
@@ -608,6 +613,7 @@ impl DaemonChatRuntime {
             &self.active_segment_path,
             &mut sink,
             effect_gate,
+            tool_activity_sink,
         )
         .await;
         cancellation.close();
@@ -1108,6 +1114,7 @@ mod tests {
                 admission.provider,
                 admission.accepted,
                 admission.cancellation,
+                None,
                 None,
             )
             .await;

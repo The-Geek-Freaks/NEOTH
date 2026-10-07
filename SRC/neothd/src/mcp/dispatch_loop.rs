@@ -23,11 +23,12 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 use crate::mcp::config::McpServers;
@@ -89,6 +90,8 @@ pub struct ToolActivitySink {
     turn_id: String,
     state: Arc<Mutex<ToolActivityState>>,
     contention_or_loss: Arc<AtomicBool>,
+    change: Arc<Notify>,
+    revision: Arc<AtomicU64>,
 }
 
 impl ToolActivitySink {
@@ -105,16 +108,41 @@ impl ToolActivitySink {
                 incomplete: false,
             })),
             contention_or_loss: Arc::new(AtomicBool::new(false)),
+            change: Arc::new(Notify::new()),
+            revision: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    fn changed(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+        self.change.notify_waiters();
+    }
+
+    pub fn activity_revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    pub async fn changed_after(&self, observed: u64) -> u64 {
+        loop {
+            let notified = self.change.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let current = self.activity_revision();
+            if current != observed { return current; }
+            notified.await;
+        }
     }
 
     pub(crate) fn try_observe(&self, call: &ParsedToolCall) -> Option<ToolActivityCall> {
         let Ok(mut state) = self.state.try_lock() else {
             self.contention_or_loss.store(true, Ordering::Relaxed);
+            self.changed();
             return None;
         };
         if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS {
             state.incomplete = true;
+            drop(state);
+            self.changed();
             return None;
         }
         let ordinal = state.next_ordinal;
@@ -131,12 +159,15 @@ impl ToolActivitySink {
     fn try_emit(&self, ordinal: u32, phase: ToolActivityPhase, label: &str) {
         let Ok(mut state) = self.state.try_lock() else {
             self.contention_or_loss.store(true, Ordering::Relaxed);
+            self.changed();
             return;
         };
         if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS
             || label.len() > MAX_TOOL_ACTIVITY_LABEL_BYTES
         {
             state.incomplete = true;
+            drop(state);
+            self.changed();
             return;
         }
         let event_seq = state.next_sequence;
@@ -149,6 +180,8 @@ impl ToolActivitySink {
             label: label.to_owned(),
             detail: None,
         });
+        drop(state);
+        self.changed();
     }
 
     pub fn snapshot(&self) -> (Vec<ToolActivity>, bool) {
@@ -3231,6 +3264,23 @@ mod tests {
         let (events, incomplete) = sink.snapshot();
         assert!(events.is_empty());
         assert!(incomplete);
+    }
+
+    #[tokio::test]
+    async fn jm03_activity_change_notification_is_coalesced_and_execution_independent() {
+        let sink = ToolActivitySink::new_authenticated("notify-turn".into()).unwrap();
+        let observed = sink.activity_revision();
+        let call = ParsedToolCall {
+            server: "filesystem".into(), tool: "read_file".into(),
+            arguments: serde_json::json!({"private":"not projected"}),
+        };
+        drop(sink.try_observe(&call).unwrap());
+        assert!(sink.changed_after(observed).await > observed);
+        let (events, incomplete) = sink.snapshot();
+        assert!(!incomplete);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].phase, ToolActivityPhase::Rejected);
+        assert_eq!(events[0].detail, None);
     }
 
     fn model_reply(value: &str) -> crate::pipeline::RenderedUntrustedContext {

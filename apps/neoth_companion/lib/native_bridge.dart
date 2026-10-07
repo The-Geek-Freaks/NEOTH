@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'bridge_input.dart';
+import 'models.dart';
 
 enum NativeOperationResult { pending, ok, denied, failed, cancelled }
 
@@ -26,6 +27,10 @@ abstract interface class NativeBridge {
   Future<void> dispose();
 }
 
+abstract interface class NativeBridgeWithActivity implements NativeBridge {
+  Future<NativeBridgeResult> chatWithActivity(String descriptorJson, String deviceId, String message, void Function(CompanionChatActivitySnapshot) onActivity);
+}
+
 final class _Bridge extends Opaque {}
 final class _Operation extends Opaque {}
 
@@ -39,21 +44,27 @@ typedef _ReconnectStartNative = Pointer<_Operation> Function(Pointer<_Bridge>, P
 typedef _ReconnectStartDart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int);
 typedef _ChatStartNative = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr);
 typedef _ChatStartDart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int);
+typedef _ChatStartV2Native = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr, Pointer<Uint8>, IntPtr, Uint8);
+typedef _ChatStartV2Dart = Pointer<_Operation> Function(Pointer<_Bridge>, Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int, int);
 typedef _PollNative = Int32 Function(Pointer<_Operation>, Pointer<Uint8>, IntPtr, Pointer<IntPtr>);
 typedef _PollDart = int Function(Pointer<_Operation>, Pointer<Uint8>, int, Pointer<IntPtr>);
+typedef _PollV2Native = Int32 Function(Pointer<_Operation>, Pointer<Uint8>, IntPtr, Pointer<IntPtr>);
+typedef _PollV2Dart = int Function(Pointer<_Operation>, Pointer<Uint8>, int, Pointer<IntPtr>);
 typedef _OperationVoidNative = Void Function(Pointer<_Operation>);
 typedef _OperationVoidDart = void Function(Pointer<_Operation>);
 
 /// Owns one Rust bridge allocation and exactly one in-flight operation.  The
 /// opaque native bridge derives the signing and Noise identities from the
 /// protected seed; neither private material nor invite data crosses back.
-class FfiNativeBridge implements NativeBridge {
+class FfiNativeBridge implements NativeBridgeWithActivity {
   FfiNativeBridge._(DynamicLibrary library, Uint8List seed)
       : _bridgeFree = library.lookupFunction<_BridgeFreeNative, _BridgeFreeDart>('neoth_companion_bridge_free'),
         _pairStart = library.lookupFunction<_PairStartNative, _PairStartDart>('neoth_companion_pair_start'),
         _reconnectStart = library.lookupFunction<_ReconnectStartNative, _ReconnectStartDart>('neoth_companion_reconnect_start'),
         _chatStart = library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_chat_start'),
+        _chatStartV2 = _lookupChatStartV2(library),
         _poll = library.lookupFunction<_PollNative, _PollDart>('neoth_companion_operation_poll'),
+        _pollV2 = _lookupPollV2(library),
         _operationCancel = library.lookupFunction<_OperationVoidNative, _OperationVoidDart>('neoth_companion_operation_cancel'),
         _operationFree = library.lookupFunction<_OperationVoidNative, _OperationVoidDart>('neoth_companion_operation_free'),
         _bridge = _create(library.lookupFunction<_BridgeNewNative, _BridgeNewDart>('neoth_companion_bridge_new'), seed);
@@ -70,7 +81,9 @@ class FfiNativeBridge implements NativeBridge {
   final _PairStartDart _pairStart;
   final _ReconnectStartDart _reconnectStart;
   final _ChatStartDart _chatStart;
+  final _ChatStartV2Dart? _chatStartV2;
   final _PollDart _poll;
+  final _PollV2Dart? _pollV2;
   final _OperationVoidDart _operationCancel;
   final _OperationVoidDart _operationFree;
   Pointer<_Bridge> _bridge;
@@ -124,6 +137,15 @@ class FfiNativeBridge implements NativeBridge {
     );
   }
 
+  @override
+  Future<NativeBridgeResult> chatWithActivity(String descriptorJson, String deviceId, String message, void Function(CompanionChatActivitySnapshot) onActivity) {
+    final start = _chatStartV2; final poll = _pollV2;
+    if (start == null || poll == null) return chat(descriptorJson, deviceId, message);
+    if (!isBoundedReconnectInput(descriptorJson, deviceId)) return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
+    validateOrdinaryChatMessage(message);
+    return _startThree((descriptor, descriptorLength, id, idLength, text, textLength) => start(_bridge, descriptor, descriptorLength, id, idLength, text, textLength, 1), descriptorJson, deviceId, message, poll: poll, onActivity: onActivity);
+  }
+
   Future<NativeBridgeResult> _start(
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int) invoke, String first, String second) async {
     _requireLive();
@@ -155,7 +177,7 @@ class FfiNativeBridge implements NativeBridge {
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int) invoke,
       String first,
       String second,
-      String third) async {
+      String third, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity}) async {
     _requireLive();
     if (_active != null) return const NativeBridgeResult(NativeOperationResult.failed);
     final firstBytes = utf8.encode(first);
@@ -173,7 +195,7 @@ class FfiNativeBridge implements NativeBridge {
       _active = operation;
       _activeCancelRequested = false;
       _activeFinished = Completer<void>();
-      return await _pollUntilTerminal(operation);
+      return await _pollUntilTerminal(operation, poll: poll, onActivity: onActivity);
     } finally {
       firstNative.asTypedList(firstBytes.length).fillRange(0, firstBytes.length, 0);
       secondNative.asTypedList(secondBytes.length).fillRange(0, secondBytes.length, 0);
@@ -187,10 +209,10 @@ class FfiNativeBridge implements NativeBridge {
     }
   }
 
-  Future<NativeBridgeResult> _pollUntilTerminal(Pointer<_Operation> operation) async {
+  Future<NativeBridgeResult> _pollUntilTerminal(Pointer<_Operation> operation, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity}) async {
     try {
       while (_active == operation) {
-        final result = _readPoll(operation);
+        final result = _readPoll(operation, poll ?? _poll, onActivity);
         if (result.kind != NativeOperationResult.pending) return result;
         await Future<void>.delayed(const Duration(milliseconds: 125));
       }
@@ -204,10 +226,10 @@ class FfiNativeBridge implements NativeBridge {
     }
   }
 
-  NativeBridgeResult _readPoll(Pointer<_Operation> operation) {
+  NativeBridgeResult _readPoll(Pointer<_Operation> operation, _PollDart poll, void Function(CompanionChatActivitySnapshot)? onActivity) {
     final required = calloc<IntPtr>();
     try {
-      final first = _poll(operation, nullptr, 0, required);
+      final first = poll(operation, nullptr, 0, required);
       if (first == 0) return const NativeBridgeResult(NativeOperationResult.pending);
       // ABI r1 returned 1 for a probe whose buffer was absent; ABI r2 uses 5.
       // Both spellings are accepted only for this size-discovery call, so a
@@ -218,7 +240,20 @@ class FfiNativeBridge implements NativeBridge {
       final outputLength = required.value;
       final output = calloc<Uint8>(outputLength + 1);
       try {
-        final second = _poll(operation, output, outputLength + 1, required);
+        final second = poll(operation, output, outputLength + 1, required);
+        if (second == 6) {
+          if (onActivity == null) return const NativeBridgeResult(NativeOperationResult.failed);
+          // Activity is observational. A malformed frame or an observer
+          // exception cannot abandon the one owned poll/free lifecycle or
+          // hide the eventual terminal result.
+          try {
+            final decoded = jsonDecode(utf8.decode(output.asTypedList(outputLength), allowMalformed: false));
+            if (decoded is Map<String, Object?>) onActivity(CompanionChatActivitySnapshot.fromBridgeJson(decoded));
+          } on Object {
+            // Drop this side-channel observation; continue polling terminal.
+          }
+          return const NativeBridgeResult(NativeOperationResult.pending);
+        }
         final terminal = _resultKind(second);
         // Chat's public busy/unavailable/timeout/indeterminate terminals use
         // the ABI's failed result code. Decode the bounded public JSON for
@@ -286,6 +321,9 @@ class FfiNativeBridge implements NativeBridge {
     if (_closing || _bridge == nullptr) throw StateError('companion bridge is closed');
   }
 }
+
+_ChatStartV2Dart? _lookupChatStartV2(DynamicLibrary library) { try { return library.lookupFunction<_ChatStartV2Native, _ChatStartV2Dart>('neoth_companion_chat_start_v2'); } on ArgumentError { return null; } }
+_PollV2Dart? _lookupPollV2(DynamicLibrary library) { try { return library.lookupFunction<_PollV2Native, _PollV2Dart>('neoth_companion_operation_poll_v2'); } on ArgumentError { return null; } }
 
 NativeOperationResult _resultKind(int raw) => switch (raw) {
       0 => NativeOperationResult.pending,

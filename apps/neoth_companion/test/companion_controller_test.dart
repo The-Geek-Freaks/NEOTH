@@ -8,6 +8,7 @@ import 'package:neoth_companion/native_bridge.dart';
 import 'package:neoth_companion/secure_store.dart';
 
 void main() {
+  activityModelRegressionCases();
   group('CompanionController', () {
     test('persists a public enrollment only after a real accepted bridge frame', () async {
       final store = _MemoryStore();
@@ -101,6 +102,32 @@ void main() {
       await Future<void>.microtask(() {});
 
       expect(bridge.disposeCalls, 1);
+    });
+
+    test('chat activity binds the first request, preserves loss notification, and terminal clears it', () async {
+      final pending = Completer<NativeBridgeResult>();
+      final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: _MemoryStore(enrollment: _chatAccepted()), bridgeFactory: (_) => bridge);
+      await controller.prepareBridge(); await controller.restore();
+      final send = controller.sendChat('ordinary text'); await Future<void>.microtask(() {});
+      bridge.emitActivity(_activity(request: '11111111-1111-1111-1111-111111111111', maximum: 1, incomplete: false));
+      bridge.emitActivity(_activity(request: '11111111-1111-1111-1111-111111111111', maximum: 1, incomplete: true));
+      bridge.emitActivity(_activity(request: '11111111-1111-1111-1111-111111111111', maximum: 2, incomplete: false));
+      bridge.emitActivity(_activity(request: '55555555-5555-5555-5555-555555555555', maximum: 2, incomplete: false));
+      expect(controller.chatActivity?.incomplete, isTrue);
+      pending.complete(_chatAcceptedResult()); await send;
+      expect(controller.chatActivity, isNull);
+    });
+
+    test('forget invalidates an old completion and clears local pending state while native drains', () async {
+      final pending = Completer<NativeBridgeResult>(); final bridge = _FakeBridge(chatFuture: pending.future);
+      final controller = CompanionController(store: _MemoryStore(enrollment: _chatAccepted()), bridgeFactory: (_) => bridge);
+      await controller.prepareBridge(); await controller.restore();
+      final send = controller.sendChat('ordinary text'); await Future<void>.microtask(() {});
+      await controller.forgetLocalEnrollment();
+      expect(controller.chatPending, isFalse); expect(bridge.cancelActiveChatCalls, 1);
+      pending.complete(_chatAcceptedResult()); await send;
+      expect(controller.chatTerminal, isNull); expect(controller.chatLocalMessage, isNull);
     });
 
     test('chat-scope enrollment sends one accepted terminal and never retries it', () async {
@@ -364,7 +391,12 @@ class _MemoryStore implements CompanionStore {
   Future<void> saveEnrollment(EnrollmentAccepted value) async => enrollment = value;
 }
 
-class _FakeBridge implements NativeBridge {
+CompanionChatActivitySnapshot _activity({required String request, required int maximum, required bool incomplete}) => CompanionChatActivitySnapshot(
+  requestId: request, maxEventSeq: maximum, incomplete: incomplete,
+  events: [CompanionToolActivityEvent(eventSeq: maximum, ordinal: 1, phase: CompanionToolActivityPhase.started, label: 'Read file')],
+);
+
+class _FakeBridge implements NativeBridgeWithActivity {
   _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult, this.chatFuture});
   NativeBridgeResult? pairResult;
   NativeBridgeResult? reconnectResult;
@@ -375,6 +407,8 @@ class _FakeBridge implements NativeBridge {
   int chatCalls = 0;
   int disposeCalls = 0;
   int cancelActiveChatCalls = 0;
+  void Function(CompanionChatActivitySnapshot)? _activity;
+  void emitActivity(CompanionChatActivitySnapshot value) => _activity?.call(value);
 
   @override
   Future<void> dispose() async => disposeCalls++;
@@ -395,5 +429,24 @@ class _FakeBridge implements NativeBridge {
     return chatResult ?? const NativeBridgeResult(NativeOperationResult.failed);
   }
   @override
+  Future<NativeBridgeResult> chatWithActivity(String descriptorJson, String deviceId, String message, void Function(CompanionChatActivitySnapshot) onActivity) {
+    _activity = onActivity;
+    return chat(descriptorJson, deviceId, message);
+  }
+  @override
   Future<void> cancelActiveChat() async => cancelActiveChatCalls++;
+}
+
+void activityModelRegressionCases() {
+  test('activity model rejects an unknown phase, unallowlisted label, and extra schema key', () {
+    final valid = <String, Object?>{
+      'kind': 'chat_activity_snapshot', 'activity_schema_version': 1,
+      'request_id': _deviceId, 'max_event_seq': 1, 'incomplete': false,
+      'events': <Object?>[<String, Object?>{'event_seq': 1, 'ordinal': 1, 'phase': 'started', 'label': 'Read file'}],
+    };
+    expect(CompanionChatActivitySnapshot.fromBridgeJson(valid).events.single.label, 'Read file');
+    expect(() => CompanionChatActivitySnapshot.fromBridgeJson(<String, Object?>{...valid, 'unexpected': true}), throwsFormatException);
+    expect(() => CompanionToolActivityEvent.fromJson(<String, Object?>{'event_seq': 1, 'ordinal': 1, 'phase': 'other', 'label': 'Read file'}, 0), throwsFormatException);
+    expect(() => CompanionToolActivityEvent.fromJson(<String, Object?>{'event_seq': 1, 'ordinal': 1, 'phase': 'started', 'label': 'sensitive path'}, 0), throwsFormatException);
+  });
 }

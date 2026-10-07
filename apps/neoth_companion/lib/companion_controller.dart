@@ -23,11 +23,16 @@ class CompanionController extends ChangeNotifier {
   EnrollmentAccepted? _enrollment;
   CompanionStatus? status;
   CompanionChatTerminal? chatTerminal;
+  CompanionChatActivitySnapshot? chatActivity;
   String? chatLocalMessage;
   bool chatPending = false;
   bool chatCancelRequested = false;
   CompanionViewState state = CompanionViewState.unpaired;
   bool _disposed = false;
+  int _chatEpoch = 0;
+  String? _chatRequestId;
+  int _activityMaximum = -1;
+  bool _activityIncomplete = false;
 
   Future<void> restore() async {
     _enrollment = await _store.loadEnrollment();
@@ -112,32 +117,55 @@ class CompanionController extends ChangeNotifier {
       _notify();
       return;
     }
+    final epoch = ++_chatEpoch;
     chatPending = true;
     chatCancelRequested = false;
     chatTerminal = null;
+    chatActivity = null;
+    _chatRequestId = null;
+    _activityMaximum = -1;
+    _activityIncomplete = false;
     chatLocalMessage = null;
     _notify();
     try {
-      final result = await _ensureBridge().chat(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message);
+      final bridge = _ensureBridge();
+      final result = bridge is NativeBridgeWithActivity
+          ? await bridge.chatWithActivity(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message, (snapshot) => _acceptActivity(epoch, snapshot))
+          : await bridge.chat(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message);
+      if (epoch != _chatEpoch) return;
       if (result.publicJson != null) {
         // A confirmed public terminal wins any earlier local stop presentation.
         // In particular, an accepted response must not retain "Stop requested".
         chatLocalMessage = null;
-        chatTerminal = CompanionChatTerminal.fromBridgeJson(result.publicJson!);
+        final terminal = CompanionChatTerminal.fromBridgeJson(result.publicJson!);
+        if (epoch != _chatEpoch || (_chatRequestId != null && _chatRequestId != terminal.requestId)) throw const FormatException('cross-request terminal');
+        chatActivity = null;
+        chatTerminal = terminal;
       } else if (result.kind == NativeOperationResult.cancelled) {
         chatLocalMessage = 'Waiting stopped before a terminal was confirmed.';
       } else {
         chatLocalMessage = 'Chat could not be started. No message is retried automatically.';
       }
     } on FormatException {
-      chatLocalMessage = 'The chat response could not be verified.';
+      if (epoch == _chatEpoch) chatLocalMessage = 'The chat response could not be verified.';
     } on StateError {
-      chatLocalMessage = 'NEOTH is unavailable. No message is retried automatically.';
+      if (epoch == _chatEpoch) chatLocalMessage = 'NEOTH is unavailable. No message is retried automatically.';
     } finally {
-      chatPending = false;
-      chatCancelRequested = false;
-      _notify();
+      if (epoch == _chatEpoch) { chatPending = false; chatCancelRequested = false; _notify(); }
     }
+  }
+
+  void _acceptActivity(int epoch, CompanionChatActivitySnapshot snapshot) {
+    if (_disposed || epoch != _chatEpoch || !chatPending || chatTerminal != null) return;
+    if (_chatRequestId == null) { _chatRequestId = snapshot.requestId; } else if (_chatRequestId != snapshot.requestId) { return; }
+    if (snapshot.maxEventSeq < _activityMaximum) return;
+    if (snapshot.maxEventSeq == _activityMaximum && !(chatActivity?.incomplete == false && snapshot.incomplete)) return;
+    _activityIncomplete = _activityIncomplete || snapshot.incomplete;
+    _activityMaximum = snapshot.maxEventSeq;
+    chatActivity = _activityIncomplete == snapshot.incomplete
+        ? snapshot
+        : CompanionChatActivitySnapshot(requestId: snapshot.requestId, maxEventSeq: snapshot.maxEventSeq, incomplete: true, events: snapshot.events);
+    _notify();
   }
 
   /// Stops waiting for this one local operation. This is not a provider or
@@ -161,12 +189,22 @@ class CompanionController extends ChangeNotifier {
 
   Future<void> forgetLocalEnrollment() async {
     if (_disposed) return;
+    // Invalidate before the awaited store mutation: a prior operation is still
+    // owned and drained by native, but may not mutate this cleared session.
+    ++_chatEpoch;
+    _activityMaximum = -1;
+    _activityIncomplete = false;
+    chatPending = false;
+    chatCancelRequested = false;
+    chatActivity = null;
+    chatTerminal = null;
+    chatLocalMessage = null;
+    _chatRequestId = null;
+    final bridge = _bridge;
+    if (bridge != null) unawaited(bridge.cancelActiveChat());
     await _store.clearEnrollment();
     _enrollment = null;
     status = null;
-    chatTerminal = null;
-    chatLocalMessage = null;
-    chatCancelRequested = false;
     _set(CompanionViewState.unpaired);
   }
 

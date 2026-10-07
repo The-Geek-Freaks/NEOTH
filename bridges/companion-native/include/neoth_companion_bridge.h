@@ -22,6 +22,9 @@ enum neoth_companion_result {
   NEOTH_COMPANION_FAILED = 3,
   NEOTH_COMPANION_CANCELLED = 4,
   NEOTH_COMPANION_BUFFER_TOO_SMALL = 5,
+  /* A bounded capability-negotiated chat activity snapshot. This is only
+   * returned by `neoth_companion_operation_poll_v2`; it is not terminal. */
+  NEOTH_COMPANION_ACTIVITY = 6,
   NEOTH_COMPANION_INTERNAL = -1
 };
 
@@ -56,6 +59,17 @@ neoth_companion_operation *neoth_companion_chat_start(
     size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
     const uint8_t *message, size_t message_len);
 
+/* Additive activity-capable chat start. The original `chat_start` remains
+ * terminal-only. `request_tool_activity` must be 0 or 1. A value of 1 is an
+ * opt-in request only: the bridge signs it only after the encrypted server
+ * ChatChallenge advertises support. An old or non-advertising daemon receives
+ * the exact legacy signed request and produces the usual one terminal result;
+ * no prompt is replayed. */
+neoth_companion_operation *neoth_companion_chat_start_v2(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *message, size_t message_len, uint8_t request_tool_activity);
+
 /* Poll is non-blocking. On terminal state it writes bounded UTF-8 JSON public
  * result bytes to `out`; set `out` NULL/0 to discover required length. The
  * buffer is byte-counted and has no trailing NUL. Size discovery returns
@@ -64,6 +78,14 @@ neoth_companion_operation *neoth_companion_chat_start(
  * `cancel` blocks until the owned transport worker has drained and a terminal
  * poll result is available; it never requires a separate drain call. */
 int32_t neoth_companion_operation_poll(neoth_companion_operation *operation,
+    uint8_t *out, size_t out_len, size_t *required_len);
+
+/* Additive non-blocking poll. It preserves all v1 terminal codes and buffer
+ * discovery semantics. Code NEOTH_COMPANION_ACTIVITY carries a bounded
+ * `chat_activity_snapshot` JSON envelope. A ready terminal takes priority over
+ * any retained snapshot, so activity can never obscure completion. A code-5
+ * probe does not consume activity; a successful code-6 sized read does. */
+int32_t neoth_companion_operation_poll_v2(neoth_companion_operation *operation,
     uint8_t *out, size_t out_len, size_t *required_len);
 void neoth_companion_operation_cancel(neoth_companion_operation *operation);
 void neoth_companion_operation_free(neoth_companion_operation *operation);

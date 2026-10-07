@@ -84,7 +84,20 @@
         "cli::serve::tests::completed_audit_listener_is_consumed_before_abort_drain",
         "cli::serve::tests::audit_listener_error_is_consumed_before_fatal_classification",
         "cli::serve::tests::cancelled_audit_listener_wait_retains_handle_for_normal_abort_drain",
-        "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals"
+        "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals",
+        "daemon::companion_protocol::tests::jm03_activity_snapshot_accepts_only_bounded_monotonic_redacted_events",
+        "daemon::companion_protocol::tests::jm04_activity_snapshot_rejects_sequence_and_label_boundary_breaks",
+        "daemon::companion_protocol::tests::jm03_capability_opt_in_is_signed_while_legacy_chat_request_bytes_stay_v3",
+        "daemon::companion_protocol::tests::jm03_envelope_sibling_advertisement_preserves_frozen_challenge_body",
+        "daemon::companion_protocol::tests::jm03_absent_unknown_or_malformed_advertisement_falls_back_to_legacy",
+        "mcp::dispatch_loop::tests::jm03_activity_change_notification_is_coalesced_and_execution_independent",
+        "daemon::companion_runtime::tests::jm03_owner_keeps_polling_chat_while_activity_ack_is_held",
+        "daemon::companion_runtime::tests::jm04_owner_discards_later_unsent_activity_when_terminal_waits_for_inflight_frame",
+        "daemon::companion_runtime::tests::jm04_owner_retires_carrier_when_inflight_activity_frame_fails_after_terminal",
+        "daemon::companion_runtime::tests::jm04_owner_retains_cancelled_chat_cleanup_after_activity_write_error",
+        "daemon::companion_runtime::tests::jm04_actual_owner_resolution_never_reaches_terminal_writer_after_completed_chat_write_error",
+        "daemon::companion_runtime::tests::jm04_actual_owner_resolution_waits_for_pending_cleanup_before_retire",
+        "daemon::companion_runtime::tests::jm04_actual_owner_resolution_allows_exactly_one_terminal_writer_after_success"
       ]
     },
     "no_cluster": {
@@ -96,7 +109,16 @@
     "bridge": {
       "step": "Run exact bridge public result regression",
       "identities": [
-        "tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text"
+        "tests::public_results_keep_the_flat_ffi_shape_and_stable_scope_text",
+        "tests::v2_poll_terminal_priority_and_probe_retention_are_explicit",
+        "tests::activity_coalescing_rejects_stale_progress_but_keeps_loss_marker",
+        "tests::native_boundary_rejects_cross_request_and_invalid_activity_frames",
+        "tests::v2_invalid_start_does_not_allocate_an_operation",
+        "tests::v1_result_codes_remain_terminal_only",
+        "tests::ffi_v2_probe_retains_then_code6_delivery_consumes_snapshot",
+        "tests::ffi_v2_terminal_beats_snapshot_and_legacy_poll_stays_pending",
+        "tests::ffi_cancel_then_free_drains_exactly_one_held_worker",
+        "tests::ffi_v2_larger_replacement_after_old_probe_is_retained_after_code5"
       ]
     }
   },
@@ -168,7 +190,13 @@
     "SRC/vendor/peeroxide/src/connection_set.rs",
     "SRC/neothd/src/lib.rs",
     "SRC/neothd/src/cli/serve.rs",
-    "SRC/neothd/src/cli/serve_tests.rs"
+    "SRC/neothd/src/cli/serve_tests.rs",
+    "SRC/neothd/src/mcp/dispatch_loop.rs",
+    "SRC/neothd/src/mcp/client.rs",
+    "SRC/neothd/src/mcp/gate.rs",
+    "SRC/neothd/src/cli/chat.rs",
+    "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+    "SRC/neothd/src/daemon/chat_runtime.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

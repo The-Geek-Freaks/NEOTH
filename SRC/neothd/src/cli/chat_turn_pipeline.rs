@@ -465,7 +465,9 @@ pub(crate) async fn run_prepared_chat_turn(
     segment_path: &Path,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<Option<ChatOutput>> {
-    run_prepared_chat_turn_with_effect_gate(prepared, provider, writer, segment_path, output, None)
+    run_prepared_chat_turn_with_effect_gate(
+        prepared, provider, writer, segment_path, output, None, None,
+    )
         .await
 }
 
@@ -476,7 +478,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     segment_path: &Path,
     output: &mut dyn ChatTurnEventSink,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
 ) -> Result<Option<ChatOutput>> {
+    // This is deliberately request-scoped and only supplied by the already
+    // authenticated companion entrypoint. Ordinary callers pass `None`.
     // Every concrete caller reaches this shared entry only after its local or
     // daemon admission succeeds and its home-scoped writer is initialized.
     // Keep the resulting opaque capability on `prepared` for the full turn,
@@ -1309,6 +1314,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         replay_context
             .as_ref()
             .map(|context| context.actual_usage_home.as_path()),
+        tool_activity_sink,
         output,
     ));
     let dispatch_output = match silence_watchdog.race_nonterminal(dispatch).await {

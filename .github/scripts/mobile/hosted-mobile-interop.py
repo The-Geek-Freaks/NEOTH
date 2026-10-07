@@ -21,7 +21,7 @@ REPLY = "W2328 deterministic loopback reply"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
- "neoth_companion_operation_free","neoth_companion_bridge_free")
+ "neoth_companion_operation_free","neoth_companion_bridge_free","neoth_companion_chat_start_v2","neoth_companion_operation_poll_v2")
 SHUTDOWN_MARKERS = (
     ("background_entry", b"shutdown checkpoint: background entry"),
     ("generation_effects_retired", b"shutdown checkpoint: generation effects retired"),

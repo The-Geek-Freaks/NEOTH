@@ -17,6 +17,6 @@ Pod::Spec.new do |spec|
   # Root each required C symbol so normal CocoaPods XCFramework selection pulls
   # its defining archive member even though Swift makes no direct bridge call.
   spec.user_target_xcconfig = {
-    'OTHER_LDFLAGS' => '$(inherited) -Wl,-u,_neoth_companion_bridge_new -Wl,-u,_neoth_companion_bridge_free -Wl,-u,_neoth_companion_pair_start -Wl,-u,_neoth_companion_reconnect_start -Wl,-u,_neoth_companion_chat_start -Wl,-u,_neoth_companion_operation_poll -Wl,-u,_neoth_companion_operation_cancel -Wl,-u,_neoth_companion_operation_free'
+    'OTHER_LDFLAGS' => '$(inherited) -Wl,-u,_neoth_companion_bridge_new -Wl,-u,_neoth_companion_bridge_free -Wl,-u,_neoth_companion_pair_start -Wl,-u,_neoth_companion_reconnect_start -Wl,-u,_neoth_companion_chat_start -Wl,-u,_neoth_companion_chat_start_v2 -Wl,-u,_neoth_companion_operation_poll -Wl,-u,_neoth_companion_operation_poll_v2 -Wl,-u,_neoth_companion_operation_cancel -Wl,-u,_neoth_companion_operation_free'
   }
 end

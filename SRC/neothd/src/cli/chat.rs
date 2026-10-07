@@ -6443,6 +6443,10 @@ pub(super) async fn dispatch_provider(
     // D5 replay retains normal authorization but binds its canonical usage
     // accounting to the real operator home, never the transient turn home.
     replay_usage_home: Option<&std::path::Path>,
+    // Present only for an already-authorized companion request.  It is never
+    // reconstructed from provider/MCP/session data; every legacy path passes
+    // `None` and retains the established dispatch behavior.
+    tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -7473,7 +7477,7 @@ pub(super) async fn dispatch_provider(
                 } else {
                     let mut compaction_budget =
                         crate::mcp::dispatch_loop::CompactionBudget::default();
-                    match run_mcp_dispatch_loop(
+                    match run_mcp_dispatch_loop_with_activity(
                         &guarded_orchestration_provider,
                         req.clone(),
                         route_mcp_servers,
@@ -7542,6 +7546,7 @@ pub(super) async fn dispatch_provider(
                         config.code_map.enrichment_selectors.clone(),
                         config.code_map.impact_policy,
                         config.code_map.requested_context_policy()?,
+                        tool_activity_sink,
                     )
                     .await
                     {
@@ -23127,6 +23132,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             output,
         )
         .await;
@@ -27514,6 +27520,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             &mut CliChatOutput,
         )
         .await;
@@ -27667,6 +27674,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             &mut output,
         );
 
@@ -27813,6 +27821,7 @@ template = "[REDACTED]"
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &[],
             &crate::hooks::SessionOnceGuard::new(),
+            None,
             None,
             None,
             None,

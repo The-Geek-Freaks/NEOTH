@@ -11,7 +11,7 @@ use std::{
     future::Future,
     ptr,
     sync::{Arc, Condvar, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ed25519_dalek::SigningKey;
@@ -25,7 +25,8 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use companion_protocol::{
-    decode_server_frame, encode_frame, CompanionChatOutcome, CompanionChatRecordKind,
+    decode_chat_challenge_with_activity_advertisement, decode_server_frame, encode_frame,
+    CompanionChatActivitySnapshot, CompanionChatOutcome, CompanionChatRecordKind,
     CompanionChatRequest, CompanionChatTerminal, CompanionDeniedCode, CompanionReadiness, CompanionScope,
     CompanionStatusSnapshot, EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
     COMPANION_V3_SCHEMA_VERSION,
@@ -79,7 +80,14 @@ struct Operation {
     completion: Arc<(Mutex<Completion>, Condvar)>,
 }
 
-struct Completion { result: Option<PublicResult>, done: bool }
+struct Completion {
+    result: Option<PublicResult>,
+    done: bool,
+    // Kept beside completion under the same lock so terminal priority is an
+    // atomic observation, never a race across two state holders.
+    activity: Option<PublicActivitySnapshot>,
+}
+type ActivitySlot = Arc<(Mutex<Completion>, Condvar)>;
 
 struct SecretBytes([u8; SECRET_BYTES]);
 
@@ -131,6 +139,39 @@ struct PublicChatResult {
 #[derive(Clone, Serialize)]
 struct PublicChatRecord { kind: &'static str, text: String }
 
+/// Additive, redacted, request-bound progress. This does not share the
+/// terminal's untagged JSON shape, so old poll callers cannot mistake it for a
+/// successful terminal result.
+#[derive(Clone, Serialize)]
+struct PublicActivitySnapshot {
+    kind: &'static str,
+    activity_schema_version: u8,
+    request_id: String,
+    max_event_seq: u64,
+    incomplete: bool,
+    events: Vec<PublicActivityEvent>,
+}
+
+#[derive(Clone, Serialize)]
+struct PublicActivityEvent {
+    event_seq: u64,
+    ordinal: u32,
+    phase: &'static str,
+    label: String,
+}
+
+enum PollV2 {
+    Pending,
+    Activity(PublicActivitySnapshot),
+    Terminal(PublicResult),
+}
+
+enum PollV2Delivery {
+    Pending,
+    Need(usize),
+    Ready(Vec<u8>, i32),
+}
+
 fn result_code(result: &PublicResult) -> i32 {
     match result {
         PublicResult::Paired { .. } | PublicResult::Status { .. } => 1,
@@ -177,7 +218,7 @@ impl Bridge {
     fn start_pair(&self, invite: PairInvite, label: String) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
-        Operation::spawn(Arc::clone(&self.runtime), cancel, async move {
+        Operation::spawn(Arc::clone(&self.runtime), cancel, move |_| async move {
             pair(device_secret, invite, label, cancel_rx).await
         })
     }
@@ -185,26 +226,35 @@ impl Bridge {
     fn start_reconnect(&self, descriptor: ReconnectDescriptor, device_id: Uuid) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
-        Operation::spawn(Arc::clone(&self.runtime), cancel, async move {
+        Operation::spawn(Arc::clone(&self.runtime), cancel, move |_| async move {
             reconnect(device_secret, descriptor, device_id, cancel_rx).await
         })
     }
 
     fn start_chat(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String) -> Operation {
+        self.start_chat_with_activity(descriptor, device_id, message, false)
+    }
+
+    fn start_chat_with_activity(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String, request_activity: bool) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
-        Operation::spawn(Arc::clone(&self.runtime), cancel, async move {
-            chat(device_secret, descriptor, device_id, message, cancel_rx).await
+        Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
+            chat(device_secret, descriptor, device_id, message, request_activity, activity, cancel_rx).await
         })
     }
 }
 
 impl Operation {
-    fn spawn(runtime: Arc<Runtime>, cancel: watch::Sender<bool>, work: impl Future<Output = PublicResult> + Send + 'static) -> Self {
-        let completion = Arc::new((Mutex::new(Completion { result: None, done: false }), Condvar::new()));
+    fn spawn<F, Fut>(runtime: Arc<Runtime>, cancel: watch::Sender<bool>, work: F) -> Self
+    where
+        F: FnOnce(ActivitySlot) -> Fut + Send + 'static,
+        Fut: Future<Output = PublicResult> + Send + 'static,
+    {
+        let completion = Arc::new((Mutex::new(Completion { result: None, done: false, activity: None }), Condvar::new()));
         let done = Arc::clone(&completion);
+        let activity_for_work = Arc::clone(&completion);
         runtime.spawn(async move {
-            let result = std::panic::AssertUnwindSafe(work).catch_unwind().await
+            let result = std::panic::AssertUnwindSafe(work(activity_for_work)).catch_unwind().await
                 .unwrap_or(PublicResult::Failed { code: "bridge_task_panicked" });
             let (lock, wake) = &*done;
             let mut state = lock_unpoison(lock);
@@ -226,6 +276,62 @@ impl Operation {
         let (lock, _) = &*self.completion;
         let state = lock_unpoison(lock);
         Ok(state.done.then(|| state.result.clone()).flatten())
+    }
+
+    fn poll_v2(&self) -> Result<PollV2, ()> {
+        // A terminal wins over an already retained snapshot. This preserves
+        // terminal dominance even if the producer finishes between polls.
+        let (lock, _) = &*self.completion;
+        let state = lock_unpoison(lock);
+        select_poll_v2(state)
+    }
+
+    fn poll_v2_for_delivery(&self, out_len: usize) -> Result<PollV2Delivery, ()> {
+        let (lock, _) = &*self.completion;
+        let mut state = lock_unpoison(lock);
+        // Select, encode, compare capacity, and consume under one lock. This
+        // prevents a newer larger coalesced snapshot from being taken after an
+        // older probe and then lost to a second code-5 response.
+        if state.done {
+            let result = state.result.clone().ok_or(())?;
+            let encoded = encode_public_result(&result).map_err(|_| ())?;
+            if encoded.len() > MAX_PUBLIC_RESULT_BYTES { return Err(()); }
+            return Ok(if out_len < encoded.len() { PollV2Delivery::Need(encoded.len()) }
+            else { PollV2Delivery::Ready(encoded, result_code(&result)) });
+        }
+        let Some(snapshot) = state.activity.as_ref() else { return Ok(PollV2Delivery::Pending) };
+        let encoded = serde_json::to_vec(snapshot).map_err(|_| ())?;
+        if encoded.len() > MAX_PUBLIC_RESULT_BYTES { return Err(()); }
+        if out_len < encoded.len() { return Ok(PollV2Delivery::Need(encoded.len())); }
+        // It is only removed after the exact current snapshot is encoded and
+        // known to fit this actual delivery buffer.
+        state.activity.take();
+        Ok(PollV2Delivery::Ready(encoded, 6))
+    }
+}
+
+fn select_poll_v2(state: &Completion) -> Result<PollV2, ()> {
+    Ok(if state.done {
+        PollV2::Terminal(state.result.clone().ok_or(())?)
+    } else if let Some(snapshot) = state.activity.clone() {
+        PollV2::Activity(snapshot)
+    } else {
+        PollV2::Pending
+    })
+}
+
+fn should_replace_activity(
+    current: Option<&PublicActivitySnapshot>,
+    candidate: &PublicActivitySnapshot,
+) -> bool {
+    match current {
+        None => true,
+        Some(current) if candidate.max_event_seq > current.max_event_seq => true,
+        // A coalesced loss marker may be the only evidence for a dropped
+        // interval. It is allowed at the same sequence; no sequence is made.
+        Some(current) if candidate.max_event_seq == current.max_event_seq
+            && !current.incomplete && candidate.incomplete => true,
+        _ => false,
     }
 }
 
@@ -489,6 +595,8 @@ async fn chat(
     descriptor: ReconnectDescriptor,
     expected_device_id: Uuid,
     message: String,
+    request_activity: bool,
+    activity: ActivitySlot,
     mut cancel: watch::Receiver<bool>,
 ) -> PublicResult {
     if descriptor.validate().is_err() { return PublicResult::Failed { code: "invalid_reconnect_descriptor" }; }
@@ -496,7 +604,7 @@ async fn chat(
     let signing_key = match derive_signing_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
     let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1; config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS)).await { Ok(value) => value, Err(result) => return result };
-    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, &signing_key, &mut cancel).await;
+    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, &activity, &signing_key, &mut cancel).await;
     // Cancellation must not detach a rendezvous worker. Destroy the carrier
     // and await the sole worker before publishing this terminal result.
     let _ = swarm.destroy().await;
@@ -510,6 +618,8 @@ async fn chat_on_swarm(
     descriptor: &ReconnectDescriptor,
     expected_device_id: Uuid,
     message: String,
+    request_activity: bool,
+    activity: &ActivitySlot,
     signing_key: &SigningKey,
     cancel: &mut watch::Receiver<bool>,
 ) -> PublicResult {
@@ -517,26 +627,61 @@ async fn chat_on_swarm(
     if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
     let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await { Wait::Value(Some(value)) => value, Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" }, Wait::Expired => return PublicResult::Failed { code: "chat_connect_timeout" }, Wait::Cancelled => return PublicResult::Cancelled };
     if conn.remote_public_key() != &descriptor.daemon_noise_public_key { return PublicResult::Denied { code: "daemon_key_mismatch" }; }
-    let challenge = match await_cancelable(cancel, timeout, conn.read()).await {
-        Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) { Ok(ServerFrame::ChatChallenge(value)) => value, Ok(ServerFrame::Denied(value)) => return public_denied(value.code), Ok(_) | Err(_) => return PublicResult::Failed { code: "invalid_server_frame" } },
+    let (challenge, activity_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_activity_advertisement(&frame) {
+            Ok(value) => value,
+            Err(_) => match decode_server_frame(&frame) {
+                Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
+                _ => return PublicResult::Failed { code: "invalid_server_frame" },
+            },
+        },
         Wait::Value(Ok(None)) => return PublicResult::Failed { code: "transport_closed" }, Wait::Value(Err(_)) => return PublicResult::Failed { code: "transport_read_failed" }, Wait::Expired => return PublicResult::Failed { code: "chat_challenge_timeout" }, Wait::Cancelled => return PublicResult::Cancelled,
     };
     if challenge.device_id.0 != expected_device_id || challenge.validate().is_err() { return PublicResult::Denied { code: "invalid_chat_challenge" }; }
     let request_id = Uuid::now_v7();
-    let request = match CompanionChatRequest::signed(&challenge, request_id, message, signing_key) { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
+    // The v2 caller merely asks for activity. The authenticated server's
+    // top-level challenge advertisement is the only authority that enables it.
+    // An old daemon therefore receives the original request; after any signed
+    // request write ambiguity this function returns indeterminate and never
+    // retries through the legacy path.
+    let request = if request_activity && activity_advertised {
+        CompanionChatRequest::signed_with_tool_activity_v1(&challenge, request_id, message, signing_key)
+    } else {
+        CompanionChatRequest::signed(&challenge, request_id, message, signing_key)
+    };
+    let request = match request { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
     let bytes = match encode_frame(&request) { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
     if *cancel.borrow() { return PublicResult::Cancelled; }
     match write_cancelable(&mut conn, &bytes, timeout, cancel).await {
         Write::Sent => {}
         Write::Cancelled | Write::Expired | Write::Failed => return public_indeterminate(request_id),
     }
-    match await_cancelable(cancel, timeout, conn.read()).await {
-        Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
-            Ok(ServerFrame::ChatTerminal(value)) => public_chat_terminal(value, request_id),
-            Ok(ServerFrame::Denied(value)) => public_denied(value.code),
-            Ok(_) | Err(_) => public_indeterminate(request_id),
-        },
-        Wait::Value(Ok(None)) | Wait::Value(Err(_)) | Wait::Expired | Wait::Cancelled => public_indeterminate(request_id),
+    // Progress is observational only. It cannot extend the single existing
+    // post-send response budget forever by resetting a per-frame timeout.
+    let response_deadline = Instant::now() + timeout;
+    loop {
+        let Some(remaining) = response_deadline.checked_duration_since(Instant::now()) else {
+            return public_indeterminate(request_id);
+        };
+        match await_cancelable(cancel, remaining, conn.read()).await {
+            Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
+                Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if request_activity && activity_advertised => {
+                    if let Some(snapshot) = public_activity_snapshot(snapshot, request_id) {
+                        let (lock, _) = &**activity;
+                        let mut state = lock_unpoison(lock);
+                        if should_replace_activity(state.activity.as_ref(), &snapshot) {
+                            state.activity = Some(snapshot);
+                        }
+                        continue;
+                    }
+                    return public_indeterminate(request_id);
+                }
+                Ok(ServerFrame::ChatTerminal(value)) => return public_chat_terminal(value, request_id),
+                Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
+                Ok(_) | Err(_) => return public_indeterminate(request_id),
+            },
+            Wait::Value(Ok(None)) | Wait::Value(Err(_)) | Wait::Expired | Wait::Cancelled => return public_indeterminate(request_id),
+        }
     }
 }
 
@@ -627,6 +772,38 @@ fn public_chat_terminal(terminal: CompanionChatTerminal, expected_request_id: Uu
     let outcome = match terminal.outcome { CompanionChatOutcome::Accepted => "accepted", CompanionChatOutcome::Denied => "denied", CompanionChatOutcome::Busy => "busy", CompanionChatOutcome::Unavailable => "unavailable", CompanionChatOutcome::Timeout => "timeout", CompanionChatOutcome::Indeterminate => "indeterminate" };
     let records = terminal.records.into_iter().map(|record| PublicChatRecord { kind: match record.kind { CompanionChatRecordKind::Stdout => "stdout", CompanionChatRecordKind::Stderr => "stderr", CompanionChatRecordKind::Notice => "notice" }, text: record.text }).collect();
     PublicResult::Chat(PublicChatResult { kind: "chat", schema_version: terminal.schema_version, request_id: terminal.request_id.to_string(), outcome, records, provider: terminal.provider, model: terminal.model })
+}
+
+fn public_activity_snapshot(
+    snapshot: CompanionChatActivitySnapshot,
+    expected_request_id: Uuid,
+) -> Option<PublicActivitySnapshot> {
+    // Validation is deliberately repeated at the native boundary. The
+    // encrypted carrier authenticates its peer, while this check prevents a
+    // stale, cross-request, malformed, or overlarge frame from reaching Dart.
+    if snapshot.validate().is_err() || snapshot.request_id != expected_request_id {
+        return None;
+    }
+    let events = snapshot.events.into_iter().map(|event| PublicActivityEvent {
+        event_seq: event.event_seq,
+        ordinal: event.ordinal,
+        phase: match event.phase {
+            companion_protocol::CompanionToolActivityPhase::Started => "started",
+            companion_protocol::CompanionToolActivityPhase::Succeeded => "succeeded",
+            companion_protocol::CompanionToolActivityPhase::Failed => "failed",
+            companion_protocol::CompanionToolActivityPhase::Rejected => "rejected",
+            companion_protocol::CompanionToolActivityPhase::Unknown => "unknown",
+        },
+        label: event.label,
+    }).collect();
+    Some(PublicActivitySnapshot {
+        kind: "chat_activity_snapshot",
+        activity_schema_version: snapshot.activity_schema_version,
+        request_id: snapshot.request_id.to_string(),
+        max_event_seq: snapshot.max_event_seq,
+        incomplete: snapshot.incomplete,
+        events,
+    })
 }
 
 fn public_status(snapshot: CompanionStatusSnapshot, expected_device_id: Uuid) -> PublicResult {
@@ -868,6 +1045,30 @@ pub extern "C" fn neoth_companion_chat_start(
 }) }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_chat_start_v2(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8,
+    descriptor_json_len: usize,
+    device_id: *const u8,
+    device_id_len: usize,
+    message: *const u8,
+    message_len: usize,
+    request_tool_activity: u8,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    if request_tool_activity > 1 { return ptr::null_mut(); }
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(message) = input(message, message_len, MAX_CHAT_MESSAGE_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()) else { return ptr::null_mut() };
+    let Ok(message) = chat_message_from(message) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation {
+        inner: bridge.inner.start_chat_with_activity(descriptor, device_id, message, request_tool_activity == 1),
+    }))
+}) }
+
+#[unsafe(no_mangle)]
 pub extern "C" fn neoth_companion_operation_poll(
     operation: *mut neoth_companion_operation,
     out: *mut u8,
@@ -882,6 +1083,30 @@ pub extern "C" fn neoth_companion_operation_poll(
     if out.is_null() || out_len < encoded.len() { return 5; }
     ptr::copy_nonoverlapping(encoded.as_ptr(), out, encoded.len());
     result_code(&result)
+}) }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_operation_poll_v2(
+    operation: *mut neoth_companion_operation,
+    out: *mut u8,
+    out_len: usize,
+    required_len: *mut usize,
+) -> i32 { ffi_code(|| unsafe {
+    let Some(operation) = borrowed(operation) else { return -1 };
+    let available = if out.is_null() { 0 } else { out_len };
+    match operation.inner.poll_v2_for_delivery(available) {
+        Ok(PollV2Delivery::Pending) => 0,
+        Ok(PollV2Delivery::Need(required)) => {
+            if !required_len.is_null() { *required_len = required; }
+            5
+        }
+        Ok(PollV2Delivery::Ready(encoded, code)) => {
+            if !required_len.is_null() { *required_len = encoded.len(); }
+            ptr::copy_nonoverlapping(encoded.as_ptr(), out, encoded.len());
+            code
+        }
+        Err(()) => -1,
+    }
 }) }
 
 #[unsafe(no_mangle)]
@@ -1040,5 +1265,208 @@ mod tests {
         assert_eq!(result_code(&PublicResult::Failed { code: "transport_closed" }), 3);
         assert_eq!(result_code(&PublicResult::Cancelled), 4);
         assert_eq!(neoth_companion_operation_poll(std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut()), -1);
+    }
+
+    fn activity(max_event_seq: u64, incomplete: bool) -> PublicActivitySnapshot {
+        PublicActivitySnapshot {
+            kind: "chat_activity_snapshot",
+            activity_schema_version: 1,
+            request_id: "00000000-0000-7000-8000-000000000002".to_owned(),
+            max_event_seq,
+            incomplete,
+            events: Vec::new(),
+        }
+    }
+
+    fn operation_with_state(
+        result: Option<PublicResult>,
+        done: bool,
+        activity: Option<PublicActivitySnapshot>,
+    ) -> *mut neoth_companion_operation {
+        let runtime = Arc::new(Runtime::new().unwrap());
+        Box::into_raw(Box::new(neoth_companion_operation {
+            inner: Operation {
+                _runtime: runtime,
+                cancel: watch::channel(false).0,
+                completion: Arc::new((Mutex::new(Completion { result, done, activity }), Condvar::new())),
+            },
+        }))
+    }
+
+    unsafe fn drop_unstarted_operation(operation: *mut neoth_companion_operation) {
+        // These fixture operations have no worker. Use raw ownership cleanup,
+        // not FFI free, whose contractual drain would correctly wait forever.
+        drop(unsafe { Box::from_raw(operation) });
+    }
+
+    #[test]
+    fn ffi_v2_probe_retains_then_code6_delivery_consumes_snapshot() {
+        let operation = operation_with_state(None, false, Some(activity(7, false)));
+        let mut required = 0usize;
+        assert_eq!(neoth_companion_operation_poll_v2(operation, ptr::null_mut(), 0, &mut required), 5);
+        assert!(required > 0);
+        let mut output = vec![0u8; required];
+        assert_eq!(neoth_companion_operation_poll_v2(operation, output.as_mut_ptr(), output.len(), &mut required), 6);
+        let parsed: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(parsed["kind"], "chat_activity_snapshot");
+        assert_eq!(neoth_companion_operation_poll_v2(operation, ptr::null_mut(), 0, &mut required), 0);
+        unsafe { drop_unstarted_operation(operation) };
+    }
+
+    fn larger_activity() -> PublicActivitySnapshot {
+        PublicActivitySnapshot {
+            kind: "chat_activity_snapshot",
+            activity_schema_version: 1,
+            request_id: "00000000-0000-7000-8000-000000000002".to_owned(),
+            max_event_seq: 16,
+            incomplete: false,
+            events: (1..=16).map(|sequence| PublicActivityEvent {
+                event_seq: sequence,
+                ordinal: sequence as u32,
+                phase: "started",
+                label: "Tool call".to_owned(),
+            }).collect(),
+        }
+    }
+
+    #[test]
+    fn ffi_v2_larger_replacement_after_old_probe_is_retained_after_code5() {
+        let operation = operation_with_state(None, false, Some(activity(7, false)));
+        let mut small_required = 0usize;
+        assert_eq!(neoth_companion_operation_poll_v2(operation, ptr::null_mut(), 0, &mut small_required), 5);
+        unsafe {
+            let operation_ref = &*operation;
+            let (lock, _) = &*operation_ref.inner.completion;
+            lock_unpoison(lock).activity = Some(larger_activity());
+        }
+        let mut large_required = 0usize;
+        let mut too_small = vec![0u8; small_required];
+        assert_eq!(neoth_companion_operation_poll_v2(operation, too_small.as_mut_ptr(), too_small.len(), &mut large_required), 5);
+        assert!(large_required > small_required);
+        let mut output = vec![0u8; large_required];
+        assert_eq!(neoth_companion_operation_poll_v2(operation, output.as_mut_ptr(), output.len(), &mut large_required), 6);
+        unsafe { drop_unstarted_operation(operation) };
+    }
+
+    #[test]
+    fn ffi_v2_terminal_beats_snapshot_and_legacy_poll_stays_pending() {
+        let pending = operation_with_state(None, false, Some(activity(7, false)));
+        assert_eq!(neoth_companion_operation_poll(pending, ptr::null_mut(), 0, ptr::null_mut()), 0);
+        unsafe { drop_unstarted_operation(pending) };
+
+        let terminal = operation_with_state(
+            Some(PublicResult::Failed { code: "transport_closed" }),
+            true,
+            Some(activity(7, false)),
+        );
+        let mut required = 0usize;
+        assert_eq!(neoth_companion_operation_poll_v2(terminal, ptr::null_mut(), 0, &mut required), 5);
+        let mut output = vec![0u8; required];
+        assert_eq!(neoth_companion_operation_poll_v2(terminal, output.as_mut_ptr(), output.len(), &mut required), 3);
+        unsafe { drop_unstarted_operation(terminal) };
+    }
+
+    #[test]
+    fn ffi_cancel_then_free_drains_exactly_one_held_worker() {
+        let runtime = Arc::new(Runtime::new().unwrap());
+        let (release, hold) = tokio::sync::oneshot::channel::<()>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (cancel_observed_tx, cancel_observed_rx) = std::sync::mpsc::channel();
+        let started_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_for_worker = Arc::clone(&started_count);
+        let (cancel, mut cancel_rx) = watch::channel(false);
+        let inner = Operation::spawn(runtime, cancel, move |_| async move {
+            count_for_worker.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            started_tx.send(()).unwrap();
+            cancel_rx.changed().await.unwrap();
+            assert!(*cancel_rx.borrow());
+            cancel_observed_tx.send(()).unwrap();
+            let _ = hold.await;
+            PublicResult::Cancelled
+        });
+        let operation = Box::into_raw(Box::new(neoth_companion_operation { inner }));
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(started_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let address = operation as usize;
+        let (drained_tx, drained_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            neoth_companion_operation_cancel(address as *mut neoth_companion_operation);
+            drained_tx.send(()).unwrap();
+        });
+        cancel_observed_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(drained_rx.recv_timeout(Duration::from_millis(25)).is_err());
+        release.send(()).unwrap();
+        drained_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        waiter.join().unwrap();
+        // Cancellation retained the operation for the poll owner; free takes
+        // that one ownership path after the verified worker drain.
+        neoth_companion_operation_free(operation);
+    }
+
+    #[test]
+    fn v2_poll_terminal_priority_and_probe_retention_are_explicit() {
+        let snapshot = activity(7, false);
+        let pending = Completion { result: None, done: false, activity: Some(snapshot.clone()) };
+        assert!(matches!(select_poll_v2(&pending), Ok(PollV2::Activity(value)) if value.max_event_seq == 7));
+        // A size probe must not consume this value; a later sized read sees it.
+        assert!(matches!(select_poll_v2(&pending), Ok(PollV2::Activity(value)) if value.max_event_seq == 7));
+        let terminal = Completion {
+            result: Some(PublicResult::Failed { code: "transport_closed" }),
+            done: true,
+            activity: Some(snapshot),
+        };
+        assert!(matches!(select_poll_v2(&terminal), Ok(PollV2::Terminal(PublicResult::Failed { code: "transport_closed" }))));
+    }
+
+    #[test]
+    fn activity_coalescing_rejects_stale_progress_but_keeps_loss_marker() {
+        let current = activity(9, false);
+        assert!(!should_replace_activity(Some(&current), &activity(8, true)));
+        assert!(!should_replace_activity(Some(&current), &activity(9, false)));
+        assert!(should_replace_activity(Some(&current), &activity(9, true)));
+        assert!(!should_replace_activity(Some(&activity(9, true)), &activity(9, false)));
+        assert!(should_replace_activity(Some(&current), &activity(10, false)));
+    }
+
+    #[test]
+    fn native_boundary_rejects_cross_request_and_invalid_activity_frames() {
+        let expected = Uuid::parse_str("00000000-0000-7000-8000-000000000002").unwrap();
+        let mut snapshot = CompanionChatActivitySnapshot {
+            activity_schema_version: 1,
+            request_id: expected,
+            max_event_seq: 1,
+            incomplete: false,
+            events: vec![companion_protocol::CompanionToolActivityEvent {
+                event_seq: 1,
+                ordinal: 1,
+                phase: companion_protocol::CompanionToolActivityPhase::Started,
+                label: "Tool call".to_owned(),
+            }],
+        };
+        assert!(public_activity_snapshot(snapshot.clone(), expected).is_some());
+        snapshot.request_id = Uuid::parse_str("00000000-0000-7000-8000-000000000003").unwrap();
+        assert!(public_activity_snapshot(snapshot.clone(), expected).is_none());
+        snapshot.request_id = expected;
+        snapshot.events[0].label = "unreviewed label".to_owned();
+        assert!(public_activity_snapshot(snapshot, expected).is_none());
+    }
+
+    #[test]
+    fn v2_invalid_start_does_not_allocate_an_operation() {
+        let result = neoth_companion_chat_start_v2(
+            std::ptr::null_mut(), std::ptr::null(), 0, std::ptr::null(), 0,
+            std::ptr::null(), 0, 2,
+        );
+        assert!(result.is_null());
+        assert_eq!(neoth_companion_operation_poll_v2(std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut()), -1);
+    }
+
+    #[test]
+    fn v1_result_codes_remain_terminal_only() {
+        assert_eq!(result_code(&PublicResult::Cancelled), 4);
+        assert_eq!(result_code(&PublicResult::Denied { code: "device_denied" }), 2);
+        // Code 6 is reserved to the v2 poll envelope and cannot be produced by
+        // the original result-code mapping.
+        assert_ne!(result_code(&PublicResult::Failed { code: "transport_closed" }), 6);
     }
 }

@@ -1,0 +1,56 @@
+{
+  "schema": "neoth.wave2490.mobile-tool-activity.v1",
+  "capturedUtc": "2026-10-07T10:06:01.4701879Z",
+  "baseProducer": "a9248a12a84e361145d8275722f27ab45b7319bd",
+  "status": "SOURCE-INTEGRATED-STATIC-REVIEWED-HOSTED-PENDING",
+  "priorFocusedAdmission": {
+    "run": "37602096416",
+    "producer": "a9248a12a84e361145d8275722f27ab45b7319bd",
+    "ownerCases": 40,
+    "companionCases": 29,
+    "originalArchives": 3,
+    "archiveEntries": 85,
+    "generatedDocsByteEqual": true,
+    "rootProofSha256": "F56999FB309C639EBAD0B75AF4EE5A31FB1990CD7E43C8F921DB1350EE67666E"
+  },
+  "changes": [
+    "Signed opt-in after optional envelope-level server capability; legacy challenge body and request signing preserved",
+    "Nonblocking MCP sink and same retained chat/carrier owner; failed activity write retires connection after actual cleanup",
+    "Additive native v2 ABI with lock-held preview/capacity/consume and terminal dominance",
+    "Flutter optional symbols, exact request/epoch binding, sticky loss, passive latest-per-tool phase cards",
+    "Canonical tests and actual hosted ABI symbol checks extended together"
+  ],
+  "staticReviews": {
+    "native": "EFDAC6C15A6214AE5A26BFC4EE62CD07BA9A6D467AA3F411183AB3DBFEB12EE0",
+    "protocol": "1BDB0B10FFA78EDDB6BCCDFF18B052C63018B01BAA35BADA535FB4AD5499CFF2",
+    "flutter": "55E13AFC98EABF3C56D134A6DF9D5B0DD87691ACAC6C833C3D0921B676E6122B"
+  },
+  "registration": {
+    "portableRust": 2824,
+    "newNativeBridge": 9,
+    "mobileSourceBindings": 49,
+    "focusedCompanion": 42,
+    "newFlutter": 7,
+    "focusedOwner": 40,
+    "collector": 19,
+    "mobileRust": 90,
+    "newPortableRust": 13
+  },
+  "requiredExportsAdded": [
+    "neoth_companion_chat_start_v2",
+    "neoth_companion_operation_poll_v2"
+  ],
+  "validationPlan": [
+    "Fast push and verified hosted formatting",
+    "Focused CLI contract40+42 including new server regressions",
+    "Canonical mobile90+19 including real V1 product canary and actual v2 FFI source regressions",
+    "Flutter source QA and native producers, then real live ToolActivity app journey"
+  ],
+  "actualNewToolActivityEndToEndAccepted": false,
+  "existingV1CanaryDoesNotProveActivity": true,
+  "deviceAccepted": false,
+  "releaseAccepted": false,
+  "whatsappStatusImplemented": false,
+  "localExecutableValidationRan": false,
+  "slintChanged": false
+}

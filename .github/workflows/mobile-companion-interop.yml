@@ -290,9 +290,14 @@ jobs:
         run: |
           set -euo pipefail
           readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
-          test "${#bridge_identities[@]}" -eq 1
-          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "${bridge_identities[0]}" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-result-regression.log"
-          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          test "${#bridge_identities[@]}" -eq 10
+          : > "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          for identity in "${bridge_identities[@]}"; do
+            cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "$identity" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-case.log"
+            grep -Fqx "test $identity ... ok" "$RUNNER_TEMP/companion-bridge-case.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/companion-bridge-case.log"
+            cat "$RUNNER_TEMP/companion-bridge-case.log" >> "$RUNNER_TEMP/companion-bridge-result-regression.log"
+          done
       - name: Save mobile-interop Cargo checkpoint
         if: ${{ always() && !cancelled() && steps.mobile_interop_cache_restore.outputs.cache-hit != 'true' && steps.exact_host_build.outcome == 'success' && steps.exact_server_publication.outcome == 'success' && steps.exact_libudx_os_completion.outcome == 'success' && steps.exact_no_cluster.outcome == 'success' && steps.exact_companion_rpc_shutdown.outcome == 'success' && steps.exact_bridge_public_result.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}
         continue-on-error: true
