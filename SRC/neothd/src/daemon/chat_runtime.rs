@@ -145,7 +145,7 @@ impl std::fmt::Display for PlainChatFailureStage {
 impl std::error::Error for PlainChatFailureStage {}
 
 #[cfg(any(test, feature = "cluster"))]
-fn companion_failure_diagnostics(error: &anyhow::Error) -> (&'static str, &'static str) {
+pub(crate) fn companion_failure_diagnostics(error: &anyhow::Error) -> (&'static str, &'static str) {
     use crate::wal::error::WalError;
     use chat_turn_pipeline::{ChatTurnFailureContext, ChatTurnFailureStage};
 

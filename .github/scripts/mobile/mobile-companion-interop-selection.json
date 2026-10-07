@@ -150,7 +150,8 @@
       "test_v2_fake_ffi_retries_resize_and_releases_only_after_fixture_enters",
       "test_v2_fake_ffi_mismatched_terminal_cancels_drains_and_frees_once",
       "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once",
-      "test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free"
+      "test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free",
+      "test_loopback_config_uses_one_explicit_cost_override_and_rejects_other_routes"
     ]
   },
   "sourcePaths": [

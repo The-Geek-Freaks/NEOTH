@@ -1,0 +1,65 @@
+{
+  "schema": "neoth.gold.wave2500.loopback-cost-fixture.v1",
+  "status": "FIXTURE-CORRECTION-PUBLISHED-HOSTED-PENDING",
+  "base": "e4270cb1aaaf8a8305cb95d3cfef9eb1bd6ae97e",
+  "priorFailure": {
+    "run": "37620382915",
+    "attempt": 1,
+    "job": "112788857172",
+    "artifactId": "11481554182",
+    "artifactSha256": "5944A13A1CC2C86E458527854D3473AE5AB2A299864798C8AE098605CB62BB45",
+    "collectorPassed": 23,
+    "cliAndBridgeBuildPassed": true,
+    "stage": "engine_provider",
+    "kind": "unknown",
+    "fullMobileAccepted": false
+  },
+  "sources": [
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseSha256": "A6F45F46447D93BEF20DE85F958F8516B6025EED26726C6B60E44B3FC97D7BA8",
+      "candidateSha256": "7091AFDC306F865367BD8DC3439B8F05ABCFB243AE94919DCBCC92F3EF39B8C0"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseSha256": "411B2AEFB7E8C7D4E8B59C3771BDE0DDFCE625C3345D9861EBB80356827189F9",
+      "candidateSha256": "73B9B6F62A825C2A896651E9EFB3F7ED7A876B6213702882A4745766B7387D5A"
+    },
+    {
+      "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "baseSha256": "4C6FB943D387EC17C349DEB6F5E5C3E8144D3FC8D9D806ED0FE048AA1EFD6C9A",
+      "candidateSha256": "4ADFD8A23512BFAFEDA56681CD1DBE395CE4DB0F09C2E4407AB11CA1B9FA42BF"
+    },
+    {
+      "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+      "baseSha256": "55C46CDA168BA7BE90F5A2291AADEDEFBD6F461E8A33E3FB32942281C7879B6E",
+      "candidateSha256": "6D56B5F840E4642D904441958D2D628CB3AE8C17C61664C0199847CE0D93C3D1"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "baseSha256": "B4723465F42F270C0EF23F74C717C9D630C1191F02323A6FAF33D734474589F8",
+      "candidateSha256": "9F20ADE89FB60E73EA6E9A22B6415A60830A6D4CB416F5748375D123E948B218"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "baseSha256": "7FADE5D15B6C368895D6ABF76B5C385F14D8C626047B90D68054CD872E96C247",
+      "candidateSha256": "31384F00D304E0FFC2D5088418527EF912ABA27F04DF7D906D64F005F58D6061"
+    }
+  ],
+  "changes": [
+    "Explicit isolated loopback fixture permission for unknown-cost provider calls, guarded by exact numeric loopback URL.",
+    "Classify the original provider error before quarantine; retain only opt-in fixed categories.",
+    "One hosted collector regression checks the single override and twelve rejected routes before file creation."
+  ],
+  "registration": {
+    "portableRust": 2826,
+    "mobileRust": 92,
+    "collector": 24,
+    "mobileSources": 50
+  },
+  "localExecutableValidationRan": false,
+  "independentAgentUsed": false,
+  "chatRootCauseProven": false,
+  "nativeDeviceAccepted": false,
+  "releaseAccepted": false
+}

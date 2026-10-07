@@ -53,6 +53,31 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def test_loopback_config_uses_one_explicit_cost_override_and_rejects_other_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            config = INTEROP.write_config(home, "http://127.0.0.1:12345/v1", 23456, 34567)
+            text = config.read_text(encoding="utf-8")
+            self.assertIn("provider_endpoint: http://127.0.0.1:12345/v1\n", text)
+            self.assertIn("autonomy: custom\ncustom_autonomy:\n  overrides:\n    unbounded_paid_provider_call: allow\n", text)
+            self.assertEqual(text.count(": allow\n"), 1)
+            self.assertNotIn("autonomy: full", text)
+            self.assertNotIn("mcp_tool_invocation: allow", text)
+        for route in (
+            "http://localhost:12345/v1", "https://127.0.0.1:12345/v1",
+            "http://127.0.0.1.example:12345/v1", "http://127.0.0.2:12345/v1",
+            "http://127.0.0.1:0/v1", "http://127.0.0.1:65536/v1",
+            "http://127.0.0.1:01234/v1", "http://127.0.0.1:12345/v1?route=remote",
+            "http://127.0.0.1:12345/v1#fragment", "http://user@127.0.0.1:12345/v1",
+            "http://127.0.0.1:12345/other", "http://127.0.0.1:12345/v1\nautonomy: full",
+        ):
+            with tempfile.TemporaryDirectory() as directory:
+                home = pathlib.Path(directory)
+                with self.assertRaises(ValueError):
+                    INTEROP.write_config(home, route, 23456, 34567)
+                self.assertFalse((home / "freedom.yaml").exists())
+                self.assertFalse((home / "credentials.yaml").exists())
+
     def test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free(self) -> None:
         marker = b"NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed\n"
         expected = {"stage": "engine", "kind": "wal_writer_closed"}

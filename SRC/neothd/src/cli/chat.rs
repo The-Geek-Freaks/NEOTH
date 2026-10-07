@@ -1347,6 +1347,12 @@ pub(crate) fn opaque_chat_post_mint_failure(
     phase: &'static str,
     error: &anyhow::Error,
 ) -> anyhow::Error {
+    #[cfg(any(test, feature = "cluster"))]
+    if std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1") {
+        // Classify before quarantine erases the type, never expose its text.
+        let (_, kind) = crate::daemon::chat_runtime::companion_failure_diagnostics(error);
+        eprintln!("NEOTH_COMPANION_CHAT_FAILURE=engine_provider:{kind}");
+    }
     log_chat_post_mint_failure(phase, error);
     anyhow::anyhow!("chat post-mint provider/orchestration failure at {phase}; content quarantined")
 }

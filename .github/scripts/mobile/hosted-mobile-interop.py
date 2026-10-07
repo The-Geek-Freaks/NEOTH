@@ -311,10 +311,16 @@ class Loopback:
             return self.server.request_count
 
 def write_config(home: pathlib.Path, provider_url: str, health_port: int, companion_port: int) -> pathlib.Path:
+    # The isolated fixture deliberately opts into its free local HTTP stub.
+    # Never attach this paid-call override to a user-supplied or remote route.
+    route = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})/v1", provider_url)
+    if route is None or int(route.group(1)) > 65535:
+        raise ValueError("hosted provider must use the exact numeric loopback route")
     config = home / "freedom.yaml"
     config.write_text(
       f"operator_id: w2328-hosted\nonboarding_complete: true\nsecrets_backend: file\nprovider_kind: openai_compat\n"
       f"provider_endpoint: {provider_url}\nprovider_model: w2328-loopback-model\n"
+      "autonomy: custom\ncustom_autonomy:\n  overrides:\n    unbounded_paid_provider_call: allow\n"
       f"observability_listen: 127.0.0.1:{health_port}\nsecurity:\n  smart_approve: true\ncompanion:\n  enabled: true\n"
       f"  port: {companion_port}\n  p2p_enabled: true\n", encoding="utf-8")
     # Local canary value only. It is never emitted and the provider ignores it.
