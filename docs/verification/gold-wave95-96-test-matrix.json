@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2500-FIXTURE-CORRECTION-HOSTED-PENDING",
+  "status": "W2502-REVOKE-OWNER-REPAIR-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 402524,
-    "sha256": "2471C0CEDDFBE95DAEFA824FC57939EBB067F004DA664AC79C9F04BAE7FEF885"
+    "bytes": 402719,
+    "sha256": "56118D270126F0DFEEC860E63D648B7ADA626A86CD87FABE783E38ED9FD86561"
   },
-  "sourceInputs": 2198,
+  "sourceInputs": 2199,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16525,37 +16525,37 @@
     {
       "test": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16591,7 +16591,7 @@
     {
       "test": "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16855,7 +16855,7 @@
     {
       "test": "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16933,43 +16933,43 @@
     {
       "test": "daemon::companion_runtime::tests::jm03_owner_keeps_polling_chat_while_activity_ack_is_held",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_owner_discards_later_unsent_activity_when_terminal_waits_for_inflight_frame",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_owner_retires_carrier_when_inflight_activity_frame_fails_after_terminal",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_owner_retains_cancelled_chat_cleanup_after_activity_write_error",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_actual_owner_resolution_never_reaches_terminal_writer_after_completed_chat_write_error",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_actual_owner_resolution_waits_for_pending_cleanup_before_retire",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::jm04_actual_owner_resolution_allows_exactly_one_terminal_writer_after_success",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     },
     {
@@ -16982,6 +16982,24 @@
       "test": "daemon::chat_runtime::tests::companion_failure_diagnostics_discard_unclassified_error_text",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
       "sourceSha256": "31384F00D304E0FFC2D5088418527EF912ABA27F04DF7D906D64F005F58D6061",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::companion_runtime::tests::cancelled_revoke_wait_retains_listener_until_later_confirmed_join",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::companion_runtime::tests::retained_revoke_join_preserves_terminal_failure_and_consumes_handle",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::companion_runtime::tests::active_discovery_distinguishes_owned_stop_from_discovery_failure",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sourceSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
       "junitClass": "neoth"
     }
   ],
@@ -78757,6 +78775,62 @@
       }
     ],
     "note": "Loopback-only cost override and pre-quarantine fixed failure kind; 92 Rust/24 collector/50 source selection remains hosted pending; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2502CompanionRevokeOwner": {
+    "base": "25443bd93f1bae402458d635c9149de271b2c050",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 59221,
+        "sha256": "D1FD9DEA174B959218FDE5A4EF6B4B15668FB80C35425EB260832F9A209A8166",
+        "blob": "b40946a2c8d508c7faec97278c6b8ab6a5a204d3"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 15157,
+        "sha256": "2637B23C25239CD938716EEC04452788D45CD1AD064C1777AD4490BCCE409822",
+        "blob": "cd091c8d863e8b0fc0c37e741098632f903106b4"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 41992,
+        "sha256": "E1E7CA47AB7443088610586DE000E0A5071A1E05FEBF07D0059542CC87E737CE",
+        "blob": "82160fe7d814bb99ffb3985f6207ad3a5318a2c8"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 10341,
+        "sha256": "40813C64D8AB0B2C9C6F843BF8F4374010C1B76CD2C34E5BF7644C75EC5EBB91",
+        "blob": "1500f25c14cd32dfa4d675114692261ab6d7f5ad"
+      },
+      {
+        "path": "docs/verification/gold-wave2502-companion-revoke-owner.json",
+        "bytes": 2983,
+        "sha256": "E689624E0A1D80AD76CB244CEDE4523510EE620AFB9EFC8DC835BA076B250D15",
+        "blob": "c38b0aa9b438506ca0705366918d86cd71d9339c"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 24645,
+        "sha256": "4C54862D58CF75CA63E55C8394C2D926C75371005ACE3DF12F7264CB8FFED85C",
+        "blob": "750a0e455bb106122bf709933bf6ff55eb3481cd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2488968,
+        "sha256": "9138100C41E08CDDBA8DAA869CD5A2EDBB480600B1E02D322F48B101778DFC16",
+        "blob": "1b11fc1a20a2880052342f1b65a48be2a2dc84d9"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 119050,
+        "sha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA",
+        "blob": "19022794ac522cd3731df7b50ae9059ed4d48c39"
+      }
+    ],
+    "note": "V1 chat accepted on 25443bd9; actual revoke still pending. Retain cancelled revoke join ownership and distinguish requested discovery stop after checked cleanup. 95 Rust/25 collector/50 sources; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

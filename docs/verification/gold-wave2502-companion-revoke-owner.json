@@ -1,0 +1,70 @@
+{
+  "schema": "neoth.gold.wave2502.companion-revoke-owner.v1",
+  "status": "REVOKE-OWNER-REPAIR-HOSTED-PENDING",
+  "base": "25443bd93f1bae402458d635c9149de271b2c050",
+  "priorFailure": {
+    "run": "37622611780",
+    "attempt": 1,
+    "job": "112796374359",
+    "artifactId": "11482947826",
+    "archiveSha256": "60015C332EA568D693D92E883226FE6AE07CBB94FA7A262983F8984FCF291850",
+    "collectorPassed": 24,
+    "cliAndBridgeBuildPassed": true,
+    "v1Chat": "accepted",
+    "providerRequests": 1,
+    "serveExitCode": 0,
+    "walDrained": true,
+    "failureStage": "device_revoke",
+    "cliExitCode": 1,
+    "exactRpcFailureCauseKnown": false,
+    "fullMobileAccepted": false
+  },
+  "sources": [
+    {
+      "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+      "baseSha256": "7091AFDC306F865367BD8DC3439B8F05ABCFB243AE94919DCBCC92F3EF39B8C0",
+      "candidateSha256": "D1FD9DEA174B959218FDE5A4EF6B4B15668FB80C35425EB260832F9A209A8166"
+    },
+    {
+      "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+      "baseSha256": "4ADFD8A23512BFAFEDA56681CD1DBE395CE4DB0F09C2E4407AB11CA1B9FA42BF",
+      "candidateSha256": "2637B23C25239CD938716EEC04452788D45CD1AD064C1777AD4490BCCE409822"
+    },
+    {
+      "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+      "baseSha256": "73B9B6F62A825C2A896651E9EFB3F7ED7A876B6213702882A4745766B7387D5A",
+      "candidateSha256": "E1E7CA47AB7443088610586DE000E0A5071A1E05FEBF07D0059542CC87E737CE"
+    },
+    {
+      "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+      "baseSha256": "6D56B5F840E4642D904441958D2D628CB3AE8C17C61664C0199847CE0D93C3D1",
+      "candidateSha256": "40813C64D8AB0B2C9C6F843BF8F4374010C1B76CD2C34E5BF7644C75EC5EBB91"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "baseSha256": "4C6AD9D4DEF811CA077AFD7A59F3336C4996F842D84DD2B05C685E00E63660DB",
+      "candidateSha256": "7C4A5D530B56EE531835F1FEABE300B34DA4ED08682940E15AB49C59436F5ADA"
+    }
+  ],
+  "changes": [
+    "An owned stop during listener discovery is a successful stop only after checked rendezvous teardown; genuine discovery/teardown failures remain errors.",
+    "Listener handle stays in the daemon map during revoke joining, including cancellation by the RPC wait; consumed only after terminal result.",
+    "The hosted device RPC retains existing closed error classifications, never streams or identifiers."
+  ],
+  "registration": {
+    "portableRust": 2829,
+    "mobileRust": 95,
+    "collector": 25,
+    "mobileSources": 50
+  },
+  "newRustTests": [
+    "cancelled_revoke_wait_retains_listener_until_later_confirmed_join",
+    "retained_revoke_join_preserves_terminal_failure_and_consumes_handle",
+    "active_discovery_distinguishes_owned_stop_from_discovery_failure"
+  ],
+  "localExecutableValidationRan": false,
+  "independentAgentUsed": false,
+  "revokeAcceptance": false,
+  "nativeDeviceAccepted": false,
+  "releaseAccepted": false
+}

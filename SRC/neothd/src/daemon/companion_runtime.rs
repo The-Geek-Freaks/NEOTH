@@ -954,22 +954,9 @@ impl CompanionRuntime {
             self.mark_degraded().await;
             return Err(error);
         }
-        let owner = self.listener_tasks.lock().await.remove(&device_id.0);
-        if let Some(owner) = owner {
-            if let Some(task) = owner.task {
-                if let Err(error) = join_companion_task(task, "revoked device listener").await {
-                    self.mark_degraded().await;
-                    return Err(error);
-                }
-            } else {
-                self.mark_degraded().await;
-                anyhow::bail!(
-                    "companion revoke could not prove listener terminal: missing join handle"
-                );
-            }
-        } else {
+        if let Err(error) = join_retained_device_listener(&self.listener_tasks, device_id.0).await {
             self.mark_degraded().await;
-            anyhow::bail!("companion revoke lost its owned listener before drain proof");
+            return Err(error);
         }
         // The joined owner has completed (or conclusively failed) every
         // connection it accepted. Keep PendingRevoke if its lease counter
@@ -1136,10 +1123,22 @@ impl CompanionRuntime {
                     return Err(error);
                 }
             };
-            let discovery = tokio::select! {
-                result = rendezvous.wait_for_initial_discovery(&mut shutdown, readiness_deadline) => result,
-                _ = device_stop.changed() => Err(anyhow::anyhow!("companion device listener stopped before discovery readiness")),
-            };
+            let mut discovery_shutdown = shutdown.clone();
+            let discovery = await_active_listener_discovery(
+                rendezvous.wait_for_initial_discovery(&mut discovery_shutdown, readiness_deadline),
+                &mut shutdown,
+                &mut device_stop,
+            )
+            .await;
+            if matches!(discovery, Ok(false)) {
+                let teardown = rendezvous.shutdown_checked().await;
+                report_pair_readiness(
+                    &mut readiness_tx,
+                    Err("companion device listener stopped before discovery readiness".into()),
+                );
+                teardown.context("stopped companion listener readiness teardown")?;
+                return Ok(());
+            }
             if let Err(error) = discovery {
                 let message = error.to_string();
                 let teardown = rendezvous.shutdown_checked().await;
@@ -1764,8 +1763,54 @@ fn signal_listener_stop(owner: &DeviceListenerOwner, operation: &'static str) ->
     }
 }
 
+// Keep the handle in its daemon-owned slot while waiting. Cancellation of the
+// RPC future then releases only the map lock, never the listener's ownership.
+async fn join_retained_device_listener(
+    tasks: &Mutex<BTreeMap<Uuid, DeviceListenerOwner>>,
+    device_id: Uuid,
+) -> Result<()> {
+    let mut tasks = tasks.lock().await;
+    let owner = tasks
+        .get_mut(&device_id)
+        .context("companion revoke lost its owned listener before drain proof")?;
+    let task = owner
+        .task
+        .as_mut()
+        .context("companion revoke could not prove listener terminal: missing join handle")?;
+    let result = join_companion_task_ref(task, "revoked device listener").await;
+    tasks.remove(&device_id);
+    result
+}
+
+async fn await_active_listener_discovery<F>(
+    discovery: F,
+    shutdown: &mut watch::Receiver<bool>,
+    device_stop: &mut watch::Receiver<bool>,
+) -> Result<bool>
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    if listener_stop_requested(shutdown, device_stop) {
+        return Ok(false);
+    }
+    tokio::pin!(discovery);
+    tokio::select! {
+        biased;
+        _ = shutdown.changed() => Ok(false),
+        _ = device_stop.changed() => Ok(false),
+        result = &mut discovery => result.map(|()| true),
+    }
+}
+
 async fn join_companion_task(
-    task: tokio::task::JoinHandle<Result<()>>,
+    mut task: tokio::task::JoinHandle<Result<()>>,
+    label: &'static str,
+) -> Result<()> {
+    join_companion_task_ref(&mut task, label).await
+}
+
+async fn join_companion_task_ref(
+    task: &mut tokio::task::JoinHandle<Result<()>>,
     label: &'static str,
 ) -> Result<()> {
     task.await
@@ -2602,6 +2647,95 @@ mod tests {
             LocalDeliveryState::NoWriteStarted,
             false,
         ));
+    }
+
+    #[tokio::test]
+    async fn cancelled_revoke_wait_retains_listener_until_later_confirmed_join() {
+        let id = Uuid::new_v4();
+        let (stop_tx, _stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let tasks = Mutex::new(BTreeMap::from([(
+            id,
+            DeviceListenerOwner {
+                stop_tx,
+                task: Some(tokio::spawn(async move {
+                    release_rx.await.context("release listener")?;
+                    Ok(())
+                })),
+            },
+        )]));
+        let mut wait = Box::pin(join_retained_device_listener(&tasks, id));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(wait.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(wait);
+        assert!(tasks.lock().await.get(&id).unwrap().task.is_some());
+        release_tx.send(()).unwrap();
+        join_retained_device_listener(&tasks, id).await.unwrap();
+        assert!(tasks.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn retained_revoke_join_preserves_terminal_failure_and_consumes_handle() {
+        let id = Uuid::new_v4();
+        let (stop_tx, _stop_rx) = watch::channel(false);
+        let tasks = Mutex::new(BTreeMap::from([(
+            id,
+            DeviceListenerOwner {
+                stop_tx,
+                task: Some(tokio::spawn(async { anyhow::bail!("unproven listener teardown") })),
+            },
+        )]));
+        assert!(join_retained_device_listener(&tasks, id).await.is_err());
+        assert!(tasks.lock().await.is_empty());
+        assert!(join_retained_device_listener(&tasks, id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn active_discovery_distinguishes_owned_stop_from_discovery_failure() {
+        let (_daemon_tx, mut shutdown) = watch::channel(false);
+        let (device_tx, mut device_stop) = watch::channel(false);
+        let (entered_tx, entered_rx) = oneshot::channel::<()>();
+        let discovery = async {
+            entered_tx.send(()).unwrap();
+            std::future::pending::<Result<()>>().await
+        };
+        let stop = async {
+            entered_rx.await.unwrap();
+            device_tx.send(true).unwrap();
+        };
+        let (result, ()) = tokio::join!(
+            await_active_listener_discovery(discovery, &mut shutdown, &mut device_stop),
+            stop,
+        );
+        assert!(!result.unwrap());
+        assert!(
+            !await_active_listener_discovery(
+                async { panic!("pre-stopped discovery polled") },
+                &mut shutdown,
+                &mut device_stop
+            )
+            .await
+            .unwrap()
+        );
+        device_tx.send(false).unwrap();
+        device_stop.borrow_and_update();
+        assert!(
+            await_active_listener_discovery(
+                async { anyhow::bail!("real discovery failure") },
+                &mut shutdown,
+                &mut device_stop
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            await_active_listener_discovery(async { Ok(()) }, &mut shutdown, &mut device_stop)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

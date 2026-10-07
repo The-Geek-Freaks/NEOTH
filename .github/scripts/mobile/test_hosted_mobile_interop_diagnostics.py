@@ -53,6 +53,26 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def test_device_rpc_invoke_keeps_only_closed_failure_classification(self) -> None:
+        from unittest.mock import patch
+        from types import SimpleNamespace
+
+        private = b"private-device-canary-secret"
+        cases = (
+            (b"companion v3 daemon refused request: HTTP 422", "companion_request_refused"),
+            (b"companion v3 daemon unavailable: RPC exchange with private-device-canary-secret exceeded the 5s deadline", "daemon_rpc_exchange_deadline"),
+            (b"companion v3 daemon returned malformed response", "daemon_rpc_malformed_response"),
+            (private, "unclassified"),
+        )
+        for stderr, category in cases:
+            with patch.object(INTEROP.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout=private, stderr=stderr)) as runner:
+                with self.assertRaises(INTEROP.CliFailure) as raised:
+                    INTEROP.invoke(["fake", "companion", "devices", "revoke"], {}, 1.0, companion_rpc=True)
+                self.assertEqual(raised.exception.category, category)
+                self.assertNotIn(private.decode(), str(raised.exception))
+                self.assertNotIn(private.decode(), raised.exception.parse_subtype)
+                runner.assert_called_once()
+
     def test_loopback_config_uses_one_explicit_cost_override_and_rejects_other_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = pathlib.Path(directory)

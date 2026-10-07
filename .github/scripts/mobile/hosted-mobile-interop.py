@@ -401,14 +401,14 @@ def pair_cli_failure_parse_subtype(stderr: bytes) -> str:
             if prefix in line:
                 return subtype
     return "unknown"
-def invoke(argv: list[str], env: dict[str,str], timeout: float, pair_mint: bool = False) -> bytes:
+def invoke(argv: list[str], env: dict[str,str], timeout: float, pair_mint: bool = False, companion_rpc: bool = False) -> bytes:
     try: item = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
       stderr=subprocess.PIPE, timeout=timeout, check=False)
     except subprocess.TimeoutExpired: raise WorkDeadline("CLI budget exhausted")
     # Pairing stdout is a capability. Never reflect either stream into a CI log.
     if item.returncode:
-        category=pair_cli_failure_category(item.stderr) if pair_mint else "cli_nonzero"
-        parse_subtype=pair_cli_failure_parse_subtype(item.stderr) if pair_mint else "unknown"
+        category=pair_cli_failure_category(item.stderr) if pair_mint or companion_rpc else "cli_nonzero"
+        parse_subtype=pair_cli_failure_parse_subtype(item.stderr) if pair_mint or companion_rpc else "unknown"
         raise CliFailure(item.returncode,category,parse_subtype)
     return item.stdout
 
@@ -874,10 +874,10 @@ def main() -> int:
                     raise RuntimeError("owned loopback provider/chat terminal proof missing")
                 receipt["steps"]["chat"]={"code":OK,"outcome":chat.get("outcome"),"record_count":len(records),"provider":chat.get("provider"),"model":chat.get("model"),"loopback_request_count":provider.server.request_count,"reply_sha256":hashlib.sha256(REPLY.encode()).hexdigest().upper()}
                 receipt["stage"]="device_revoke"
-                revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",chat_pair["device_id"]],env,budget(work_deadline,20.0)),"revoke")
+                revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",chat_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"revoke")
                 if revoke != {"revoked": True}: raise RuntimeError("revoke result was not exact success")
                 receipt["stage"]="device_status_readback"
-                views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",chat_pair["device_id"]],env,budget(work_deadline,20.0)),"device status")
+                views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",chat_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"device status")
                 if not isinstance(views,list) or len(views) != 1 or not isinstance(views[0],dict):
                     raise RuntimeError("device status was not one public view")
                 view=views[0]
@@ -903,10 +903,10 @@ def main() -> int:
                     raise RuntimeError("held fixture v2 activity/terminal proof missing")
                 receipt["steps"]["chat_v2"]={"code":OK,"outcome":v2_chat.get("outcome"),"record_count":len(v2_records),"loopback_request_delta":2,"loopback_request_count":3,"fixture_call_count":1,"fixture_call_count_after_terminal":1,"reply_sha256":hashlib.sha256(V2_REPLY.encode()).hexdigest().upper()}
                 receipt["stage"]="device_v2_revoke"
-                v2_revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",v2_pair["device_id"]],env,budget(work_deadline,20.0)),"v2 revoke")
+                v2_revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",v2_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"v2 revoke")
                 if v2_revoke != {"revoked": True}: raise RuntimeError("v2 revoke result was not exact success")
                 receipt["stage"]="device_v2_status_readback"
-                v2_views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",v2_pair["device_id"]],env,budget(work_deadline,20.0)),"v2 device status")
+                v2_views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",v2_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"v2 device status")
                 if not isinstance(v2_views,list) or len(v2_views) != 1 or not isinstance(v2_views[0],dict):
                     raise RuntimeError("v2 device status was not one public view")
                 v2_view=v2_views[0]; v2_revision=v2_pair.get("revision")
@@ -919,6 +919,11 @@ def main() -> int:
             receipt["outcome"]="passed"
         except WorkDeadline:
             receipt["outcome"]="failed"; receipt["failure_category"]="work_deadline"
+            raise
+        except CliFailure as exc:
+            receipt["outcome"]="failed"; receipt["failure_category"]="cli_failure"
+            receipt["cli_failure_category"]=exc.category
+            receipt["cli_failure_parse_subtype"]=exc.parse_subtype
             raise
         except Exception:
             receipt["outcome"]="failed"; receipt["failure_category"]="bounded_failure"
