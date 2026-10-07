@@ -18672,3 +18672,9 @@ Die native Vorbereitung ist auf den vorangegangenen Producer gebunden, aber nich
 - Subsequent native run 37642719422 stopped at Flutter analysis: the pending boolean was combined incorrectly with the nullable activity pattern. The two checks are now nested, preserving when the activity card is visible and its snapshot type. Native jobs were skipped; no widget/device/native/release acceptance is inferred.
 - The correction changes only mobile presentation source plus evidence. Existing mobile runtime evidence remains bound to c4a04fb5; compare every selected runtime source before carrying it into the next native producer. Fresh native/Flutter validation is required. No local runtime or .slint change.
 - Report: docs/verification/gold-wave2508-flutter-activity-pattern.json. The next WhatsApp import has twelve verified candidate paths and one new workflow; it remains unimported.
+
+### W2509 - exact read-only SelectableText semantics (2026-10-07)
+
+- Native workflow 37643907962 on c51fb937 passed Flutter analysis and 33 tests. TERM-PRES-002 and TERM-PRES-004 failed because their finder expected reply content in the semantics label.
+- Pinned Flutter 3.24.5 source confirms SelectableText uses read-only EditableText; RenderEditable publishes attributedValue. The two tests now require exactly one full text value, its read-only flag and no duplicate standalone label. Existing heading, no-action, 240-dp and 2x text-scale checks are preserved.
+- Only test and evidence files change. Native builds were skipped, and fresh Flutter/native validation remains required. Prior 99/25 mobile runtime admission retains producer c4a04fb5. Source: docs/verification/gold-wave2509-flutter-selectable-semantics.json. No local runtime.

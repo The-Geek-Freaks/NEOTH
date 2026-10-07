@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T15:20:03.1526154Z",
-  "validationStatus": "W2508-MOBILE-INTEROP-ACCEPTED-FLUTTER-REPAIR-HOSTED-PENDING",
+  "capturedUtc": "2026-10-07T15:29:47.2891362Z",
+  "validationStatus": "W2509-PINNED-FLUTTER-TEST-CONTRACT-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,8 +433,8 @@
     },
     {
       "path": "apps/neoth_companion/test/companion_terminal_presentation_test.dart",
-      "bytes": 5018,
-      "sha256": "5EF93E08DF15D8D5E1E43CF9F8E169CD99FB870E33DC2FEFF15654FB97860376"
+      "bytes": 5478,
+      "sha256": "2BEF62166816939884493BD2EA37411B5384AA76918D2B24A703B242044C0405"
     },
     {
       "path": "apps/neoth_companion/test/secure_store_test.dart",
@@ -3957,6 +3957,11 @@
       "sha256": "0C1D8515EA68ABD674019FD1FF0F544A70384F343DF2715F7CA79C77F939EDF9"
     },
     {
+      "path": "docs/verification/gold-wave2509-flutter-selectable-semantics.json",
+      "bytes": 2116,
+      "sha256": "FDB20614E05622F58CAFCF76677168E895CCF9E94AF9ED042E155E56BE660D47"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5113,8 +5118,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2494863,
-      "sha256": "304A008B412C3ADE3CDAD721BBF1DDFA348A42EAE16584D3E54FC58762A821AA"
+      "bytes": 2495707,
+      "sha256": "B71A2B98AE23422F181857DEF81B4F49A0F1E88D16D5511A6102E17E729A3BA1"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

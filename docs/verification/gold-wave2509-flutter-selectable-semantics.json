@@ -1,0 +1,45 @@
+{
+  "schema": "neoth.gold.wave2509.flutter-selectable-semantics.v1",
+  "status": "TEST-CONTRACT-CORRECTED-HOSTED-PENDING",
+  "base": "c51fb9374338a1acbfe36cbef326e7d4e08cb520",
+  "failure": {
+    "run": "37643907962",
+    "job": "112869563177",
+    "flutterAnalyze": "passed",
+    "widgetControllerTestsPassed": 33,
+    "failed": [
+      "TERM-PRES-002",
+      "TERM-PRES-004"
+    ],
+    "cause": "Tests looked for SelectableText content as a semantics label; pinned Flutter exposes it as attributedValue with read-only text-field semantics.",
+    "nativeJobs": "skipped",
+    "logSha256": "AD5BC3769F383E86F0D053671C3430CE99DE437C1C7CCF30D75486DDA31E6103"
+  },
+  "repair": "Require exactly one semantics value containing the full expected record, assert its read-only flag, and forbid a duplicate standalone label; preserve header, narrow-width, 2x-scale and no-action checks.",
+  "primarySources": [
+    {
+      "url": "https://github.com/flutter/flutter/blob/3.24.5/packages/flutter/lib/src/material/selectable_text.dart",
+      "lines": "753-799",
+      "finding": "SelectableText uses EditableText readOnly:true; absent semanticsLabel preserves child semantics",
+      "sha256": "0C152ACD07018FEC0034AAA0E7CE1725361100DA7648B4CA6EC306AB636C22B5"
+    },
+    {
+      "url": "https://github.com/flutter/flutter/blob/3.24.5/packages/flutter/lib/src/rendering/editable.dart",
+      "lines": "1308-1357",
+      "finding": "RenderEditable publishes attributedValue and isReadOnly",
+      "sha256": "DE5D8F9BC7E9C6FC5D96EF4409B3EBC9A78D1CAFF4CC37C0B3618ABD00FBF5B8"
+    },
+    {
+      "url": "https://github.com/flutter/flutter/blob/3.24.5/packages/flutter_test/lib/src/finders.dart",
+      "lines": "586-598",
+      "finding": "Pinned test framework supports find.semantics.byValue",
+      "sha256": "A2D1A90FBDF283699938F600D0CB7B75CF56D4BA517A7AD90EBF570A64DE5BA9"
+    }
+  ],
+  "productionSourceChanged": false,
+  "existingMobileEvidenceProducer": "c4a04fb5b57d3ec05f2c6ee5e0a5bc611009fd29",
+  "freshNativeValidation": "pending",
+  "localRuntimeExecuted": false,
+  "deviceAccepted": false,
+  "releaseReady": false
+}

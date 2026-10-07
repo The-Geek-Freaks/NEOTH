@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsFlag;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neoth_companion/companion_terminal_presentation.dart';
@@ -41,7 +43,10 @@ void main() {
     expect(find.text('A bounded reply.'), findsOneWidget);
     expect(find.text('Provider: local-provider'), findsOneWidget);
     expect(find.bySemanticsLabel('Response output'), findsOneWidget);
-    expect(find.bySemanticsLabel('A bounded reply.'), findsOneWidget);
+    final replyNodes = find.semantics.byValue('A bounded reply.').evaluate().toList();
+    expect(replyNodes, hasLength(1));
+    expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
+    expect(find.bySemanticsLabel('A bounded reply.'), findsNothing);
     expect(find.byType(FilledButton), findsNothing);
     expect(find.byType(OutlinedButton), findsNothing);
   });
@@ -75,7 +80,10 @@ void main() {
     expect(tester.getSize(find.byType(CompanionTerminalCard)).width, lessThanOrEqualTo(240));
     expect(MediaQuery.textScalerOf(tester.element(find.byType(CompanionTerminalCard))).scale(1), 2);
     expect(find.bySemanticsLabel('NEOTH notice'), findsOneWidget);
-    expect(find.bySemanticsLabel(longRecord), findsOneWidget);
+    final replyNodes = find.semantics.byValue(longRecord).evaluate().toList();
+    expect(replyNodes, hasLength(1));
+    expect(replyNodes.single.getSemanticsData().hasFlag(SemanticsFlag.isReadOnly), isTrue);
+    expect(find.bySemanticsLabel(longRecord), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
