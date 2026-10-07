@@ -81,5 +81,21 @@
   "localExecutableValidationRan": false,
   "slintChanged": false,
   "deviceAccepted": false,
-  "releaseAccepted": false
+  "releaseAccepted": false,
+  "hostedFormat": {
+    "run": "37599635735",
+    "producer": "a120b8d22835bffb8cd15f6b2de6b26f20bf23d7",
+    "artifact": 11472243156,
+    "archiveSha256": "8BCB06DC0160E9F39BB11C362A79389BFFA85C0EB5E3416ACFCF971947334BA1",
+    "patchSha256": "16173DA7278ECE5B9E89547DBC3922A6233D8C29DA6591D7C40F6E54A9044725",
+    "sourcePaths": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/mcp/client.rs",
+      "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "SRC/neothd/src/mcp/gate.rs"
+    ],
+    "localFormatterRan": false,
+    "fastCodeQuality": "37599636080 success",
+    "nextProducerValidation": "pending"
+  }
 }

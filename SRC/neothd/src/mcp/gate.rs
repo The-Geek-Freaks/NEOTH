@@ -1856,23 +1856,32 @@ mod tests {
 
     #[test]
     fn decoded_mcp_is_error_settles_failed_activity() {
-        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("decoded-error-turn".into()).unwrap();
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
+            "decoded-error-turn".into(),
+        )
+        .unwrap();
         let call = crate::mcp::tool_call_parser::ParsedToolCall {
-            server: "untrusted".into(), tool: "untrusted".into(), arguments: serde_json::json!({"raw":"not projected"}),
+            server: "untrusted".into(),
+            tool: "untrusted".into(),
+            arguments: serde_json::json!({"raw":"not projected"}),
         };
         let activity = sink.try_observe(&call).unwrap();
         activity.started_at_write_edge();
         let decoded: ToolCallResult = serde_json::from_value(serde_json::json!({
             "content": [{"type":"text", "text":"MCP private error body"}], "isError": true
-        })).unwrap();
+        }))
+        .unwrap();
         settle_decoded_tool_activity(Some(&activity), &decoded);
         drop(activity);
         let (events, incomplete) = sink.snapshot();
         assert!(!incomplete);
-        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
-            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
-            crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
-        ]);
+        assert_eq!(
+            events.iter().map(|event| event.phase).collect::<Vec<_>>(),
+            vec![
+                crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+                crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
+            ]
+        );
         assert_eq!(events[0].label, "Tool call");
         assert_eq!(events[0].detail, None);
     }
@@ -1882,25 +1891,44 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let counter = home.path().join("is-error-calls.txt");
         let cfg = crate::mcp::client::stdio_activity_fixture_config(&counter);
-        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("fixture-is-error-turn".into()).unwrap();
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
+            "fixture-is-error-turn".into(),
+        )
+        .unwrap();
         let parsed = crate::mcp::tool_call_parser::ParsedToolCall {
-            server: cfg.id.clone(), tool: "read".into(), arguments: serde_json::json!({"activity_is_error":true}),
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"activity_is_error":true}),
         };
         let activity = sink.try_observe(&parsed).unwrap();
         let mut client = McpClient::spawn(&cfg).await.unwrap();
         let response = call_tool_with_success_audit(
-            &mut client, &cfg, "read", parsed.arguments.clone(), "0000000000000001",
-            McpAuditSink::None, 1, None, None, false, Some(&activity),
-        ).await.unwrap();
+            &mut client,
+            &cfg,
+            "read",
+            parsed.arguments.clone(),
+            "0000000000000001",
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+            false,
+            Some(&activity),
+        )
+        .await
+        .unwrap();
         assert!(response.raw_result.is_error);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
         drop(activity);
         let (events, incomplete) = sink.snapshot();
         assert!(!incomplete);
-        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
-            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
-            crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
-        ]);
+        assert_eq!(
+            events.iter().map(|event| event.phase).collect::<Vec<_>>(),
+            vec![
+                crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+                crate::mcp::dispatch_loop::ToolActivityPhase::Failed,
+            ]
+        );
     }
     use crate::mcp::client::{McpContent, McpTool};
     use crate::mcp::sanitizer::SanitizerVerdict;
@@ -2589,10 +2617,16 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
         )
         .unwrap();
-        let activity_sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("trusted-public-turn".into()).unwrap();
-        let activity_call = activity_sink.try_observe(&crate::mcp::tool_call_parser::ParsedToolCall {
-            server: cfg.id.clone(), tool: "read".into(), arguments: arguments.clone(),
-        });
+        let activity_sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
+            "trusted-public-turn".into(),
+        )
+        .unwrap();
+        let activity_call =
+            activity_sink.try_observe(&crate::mcp::tool_call_parser::ParsedToolCall {
+                server: cfg.id.clone(),
+                tool: "read".into(),
+                arguments: arguments.clone(),
+            });
         let mut client = McpClient::spawn(&cfg).await.unwrap();
         let result = invoke_authorized_with_audit_sink_effect_gate(
             &mut client,
@@ -2616,10 +2650,13 @@ mod tests {
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
         let (events, incomplete) = activity_sink.snapshot();
         assert!(!incomplete);
-        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
-            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
-            crate::mcp::dispatch_loop::ToolActivityPhase::Succeeded,
-        ]);
+        assert_eq!(
+            events.iter().map(|event| event.phase).collect::<Vec<_>>(),
+            vec![
+                crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+                crate::mcp::dispatch_loop::ToolActivityPhase::Succeeded,
+            ]
+        );
     }
 
     #[tokio::test]
@@ -3142,9 +3179,13 @@ mod tests {
         // Fill the bounded presentation view before the real call. The
         // observer then declines this call without changing the client,
         // audit writer, or raw-result path exercised below.
-        let activity_sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("full-view-turn".into()).unwrap();
+        let activity_sink =
+            crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("full-view-turn".into())
+                .unwrap();
         let synthetic = crate::mcp::tool_call_parser::ParsedToolCall {
-            server: "untrusted".into(), tool: "untrusted".into(), arguments: serde_json::json!({}),
+            server: "untrusted".into(),
+            tool: "untrusted".into(),
+            arguments: serde_json::json!({}),
         };
         for _ in 0..8 {
             let activity = activity_sink.try_observe(&synthetic).unwrap();

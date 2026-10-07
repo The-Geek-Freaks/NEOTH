@@ -700,7 +700,8 @@ impl McpClient {
         method: &str,
         params: P,
     ) -> Result<serde_json::Value, McpError> {
-        self.request_with_effect(method, params, None, "", None).await
+        self.request_with_effect(method, params, None, "", None)
+            .await
     }
 
     /// Write-side JSON-RPC start classification.  A successful write+flush is
@@ -1051,42 +1052,77 @@ mod tests {
 
     #[tokio::test]
     async fn tool_activity_effect_refusal_has_no_started_event() {
-        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("turn-authenticated-1".into()).unwrap();
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
+            "turn-authenticated-1".into(),
+        )
+        .unwrap();
         let call = crate::mcp::tool_call_parser::ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(), arguments: serde_json::json!({"private":"never projected"}),
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({"private":"never projected"}),
         };
         let activity = sink.try_observe(&call).unwrap();
         let gate = Arc::new(RecordingEffectGate::new(Duration::from_millis(200)));
         gate.close();
         let effect_gate: Arc<dyn ChatTurnEffectGate> = gate;
         let (mut writer, _reader) = tokio::io::duplex(256);
-        let denied = write_framed_with_effect(&mut writer, b"{}\n", "duplex", Duration::from_millis(50), Some(&effect_gate), "binding", Some(&activity)).await;
+        let denied = write_framed_with_effect(
+            &mut writer,
+            b"{}\n",
+            "duplex",
+            Duration::from_millis(50),
+            Some(&effect_gate),
+            "binding",
+            Some(&activity),
+        )
+        .await;
         assert!(denied.is_err());
         drop(activity);
         let (events, incomplete) = sink.snapshot();
         assert!(!incomplete);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].phase, crate::mcp::dispatch_loop::ToolActivityPhase::Rejected);
+        assert_eq!(
+            events[0].phase,
+            crate::mcp::dispatch_loop::ToolActivityPhase::Rejected
+        );
         assert_eq!(events[0].label, "Read file");
         assert_eq!(events[0].detail, None);
     }
 
     #[tokio::test]
     async fn dropping_after_actual_write_edge_settles_unknown() {
-        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated("drop-after-write-turn".into()).unwrap();
+        let sink = crate::mcp::dispatch_loop::ToolActivitySink::new_authenticated(
+            "drop-after-write-turn".into(),
+        )
+        .unwrap();
         let call = crate::mcp::tool_call_parser::ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(), arguments: serde_json::json!({"raw":"not projected"}),
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({"raw":"not projected"}),
         };
         let activity = sink.try_observe(&call).unwrap();
         let (mut writer, _reader) = tokio::io::duplex(256);
-        write_framed_with_effect(&mut writer, b"{}\n", "duplex", Duration::from_millis(50), None, "", Some(&activity)).await.unwrap();
+        write_framed_with_effect(
+            &mut writer,
+            b"{}\n",
+            "duplex",
+            Duration::from_millis(50),
+            None,
+            "",
+            Some(&activity),
+        )
+        .await
+        .unwrap();
         drop(activity);
         let (events, incomplete) = sink.snapshot();
         assert!(!incomplete);
-        assert_eq!(events.iter().map(|event| event.phase).collect::<Vec<_>>(), vec![
-            crate::mcp::dispatch_loop::ToolActivityPhase::Started,
-            crate::mcp::dispatch_loop::ToolActivityPhase::Unknown,
-        ]);
+        assert_eq!(
+            events.iter().map(|event| event.phase).collect::<Vec<_>>(),
+            vec![
+                crate::mcp::dispatch_loop::ToolActivityPhase::Started,
+                crate::mcp::dispatch_loop::ToolActivityPhase::Unknown,
+            ]
+        );
     }
 
     /// Subprocess fixture for the environment/stderr policy regression below.

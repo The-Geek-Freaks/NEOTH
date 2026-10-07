@@ -54,7 +54,13 @@ pub const MAX_TOOL_ACTIVITY_LABEL_BYTES: usize = 96;
 pub const MAX_TOOL_ACTIVITY_TURN_ID_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolActivityPhase { Started, Succeeded, Failed, Rejected, Unknown }
+pub enum ToolActivityPhase {
+    Started,
+    Succeeded,
+    Failed,
+    Rejected,
+    Unknown,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolActivity {
@@ -127,21 +133,32 @@ impl ToolActivitySink {
             self.contention_or_loss.store(true, Ordering::Relaxed);
             return;
         };
-        if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS || label.len() > MAX_TOOL_ACTIVITY_LABEL_BYTES {
+        if state.events.len() >= MAX_TOOL_ACTIVITY_ROWS
+            || label.len() > MAX_TOOL_ACTIVITY_LABEL_BYTES
+        {
             state.incomplete = true;
             return;
         }
         let event_seq = state.next_sequence;
         state.next_sequence = state.next_sequence.saturating_add(1);
         state.events.push_back(ToolActivity {
-            turn_id: self.turn_id.clone(), event_seq, ordinal, phase,
-            label: label.to_owned(), detail: None,
+            turn_id: self.turn_id.clone(),
+            event_seq,
+            ordinal,
+            phase,
+            label: label.to_owned(),
+            detail: None,
         });
     }
 
     pub fn snapshot(&self) -> (Vec<ToolActivity>, bool) {
-        let Ok(state) = self.state.try_lock() else { return (Vec::new(), true); };
-        (state.events.iter().cloned().collect(), state.incomplete || self.contention_or_loss.load(Ordering::Relaxed))
+        let Ok(state) = self.state.try_lock() else {
+            return (Vec::new(), true);
+        };
+        (
+            state.events.iter().cloned().collect(),
+            state.incomplete || self.contention_or_loss.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -160,11 +177,22 @@ pub(crate) struct ToolActivityCall {
 
 impl ToolActivityCall {
     pub(crate) fn started_at_write_edge(&self) {
-        if !self.started.swap(true, Ordering::AcqRel) { self.sink.try_emit(self.ordinal, ToolActivityPhase::Started, &self.label); }
+        if !self.started.swap(true, Ordering::AcqRel) {
+            self.sink
+                .try_emit(self.ordinal, ToolActivityPhase::Started, &self.label);
+        }
     }
     pub(crate) fn settled_from_result(&self, is_error: bool) {
         if self.started.load(Ordering::Acquire) && !self.terminal.swap(true, Ordering::AcqRel) {
-            self.sink.try_emit(self.ordinal, if is_error { ToolActivityPhase::Failed } else { ToolActivityPhase::Succeeded }, &self.label);
+            self.sink.try_emit(
+                self.ordinal,
+                if is_error {
+                    ToolActivityPhase::Failed
+                } else {
+                    ToolActivityPhase::Succeeded
+                },
+                &self.label,
+            );
         }
     }
 }
@@ -172,7 +200,15 @@ impl ToolActivityCall {
 impl Drop for ToolActivityCall {
     fn drop(&mut self) {
         if !self.terminal.swap(true, Ordering::AcqRel) {
-            self.sink.try_emit(self.ordinal, if self.started.load(Ordering::Acquire) { ToolActivityPhase::Unknown } else { ToolActivityPhase::Rejected }, &self.label);
+            self.sink.try_emit(
+                self.ordinal,
+                if self.started.load(Ordering::Acquire) {
+                    ToolActivityPhase::Unknown
+                } else {
+                    ToolActivityPhase::Rejected
+                },
+                &self.label,
+            );
         }
     }
 }
@@ -3184,7 +3220,11 @@ mod tests {
     #[test]
     fn contended_activity_view_is_sticky_loss_without_a_call_handle() {
         let sink = ToolActivitySink::new_authenticated("contended-turn".into()).unwrap();
-        let call = ParsedToolCall { server: "filesystem".into(), tool: "read_file".into(), arguments: serde_json::json!({}) };
+        let call = ParsedToolCall {
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+            arguments: serde_json::json!({}),
+        };
         let held = sink.state.lock().unwrap();
         assert!(begin_tool_activity_for_parsed_call(Some(&sink), &call).is_none());
         drop(held);
@@ -3335,7 +3375,8 @@ mod tests {
         let mut compaction_budget = CompactionBudget::default();
         let once = crate::hooks::SessionOnceGuard::new();
 
-        let activity_sink = ToolActivitySink::new_authenticated("actual-loop-ifc-reject".into()).unwrap();
+        let activity_sink =
+            ToolActivitySink::new_authenticated("actual-loop-ifc-reject".into()).unwrap();
         let outcome = run_tool_loop_with_budget_and_skill_policy(
             &mut driver,
             "do not disclose private content".into(),

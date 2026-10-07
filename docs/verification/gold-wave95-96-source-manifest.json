@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T09:14:31.9667166Z",
-  "validationStatus": "W2488 static-reviewed sources; exact hosted compilation, focused, mobile and Flutter validation pending",
+  "capturedUtc": "2026-10-07T09:19:36.5133745Z",
+  "validationStatus": "W2488 hosted formatting imported; final-producer executable acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3888,8 +3888,8 @@
     },
     {
       "path": "docs/verification/gold-wave2488-mobile-readiness-and-tool-activity.json",
-      "bytes": 4735,
-      "sha256": "1D285993FC6D64E21824FBB830BE7F723D69A32E27CBFC334888B9B7BF3B1C61"
+      "bytes": 5351,
+      "sha256": "7002A2E860E8BB1AED06D0C78FCD6DA4AA4DC52DD46A535CA06876898FDD55FE"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5978,8 +5978,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1221088,
-      "sha256": "6E76CACBFFE6D6D13D0C606466F3DB44FCE8DFEE215BE1B4091643CE535D721E"
+      "bytes": 1221293,
+      "sha256": "3F68DB69F07073868D25C178CFA6944E25E311E806E86EEB0911E8BCE82B0027"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -7618,8 +7618,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/client.rs",
-      "bytes": 56716,
-      "sha256": "86B88B0EF3C3357B98922CDE0F8362176706A90032BFE00F4B586AC053E2836F"
+      "bytes": 57138,
+      "sha256": "A8EF23AC352B97A9FFAD7036C99833C7B905E0DA337012C4762D5C21E6FDC727"
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
@@ -7633,13 +7633,13 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 325693,
-      "sha256": "2D85ECD6761B803C3281DFBECBA523E57833E8440BC93A21751BB03A872F87F5"
+      "bytes": 326201,
+      "sha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
-      "bytes": 152979,
-      "sha256": "A0158BD0A5444B13D71F4AD1E0490E7E27A9FC61464FFF9663FF0BF292AD01F2"
+      "bytes": 153501,
+      "sha256": "A73C10D2382C9403BA697E701D81224DF37F2CC88129C725157BDF8A794B392D"
     },
     {
       "path": "SRC/neothd/src/mcp/goal_judge.rs",

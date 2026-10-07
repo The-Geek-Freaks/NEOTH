@@ -15761,14 +15761,40 @@ pub(crate) async fn run_mcp_dispatch_loop(
     requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     run_mcp_dispatch_loop_with_activity(
-        provider, base_req, servers, autonomy_policy, skill_invocation_policy, writer,
-        wal_session, rollback_policy, tool_scope, max_iterations, security_policy,
-        goal_context, hints_enabled, compaction, compression, judge_provider,
-        elicitation_handler, subject, mcp_ifc, harness_cfg, compaction_budget,
-        max_tool_calls, turn_effect_gate, instance_home, pre_tool_hook_policy,
-        pre_tool_once_guard, pre_tool_cancellation, outline_enrichment_enabled,
-        enrichment_selectors, impact_policy, requested_context_policy, None,
-    ).await
+        provider,
+        base_req,
+        servers,
+        autonomy_policy,
+        skill_invocation_policy,
+        writer,
+        wal_session,
+        rollback_policy,
+        tool_scope,
+        max_iterations,
+        security_policy,
+        goal_context,
+        hints_enabled,
+        compaction,
+        compression,
+        judge_provider,
+        elicitation_handler,
+        subject,
+        mcp_ifc,
+        harness_cfg,
+        compaction_budget,
+        max_tool_calls,
+        turn_effect_gate,
+        instance_home,
+        pre_tool_hook_policy,
+        pre_tool_once_guard,
+        pre_tool_cancellation,
+        outline_enrichment_enabled,
+        enrichment_selectors,
+        impact_policy,
+        requested_context_policy,
+        None,
+    )
+    .await
 }
 
 /// Activity-aware chat/channel adapter. The caller must retain an exact
