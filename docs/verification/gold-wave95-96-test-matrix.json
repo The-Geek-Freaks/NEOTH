@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "CONFIRMED-HOSTED-CLIPPY-REPAIR-RERUN-PENDING",
+  "status": "REVIEWED-READINESS-DIAGNOSTICS-AND-PORT-PIPELINE-HOSTED-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 399212,
-    "sha256": "1063863DD97CCE1F1B286621D5BE530557FAEC8E4E28A2103ABDA13DC8C9CD6F"
+    "bytes": 399608,
+    "sha256": "FBEBBBDB7D946EAB4455549CBE830EB94A971F160873F32B202761118D8FA02D"
   },
-  "sourceInputs": 2181,
+  "sourceInputs": 2183,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -16441,37 +16441,37 @@
     {
       "test": "daemon::companion_runtime::tests::v3_pair_qr_binds_exact_persistent_server_noise_key_before_invite_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::v3_restart_reloads_the_same_private_server_key",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::per_device_stop_prevents_new_reconnect_acceptance_without_global_shutdown",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::cancelled_before_write_closes_only_after_checked_carrier_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::listener_join_failure_is_not_converted_into_a_successful_drain",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::closed_listener_stop_requires_the_retained_task_terminal_proof",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
@@ -16507,7 +16507,7 @@
     {
       "test": "daemon::companion_runtime::tests::accepted_chat_owner_cancels_on_per_device_stop_before_terminal_selection",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
@@ -16525,37 +16525,37 @@
     {
       "test": "daemon::companion_runtime::tests::runtime_shutdown_before_pair_listener_subscription_exits_cleanly",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_listener_owner_cancellation_signals_before_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_defers_publication_until_initial_discovery_completes",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_readiness_caller_cancellation_is_observed_before_publication",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::pair_invite_ttl_is_remaining_and_never_reset_after_readiness",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::companion_runtime::tests::companion_v3_shutdown_drains_all_owners_after_first_listener_error_before_writer_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
@@ -16591,7 +16591,7 @@
     {
       "test": "daemon::companion_runtime::tests::audit_rpc_refusal_requires_retained_pair_owner_join",
       "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "sourceSha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     },
     {
@@ -16850,6 +16850,12 @@
       "test": "cli::cluster::tests::outbound_wait_parser_rejects_out_of_range_values",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
       "sourceSha256": "2D27EE45E5FE0454FB60BFEBB0FCD164634326E1CB3CC402AE874FDB76F85B90",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals",
+      "sourcePath": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "sourceSha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
       "junitClass": "neoth"
     }
   ],
@@ -77821,6 +77827,68 @@
       }
     ],
     "note": "Two Dream Clippy failures from CLI37578659705 corrected by exact type alias and equivalent let chain; unchanged59case contract awaits next producer.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2484PairReadinessAndJarvisPortPipeline": {
+    "base": "8f0d1306573fe27cfabd7ac3f70227ece2f21e33",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 42305,
+        "sha256": "18D88F62798699E04B7F6AD8F924900C338C3CD40E4EC96F7036543ED950A2E3",
+        "blob": "3071638fdfbae31eb03c06fc4958933f845a5bb8"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 11327,
+        "sha256": "8310894FB35676319205800CF6150256EF1D643DD4D6CBDB17CF51BE875554DB",
+        "blob": "03cb95dd1e9721e9354fde146b3e64e3ee8f9e97"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 27271,
+        "sha256": "298C8E1EE2A901A47705FF659507AC52A21B7B252A44827735ADB8B71C2FB647",
+        "blob": "a36fb0bc57d69a8139696eda9aca2ea781bc80d8"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 9847,
+        "sha256": "1936C491923EE1AD886838213CEDDAF2C9B79035CAE38DB78CA42878D877E5DC",
+        "blob": "c02d382f07117a6b2c8423c6bf413068fe1ecd9b"
+      },
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 27702,
+        "sha256": "BEB91978148BC0E5D99FE52907CD9A78AFB319F86FA1762F0FAA9F540C7701D5",
+        "blob": "0909512381b19cae8d552278c7af9a3da7b88229"
+      },
+      {
+        "path": "docs/verification/gold-wave2484-pair-readiness-and-jarvis-pipeline.json",
+        "bytes": 3656,
+        "sha256": "AFA62C4EDFC1FF83FDC04E72F0D9505AA211F461CD867FAC798B76532CC9ABBB",
+        "blob": "651267b0e88dde67223004e085f96574c49327ff"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 11787,
+        "sha256": "B3AA9F9255A79733269767FB6E676E8761E1162D7FD0490C0CF4F78520ED46CA",
+        "blob": "c67d0c78f9cfb48a377ad34c6c291669b839bf11"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2470943,
+        "sha256": "28E262E68E6AB363256D4C31E3A42FD88F582DC46EF638E542F794FC4D332C7A",
+        "blob": "9d59604b375e71a4f915f3e1b9347848d18b0d28"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+        "bytes": 92791,
+        "sha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4",
+        "blob": "b83015834365057608fa6e6d6375680864d0e10d"
+      }
+    ],
+    "note": "W2484 adds fixed pair readiness winner and checked early cleanup diagnostics with one shared-helper native and one collector regression. Existing ownership behavior remains. Reviewed CLI reorder improves failure feedback. W2485 user-authorized Jarvis app/WhatsApp/tool-display port is recorded JM-01..JM-10 with source custody and NEOTH owner/design mapping; implementation and acceptance remain open. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

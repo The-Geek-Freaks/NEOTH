@@ -558,6 +558,7 @@ impl CompanionRuntime {
 
         if *cancellation.borrow() {
             drop(ready_rx);
+            emit_pair_owner_phase("readiness_owner_cancelled");
             self.join_failed_pair_listener(&key).await?;
             anyhow::bail!("companion pair mint was cancelled before readiness")
         }
@@ -577,10 +578,12 @@ impl CompanionRuntime {
                 }
             }
             Ok(Ok(())) => {
+                emit_pair_owner_phase("readiness_owner_cancelled");
                 self.join_failed_pair_listener(&key).await?;
                 anyhow::bail!("companion pair mint was cancelled before publication")
             }
             Ok(Err(message)) => {
+                emit_pair_owner_phase("readiness_owner_refused");
                 match self.join_proven_refused_pair_listener(&key).await {
                     Ok(()) => Ok(PairListenerPreparation::Refused),
                     Err(error) => Err(error.context(format!(
@@ -589,16 +592,19 @@ impl CompanionRuntime {
                 }
             }
             Err(_) => {
+                emit_pair_owner_phase("readiness_owner_ended");
                 self.join_failed_pair_listener(&key).await?;
                 anyhow::bail!("companion pair listener ended before readiness")
             }
             },
             changed = cancellation.changed() => {
                 let _ = changed;
+                emit_pair_owner_phase("readiness_owner_cancelled");
                 self.join_failed_pair_listener(&key).await?;
                 anyhow::bail!("companion pair mint was cancelled before readiness")
             }
             _ = tokio::time::sleep_until(readiness_deadline) => {
+                emit_pair_owner_phase("readiness_owner_deadline");
                 self.join_failed_pair_listener(&key).await?;
                 anyhow::bail!("companion pair mint deadline expired before readiness")
             }
@@ -717,23 +723,20 @@ impl CompanionRuntime {
                 }
             }
             PairReadinessWait::Discovery(Err(error)) => {
-                let message = error.to_string();
-                let teardown = rendezvous.shutdown_checked().await;
-                match teardown {
-                    Ok(()) => {
-                        report_pair_readiness(&mut readiness_tx, Err(message));
-                        return Ok(());
-                    }
-                    Err(teardown_error) => {
-                        report_pair_readiness(&mut readiness_tx, Err(message));
-                        return Err(
-                            teardown_error.context("unready companion pair listener teardown")
-                        );
-                    }
-                }
+                return settle_pair_readiness_error(
+                    &mut diagnostics,
+                    &mut readiness_tx,
+                    error,
+                    rendezvous.shutdown_checked(),
+                )
+                .await;
             }
             PairReadinessWait::CallerCancelled => {
-                return rendezvous.shutdown_checked().await;
+                return settle_pair_readiness_stop(
+                    &mut diagnostics,
+                    rendezvous.shutdown_checked(),
+                )
+                .await;
             }
         }
 
@@ -1587,6 +1590,8 @@ struct CompanionPairDiagnostics {
     enabled: bool,
     emitted: u32,
     last_phase: &'static str,
+    #[cfg(test)]
+    last_failed_phase: Option<&'static str>,
 }
 
 impl CompanionPairDiagnostics {
@@ -1595,6 +1600,8 @@ impl CompanionPairDiagnostics {
             enabled: std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1"),
             emitted: 0,
             last_phase: "bootstrap_started",
+            #[cfg(test)]
+            last_failed_phase: None,
         }
     }
 
@@ -1624,6 +1631,11 @@ impl CompanionPairDiagnostics {
             "teardown_failed" => 21,
             "rendezvous_started" => 22,
             "initial_discovery_started" => 23,
+            "readiness_stop_requested" => 24,
+            "readiness_owner_cancelled" => 25,
+            "readiness_owner_deadline" => 26,
+            "readiness_owner_ended" => 27,
+            "readiness_owner_refused" => 28,
             _ => return,
         };
         self.last_phase = phase;
@@ -1634,6 +1646,10 @@ impl CompanionPairDiagnostics {
     }
 
     fn failed(&mut self, last: &'static str) {
+        #[cfg(test)]
+        {
+            self.last_failed_phase = Some(last);
+        }
         if self.enabled {
             eprintln!("NEOTH_COMPANION_PAIR_PHASE=failed.{last}");
         }
@@ -1727,6 +1743,69 @@ fn request_runtime_shutdown(shutdown_tx: &watch::Sender<bool>) {
     // subscription. Pair tasks subscribe inside their spawned future, so use
     // the watch value itself as the durable shutdown state.
     shutdown_tx.send_replace(true);
+}
+
+/// The initial-discovery terminal owns a live shared route.  Record the
+/// checked-cleanup result before reporting the readiness result, so a receipt
+/// can distinguish a settled refusal from an unproven terminal.
+async fn settle_pair_readiness_error<F>(
+    diagnostics: &mut CompanionPairDiagnostics,
+    readiness_tx: &mut Option<oneshot::Sender<PairListenerReadiness>>,
+    error: anyhow::Error,
+    teardown: F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    let message = error.to_string();
+    diagnostics.phase("teardown_started");
+    match teardown.await {
+        Ok(()) => {
+            diagnostics.phase("teardown_completed");
+            report_pair_readiness(readiness_tx, Err(message));
+            Ok(())
+        }
+        Err(teardown_error) => {
+            diagnostics.phase("teardown_failed");
+            diagnostics.failed("initial_discovery_started");
+            report_pair_readiness(readiness_tx, Err(message));
+            Err(teardown_error.context("unready companion pair listener teardown"))
+        }
+    }
+}
+
+/// A caller stop still has to retire the exact shared-route lease.  Unlike a
+/// discovery error it carries no DHT failure claim; its terminal marker names
+/// only the stop decision and the checked cleanup outcome.
+async fn settle_pair_readiness_stop<F>(
+    diagnostics: &mut CompanionPairDiagnostics,
+    teardown: F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    diagnostics.phase("readiness_stop_requested");
+    diagnostics.phase("teardown_started");
+    match teardown.await {
+        Ok(()) => {
+            diagnostics.phase("teardown_completed");
+            Ok(())
+        }
+        Err(error) => {
+            diagnostics.phase("teardown_failed");
+            diagnostics.failed("readiness_stop_requested");
+            Err(error.context("cancelled companion pair listener teardown"))
+        }
+    }
+}
+
+/// Owner-side readiness outcomes are emitted outside the listener task before
+/// joining its exact retained task. The strings are fixed grammar,
+/// never error text, endpoint data, topics, keys, or tokens.
+fn emit_pair_owner_phase(phase: &'static str) {
+    if std::env::var(COMPANION_DIAGNOSTICS_ENV).as_deref() == Ok("1") {
+        eprintln!("NEOTH_COMPANION_PAIR_PHASE={phase}");
+    }
 }
 
 fn build_pair_url(
@@ -2145,6 +2224,89 @@ mod tests {
         .await
         .expect("closed caller is observed without waiting for discovery");
         assert!(matches!(result, PairReadinessWait::CallerCancelled));
+    }
+
+    #[tokio::test]
+    async fn early_pair_readiness_cleanup_emits_settled_and_unproven_terminals() {
+        let mut settled = CompanionPairDiagnostics {
+            enabled: true,
+            emitted: 0,
+            last_phase: "initial_discovery_started",
+            last_failed_phase: None,
+        };
+        let (settled_tx, settled_rx) = oneshot::channel();
+        assert!(settle_pair_readiness_error(
+            &mut settled,
+            &mut Some(settled_tx),
+            anyhow::anyhow!("typed discovery refusal"),
+            async { Ok(()) },
+        )
+        .await
+        .is_ok());
+        assert!(settled.emitted & (1 << 8) != 0, "cleanup start is observable");
+        assert!(settled.emitted & (1 << 9) != 0, "settled cleanup is observable");
+        assert_eq!(settled.last_failed_phase, None);
+        assert_eq!(
+            settled_rx.await.expect("settled readiness result is reported"),
+            Err("typed discovery refusal".to_owned())
+        );
+
+        let mut unproven = CompanionPairDiagnostics {
+            enabled: true,
+            emitted: 0,
+            last_phase: "initial_discovery_started",
+            last_failed_phase: None,
+        };
+        let (unproven_tx, unproven_rx) = oneshot::channel();
+        let failure = settle_pair_readiness_error(
+            &mut unproven,
+            &mut Some(unproven_tx),
+            anyhow::anyhow!("typed discovery refusal"),
+            async { anyhow::bail!("injected checked-cleanup failure") },
+        )
+        .await;
+        assert!(failure.is_err(), "unproven cleanup remains listener-fatal");
+        assert!(unproven.emitted & (1 << 8) != 0, "cleanup start is observable");
+        assert!(unproven.emitted & (1 << 21) != 0, "cleanup failure is observable");
+        assert_eq!(
+            unproven.last_failed_phase,
+            Some("initial_discovery_started"),
+            "the failed marker names the fixed readiness boundary, never raw error text"
+        );
+        assert_eq!(
+            unproven_rx.await.expect("unproven readiness result is still reported"),
+            Err("typed discovery refusal".to_owned())
+        );
+
+        let mut cancelled = CompanionPairDiagnostics {
+            enabled: true,
+            emitted: 0,
+            last_phase: "initial_discovery_started",
+            last_failed_phase: None,
+        };
+        assert!(settle_pair_readiness_stop(&mut cancelled, async { Ok(()) })
+            .await
+            .is_ok());
+        assert!(cancelled.emitted & (1 << 24) != 0, "caller-stop cleanup is observable");
+        assert!(cancelled.emitted & (1 << 9) != 0, "caller-stop settled cleanup is observable");
+
+        let mut cancelled_unproven = CompanionPairDiagnostics {
+            enabled: true,
+            emitted: 0,
+            last_phase: "initial_discovery_started",
+            last_failed_phase: None,
+        };
+        assert!(settle_pair_readiness_stop(
+            &mut cancelled_unproven,
+            async { anyhow::bail!("injected stop cleanup failure") },
+        )
+        .await
+        .is_err());
+        assert!(cancelled_unproven.emitted & (1 << 21) != 0);
+        assert_eq!(
+            cancelled_unproven.last_failed_phase,
+            Some("readiness_stop_requested")
+        );
     }
 
     #[test]

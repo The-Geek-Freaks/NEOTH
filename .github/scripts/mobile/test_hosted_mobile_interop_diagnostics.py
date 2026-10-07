@@ -112,6 +112,23 @@ class ScopedCollectorTests(unittest.TestCase):
         self.assertEqual(raised.exception.parse_subtype, "header")
         self.assertEqual(raised.exception.category, "daemon_rpc_malformed_response")
 
+    def test_pair_readiness_terminal_markers_are_closed_and_secret_free(self) -> None:
+        secret = b"must-not-retain-pair-error-detail"
+        stream = ChunkStream([
+            b"NEOTH_COMPANION_PAIR_PHASE=readiness_owner_deadline\n",
+            b"NEOTH_COMPANION_PAIR_PHASE=teardown_started\n",
+            b"NEOTH_COMPANION_PAIR_PHASE=teardown_completed\n",
+            b"NEOTH_COMPANION_PAIR_PHASE=failed.initial_discovery_started\n",
+            b"NEOTH_COMPANION_PAIR_PHASE=readiness_owner_ended_extra\n" + secret,
+        ])
+        markers = INTEROP.ShutdownMarkerCollector(stream).snapshot(5)["pair_markers"]
+        self.assertTrue(markers["readiness_owner_deadline"])
+        self.assertTrue(markers["teardown_started"])
+        self.assertTrue(markers["teardown_completed"])
+        self.assertTrue(markers["failed.initial_discovery_started"])
+        self.assertFalse(markers["readiness_owner_ended"])
+        self.assertNotIn(secret.decode("ascii"), repr(markers))
+
     def test_chunk_boundaries_do_not_duplicate_or_merge_pair_and_active_markers(self) -> None:
         private_canary = b"discard-this-raw-daemon-text"
         stream = ChunkStream([

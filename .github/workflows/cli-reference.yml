@@ -102,11 +102,6 @@ jobs:
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
 
-      - name: Build current public CLI
-        timeout-minutes: 25
-        working-directory: SRC
-        run: cargo build -p neoth --bin neoth --locked
-
       # This optional contract is deliberately narrow: each listed identity is
       # discovered and run once, while the ordinary type check, public CLI
       # build, generated-reference export, and optional companion mode remain
@@ -356,6 +351,11 @@ jobs:
           path: ${{ runner.temp }}/neoth-updater-status-regressions/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Build current public CLI
+        timeout-minutes: 25
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked
 
       # Generate without changing the committed snapshot or bypassing its
       # equality test. A maintainer imports only the SHA/digest-bound output.

@@ -1,0 +1,81 @@
+{
+  "schema": "neoth.wave2484.pair-readiness-and-wave2485-port-pipeline.v1",
+  "capturedUtc": "2026-10-07T06:58:46.2717799Z",
+  "baseProducer": "8f0d1306573fe27cfabd7ac3f70227ece2f21e33",
+  "status": "STATIC-REVIEWED-HOSTED-VALIDATION-PENDING",
+  "changes": [
+    {
+      "area": "Pair readiness diagnosis",
+      "behavior": "Fixed owner-select winner before retained join; checked early cleanup start/success/failure for discovery refusal and caller stop. Existing successful/refused/fatal semantics retained. Test-only last-failed state is cfg(test).",
+      "reviewSha256": "8414E1969EF5A3B2785B756487EF66D364A9D0BAF88F24D731705F5EE82B0CD4"
+    },
+    {
+      "area": "CLI failure feedback",
+      "behavior": "Move unchanged public CLI build after existing library regressions and before reference export. All checks and success gates retained.",
+      "reviewSha256": "3994582B9B22E3BD881EF3C014EE06F6B00F2A3B60B0446B4BF8023F09925CAF",
+      "measuredEarlierFailureFeedbackSeconds": 290,
+      "successPathSpeedupClaim": false
+    },
+    {
+      "area": "User-authorized Jarvis port",
+      "behavior": "JM-01..JM-10 added to Gold pipeline. Source-backed mobile tool display, transcript, responsive and consented notification preview mapped to existing NEOTH owners/design. Additional WhatsApp-bot tool-progress implementation remains unlocated and explicitly open. No Jarvis app source imported.",
+      "plan": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+      "sourceInventorySha256": "CD126A88A10A247CD663C67FAC80DBBCE6CF9750DC2257C1CDF4974AC12296A5",
+      "sourceManifestSha256": "11CBE693B284CF86CB18702A2AC01FFBB7D6FE9960C7DC1E52802B50CDD2AFC6",
+      "targetMapSha256": "DF2B2333FAF0E4AE65232E71358A0FBDB45C3946843BD452B3F2753768B46C3A"
+    }
+  ],
+  "registration": {
+    "portableNative": 2805,
+    "newNativeTest": "daemon::companion_runtime::tests::early_pair_readiness_cleanup_emits_settled_and_unproven_terminals",
+    "focusedOwner": 32,
+    "focusedCompanion": 28,
+    "focusedTotal": 60,
+    "mobileRust": 65,
+    "mobileCollector": 19,
+    "mobileSourceBindings": 43,
+    "newCollector": "test_pair_readiness_terminal_markers_are_closed_and_secret_free"
+  },
+  "previousEvidence": {
+    "producer": "8f0d1306573fe27cfabd7ac3f70227ece2f21e33",
+    "focused": {
+      "run": "37579901542",
+      "status": "independently-admitted",
+      "exactCases": 59,
+      "originalArchiveEntries": 75,
+      "rootProofSha256": "9FA6AE0A1DE3882A173C15E417FBDFD10FFEC4FFEB25ED72AAA4435290AA0F20"
+    },
+    "mobile": {
+      "run": "37581800396",
+      "status": "failed",
+      "stage": "pair_status_read_mint",
+      "parseSubtype": "delimiter",
+      "keyAnnounceFailed": true,
+      "topicAnnounceSucceeded": true,
+      "rustPanic": false,
+      "daemonExit": 1,
+      "walDrain": true,
+      "admittedEarlyRust": 37,
+      "admittedCollector": 18,
+      "laterRustNotRun": 27,
+      "sourceBindings": 43,
+      "originalArchiveEntries": 4,
+      "zipSha256": "E1DF3C12094F4FDB269FD2C8D0074EBEFFB0DEB26B3B64E22D9BE64D54A4DECB",
+      "partialProofSha256": "BB1A8D0F5CB8EC2CA554E5A6FBA7B4DFE81F427A53CA286DA104565FAED398D9",
+      "rootCause": "Not established: clean joined deadline/cancel/channel-close and unproven cleanup can all reach fatal mint; new fixed markers discriminate"
+    }
+  },
+  "localExecutableValidationRan": false,
+  "slintChanged": false,
+  "goldComplete": false,
+  "acceptanceOpen": [
+    "new exact producer fast/focused/Mobile",
+    "same enrollment restart",
+    "V4 rebase",
+    "Jarvis port JM-01..JM-10",
+    "remaining Gold product leaves",
+    "Full CI",
+    "native/device/package",
+    "signing and release"
+  ]
+}

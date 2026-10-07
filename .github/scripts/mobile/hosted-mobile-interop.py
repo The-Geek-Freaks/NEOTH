@@ -51,6 +51,8 @@ PAIR_PHASES = (
     "enrollment_rollback_noop", "enrollment_rollback_unproven", "pair_rendezvous_leave_started",
     "pair_rendezvous_left", "enrollment_response_write_started", "teardown_failed",
     "rendezvous_started", "initial_discovery_started",
+    "readiness_stop_requested", "readiness_owner_cancelled", "readiness_owner_deadline",
+    "readiness_owner_ended", "readiness_owner_refused",
 )
 PAIR_MARKERS = tuple(
     (phase, f"NEOTH_COMPANION_PAIR_PHASE={phase}".encode("ascii"))

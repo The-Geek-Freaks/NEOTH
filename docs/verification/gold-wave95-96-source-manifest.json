@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T06:03:32.2472174Z",
-  "validationStatus": "CONFIRMED-HOSTED-CLIPPY-REPAIR-RERUN-PENDING",
+  "capturedUtc": "2026-10-07T06:59:45.3188253Z",
+  "validationStatus": "REVIEWED-READINESS-DIAGNOSTICS-AND-PORT-PIPELINE-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 42160,
-      "sha256": "BBDC291917F5A17EC8B46E3ECCE69F2D840A27D66730DACCC4C427C3B4480D9D"
+      "bytes": 42305,
+      "sha256": "18D88F62798699E04B7F6AD8F924900C338C3CD40E4EC96F7036543ED950A2E3"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -53,18 +53,18 @@
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
-      "bytes": 11143,
-      "sha256": "1DCD6BFD880D629F7E7FFF0A7895FAB846750934141949BB58E938FC740C9DD3"
+      "bytes": 11327,
+      "sha256": "8310894FB35676319205800CF6150256EF1D643DD4D6CBDB17CF51BE875554DB"
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 26284,
-      "sha256": "E37865048BA58F81039985537D1D9B71CE4584A50EB3B23D15635DA5B1FDEE4D"
+      "bytes": 27271,
+      "sha256": "298C8E1EE2A901A47705FF659507AC52A21B7B252A44827735ADB8B71C2FB647"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
-      "bytes": 9569,
-      "sha256": "BA47FEB28C2066BC36E7F432F5E7AA3596762404921ADE87D3F4A4A25E2F1957"
+      "bytes": 9847,
+      "sha256": "1936C491923EE1AD886838213CEDDAF2C9B79035CAE38DB78CA42878D877E5DC"
     },
     {
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
@@ -99,7 +99,7 @@
     {
       "path": ".github/workflows/cli-reference.yml",
       "bytes": 27702,
-      "sha256": "A950F5EFAEAF240249BEA19C2FCADDCCA92C5EFFCD5C678B125C6D4881D0C9CC"
+      "sha256": "BEB91978148BC0E5D99FE52907CD9A78AFB319F86FA1762F0FAA9F540C7701D5"
     },
     {
       "path": ".github/workflows/gchat-crypto-lock-reconcile.yml",
@@ -3862,6 +3862,11 @@
       "sha256": "FF65FDF94D3DDA899F3FC9534BDECCAE47B115CD5412C30F7027B371E8189E7E"
     },
     {
+      "path": "docs/verification/gold-wave2484-pair-readiness-and-jarvis-pipeline.json",
+      "bytes": 3656,
+      "sha256": "AFA62C4EDFC1FF83FDC04E72F0D9505AA211F461CD867FAC798B76532CC9ABBB"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5007,14 +5012,19 @@
       "sha256": "A786B826024234FC2097720E9DE0F409DE723B5504D166E717233241F422348D"
     },
     {
+      "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+      "bytes": 11787,
+      "sha256": "B3AA9F9255A79733269767FB6E676E8761E1162D7FD0490C0CF4F78520ED46CA"
+    },
+    {
       "path": "PLAN/PROGRESS_v1_0.md",
       "bytes": 1635741,
       "sha256": "8085250B528C8AFB9447D5031E3697C29D37FE34A1E38B1E90335C3A7EA70EF2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2467572,
-      "sha256": "56813918A32B7B40C58AC9AB3E231FB48644140276BC3FD51D1C8B91BD0CAA4C"
+      "bytes": 2470943,
+      "sha256": "28E262E68E6AB363256D4C31E3A42FD88F582DC46EF638E542F794FC4D332C7A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -6923,8 +6933,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 86648,
-      "sha256": "366135113DA7C802DA6C488CBC63C948D45DFFB8195F8CCBA02A2D788310D31E"
+      "bytes": 92791,
+      "sha256": "85889256346545F10E6A93423EA0C2E5E6EA36B11A13AD82E3BE1FEABED811A4"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
