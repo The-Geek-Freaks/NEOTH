@@ -661,7 +661,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Ok(contexts) => contexts,
         Err(error) => {
             drop(writer);
-            return Err(tag_chat_turn_failure(error, ChatTurnFailureStage::Attachments));
+            return Err(tag_chat_turn_failure(
+                error,
+                ChatTurnFailureStage::Attachments,
+            ));
         }
     };
 
@@ -1245,7 +1248,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Ok(request) => request,
         Err(error) => {
             drop(writer);
-            return Err(tag_chat_turn_failure(error, ChatTurnFailureStage::RequestBudget));
+            return Err(tag_chat_turn_failure(
+                error,
+                ChatTurnFailureStage::RequestBudget,
+            ));
         }
     };
     let BudgetedProviderRequest {
@@ -1271,7 +1277,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Err(error) => {
             drop(writer);
             let audit_error = tag_chat_turn_failure(
-                error.context("code-map context audit failed; provider dispatch refused before egress"),
+                error.context(
+                    "code-map context audit failed; provider dispatch refused before egress",
+                ),
                 ChatTurnFailureStage::CodeMapAudit,
             );
             return Err(preserve_code_map_audit_and_writer_failure(audit_error).await);
