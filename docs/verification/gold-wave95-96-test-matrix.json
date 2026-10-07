@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED-FORMAT-IMPORTED-EXECUTABLE-VALIDATION-PENDING",
+  "status": "CONFIRMED-HOSTED-CLIPPY-REPAIR-RERUN-PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 399220,
-    "sha256": "EC25D7591A19C24382079E484EFBC7C39FC610DD2F8763B7B169D3B347750B91"
+    "bytes": 399212,
+    "sha256": "1063863DD97CCE1F1B286621D5BE530557FAEC8E4E28A2103ABDA13DC8C9CD6F"
   },
   "sourceInputs": 2181,
   "requiredNativeTests": [
@@ -6480,37 +6480,37 @@
     {
       "test": "cli::dream::tests::status_without_config_reports_manual_only_defaults",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_enable_is_atomic_lossless_and_canonicalizes_legacy_spelling",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_disable_is_idempotent_but_still_requests_reconciliation",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cron_mutation_requires_initialized_config",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::invalid_config_is_unchanged_and_never_requests_reload",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::status_exposes_enabled_but_fail_closed_autonomy_contracts",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
@@ -16795,25 +16795,25 @@
     {
       "test": "cli::dream::tests::standalone_dream_audit_waits_for_real_writer_completion",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dream::tests::cancelled_dream_audit_reaps_real_writer_after_append_admission",
       "sourcePath": "SRC/neothd/src/cli/dream.rs",
-      "sourceSha256": "5335A653883D2696BEB64EF302F4EE522196D566A5C0D743987EB8B1A5318073",
+      "sourceSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
       "junitClass": "neoth"
     },
     {
@@ -77801,6 +77801,26 @@
       }
     ],
     "note": "Imported original Preflight 37541761551 artifact 11449570544 formatting patch for cluster and Dream; exact pre/post Git blobs verified; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2482DreamClippy": {
+    "base": "91fe9bbefc7fc6ea63e6a436ba49e10a8e48d4d1",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2480-bounded-owners-and-chat-diagnostics.json",
+        "bytes": 6348,
+        "sha256": "FF65FDF94D3DDA899F3FC9534BDECCAE47B115CD5412C30F7027B371E8189E7E",
+        "blob": "7351344cba0e14222345ca34abd10e74b3237056"
+      },
+      {
+        "path": "SRC/neothd/src/cli/dream.rs",
+        "bytes": 40007,
+        "sha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
+        "blob": "21d540b27545ed2398b79b1325e3db1c437d5fdb"
+      }
+    ],
+    "note": "Two Dream Clippy failures from CLI37578659705 corrected by exact type alias and equivalent let chain; unchanged59case contract awaits next producer.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

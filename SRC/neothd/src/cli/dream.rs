@@ -454,6 +454,11 @@ async fn emit_dream_composed_at(
     emit_dream_composed_at_with_lifecycle_signals(home, report, completion_timeout, None).await
 }
 
+type DreamAuditLifecycleSignals = (
+    Option<tokio::sync::oneshot::Sender<crate::wal::writer::WalWriterHandle>>,
+    Option<tokio::sync::oneshot::Sender<()>>,
+);
+
 /// Keep the actual writer owner in a detached supervisor until it has either
 /// completed or been aborted and reaped. Dropping the caller future is allowed
 /// to abandon this best-effort receipt, but never the writer task it started.
@@ -461,10 +466,7 @@ async fn emit_dream_composed_at_with_lifecycle_signals(
     home: &Path,
     report: &PassReport,
     completion_timeout: Duration,
-    mut lifecycle_signals: Option<(
-        Option<tokio::sync::oneshot::Sender<crate::wal::writer::WalWriterHandle>>,
-        Option<tokio::sync::oneshot::Sender<()>>,
-    )>,
+    mut lifecycle_signals: Option<DreamAuditLifecycleSignals>,
     #[cfg(test)] ack_gate: Option<crate::wal::writer::TestAckGate>,
 ) -> Result<()> {
     let now_unix = crate::time::now_unix_secs();
@@ -509,13 +511,12 @@ async fn emit_dream_composed_at_with_lifecycle_signals(
                 }
             }
         };
-        if append_result.is_ok() {
-            if let Some(signal) = lifecycle_signals
+        if append_result.is_ok()
+            && let Some(signal) = lifecycle_signals
                 .as_mut()
                 .and_then(|signals| signals.0.take())
-            {
-                let _ = signal.send(writer.clone());
-            }
+        {
+            let _ = signal.send(writer.clone());
         }
         drop(writer);
         let finalized = completion.wait();

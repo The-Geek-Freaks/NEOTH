@@ -109,5 +109,19 @@
     "artifactId": "11449570544",
     "rootCustodySha256": "1A69C982996E2AC1595C4F3A5BCE712CB73B0CFF2DA2C8822615344443DB2570",
     "status": "Original hosted patch admitted; two source postimage blobs verified; executable validation pending on next producer"
+  },
+  "hostedClippyRepair": {
+    "run": "37578659705",
+    "producer": "91fe9bbefc7fc6ea63e6a436ba49e10a8e48d4d1",
+    "status": "FAILED-BEFORE-CASES-NARROW-REPAIR-IMPORTED",
+    "diagnostics": [
+      "type_complexity in Dream lifecycle signal parameter",
+      "collapsible_if after acknowledged append"
+    ],
+    "changes": "Name existing lifecycle tuple and use equivalent short-circuit let chain; no lint suppression or test removal",
+    "rootImportSha256": "B7C52A976FA29D3CA7AE674AD20C132AF1A80EA18C43497C115A5B3101745651",
+    "ownerCasesAdmitted": 0,
+    "companionCasesAdmitted": 0,
+    "validation": "Hosted rerun required on next published producer"
   }
 }
