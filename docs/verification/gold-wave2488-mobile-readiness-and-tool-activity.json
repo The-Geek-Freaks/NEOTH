@@ -97,5 +97,16 @@
     "localFormatterRan": false,
     "fastCodeQuality": "37599636080 success",
     "nextProducerValidation": "pending"
+  },
+  "focusedTypecheckRepair": {
+    "run": "37600416253",
+    "producer": "4ffbe7217478295f5c67dd0f90aa52131d58d619",
+    "productionSlimClippy": "success",
+    "testTargetCheck": "E0061: one extended test omitted rollback_policy argument",
+    "focusedRegressions": "not executed",
+    "correction": "Explicit None for optional rollback policy in existing trusted_nonpublic_source regression",
+    "behaviorChange": "test call only; production implementation and assertions unchanged",
+    "repeatHostedValidation": "pending",
+    "localExecutableValidationRan": false
   }
 }

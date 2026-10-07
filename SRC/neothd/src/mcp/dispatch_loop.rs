@@ -3385,6 +3385,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &McpToolScope::default(),
             // The final iteration is reserved for the model reply; allow dispatch first.
             2,

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2488 hosted formatting imported; final-producer executable acceptance pending",
+  "status": "source-integrated-focused-typecheck-repair-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 400809,
-    "sha256": "EE040B62064377E4A9E154FE7EEA5CB68C6AFA15048D6FB6B97226E5A5A9DC26"
+    "bytes": 400788,
+    "sha256": "7399B9D1DB0C1A191004B1631EEAC4F226DC3405EBFA2B1439E844D433B3F71E"
   },
   "sourceInputs": 2189,
   "requiredNativeTests": [
@@ -96,25 +96,25 @@
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
@@ -330,7 +330,7 @@
     {
       "test": "mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
@@ -9858,7 +9858,7 @@
     {
       "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_or_smartapprove_list",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
@@ -9948,7 +9948,7 @@
     {
       "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
@@ -16879,7 +16879,7 @@
     {
       "test": "mcp::dispatch_loop::tests::contended_activity_view_is_sticky_loss_without_a_call_handle",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D99E87FE20D04681989AFD96E81596FFADA9F35A2034695ADF86BE801D7915A1",
+      "sourceSha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
       "junitClass": "neoth"
     },
     {
@@ -78143,6 +78143,32 @@
       }
     ],
     "note": "Original preflight artifact11472243156/run37599635735 at a120b8d2 verified ZIP/API checksums, source head and four full-index pre/postimages; layout-only import. No local formatter/compiler/tests.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2489CliTestCallRepair": {
+    "base": "4ffbe7217478295f5c67dd0f90aa52131d58d619",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2488-mobile-readiness-and-tool-activity.json",
+        "bytes": 5924,
+        "sha256": "F1AA2FB2EA48A9B58F08D3D48DCAAE059B26936A49758C0ED759609397A6D332",
+        "blob": "46aaeb69710dff20ed3e8e9b807ab46d6ec4aedc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2477340,
+        "sha256": "1529CECFC5533A506D456BD1474C0D6719D36D17D668438722E5CEC4A8417BD5",
+        "blob": "66d8eb099049c7989794583f734ed544f4263383"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
+        "bytes": 326219,
+        "sha256": "5B9CD409EF134FDD7BC0C6367ABAE79A467A955E97F210E82BA89129EE88952D",
+        "blob": "0359624dcb0219e7235861f2d0c673fcb633b142"
+      }
+    ],
+    "note": "Hosted run37600416253 production slim Clippy passed; default test target E0061 repaired by adding missing rollback_policy None to one test call; assertions and production source behavior unchanged; repeat exact-source hosted validation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
