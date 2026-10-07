@@ -32,7 +32,10 @@ const CHAT_DOMAIN: &[u8] = b"NEOTH/companion/v3/chat";
 /// label requires a coordinated schema revision instead of projecting tool
 /// names, paths, arguments, or error text through the companion boundary.
 pub fn is_companion_activity_label_v1(label: &str) -> bool {
-    matches!(label, "Read file" | "Write file" | "List files" | "Search code" | "Tool call")
+    matches!(
+        label,
+        "Read file" | "Write file" | "List files" | "Search code" | "Tool call"
+    )
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -729,7 +732,10 @@ pub fn encode_chat_challenge_with_activity_advertisement(
 ) -> Result<Vec<u8>, ProtocolError> {
     challenge.validate()?;
     let mut envelope = serde_json::Map::new();
-    envelope.insert("type".into(), serde_json::Value::String("chat_challenge".into()));
+    envelope.insert(
+        "type".into(),
+        serde_json::Value::String("chat_challenge".into()),
+    );
     envelope.insert(
         "body".into(),
         serde_json::to_value(challenge).map_err(|_| ProtocolError::InvalidFrame)?,
@@ -887,20 +893,39 @@ mod tests {
             challenge_nonce: [3; 32],
             issued_at_unix: 4,
         };
-        let legacy = CompanionChatRequest::signed(
-            &challenge, Uuid::new_v4(), "hello".to_owned(), &signing,
-        ).unwrap();
+        let legacy =
+            CompanionChatRequest::signed(&challenge, Uuid::new_v4(), "hello".to_owned(), &signing)
+                .unwrap();
         let opted_in = CompanionChatRequest::signed_with_tool_activity_v1(
-            &challenge, Uuid::new_v4(), "hello".to_owned(), &signing,
-        ).unwrap();
+            &challenge,
+            Uuid::new_v4(),
+            "hello".to_owned(),
+            &signing,
+        )
+        .unwrap();
 
         assert!(!legacy.requests_tool_activity_v1());
-        assert!(!serde_json::to_string(&legacy).unwrap().contains("capabilities"));
+        assert!(
+            !serde_json::to_string(&legacy)
+                .unwrap()
+                .contains("capabilities")
+        );
         assert!(opted_in.requests_tool_activity_v1());
-        assert!(serde_json::to_string(&opted_in).unwrap().contains("tool_activity_v1"));
-        legacy.verify_with(&signing.verifying_key().to_bytes()).unwrap();
-        opted_in.verify_with(&signing.verifying_key().to_bytes()).unwrap();
-        assert_ne!(legacy.signing_bytes().unwrap(), opted_in.signing_bytes().unwrap());
+        assert!(
+            serde_json::to_string(&opted_in)
+                .unwrap()
+                .contains("tool_activity_v1")
+        );
+        legacy
+            .verify_with(&signing.verifying_key().to_bytes())
+            .unwrap();
+        opted_in
+            .verify_with(&signing.verifying_key().to_bytes())
+            .unwrap();
+        assert_ne!(
+            legacy.signing_bytes().unwrap(),
+            opted_in.signing_bytes().unwrap()
+        );
     }
 
     #[test]
@@ -923,7 +948,8 @@ mod tests {
         let legacy: FrozenLegacyServerFrame = serde_json::from_slice(&bytes).unwrap();
         let FrozenLegacyServerFrame::ChatChallenge(legacy_body) = legacy;
         assert_eq!(legacy_body, challenge);
-        let (decoded, advertised) = decode_chat_challenge_with_activity_advertisement(&bytes).unwrap();
+        let (decoded, advertised) =
+            decode_chat_challenge_with_activity_advertisement(&bytes).unwrap();
         assert_eq!(decoded, challenge);
         assert!(advertised);
     }
@@ -937,11 +963,18 @@ mod tests {
             ",\"capabilities\":{\"tool_activity_v1\":\"yes\"}".to_owned(),
         ] {
             let bytes = format!("{{\"type\":\"chat_challenge\",\"body\":{body}{suffix}}}");
-            assert!(!decode_chat_challenge_with_activity_advertisement(bytes.as_bytes()).unwrap().1);
+            assert!(
+                !decode_chat_challenge_with_activity_advertisement(bytes.as_bytes())
+                    .unwrap()
+                    .1
+            );
         }
-        assert!(decode_chat_challenge_with_activity_advertisement(
-            br#"{"type":"chat_challenge","body":{"schema_version":2}}"#
-        ).is_err());
+        assert!(
+            decode_chat_challenge_with_activity_advertisement(
+                br#"{"type":"chat_challenge","body":{"schema_version":2}}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

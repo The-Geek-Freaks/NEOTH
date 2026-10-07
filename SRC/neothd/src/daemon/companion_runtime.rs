@@ -31,10 +31,10 @@ use crate::{
         companion_protocol::{
             COMPANION_V3_SCHEMA_VERSION, CompanionChatActivitySnapshot, CompanionChatOutcome,
             CompanionChatRecord, CompanionChatRecordKind, CompanionChatRequest,
-            CompanionChatTerminal, CompanionDenied,
-            CompanionDeniedCode, CompanionDeviceId, CompanionReadiness, CompanionScope,
-            CompanionStatusSnapshot, CompanionToolActivityEvent, CompanionToolActivityPhase,
-            EnrollmentAccepted, EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
+            CompanionChatTerminal, CompanionDenied, CompanionDeniedCode, CompanionDeviceId,
+            CompanionReadiness, CompanionScope, CompanionStatusSnapshot,
+            CompanionToolActivityEvent, CompanionToolActivityPhase, EnrollmentAccepted,
+            EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
         },
     },
     wal::{
@@ -124,7 +124,9 @@ where
             }
             ActivityOwnerResolution::RetireAfterCleanup
         }
-        InFlightActivityOutcome::ActivityWritten => unreachable!("only terminal/failure reaches owner resolution"),
+        InFlightActivityOutcome::ActivityWritten => {
+            unreachable!("only terminal/failure reaches owner resolution")
+        }
     }
 }
 
@@ -1393,14 +1395,12 @@ impl CompanionRuntime {
             device_stop,
             cancelled_by_owner_task,
         ));
-        let chat = self
-            .chat_runtime
-            .execute_companion_chat_turn(
-                daemon_request,
-                cancellation.clone(),
-                effect_gate,
-                tool_activity_sink.as_ref(),
-            );
+        let chat = self.chat_runtime.execute_companion_chat_turn(
+            daemon_request,
+            cancellation.clone(),
+            effect_gate,
+            tool_activity_sink.as_ref(),
+        );
         tokio::pin!(chat);
         // This is the existing request/connection owner.  It never creates a
         // transport task: while an activity frame is in flight the chat future
@@ -2030,10 +2030,10 @@ async fn write_chat_challenge_with_activity_advertisement(
     connection: &mut peeroxide::SwarmConnection,
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
-    let bytes = crate::daemon::companion_protocol::encode_chat_challenge_with_activity_advertisement(
-        challenge,
-        true,
-    )?;
+    let bytes =
+        crate::daemon::companion_protocol::encode_chat_challenge_with_activity_advertisement(
+            challenge, true,
+        )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
         .await
         .context("companion chat challenge write timeout")??;
@@ -2065,7 +2065,8 @@ fn companion_activity_snapshot(
     let (events, incomplete) = sink.snapshot();
     let max_event_seq = events.last().map_or(0, |event| event.event_seq);
     CompanionChatActivitySnapshot {
-        activity_schema_version: crate::daemon::companion_protocol::COMPANION_ACTIVITY_SCHEMA_VERSION,
+        activity_schema_version:
+            crate::daemon::companion_protocol::COMPANION_ACTIVITY_SCHEMA_VERSION,
         request_id,
         max_event_seq,
         incomplete,
@@ -2075,11 +2076,21 @@ fn companion_activity_snapshot(
                 event_seq: event.event_seq,
                 ordinal: event.ordinal,
                 phase: match event.phase {
-                    crate::mcp::dispatch_loop::ToolActivityPhase::Started => CompanionToolActivityPhase::Started,
-                    crate::mcp::dispatch_loop::ToolActivityPhase::Succeeded => CompanionToolActivityPhase::Succeeded,
-                    crate::mcp::dispatch_loop::ToolActivityPhase::Failed => CompanionToolActivityPhase::Failed,
-                    crate::mcp::dispatch_loop::ToolActivityPhase::Rejected => CompanionToolActivityPhase::Rejected,
-                    crate::mcp::dispatch_loop::ToolActivityPhase::Unknown => CompanionToolActivityPhase::Unknown,
+                    crate::mcp::dispatch_loop::ToolActivityPhase::Started => {
+                        CompanionToolActivityPhase::Started
+                    }
+                    crate::mcp::dispatch_loop::ToolActivityPhase::Succeeded => {
+                        CompanionToolActivityPhase::Succeeded
+                    }
+                    crate::mcp::dispatch_loop::ToolActivityPhase::Failed => {
+                        CompanionToolActivityPhase::Failed
+                    }
+                    crate::mcp::dispatch_loop::ToolActivityPhase::Rejected => {
+                        CompanionToolActivityPhase::Rejected
+                    }
+                    crate::mcp::dispatch_loop::ToolActivityPhase::Unknown => {
+                        CompanionToolActivityPhase::Unknown
+                    }
                 },
                 label: event.label,
             })
@@ -2103,74 +2114,157 @@ mod tests {
 
     #[tokio::test]
     async fn jm03_owner_keeps_polling_chat_while_activity_ack_is_held() {
-        let (chat_tx, mut chat_rx) = oneshot::channel::<&'static str>();
+        let (chat_tx, chat_rx) = oneshot::channel::<&'static str>();
+        let (chat_polled_tx, mut chat_polled_rx) = oneshot::channel::<()>();
+        let mut chat = Box::pin(async move {
+            chat_polled_tx
+                .send(())
+                .expect("owner polls chat while activity writer is held");
+            chat_rx.await.expect("scripted chat")
+        });
         let (ack_tx, ack_rx) = oneshot::channel::<std::result::Result<(), &'static str>>();
-        let race = race_admitted_chat_with_activity_write(
-            &mut chat_rx,
-            async move { ack_rx.await.expect("scripted activity writer") },
-        );
+        let race = race_admitted_chat_with_activity_write(&mut chat, async move {
+            ack_rx.await.expect("scripted activity writer")
+        });
         tokio::pin!(race);
-        chat_tx.send("terminal").expect("chat remains polled while activity waits");
-        tokio::task::yield_now().await;
-        ack_tx.send(Ok(())).expect("complete bounded activity frame");
-        assert_eq!(tokio::time::timeout(Duration::from_secs(3), race).await.expect("bounded owner race"), InFlightActivityOutcome::TerminalAfterActivity("terminal"));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::select! {
+                outcome = &mut race => panic!("held activity writer completed race: {outcome:?}"),
+                _ = &mut chat_polled_rx => {}
+            }
+        })
+        .await
+        .expect("bounded poll while activity writer is held");
+        chat_tx
+            .send("terminal")
+            .expect("chat remains polled while activity waits");
+        ack_tx
+            .send(Ok(()))
+            .expect("complete bounded activity frame");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), race)
+                .await
+                .expect("bounded owner race"),
+            InFlightActivityOutcome::TerminalAfterActivity("terminal")
+        );
     }
 
     #[tokio::test]
     async fn jm04_owner_discards_later_unsent_activity_when_terminal_waits_for_inflight_frame() {
-        let (chat_tx, mut chat_rx) = oneshot::channel::<u8>();
+        let (chat_tx, chat_rx) = oneshot::channel::<u8>();
+        let (chat_polled_tx, mut chat_polled_rx) = oneshot::channel::<()>();
+        let (chat_completed_tx, mut chat_completed_rx) = oneshot::channel::<()>();
+        let mut chat = Box::pin(async move {
+            chat_polled_tx
+                .send(())
+                .expect("owner polls chat while activity writer is held");
+            let terminal = chat_rx.await.expect("scripted chat");
+            chat_completed_tx
+                .send(())
+                .expect("terminal completion is retained while writer is held");
+            terminal
+        });
         let (ack_tx, ack_rx) = oneshot::channel::<std::result::Result<(), &'static str>>();
-        let race = race_admitted_chat_with_activity_write(
-            &mut chat_rx,
-            async move { ack_rx.await.expect("scripted activity writer") },
-        );
+        let race = race_admitted_chat_with_activity_write(&mut chat, async move {
+            ack_rx.await.expect("scripted activity writer")
+        });
         tokio::pin!(race);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::select! {
+                outcome = &mut race => panic!("held activity writer completed race: {outcome:?}"),
+                _ = &mut chat_polled_rx => {}
+            }
+        })
+        .await
+        .expect("bounded initial owner poll");
         chat_tx.send(7).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::select! {
+                outcome = &mut race => panic!("terminal escaped before held activity writer settled: {outcome:?}"),
+                _ = &mut chat_completed_rx => {}
+            }
+        })
+        .await
+        .expect("bounded terminal retention while activity writer is held");
         ack_tx.send(Ok(())).unwrap();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(3), race).await.expect("bounded owner race"), InFlightActivityOutcome::TerminalAfterActivity(7));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), race)
+                .await
+                .expect("bounded owner race"),
+            InFlightActivityOutcome::TerminalAfterActivity(7)
+        );
         // The production owner breaks on this outcome before consuming a
         // later sink generation, so no second pre-terminal frame is started.
     }
 
     #[tokio::test]
     async fn jm04_owner_retires_carrier_when_inflight_activity_frame_fails_after_terminal() {
-        let (chat_tx, mut chat_rx) = oneshot::channel::<()>();
+        let (chat_tx, chat_rx) = oneshot::channel::<()>();
+        let mut chat = Box::pin(async move { chat_rx.await.expect("scripted chat") });
         let (ack_tx, ack_rx) = oneshot::channel::<std::result::Result<(), &'static str>>();
-        let race = race_admitted_chat_with_activity_write(
-            &mut chat_rx,
-            async move { ack_rx.await.expect("scripted activity writer") },
-        );
+        let race = race_admitted_chat_with_activity_write(&mut chat, async move {
+            ack_rx.await.expect("scripted activity writer")
+        });
         tokio::pin!(race);
         chat_tx.send(()).unwrap();
         ack_tx.send(Err("deadline")).unwrap();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(3), race).await.expect("bounded owner race"), InFlightActivityOutcome::ActivityWriteFailed { error: "deadline", terminal: Some(()) });
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), race)
+                .await
+                .expect("bounded owner race"),
+            InFlightActivityOutcome::ActivityWriteFailed {
+                error: "deadline",
+                terminal: Some(())
+            }
+        );
     }
 
     #[tokio::test]
     async fn jm04_owner_retains_cancelled_chat_cleanup_after_activity_write_error() {
-        let (chat_tx, mut chat_rx) = oneshot::channel::<u8>();
-        let outcome = race_admitted_chat_with_activity_write(
-            &mut chat_rx,
-            async { Err::<(), _>("carrier write failed") },
-        )
+        let (chat_tx, chat_rx) = oneshot::channel::<u8>();
+        let mut chat = Box::pin(async move { chat_rx.await.expect("scripted chat") });
+        let outcome = race_admitted_chat_with_activity_write(&mut chat, async {
+            Err::<(), _>("carrier write failed")
+        })
         .await;
-        assert_eq!(outcome, InFlightActivityOutcome::ActivityWriteFailed { error: "carrier write failed", terminal: None });
-        let cleanup = retain_cancelled_chat(&mut chat_rx);
+        assert_eq!(
+            outcome,
+            InFlightActivityOutcome::ActivityWriteFailed {
+                error: "carrier write failed",
+                terminal: None
+            }
+        );
+        let cleanup = retain_cancelled_chat(&mut chat);
         tokio::pin!(cleanup);
         tokio::task::yield_now().await;
         chat_tx.send(9).expect("real chat cleanup remains retained");
-        assert_eq!(tokio::time::timeout(Duration::from_secs(3), cleanup).await.expect("bounded cleanup").expect("chat cleanup result"), 9);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), cleanup)
+                .await
+                .expect("bounded cleanup"),
+            9
+        );
     }
 
     #[tokio::test]
-    async fn jm04_actual_owner_resolution_never_reaches_terminal_writer_after_completed_chat_write_error() {
+    async fn jm04_actual_owner_resolution_never_reaches_terminal_writer_after_completed_chat_write_error()
+     {
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
-        let (_tx, mut chat) = oneshot::channel::<u8>();
-        let resolution = tokio::time::timeout(Duration::from_secs(3),
+        let (_tx, chat_rx) = oneshot::channel::<u8>();
+        let mut chat = Box::pin(async move { chat_rx.await.expect("scripted chat") });
+        let resolution = tokio::time::timeout(
+            Duration::from_secs(3),
             resolve_activity_owner_terminal(
-                InFlightActivityOutcome::ActivityWriteFailed { error: "write", terminal: Some(7) },
-                &cancellation, &mut chat,
-            )).await.expect("bounded owner resolution");
+                InFlightActivityOutcome::ActivityWriteFailed {
+                    error: "write",
+                    terminal: Some(7),
+                },
+                &cancellation,
+                &mut chat,
+            ),
+        )
+        .await
+        .expect("bounded owner resolution");
         let terminal_writes = std::sync::atomic::AtomicUsize::new(0);
         if let ActivityOwnerResolution::ContinueWithTerminal(_) = resolution {
             terminal_writes.fetch_add(1, Ordering::Relaxed);
@@ -2181,14 +2275,21 @@ mod tests {
     #[tokio::test]
     async fn jm04_actual_owner_resolution_waits_for_pending_cleanup_before_retire() {
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
-        let (chat_tx, mut chat) = oneshot::channel::<()>();
+        let (chat_tx, chat_rx) = oneshot::channel::<()>();
+        let mut chat = Box::pin(async move { chat_rx.await.expect("scripted chat") });
         let resolution = resolve_activity_owner_terminal(
-            InFlightActivityOutcome::ActivityWriteFailed { error: "write", terminal: None },
-            &cancellation, &mut chat,
+            InFlightActivityOutcome::ActivityWriteFailed {
+                error: "write",
+                terminal: None,
+            },
+            &cancellation,
+            &mut chat,
         );
         tokio::pin!(resolution);
         tokio::task::yield_now().await;
-        chat_tx.send(()).expect("cleanup remains owned before retire");
+        chat_tx
+            .send(())
+            .expect("cleanup remains owned before retire");
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(3), resolution).await,
             Ok(ActivityOwnerResolution::RetireAfterCleanup)
@@ -2198,12 +2299,18 @@ mod tests {
     #[tokio::test]
     async fn jm04_actual_owner_resolution_allows_exactly_one_terminal_writer_after_success() {
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
-        let (_tx, mut chat) = oneshot::channel::<u8>();
-        let resolution = tokio::time::timeout(Duration::from_secs(3),
+        let (_tx, chat_rx) = oneshot::channel::<u8>();
+        let mut chat = Box::pin(async move { chat_rx.await.expect("scripted chat") });
+        let resolution = tokio::time::timeout(
+            Duration::from_secs(3),
             resolve_activity_owner_terminal(
-                InFlightActivityOutcome::TerminalAfterActivity(7),
-                &cancellation, &mut chat,
-            )).await.expect("bounded owner resolution");
+                InFlightActivityOutcome::<u8, &'static str>::TerminalAfterActivity(7),
+                &cancellation,
+                &mut chat,
+            ),
+        )
+        .await
+        .expect("bounded owner resolution");
         let terminal_writes = std::sync::atomic::AtomicUsize::new(0);
         if let ActivityOwnerResolution::ContinueWithTerminal(_) = resolution {
             terminal_writes.fetch_add(1, Ordering::Relaxed);

@@ -52,5 +52,28 @@
   "releaseAccepted": false,
   "whatsappStatusImplemented": false,
   "localExecutableValidationRan": false,
-  "slintChanged": false
+  "slintChanged": false,
+  "hostedFormat": {
+    "run": "37605525695",
+    "producer": "9c856a32145ed81dd4d9c4ad77170ce3ae7eccf4",
+    "artifact": 11474224482,
+    "archiveSha256": "61A6E4B2F1189555C5DEC6D4AB45FB909A23F4E5A9F434470F75BE5EA995CFE7",
+    "patchSha256": "5C289EDF1CD57301BF664FC23E58DECB541BC1564C9B85CFC0CAAAD3AF7E0D40",
+    "entries": 3,
+    "sourcePaths": [
+      "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "SRC/neothd/src/daemon/companion_protocol.rs",
+      "SRC/neothd/src/daemon/companion_runtime.rs",
+      "SRC/neothd/src/mcp/dispatch_loop.rs"
+    ],
+    "localFormatterRan": false
+  },
+  "ownerFixtureRepair": {
+    "status": "STATIC-REVIEWED-HOSTED-PENDING",
+    "sourceSha256": "28C68E8514D6339316A1CCB7C3BE7B5DA94E5C3D5C217C843E89EC751D63F08E",
+    "reviewSha256": "0B47A565E9545F752EDB2B47BFF151B2D9729DD655920807405080F5BA6D1A8F",
+    "scope": "Seven existing owner test fixtures only; map oneshot output to bare T, fix error generic, actually poll held-ACK ordering before release",
+    "productionBehaviorChanged": false,
+    "localTestsRan": false
+  }
 }

@@ -128,7 +128,9 @@ impl ToolActivitySink {
             tokio::pin!(notified);
             notified.as_mut().enable();
             let current = self.activity_revision();
-            if current != observed { return current; }
+            if current != observed {
+                return current;
+            }
             notified.await;
         }
     }
@@ -3271,7 +3273,8 @@ mod tests {
         let sink = ToolActivitySink::new_authenticated("notify-turn".into()).unwrap();
         let observed = sink.activity_revision();
         let call = ParsedToolCall {
-            server: "filesystem".into(), tool: "read_file".into(),
+            server: "filesystem".into(),
+            tool: "read_file".into(),
             arguments: serde_json::json!({"private":"not projected"}),
         };
         drop(sink.try_observe(&call).unwrap());

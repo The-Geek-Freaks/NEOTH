@@ -466,9 +466,15 @@ pub(crate) async fn run_prepared_chat_turn(
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<Option<ChatOutput>> {
     run_prepared_chat_turn_with_effect_gate(
-        prepared, provider, writer, segment_path, output, None, None,
+        prepared,
+        provider,
+        writer,
+        segment_path,
+        output,
+        None,
+        None,
     )
-        .await
+    .await
 }
 
 pub(crate) async fn run_prepared_chat_turn_with_effect_gate(

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T10:06:08.8976488Z",
-  "validationStatus": "source-integrated-mobile-tool-activity-hosted-pending",
+  "capturedUtc": "2026-10-07T10:20:50.3661921Z",
+  "validationStatus": "W2490-SOURCE-STATIC-REVIEWED-HOSTED-PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3903,8 +3903,8 @@
     },
     {
       "path": "docs/verification/gold-wave2490-mobile-tool-activity.json",
-      "bytes": 2347,
-      "sha256": "08ABF1811F9A02A22BDE535ECFA1E9D82F638EA5769F2E33BD64D25F9FEA1C61"
+      "bytes": 3414,
+      "sha256": "278D49466EC8413A73464E73E4833D2B22575F8384CB1161AB3C30D917D9C786"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5983,8 +5983,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 174179,
-      "sha256": "8D2BC6B5666B1668F74BA026A22C3AAB244BAA9762550C8B067E7EA899EFBD55"
+      "bytes": 174223,
+      "sha256": "F14BA5DC7D30F86BF274EA70727C698856ED2FA3C145E11C7A7821DB53C1B858"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -6963,8 +6963,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 39505,
-      "sha256": "C3F5171185F56BA46E9074A4D58912D704BAEB59ABDDB3666A599DB51383BFD4"
+      "bytes": 39926,
+      "sha256": "AD16DEC3082B5BCEB53C3398673517AB06B59460617E54DE0F6BBF2577CCAAEF"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
@@ -6973,8 +6973,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 111179,
-      "sha256": "1EEC97F739903C298D0CE20A3CFCD69A2FE7EDB409BDC0B418444727E1C0A81B"
+      "bytes": 114320,
+      "sha256": "28C68E8514D6339316A1CCB7C3BE7B5DA94E5C3D5C217C843E89EC751D63F08E"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
@@ -7648,8 +7648,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 327968,
-      "sha256": "B44FF6410475B9A7EE78B275CA60FCDAA4D865DFA9514B7F4956C9B6DE40D6F3"
+      "bytes": 328008,
+      "sha256": "710C682874633F4E95507F716BCA926FFE5C1494353CC214EEBC2E46B93067E9"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
