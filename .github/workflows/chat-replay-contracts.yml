@@ -1,0 +1,136 @@
+name: Chat Replay Contracts
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  replay-contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - name: Bind exact replay producer
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/chat-replay"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          paths = [
+              ".github/workflows/chat-replay-contracts.yml", "SRC/Cargo.toml", "SRC/Cargo.lock",
+              "SRC/neothd/Cargo.toml", "SRC/neothd/src/daemon/mod.rs",
+              "SRC/neothd/src/daemon/chat_replay.rs", "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+              "SRC/neothd/src/daemon/gui_chat_protocol.rs", "SRC/neothd/src/daemon/chat_runtime.rs",
+              "SRC/neothd/src/daemon/companion_protocol.rs",
+          ]
+          sources = []
+          for relative in paths:
+              path = pathlib.Path(relative)
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit("source absent")
+              data = path.read_bytes()
+              blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + relative], text=True).strip()
+              actual = subprocess.check_output(["git", "hash-object", "--no-filters", "--", relative], text=True).strip()
+              if actual != blob:
+                  raise SystemExit("checkout differs from producer")
+              sources.append({"path": relative, "blob": blob, "bytes": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest().upper()})
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chat-replay"
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "sources": sources}
+          (proof / "source-custody.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: '1.91.0' }
+      - name: Restore compiled core checkpoint
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-whatsapp-product-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+      - name: Run replay storage and existing carrier regressions
+        id: contracts
+        working-directory: SRC
+        timeout-minutes: 50
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/chat-replay"
+          ordinal=0
+          for group in daemon::chat_replay::tests:: daemon::gui_chat_runtime:: daemon::companion_protocol::tests::; do
+            ordinal=$((ordinal + 1))
+            timeout --kill-after=10s 2400s cargo test -p neoth --lib --locked "$group" -- --list 2>&1 | tee "$proof/discovery-$ordinal.log"
+            timeout --kill-after=10s 300s cargo test -p neoth --lib --locked "$group" -- --test-threads=1 2>&1 | tee "$proof/execution-$ordinal.log"
+          done
+          git diff --exit-code HEAD -- Cargo.lock
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chat-replay"
+          groups = []
+          for ordinal, prefix in enumerate(("daemon::chat_replay::tests::", "daemon::gui_chat_runtime::", "daemon::companion_protocol::tests::"), 1):
+              discovery = (proof / f"discovery-{ordinal}.log").read_text()
+              execution = (proof / f"execution-{ordinal}.log").read_text()
+              found = re.findall(r"^(" + re.escape(prefix) + r"[A-Za-z0-9_:]+): test$", discovery, re.M)
+              passed = re.findall(r"^test (" + re.escape(prefix) + r"[A-Za-z0-9_:]+) \.\.\. ok$", execution, re.M)
+              if not found or len(set(found)) != len(found) or len(set(passed)) != len(passed) or set(found) != set(passed):
+                  raise SystemExit("case identity mismatch")
+              if len(re.findall(r"^test result: ok\. " + str(len(found)) + r" passed; 0 failed; 0 ignored;", execution, re.M)) != 1:
+                  raise SystemExit("suite terminal absent")
+              groups.append({"prefix": prefix, "identities": sorted(passed)})
+          required = [
+              "daemon::chat_replay::tests::empty_after_oversized_frame_keeps_the_missing_cursor_boundary",
+              "daemon::chat_replay::tests::frame_and_utf8_byte_limits_keep_only_the_contiguous_tail",
+              "daemon::chat_replay::tests::clear_and_drop_erase_each_owned_payload_once",
+              "daemon::chat_replay::tests::zero_capacity_refuses_retention_without_resetting_the_cursor",
+              "daemon::chat_replay::tests::replay_from_last_seen_sequence_never_duplicates_prior_text",
+              "daemon::gui_chat_runtime::lifecycle_tests::replay_and_both_attach_paths_report_gap_after_full_byte_eviction",
+          ]
+          identities = [case for group in groups for case in group["identities"]]
+          if not set(required).issubset(identities):
+              raise SystemExit("mandatory regression missing")
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "groups": groups, "required": required,
+                   "logs": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest().upper()}
+                            for p in sorted(proof.glob("*.log"))]}
+          (proof / "cases.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - name: Save admitted replay checkpoint
+        if: ${{ success() && steps.cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: chat-replay-contracts-${{ github.sha }}
+          path: ${{ runner.temp }}/chat-replay/
+          if-no-files-found: error
+          retention-days: 14

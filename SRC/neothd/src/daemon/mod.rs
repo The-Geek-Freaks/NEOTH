@@ -51,6 +51,8 @@ pub mod channel_runtime_health;
 /// Read-only account-bound adapter attempt/result evidence from the
 /// authenticated complete home WAL.
 pub(crate) mod channel_transport_evidence;
+/// Bounded replay storage; carrier authorization and output classification stay with their owners.
+pub(crate) mod chat_replay;
 /// Capacity-one, daemon-owned execution for the sealed non-streaming chat
 /// request.  The transport stays in `audit_rpc`; this module owns no listener
 /// and accepts no caller-selected configuration or filesystem authority.

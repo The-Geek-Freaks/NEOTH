@@ -22,6 +22,7 @@ use crate::cli::chat_turn_pipeline::{
     ChatOutput, ChatTurnEvent, ChatTurnEventSink, ChatTurnTerminal,
 };
 use crate::daemon::audit_rpc::AuditStream;
+use crate::daemon::chat_replay::{ChatReplay, ReplayFrame, ReplayPayload};
 use crate::daemon::chat_runtime::DaemonChatRuntime;
 use crate::daemon::gui_chat_protocol::*;
 
@@ -126,8 +127,7 @@ struct Turn {
     grant: String,
     subscriptions: HashMap<GuiChatSurface, Subscription>,
     live_reasoning_owner: Option<LiveReasoningOwner>,
-    replay: VecDeque<Replay>,
-    replay_bytes: usize,
+    replay: ChatReplay<GuiChatFramePayload>,
     next_sequence: u64,
     phase: GuiChatPhase,
     terminal: Option<GuiChatTerminal>,
@@ -161,10 +161,21 @@ struct LiveReasoningOwner {
     surface: GuiChatSurface,
     generation: u64,
 }
-struct Replay {
-    sequence: u64,
-    payload: GuiChatFramePayload,
-    bytes: usize,
+type Replay = ReplayFrame<GuiChatFramePayload>;
+
+impl ReplayPayload for GuiChatFramePayload {
+    fn replay_bytes(&self) -> usize {
+        match self {
+            Self::Delta { text } => text.len(),
+            _ => 0,
+        }
+    }
+
+    fn clear_replay_text(&mut self) {
+        if let Self::Delta { text } = self {
+            text.zeroize();
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -533,27 +544,10 @@ impl DaemonGuiChatRuntime {
     fn frame(turn: &mut Turn, payload: GuiChatFramePayload) -> Replay {
         let sequence = turn.next_sequence;
         turn.next_sequence = turn.next_sequence.saturating_add(1);
-        let bytes = match &payload {
-            GuiChatFramePayload::Delta { text } => text.len(),
-            _ => 0,
-        };
-        Replay {
-            sequence,
-            payload,
-            bytes,
-        }
+        Replay::new(sequence, payload)
     }
     fn retain(turn: &mut Turn, frame: Replay) {
-        turn.replay_bytes = turn.replay_bytes.saturating_add(frame.bytes);
-        turn.replay.push_back(frame);
-        while turn.replay.len() > REPLAY_FRAME_LIMIT || turn.replay_bytes > REPLAY_BYTE_LIMIT {
-            if let Some(mut evicted) = turn.replay.pop_front() {
-                if let GuiChatFramePayload::Delta { text } = &mut evicted.payload {
-                    text.zeroize();
-                }
-                turn.replay_bytes = turn.replay_bytes.saturating_sub(evicted.bytes);
-            }
-        }
+        turn.replay.retain(frame);
     }
     fn emit(turn: &mut Turn, payload: GuiChatFramePayload) {
         let frame = Self::frame(turn, payload);
@@ -2046,8 +2040,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 grant: grant.clone(),
                 subscriptions: HashMap::new(),
                 live_reasoning_owner: None,
-                replay: VecDeque::new(),
-                replay_bytes: 0,
+                replay: ChatReplay::new(REPLAY_FRAME_LIMIT, REPLAY_BYTE_LIMIT),
                 next_sequence: 1,
                 phase: GuiChatPhase::Waiting,
                 terminal: None,
@@ -2154,11 +2147,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                         .turns
                         .get_mut(&request.turn_id.0)
                         .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
-                    let earliest = turn
-                        .replay
-                        .front()
-                        .map(|frame| frame.sequence.saturating_sub(1))
-                        .unwrap_or(0);
+                    let earliest = turn.replay.earliest_cursor();
                     {
                         let subscription = turn
                             .subscriptions
@@ -2297,11 +2286,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                     let turn = state.turns.get_mut(&request.turn_id.0).ok_or_else(|| {
                         Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn")
                     })?;
-                    let earliest = turn
-                        .replay
-                        .front()
-                        .map(|frame| frame.sequence.saturating_sub(1))
-                        .unwrap_or(0);
+                    let earliest = turn.replay.earliest_cursor();
                     {
                         let subscription =
                             turn.subscriptions.get(&request.surface).ok_or_else(|| {
@@ -2433,11 +2418,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 "attach_capability",
             ));
         }
-        let earliest = turn
-            .replay
-            .front()
-            .map(|frame| frame.sequence.saturating_sub(1))
-            .unwrap_or(0);
+        let earliest = turn.replay.earliest_cursor();
         if request.after_sequence < earliest {
             return Err(Self::reject(GuiChatErrorCode::ReplayGap, "replay_gap"));
         }
@@ -2603,11 +2584,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
             let mut staged = Vec::new();
             for turn in state.turns.values_mut() {
                 Self::clear_live_reasoning(turn);
-                for frame in &mut turn.replay {
-                    if let GuiChatFramePayload::Delta { text } = &mut frame.payload {
-                        text.zeroize();
-                    }
-                }
+                turn.replay.clear();
                 staged.append(&mut turn.staged);
             }
             staged
@@ -3493,8 +3470,7 @@ mod lifecycle_tests {
                 grant: "grant".into(),
                 subscriptions: HashMap::new(),
                 live_reasoning_owner: None,
-                replay: VecDeque::new(),
-                replay_bytes: 0,
+                replay: ChatReplay::new(REPLAY_FRAME_LIMIT, REPLAY_BYTE_LIMIT),
                 next_sequence: 1,
                 phase: GuiChatPhase::Waiting,
                 terminal: None,
@@ -4856,6 +4832,119 @@ mod lifecycle_tests {
             .await
             .expect("writer drains");
     }
+    #[tokio::test]
+    async fn replay_and_both_attach_paths_report_gap_after_full_byte_eviction() {
+        use tokio::io::AsyncReadExt;
+
+        struct CountingSink(usize);
+        impl GuiChatFrameSink for CountingSink {
+            fn on_frame(&mut self, _frame: GuiChatStreamFrame) -> GuiChatResult<()> {
+                self.0 += 1;
+                Ok(())
+            }
+        }
+        fn expect_gap<T>(result: GuiChatResult<T>) {
+            assert!(matches!(
+                result,
+                Err(GuiChatProtocolError::Runtime(GuiChatErrorResponse {
+                    code: GuiChatErrorCode::ReplayGap,
+                    ..
+                }))
+            ));
+        }
+
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        let exchange = runtime
+            .exchange_attach(GuiChatAttachExchangeRequest {
+                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                expected_boot_id: "fixture-boot".into(),
+                turn_id: GuiChatTurnId(turn_id),
+                session_id: "fixture".into(),
+                desired_surface: GuiChatSurface::Main,
+                grant: GuiChatOpaqueCapability("grant".into()),
+            })
+            .await
+            .expect("actual subscription exchange");
+        let request = |after_sequence| GuiChatAttachRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            surface: GuiChatSurface::Main,
+            subscription_generation: exchange.subscription_generation,
+            attach_capability: exchange.attach_capability.clone(),
+            after_sequence,
+        };
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).unwrap();
+            // Same production emission/eviction path, including subscriber cursor update.
+            DaemonGuiChatRuntime::emit(
+                turn,
+                GuiChatFramePayload::Delta {
+                    text: "x".repeat(REPLAY_BYTE_LIMIT + 1),
+                },
+            );
+            assert_eq!(turn.replay.len(), 0);
+            assert_eq!(turn.next_sequence, 2);
+        }
+        expect_gap(runtime.replay(request(0)).await);
+        let mut sink = CountingSink(0);
+        expect_gap(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                runtime.attach_frames(request(0), &mut sink),
+            )
+            .await
+            .expect("a replay gap must not wait for new provider output"),
+        );
+        assert_eq!(sink.0, 0);
+        let (server, mut client) = tokio::io::duplex(4096);
+        expect_gap(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                runtime.attach(Box::new(server), request(0)),
+            )
+            .await
+            .expect("HTTP attach gap must finish promptly"),
+        );
+        let mut wire = Vec::new();
+        client.read_to_end(&mut wire).await.unwrap();
+        assert!(wire.ends_with(b"\r\n\r\n"), "no truncated output frames");
+        let mut foreign = request(0);
+        foreign.attach_capability = GuiChatOpaqueCapability("foreign".into());
+        assert!(matches!(
+            runtime.replay(foreign).await,
+            Err(GuiChatProtocolError::Runtime(GuiChatErrorResponse {
+                code: GuiChatErrorCode::Forbidden,
+                ..
+            }))
+        ));
+        assert!(runtime.replay(request(1)).await.unwrap().is_empty());
+        {
+            let mut state = runtime.state.lock().await;
+            DaemonGuiChatRuntime::emit(
+                state.turns.get_mut(&turn_id).unwrap(),
+                GuiChatFramePayload::Delta {
+                    text: "retained tail".into(),
+                },
+            );
+        }
+        expect_gap(runtime.replay(request(0)).await);
+        let tail = runtime.replay(request(1)).await.unwrap();
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].sequence, 2);
+        assert!(
+            matches!(&tail[0].payload, GuiChatFramePayload::Delta { text } if text == "retained tail")
+        );
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion
+            .wait_bounded(Duration::from_secs(1))
+            .await
+            .expect("actual WAL writer drained");
+    }
+
     #[tokio::test]
     async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;

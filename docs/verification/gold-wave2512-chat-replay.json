@@ -1,0 +1,26 @@
+{
+  "schema": "neoth.gold.wave2512.chat-replay.v1",
+  "base": "76b16b3fd795c237b72a00823d1cbb9d8370d8ff",
+  "status": "implemented_static_reviewed_hosted_pending",
+  "localExecutableValidationRan": false,
+  "problem": "Eviction of a delta larger than the whole replay byte budget empties the deque. Three readers previously reset the earliest cursor to zero, hiding a replay gap.",
+  "change": "Extract private payload-generic bounded replay storage. Preserve the latest emitted cursor even when no frames remain; all replay and attach readers reject missing output. Retained frames clear their sensitive text on eviction, clear and drop.",
+  "unchanged": [
+    "1024-frame GUI retention limit",
+    "Existing GUI byte budget and delta-byte accounting",
+    "Actual output classification remains in RuntimeSink",
+    "Live reasoning remains in its separate ephemeral queue",
+    "Carrier/device authorization and mobile V3 signing/wire format",
+    "Provider/turn/WAL ownership"
+  ],
+  "newTests": [
+    "daemon::chat_replay::tests::empty_after_oversized_frame_keeps_the_missing_cursor_boundary",
+    "daemon::chat_replay::tests::frame_and_utf8_byte_limits_keep_only_the_contiguous_tail",
+    "daemon::chat_replay::tests::clear_and_drop_erase_each_owned_payload_once",
+    "daemon::chat_replay::tests::zero_capacity_refuses_retention_without_resetting_the_cursor",
+    "daemon::chat_replay::tests::replay_from_last_seen_sequence_never_duplicates_prior_text",
+    "daemon::gui_chat_runtime::lifecycle_tests::replay_and_both_attach_paths_report_gap_after_full_byte_eviction"
+  ],
+  "validation": "New six cases plus full existing gui_chat_runtime and companion_protocol test groups on a single hosted runner; source/identity/archive admission pending.",
+  "boundary": "JM05 shared retention prerequisite and concrete existing GUI gap repair only; mobile session registry, history, negotiated stream/ABI and Flutter consumer remain open. No device/release acceptance."
+}
