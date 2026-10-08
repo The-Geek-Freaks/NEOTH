@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2511 product journey implemented; hosted execution pending; prior scoped evidence retained",
+  "status": "W2511 actual MCP-to-sidecar four-scenario hosted acceptance on 2317bc7e; device/release open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 406634,
-    "sha256": "5113921C224B70C7332535E3FF02578AE46647F20C686957A1D30A4ED65F68E5"
+    "bytes": 406635,
+    "sha256": "FADA180AC281AF257C25E26BA65EBB5B6F1D23A00CF78FB70ECAAB11D94638B9"
   },
   "sourceInputs": 2220,
   "requiredNativeTests": [
@@ -79329,6 +79329,32 @@
       }
     ],
     "note": "Four serial actual daemon/MCP/production-sidecar scenarios. Fixture explicitly passes hosted guard through the production env_clear boundary. Controlled provider and socket, no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2511HostedAcceptance": {
+    "base": "2317bc7e24b3a052968c2b1e648ab51ac7b44873",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2511-whatsapp-product-journey.json",
+        "bytes": 4799,
+        "sha256": "F81AC55228CF059CFDA07B6B92C13E6219BE0847582C49CA230A1C2C70F55518",
+        "blob": "2d5328dc8387b5f0fc28e231f5e374106c36839f"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 31940,
+        "sha256": "01FB5E45915A83BBA0A04FEB915724ECA7885C8D3044DEAC7BA30609EC0684C9",
+        "blob": "17b311a60e0b987ecfd59149ccff6b1dad6e0071"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2501237,
+        "sha256": "8284389CAF38CA5D4195105CF9B4975EDB657E8CC4E844F83B10B7136EA7BA62",
+        "blob": "c6b89e8a89a187119b21c4a4488e39fed903675f"
+      }
+    ],
+    "note": "Original API/ZIP digest, four entries, 48 raw Git sources, binary/lock and all actual lifecycle assertions independently admitted. Docs/inventory only; no new runtime run claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

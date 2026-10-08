@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T05:44:42.2456707Z",
-  "validationStatus": "W2511 product journey implemented; hosted execution pending; prior scoped evidence retained",
+  "capturedUtc": "2026-10-08T05:57:40.9170468Z",
+  "validationStatus": "W2511 actual MCP-to-sidecar four-scenario hosted acceptance on 2317bc7e; device/release open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4033,8 +4033,8 @@
     },
     {
       "path": "docs/verification/gold-wave2511-whatsapp-product-journey.json",
-      "bytes": 2407,
-      "sha256": "F31F43D168F9D20C177F8D1A7D5559B7ADFE4C053E58B369E06E59B64D15A32F"
+      "bytes": 4799,
+      "sha256": "F81AC55228CF059CFDA07B6B92C13E6219BE0847582C49CA230A1C2C70F55518"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5183,8 +5183,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 30494,
-      "sha256": "270CCA6C0C1228476DF2C113A90A1026951B984CCC0C669D24D355D3B18B6EB3"
+      "bytes": 31940,
+      "sha256": "01FB5E45915A83BBA0A04FEB915724ECA7885C8D3044DEAC7BA30609EC0684C9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5193,8 +5193,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2499791,
-      "sha256": "CBD47A2AD9440003EA5FADD8BBB970553353CB52B7FB7E1FDE09A34E8AE52148"
+      "bytes": 2501237,
+      "sha256": "8284389CAF38CA5D4195105CF9B4975EDB657E8CC4E844F83B10B7136EA7BA62"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

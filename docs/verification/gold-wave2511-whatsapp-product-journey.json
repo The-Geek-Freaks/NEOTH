@@ -1,7 +1,7 @@
 {
   "schema": "neoth.gold.wave2511.whatsapp-product-journey.v1",
   "base": "cf86bc001518f570b165db43185029e3a929075f",
-  "status": "implemented_static_reviewed_hosted_pending",
+  "status": "hosted_actual_daemon_mcp_sidecar_accepted_on_2317bc7e",
   "localExecutableValidationRan": false,
   "scope": "Actual NEOTH serve, real held MCP child, production BridgeClient, API, runtime and durable journals; controlled loopback provider and WhatsApp socket.",
   "scenarios": [
@@ -51,11 +51,90 @@
     "Original Road backlog bytes"
   ],
   "stillOpen": [
-    "Fresh hosted execution and independent artifact admission",
     "Linked WhatsApp account and device display/delivery",
     "JM05 bounded history/streaming",
     "JM07 preview",
     "JM08 voice",
     "Signed native historical upgrades and full Road-to-Gold acceptance"
-  ]
+  ],
+  "hostedAcceptance": {
+    "producer": "2317bc7e24b3a052968c2b1e648ab51ac7b44873",
+    "run": 37734341772,
+    "attempt": 1,
+    "job": 113170387519,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37734341772",
+    "originalArtifact": 11531571445,
+    "originalZipSha256": "8A2D86B8BE6EA9233F3D8BCBB18CB9E817B8731D0C9349865938534DAAC7B10F",
+    "entries": 4,
+    "sourceBindings": 48,
+    "rootProofPath": "work/gold-20260906/wave2511-product-journey/admission/ROOT_PRODUCT_ADMISSION.json",
+    "rootProofSha256": "6BE8950904DE3868C574E9F06ECA165DF27B2B40E9DCCE8F7B680A194EB11A4C",
+    "scenarios": [
+      {
+        "mode": "success",
+        "accepted": true,
+        "mcpCalls": 1,
+        "recordedMcpProcesses": 2,
+        "allMcpReaped": true,
+        "providerCalls": 2,
+        "socketWrites": [
+          "tool_start",
+          "tool_finish",
+          "final"
+        ],
+        "daemonExit": 0,
+        "walDrained": true,
+        "lateRefused": true,
+        "afterRestartLateRefused": true
+      },
+      {
+        "mode": "tool_error",
+        "accepted": true,
+        "mcpCalls": 1,
+        "recordedMcpProcesses": 2,
+        "allMcpReaped": true,
+        "providerCalls": 2,
+        "socketWrites": [
+          "tool_start",
+          "tool_error",
+          "final"
+        ],
+        "daemonExit": 0,
+        "walDrained": true,
+        "lateRefused": true,
+        "afterRestartLateRefused": true
+      },
+      {
+        "mode": "disabled",
+        "accepted": true,
+        "mcpCalls": 1,
+        "recordedMcpProcesses": 2,
+        "allMcpReaped": true,
+        "providerCalls": 2,
+        "socketWrites": [
+          "final"
+        ],
+        "daemonExit": 0,
+        "walDrained": true,
+        "lateRefused": null,
+        "afterRestartLateRefused": null
+      },
+      {
+        "mode": "cancel",
+        "accepted": true,
+        "mcpCalls": 1,
+        "recordedMcpProcesses": 2,
+        "allMcpReaped": true,
+        "providerCalls": 1,
+        "socketWrites": [
+          "tool_start"
+        ],
+        "daemonExit": 0,
+        "walDrained": true,
+        "lateRefused": null,
+        "afterRestartLateRefused": null
+      }
+    ],
+    "boundary": "Actual daemon, MCP child, production bridge HTTP/journals and socket dispatch verified. Provider/tool implementation and WhatsApp socket are controlled. No real WhatsApp account, mobile device display or signed release acceptance claimed."
+  }
 }
