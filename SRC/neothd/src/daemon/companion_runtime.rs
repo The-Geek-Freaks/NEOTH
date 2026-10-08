@@ -1399,14 +1399,24 @@ impl CompanionRuntime {
         ));
         let chat = async {
             if stream_requested {
-                self.chat_runtime.execute_companion_stream_turn(
-                    daemon_request, cancellation.clone(), effect_gate,
-                    tool_activity_sink.as_ref(), &mut stream_sink,
-                ).await
+                self.chat_runtime
+                    .execute_companion_stream_turn(
+                        daemon_request,
+                        cancellation.clone(),
+                        effect_gate,
+                        tool_activity_sink.as_ref(),
+                        &mut stream_sink,
+                    )
+                    .await
             } else {
-                self.chat_runtime.execute_companion_chat_turn(
-                    daemon_request, cancellation.clone(), effect_gate, tool_activity_sink.as_ref(),
-                ).await
+                self.chat_runtime
+                    .execute_companion_chat_turn(
+                        daemon_request,
+                        cancellation.clone(),
+                        effect_gate,
+                        tool_activity_sink.as_ref(),
+                    )
+                    .await
             }
         };
         tokio::pin!(chat);
@@ -2083,10 +2093,9 @@ async fn write_chat_challenge_with_activity_advertisement(
     connection: &mut peeroxide::SwarmConnection,
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
-    let bytes =
-        crate::daemon::companion_protocol::encode_chat_challenge_with_stream_advertisement(
-            challenge,
-        )?;
+    let bytes = crate::daemon::companion_protocol::encode_chat_challenge_with_stream_advertisement(
+        challenge,
+    )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
         .await
         .context("companion chat challenge write timeout")??;
@@ -2100,7 +2109,9 @@ async fn next_chat_progress(
     request_id: Uuid,
     activity: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
     observed: &mut u64,
-    stream: &mut tokio::sync::watch::Receiver<super::companion_protocol::CompanionChatStreamSnapshot>,
+    stream: &mut tokio::sync::watch::Receiver<
+        super::companion_protocol::CompanionChatStreamSnapshot,
+    >,
     stream_requested: bool,
 ) -> ServerFrame {
     tokio::select! {

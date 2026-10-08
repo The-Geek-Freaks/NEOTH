@@ -4,7 +4,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::companion_protocol::{CompanionChatStreamSnapshot, COMPANION_STREAM_MAX_PREVIEW_BYTES};
+use super::companion_protocol::{COMPANION_STREAM_MAX_PREVIEW_BYTES, CompanionChatStreamSnapshot};
 use crate::cli::chat_turn_pipeline::{ChatOutput, ChatTurnEvent, ChatTurnEventSink};
 
 pub(crate) struct CompanionStreamSink {
@@ -14,18 +14,35 @@ pub(crate) struct CompanionStreamSink {
 impl CompanionStreamSink {
     pub(super) fn new(request_id: Uuid) -> (Self, watch::Receiver<CompanionChatStreamSnapshot>) {
         let (sender, receiver) = watch::channel(CompanionChatStreamSnapshot {
-            stream_schema_version: 1, request_id, revision: 0, text: String::new(), truncated: false,
+            stream_schema_version: 1,
+            request_id,
+            revision: 0,
+            text: String::new(),
+            truncated: false,
         });
-        (Self { text: Zeroizing::new(String::new()), sender }, receiver)
+        (
+            Self {
+                text: Zeroizing::new(String::new()),
+                sender,
+            },
+            receiver,
+        )
     }
-    pub(super) fn response_text(&self) -> String { self.text.to_string() }
+    pub(super) fn response_text(&self) -> String {
+        self.text.to_string()
+    }
 
     fn accept_visible(&mut self, text: &str) -> Result<()> {
         // Check before allocating; a terminal never silently truncates text.
-        anyhow::ensure!(self.text.len().saturating_add(text.len()) <= 64 * 1024, "companion output exceeds terminal cap");
+        anyhow::ensure!(
+            self.text.len().saturating_add(text.len()) <= 64 * 1024,
+            "companion output exceeds terminal cap"
+        );
         self.text.push_str(text);
         let mut end = self.text.len().min(COMPANION_STREAM_MAX_PREVIEW_BYTES);
-        while !self.text.is_char_boundary(end) { end -= 1; }
+        while !self.text.is_char_boundary(end) {
+            end -= 1;
+        }
         let preview = self.text[..end].to_owned();
         let truncated = end < self.text.len();
         self.sender.send_modify(|snapshot| {
@@ -39,10 +56,12 @@ impl CompanionStreamSink {
 impl ChatTurnEventSink for CompanionStreamSink {
     fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
         match event {
-            ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) =>
-                self.accept_visible(&text),
-            ChatTurnEvent::Output(ChatOutput::DeferredProviderFrames { accepted_body, .. }) =>
-                self.accept_visible(&accepted_body),
+            ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => {
+                self.accept_visible(&text)
+            }
+            ChatTurnEvent::Output(ChatOutput::DeferredProviderFrames { accepted_body, .. }) => {
+                self.accept_visible(&accepted_body)
+            }
             // No stdout reconstruction, reasoning, recall, internal notices,
             // replay scoring body or GUI feedback identifiers cross this sink.
             _ => Ok(()),
@@ -56,8 +75,18 @@ mod tests {
     #[test]
     fn visible_snapshots_coalesce_without_losing_text_or_duplicating_terminal() {
         let (mut sink, receiver) = CompanionStreamSink::new(Uuid::nil());
-        sink.emit(ChatTurnEvent::Output(ChatOutput::ProviderDelta { sequence: 1, text: "first ".into(), stream_control_token: None })).unwrap();
-        sink.emit(ChatTurnEvent::Output(ChatOutput::ProviderDelta { sequence: 2, text: "second".into(), stream_control_token: None })).unwrap();
+        sink.emit(ChatTurnEvent::Output(ChatOutput::ProviderDelta {
+            sequence: 1,
+            text: "first ".into(),
+            stream_control_token: None,
+        }))
+        .unwrap();
+        sink.emit(ChatTurnEvent::Output(ChatOutput::ProviderDelta {
+            sequence: 2,
+            text: "second".into(),
+            stream_control_token: None,
+        }))
+        .unwrap();
         let snapshot = receiver.borrow();
         assert_eq!(snapshot.revision, 2);
         assert_eq!(snapshot.text, "first second");
@@ -81,9 +110,19 @@ mod tests {
     #[test]
     fn private_and_plain_outputs_do_not_become_stream_text() {
         let (mut sink, receiver) = CompanionStreamSink::new(Uuid::nil());
-        sink.emit(ChatTurnEvent::Output(ChatOutput::HumanStdout { text: "terminal duplicate".into() })).unwrap();
-        sink.emit(ChatTurnEvent::Output(ChatOutput::HumanStderr { text: "private error".into() })).unwrap();
-        sink.emit(ChatTurnEvent::Output(ChatOutput::Notice { stream: true, text: "private notice".into() })).unwrap();
+        sink.emit(ChatTurnEvent::Output(ChatOutput::HumanStdout {
+            text: "terminal duplicate".into(),
+        }))
+        .unwrap();
+        sink.emit(ChatTurnEvent::Output(ChatOutput::HumanStderr {
+            text: "private error".into(),
+        }))
+        .unwrap();
+        sink.emit(ChatTurnEvent::Output(ChatOutput::Notice {
+            stream: true,
+            text: "private notice".into(),
+        }))
+        .unwrap();
         assert_eq!(receiver.borrow().revision, 0);
         assert!(sink.response_text().is_empty());
     }

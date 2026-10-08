@@ -167,7 +167,9 @@ impl CompanionChatCapabilities {
     }
 }
 
-fn is_false(value: &bool) -> bool { !value }
+fn is_false(value: &bool) -> bool {
+    !value
+}
 
 pub const COMPANION_STREAM_MAX_PREVIEW_BYTES: usize = 10 * 1024;
 
@@ -184,8 +186,10 @@ pub struct CompanionChatStreamSnapshot {
 }
 impl CompanionChatStreamSnapshot {
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        if self.stream_schema_version != 1 || self.revision == 0
-            || self.text.len() > COMPANION_STREAM_MAX_PREVIEW_BYTES {
+        if self.stream_schema_version != 1
+            || self.revision == 0
+            || self.text.len() > COMPANION_STREAM_MAX_PREVIEW_BYTES
+        {
             return Err(ProtocolError::InvalidFrame);
         }
         Ok(())
@@ -553,7 +557,10 @@ impl CompanionChatRequest {
         let mut result = Self::signed(challenge, request_id, message, signing_key)?;
         result.capabilities.tool_activity_v1 = tool_activity;
         result.capabilities.chat_stream_v1 = true;
-        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
+        result.signature = signing_key
+            .sign(&result.signing_bytes()?)
+            .to_bytes()
+            .to_vec();
         Ok(result)
     }
 
@@ -768,7 +775,8 @@ pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError
         ServerFrame::ChatStreamSnapshot(_) => {
             let bytes = serde_json::to_vec(frame).map_err(|_| ProtocolError::InvalidFrame)?;
             (bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES)
-                .then_some(bytes).ok_or(ProtocolError::InvalidFrame)
+                .then_some(bytes)
+                .ok_or(ProtocolError::InvalidFrame)
         }
         _ => encode_frame(frame),
     }
@@ -829,17 +837,27 @@ pub fn decode_chat_challenge_with_activity_advertisement(
 }
 
 /// A separate sibling preserves the exact v2 activity advertisement.
-pub fn encode_chat_challenge_with_stream_advertisement(challenge: &ChatChallenge) -> Result<Vec<u8>, ProtocolError> {
+pub fn encode_chat_challenge_with_stream_advertisement(
+    challenge: &ChatChallenge,
+) -> Result<Vec<u8>, ProtocolError> {
     let legacy = encode_chat_challenge_with_activity_advertisement(challenge, true)?;
-    let mut envelope: serde_json::Value = serde_json::from_slice(&legacy).map_err(|_| ProtocolError::InvalidFrame)?;
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&legacy).map_err(|_| ProtocolError::InvalidFrame)?;
     envelope["chat_stream_v1"] = serde_json::Value::Bool(true);
     encode_frame(&envelope)
 }
 
-pub fn decode_chat_challenge_with_stream_advertisement(bytes: &[u8]) -> Result<(ChatChallenge, bool, bool), ProtocolError> {
+pub fn decode_chat_challenge_with_stream_advertisement(
+    bytes: &[u8],
+) -> Result<(ChatChallenge, bool, bool), ProtocolError> {
     let (challenge, activity) = decode_chat_challenge_with_activity_advertisement(bytes)?;
-    let envelope: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
-    Ok((challenge, activity, envelope.get("chat_stream_v1") == Some(&serde_json::Value::Bool(true))))
+    let envelope: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    Ok((
+        challenge,
+        activity,
+        envelope.get("chat_stream_v1") == Some(&serde_json::Value::Bool(true)),
+    ))
 }
 
 pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
@@ -867,7 +885,10 @@ pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame, ProtocolError> {
     let value: ServerFrame =
         serde_json::from_slice(frame).map_err(|_| ProtocolError::InvalidFrame)?;
     value.validate()?;
-    if !matches!(value, ServerFrame::ChatTerminal(_) | ServerFrame::ChatStreamSnapshot(_)) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES
+    if !matches!(
+        value,
+        ServerFrame::ChatTerminal(_) | ServerFrame::ChatStreamSnapshot(_)
+    ) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES
     {
         return Err(ProtocolError::InvalidFrame);
     }
@@ -899,29 +920,81 @@ mod tests {
     #[test]
     fn jm05_stream_negotiation_keeps_legacy_advertisement_and_signatures() {
         let signing = SigningKey::from_bytes(&[7; 32]);
-        let challenge = ChatChallenge { schema_version: 3, device_id: CompanionDeviceId(Uuid::nil()),
-            revision: 1, listener_generation: 2, daemon_boot_id: "boot".into(), challenge_nonce: [3; 32], issued_at_unix: 4 };
+        let challenge = ChatChallenge {
+            schema_version: 3,
+            device_id: CompanionDeviceId(Uuid::nil()),
+            revision: 1,
+            listener_generation: 2,
+            daemon_boot_id: "boot".into(),
+            challenge_nonce: [3; 32],
+            issued_at_unix: 4,
+        };
         let bytes = encode_chat_challenge_with_stream_advertisement(&challenge).unwrap();
-        assert!(decode_chat_challenge_with_activity_advertisement(&bytes).unwrap().1);
-        assert!(decode_chat_challenge_with_stream_advertisement(&bytes).unwrap().2);
+        assert!(
+            decode_chat_challenge_with_activity_advertisement(&bytes)
+                .unwrap()
+                .1
+        );
+        assert!(
+            decode_chat_challenge_with_stream_advertisement(&bytes)
+                .unwrap()
+                .2
+        );
         let old = encode_chat_challenge_with_activity_advertisement(&challenge, true).unwrap();
-        assert!(!decode_chat_challenge_with_stream_advertisement(&old).unwrap().2);
-        let legacy = CompanionChatRequest::signed_with_tool_activity_v1(&challenge, Uuid::nil(), "hello".into(), &signing).unwrap();
-        assert!(!String::from_utf8(encode_frame(&legacy).unwrap()).unwrap().contains("chat_stream_v1"));
-        let mut live = CompanionChatRequest::signed_with_chat_stream_v1(&challenge, Uuid::nil(), "hello".into(), true, &signing).unwrap();
-        live.verify_with(signing.verifying_key().as_bytes()).unwrap();
+        assert!(
+            !decode_chat_challenge_with_stream_advertisement(&old)
+                .unwrap()
+                .2
+        );
+        let legacy = CompanionChatRequest::signed_with_tool_activity_v1(
+            &challenge,
+            Uuid::nil(),
+            "hello".into(),
+            &signing,
+        )
+        .unwrap();
+        assert!(
+            !String::from_utf8(encode_frame(&legacy).unwrap())
+                .unwrap()
+                .contains("chat_stream_v1")
+        );
+        let mut live = CompanionChatRequest::signed_with_chat_stream_v1(
+            &challenge,
+            Uuid::nil(),
+            "hello".into(),
+            true,
+            &signing,
+        )
+        .unwrap();
+        live.verify_with(signing.verifying_key().as_bytes())
+            .unwrap();
         live.capabilities.chat_stream_v1 = false;
-        assert!(live.verify_with(signing.verifying_key().as_bytes()).is_err());
-        assert_eq!(live.signing_bytes().unwrap(), legacy.signing_bytes().unwrap());
+        assert!(
+            live.verify_with(signing.verifying_key().as_bytes())
+                .is_err()
+        );
+        assert_eq!(
+            live.signing_bytes().unwrap(),
+            legacy.signing_bytes().unwrap()
+        );
     }
 
     #[test]
     fn jm05_stream_frames_bound_escaped_text_and_reject_invalid_revision() {
-        let mut snapshot = CompanionChatStreamSnapshot { stream_schema_version: 1,
-            request_id: Uuid::nil(), revision: 1, text: "\u{0000}".repeat(COMPANION_STREAM_MAX_PREVIEW_BYTES), truncated: false };
-        let bytes = encode_server_frame(&ServerFrame::ChatStreamSnapshot(snapshot.clone())).unwrap();
+        let mut snapshot = CompanionChatStreamSnapshot {
+            stream_schema_version: 1,
+            request_id: Uuid::nil(),
+            revision: 1,
+            text: "\u{0000}".repeat(COMPANION_STREAM_MAX_PREVIEW_BYTES),
+            truncated: false,
+        };
+        let bytes =
+            encode_server_frame(&ServerFrame::ChatStreamSnapshot(snapshot.clone())).unwrap();
         assert!(bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES);
-        assert!(matches!(decode_server_frame(&bytes), Ok(ServerFrame::ChatStreamSnapshot(_))));
+        assert!(matches!(
+            decode_server_frame(&bytes),
+            Ok(ServerFrame::ChatStreamSnapshot(_))
+        ));
         snapshot.revision = 0;
         assert!(snapshot.validate().is_err());
         snapshot.revision = 1;

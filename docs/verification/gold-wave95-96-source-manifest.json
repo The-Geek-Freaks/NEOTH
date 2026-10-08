@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T10:07:55.0598998Z",
-  "validationStatus": "mobile-live-implemented-hosted-pending",
+  "capturedUtc": "2026-10-08T10:10:35.5935312Z",
+  "validationStatus": "mobile-live-hosted-format-applied-functional-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -7108,8 +7108,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 86505,
-      "sha256": "37D99D8DECB62D3BF696FCCF81114EB44F6AB1F3C6F48D07A2F5C8899CE4D350"
+      "bytes": 87821,
+      "sha256": "7D1C080E26DD375C6D847F389BA12537DF01049791D6750E552FAF0AFA11D1AC"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -7123,8 +7123,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 45175,
-      "sha256": "5EF0CCBDA35755DD5427BE944CC15BA4555A40FEBF66131F2B17DA504A2CD389"
+      "bytes": 45980,
+      "sha256": "B330E6112B5DCF88E402FEAE7BD17CE64E387CB57F3041AD939D67CD046F6AEC"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
@@ -7133,13 +7133,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 120426,
-      "sha256": "3443686E56896B39A4D515BB00EA5183478F95AE37B511642E30D1E027E8D0B8"
+      "bytes": 120673,
+      "sha256": "1963E5A0B96DD6765D80A36B913CF181F9D107D166DBAD81A3A1901956308791"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_stream.rs",
-      "bytes": 4346,
-      "sha256": "B2AB050B91F0A800830B8BF882FBD2AC57CF2AF9930CC5718BBDA80C5A79C48A"
+      "bytes": 4780,
+      "sha256": "56CB24DF004FB9DCB67A98636C83702514FD8767443C8FD575663FF2A04F0D92"
     },
     {
       "path": "SRC/neothd/src/daemon/companion.rs",
@@ -7259,7 +7259,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 20837,
-      "sha256": "7AEDF8F42DAED30AEE3DBD6E8D8AE5092BED76638A655D3EAF1B3C1296240A8F"
+      "sha256": "32EE39772DF88EB1D825D4B8DD37BFAC5911A38375CC56F622F7A297C946E935"
     },
     {
       "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_ipc.rs",
