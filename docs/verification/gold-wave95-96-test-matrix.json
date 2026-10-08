@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2513 contracts/native accepted; W2514 actual carrier acceptance pending",
+  "status": "hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 407879,
-    "sha256": "E606D54681D730E8F26F73C73A3D6DE4305B650FD5EE926C2BA1032A5A7750CE"
+    "bytes": 408009,
+    "sha256": "B96736F4356A1ED11A3509B822F5362FF34413B6085F84A8BF7FE00C5DEC5CC1"
   },
-  "sourceInputs": 2227,
+  "sourceInputs": 2228,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -79765,6 +79765,50 @@
       }
     ],
     "note": "Serial text-only integration; W2513 native run37765558012 independently admitted. W2514 adds actual held SSE to v3 encrypted carrier; 100 Rust/29 collector/53 sources/12 exports selected; hosted execution pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2514AbortDiagnostics": {
+    "base": "da39cc9784c71e5b159d7799e950537c2dbcd239",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 71932,
+        "sha256": "24B8F965C12506706950D35592BA9636AB521E033E41EC0C8F05C96A400D266B",
+        "blob": "db9c05af15241e84e4f0e2d8908170b24df73ed9"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 48880,
+        "sha256": "577FB71BF75B3AD87540F7C50E786364009AF11222759F5CA8B4B03A24267023",
+        "blob": "f7c1c292a4b0d9a487e88d8dbcd3b64e8c0938a9"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 20560,
+        "sha256": "4C8F87DC5E2371FE0E27EB78176663D942BFFD98EEDBBA625C7973B3AEF988FC",
+        "blob": "a4feb0f005769b6f25f3a657bf0398f504485af9"
+      },
+      {
+        "path": "docs/verification/gold-wave2514-abort-diagnostics.json",
+        "bytes": 717,
+        "sha256": "AD9FF9656A145892AF9A46E3E90165828B601C33524B75BDD3D603291A92E59A",
+        "blob": "e0723aa76bc5e5305ced91f8f2b952cf57e65cff"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 37991,
+        "sha256": "E9AA642F264BA911FB93AD548C7E6F58840463576CDF2D6FCE0DCF4B65085DA1",
+        "blob": "e5473e8fa13314f1685324a81c1a40e4236f5ff3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2507288,
+        "sha256": "1670FDA5E71874D155FF5F88E03D850C9407D76816C2F5EDAEC72027B03A15A7",
+        "blob": "61b9309ec398cff67c171ffff16327e67a6a12c9"
+      }
+    ],
+    "note": "Prior100Rust29collector admitted; actualV2 SIGABRT cause unproven. Fixed bounded fatal diagnostics and source-aware cache; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

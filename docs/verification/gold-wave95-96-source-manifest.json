@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T11:06:30.3767811Z",
-  "validationStatus": "W2513 contracts/native accepted; W2514 actual carrier acceptance pending",
+  "capturedUtc": "2026-10-08T11:55:48.0956385Z",
+  "validationStatus": "hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/scripts/mobile/hosted-mobile-interop.py",
-      "bytes": 70793,
-      "sha256": "F800DD70FC44B19A14A0EF93D27AE5F114F3B3B68C895FAF4DD5CEE03B14456C"
+      "bytes": 71932,
+      "sha256": "24B8F965C12506706950D35592BA9636AB521E033E41EC0C8F05C96A400D266B"
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
-      "bytes": 47694,
-      "sha256": "E5005EEAAAE920233D341A4265E47D1CF78E7A2F8091160FA97A92DCA74DA313"
+      "bytes": 48880,
+      "sha256": "577FB71BF75B3AD87540F7C50E786364009AF11222759F5CA8B4B03A24267023"
     },
     {
       "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
@@ -163,8 +163,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion-interop.yml",
-      "bytes": 19972,
-      "sha256": "6CF520CEB9C0F308A36436EE8F28CE0CDC72127CE88788C7A619A58EA1DF175F"
+      "bytes": 20560,
+      "sha256": "4C8F87DC5E2371FE0E27EB78176663D942BFFD98EEDBBA625C7973B3AEF988FC"
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
@@ -4057,6 +4057,11 @@
       "sha256": "11188A3E0977D0215B143DE834AF7FCE781922A3C2D1D8B067FDD700EE5937E6"
     },
     {
+      "path": "docs/verification/gold-wave2514-abort-diagnostics.json",
+      "bytes": 717,
+      "sha256": "AD9FF9656A145892AF9A46E3E90165828B601C33524B75BDD3D603291A92E59A"
+    },
+    {
       "path": "docs/verification/gold-wave2514-mobile-v3-wire.json",
       "bytes": 1917,
       "sha256": "B5DB8F74D1F5118492E35CBF3EF352A775DFAAD6C9C0DF1F44E251863AAD84F9"
@@ -5208,8 +5213,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 37621,
-      "sha256": "88C5BAA20CC88806CAD52A8851B67FF08201B31D9514726B0D0DDD3023CF1735"
+      "bytes": 37991,
+      "sha256": "E9AA642F264BA911FB93AD548C7E6F58840463576CDF2D6FCE0DCF4B65085DA1"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5218,8 +5223,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2506918,
-      "sha256": "CC69515462C3791AF6A8645AD86121D6FA9472690A3C17B702A3F47B5B9E44C0"
+      "bytes": 2507288,
+      "sha256": "1670FDA5E71874D155FF5F88E03D850C9407D76816C2F5EDAEC72027B03A15A7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

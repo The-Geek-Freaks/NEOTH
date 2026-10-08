@@ -47,8 +47,11 @@ jobs:
             ~/.cargo/git/db/
             SRC/target/
             bridges/companion-native/target/
-          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
+          # Immutable caches need a new key after source changes, even with unchanged locks.
+          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema3-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-${{ hashFiles('SRC/**', 'bridges/companion-native/**', '!**/target/**', '.github/scripts/mobile/build-host-interop-bridge.sh', '.github/workflows/mobile-companion-interop.yml') }}
           restore-keys: |
+            ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema3-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-
+            ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
             ${{ runner.os }}-mobile-interop-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}-
       - name: Run bounded scoped diagnostics collector regressions
         timeout-minutes: 2
@@ -314,7 +317,8 @@ jobs:
             ~/.cargo/git/db/
             SRC/target/
             bridges/companion-native/target/
-          key: ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
+          # Retain the pre-build key; never hash transient test overlay or output files.
+          key: ${{ steps.mobile_interop_cache_restore.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ always() }}
         with:

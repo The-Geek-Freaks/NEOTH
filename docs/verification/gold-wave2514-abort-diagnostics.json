@@ -1,0 +1,19 @@
+{
+  "schema": "neoth.gold.wave2514.abort-diagnostics.v1",
+  "status": "implemented-hosted-pending",
+  "priorProducer": "da39cc9784c71e5b159d7799e950537c2dbcd239",
+  "priorRun": 37768474464,
+  "admittedRust": 100,
+  "admittedCollector": 29,
+  "productAccepted": false,
+  "failureStage": "chat_v2_start",
+  "daemonExit": -6,
+  "cause": "unproven",
+  "changes": [
+    "Closed fixed fatal-runtime categories with chunk-boundary and payload rejection checks",
+    "Closed V2 terminal diagnostic retained on failure",
+    "Source-aware immutable Cargo cache key with prior checkpoint fallback"
+  ],
+  "localRuntimeExecuted": false,
+  "priorProofSha256": "AED6CED5F287BF6F65E628074ECD525CA3D49BFE446892FB41D0ED472A3EBB35"
+}

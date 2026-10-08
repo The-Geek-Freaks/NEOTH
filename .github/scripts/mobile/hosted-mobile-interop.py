@@ -144,6 +144,7 @@ class ShutdownMarkerCollector:
         self.rust_panic_site: str | None = None
         self.rust_panic_floor: int | None = None
         self.chat_failure: dict[str, str] | None = None
+        self.fatal_runtime_kinds: set[str] = set()
         self.pair_observed = {name: False for name, _ in PAIR_MARKERS}
         self.discovery_observed = {name: False for name, _ in DISCOVERY_MARKERS}
         self.connect_observed = {name: False for name, _ in CONNECT_MARKERS}
@@ -185,6 +186,18 @@ class ShutdownMarkerCollector:
                             if window_start + site.start() >= self.rust_panic_floor:
                                 self.rust_panic_site = site.group(1).decode("ascii")
                                 break
+                    # Retain fixed runtime categories, never arbitrary daemon stderr.
+                    for fatal in re.finditer(
+                        rb"(?m)^(fatal runtime error: stack overflow(?:, aborting)?|memory allocation of [0-9]{1,20} bytes failed|thread caused non-unwinding panic\. aborting\.)\r?\n",
+                        window,
+                    ):
+                        if window_start > 0 and fatal.start() == 0:
+                            continue
+                        line = fatal.group(1)
+                        kind = ("stack_overflow" if line.startswith(b"fatal runtime error:")
+                                else "allocation_failure" if line.startswith(b"memory allocation")
+                                else "non_unwinding_panic")
+                        self.fatal_runtime_kinds.add(kind)
                     if self.chat_failure is None:
                         for failure in CHAT_FAILURE_RE.finditer(window):
                             # A retained tail beginning mid-line cannot prove a line boundary.
@@ -252,6 +265,7 @@ class ShutdownMarkerCollector:
                 "markers": dict(self.observed),
                 "rust_panic_observed": self.rust_panic_observed,
                 "rust_panic_site": self.rust_panic_site,
+                "fatal_runtime_kinds": sorted(self.fatal_runtime_kinds),
                 "chat_failure": dict(self.chat_failure) if self.chat_failure is not None else None,
                 "pair_markers": dict(self.pair_observed),
                 "discovery_markers": dict(self.discovery_observed),
@@ -647,6 +661,9 @@ class Bridge:
                     except (OSError,ValueError): raise RuntimeError("held fixture counter missing after terminal")
                     if terminal_call_count != 1: raise RuntimeError("held fixture call count changed after terminal")
                     observed["fixture_call_count_after_terminal"]=terminal_call_count
+                if code != OK:
+                    observed["failure_terminal"] = chat_failure_terminal_diagnostic(raw)
+                    observed["failure_terminal_code"] = code
                 return code,raw,observed
             self.lib.neoth_companion_operation_cancel(op); cancelled=True; drain_until_terminal()
             raise WorkDeadline("chat_start_v2 work deadline exhausted")

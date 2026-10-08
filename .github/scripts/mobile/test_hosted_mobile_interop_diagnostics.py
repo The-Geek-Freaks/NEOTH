@@ -190,6 +190,26 @@ class ScopedCollectorTests(unittest.TestCase):
                 self.assertFalse((home / "credentials.yaml").exists())
 
     def test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free(self) -> None:
+        fatal_lines = (
+            (b"fatal runtime error: stack overflow, aborting\n", "stack_overflow"),
+            (b"memory allocation of 4096 bytes failed\n", "allocation_failure"),
+            (b"thread caused non-unwinding panic. aborting.\n", "non_unwinding_panic"),
+        )
+        for fatal_marker, kind in fatal_lines:
+            for split in range(1, len(fatal_marker)):
+                snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([
+                    b"private-canary\n" + fatal_marker[:split], fatal_marker[split:],
+                ])).snapshot(5)
+                self.assertEqual(snapshot["fatal_runtime_kinds"], [kind])
+                self.assertNotIn("private-canary", repr(snapshot))
+        for raw in (
+            b"payload fatal runtime error: stack overflow, aborting\n",
+            b"fatal runtime error: stack overflow, aborting private-canary\n",
+            b"memory allocation of private-canary bytes failed\n",
+        ):
+            snapshot = INTEROP.ShutdownMarkerCollector(ChunkStream([raw])).snapshot(5)
+            self.assertEqual(snapshot["fatal_runtime_kinds"], [])
+            self.assertNotIn("private-canary", repr(snapshot))
         marker = b"NEOTH_COMPANION_CHAT_FAILURE=engine:wal_writer_closed\n"
         expected = {"stage": "engine", "kind": "wal_writer_closed"}
         for split in range(1, len(marker)):
