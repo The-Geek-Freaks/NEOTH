@@ -1,0 +1,61 @@
+{
+  "schema": "neoth.gold.wave2511.whatsapp-product-journey.v1",
+  "base": "cf86bc001518f570b165db43185029e3a929075f",
+  "status": "implemented_static_reviewed_hosted_pending",
+  "localExecutableValidationRan": false,
+  "scope": "Actual NEOTH serve, real held MCP child, production BridgeClient, API, runtime and durable journals; controlled loopback provider and WhatsApp socket.",
+  "scenarios": [
+    "success",
+    "tool_error",
+    "disabled",
+    "cancel"
+  ],
+  "requirements": [
+    "Observe real tool-start socket write before releasing MCP",
+    "Exactly one MCP tool call and two provider calls for completed turns",
+    "Observe successful or failed tool status before final reply",
+    "Final send observes durable closed status admission",
+    "Real HTTP rejects late status before and after journal reopen",
+    "Daemon opt-out emits only normal final reply",
+    "Cancellation leaves held tool unreleased and no final reply",
+    "All recorded MCP child identities absent after daemon shutdown",
+    "Exit zero, channel/transport drain and WAL no-senders/clean-drain markers",
+    "No payload or credentials in uploaded evidence"
+  ],
+  "implementationFiles": [
+    {
+      "path": ".github/scripts/whatsapp/held-mcp.py",
+      "sha256": "1BADA3EA87E1DACEEF39BFD47324F5D2C3BD4048F02EBBC4DC14868228F96301",
+      "bytes": 1998
+    },
+    {
+      "path": ".github/scripts/whatsapp/hosted-product-journey.py",
+      "sha256": "94E946F2400E916EB24F0668151382F5C2990BDB0FE295F72AD195CA5566BA8D",
+      "bytes": 15943
+    },
+    {
+      "path": ".github/workflows/whatsapp-product-journey.yml",
+      "sha256": "A4181EBD57D157D081A40E975C0FEBE65041B71484CCA0AB34E0B942E2BDDB38",
+      "bytes": 7947
+    },
+    {
+      "path": "bridges/whatsapp-baileys/fixtures/hosted-product-helper.mjs",
+      "sha256": "95C478E31AE1E825D657EDA7938EF8EF10D52CB0E15DE30F72295E48A734CC1C",
+      "bytes": 7668
+    }
+  ],
+  "preserved": [
+    "Production permission and sidecar logic unchanged",
+    "Separate status opt-ins",
+    "Protected dirty .gitignore and SRC/Cargo.lock",
+    "Original Road backlog bytes"
+  ],
+  "stillOpen": [
+    "Fresh hosted execution and independent artifact admission",
+    "Linked WhatsApp account and device display/delivery",
+    "JM05 bounded history/streaming",
+    "JM07 preview",
+    "JM08 voice",
+    "Signed native historical upgrades and full Road-to-Gold acceptance"
+  ]
+}

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2510-WHATSAPP-HOSTED-CONTRACTS-ACCEPTED",
+  "status": "W2511 product journey implemented; hosted execution pending; prior scoped evidence retained",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 405655,
-    "sha256": "F6FC120DE413F97244386D51C8427A34A005E86ACC10F95F45D75AE6663347C7"
+    "bytes": 406634,
+    "sha256": "5113921C224B70C7332535E3FF02578AE46647F20C686957A1D30A4ED65F68E5"
   },
-  "sourceInputs": 2215,
+  "sourceInputs": 2220,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -79279,6 +79279,56 @@
       }
     ],
     "note": "Producerb625b606 run37651077395:37Node19Rust exactcases,7archiveentries24rawsources admitted. Documentation/inventory-only update; full MCP-sidecar and real WhatsApp/device boundaries remain open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2511ProductJourney": {
+    "base": "cf86bc001518f570b165db43185029e3a929075f",
+    "sources": [
+      {
+        "path": ".github/scripts/whatsapp/held-mcp.py",
+        "bytes": 1998,
+        "sha256": "1BADA3EA87E1DACEEF39BFD47324F5D2C3BD4048F02EBBC4DC14868228F96301",
+        "blob": "c0b662d0e728f2852f3aa96b675b5558279638d6"
+      },
+      {
+        "path": ".github/scripts/whatsapp/hosted-product-journey.py",
+        "bytes": 15943,
+        "sha256": "94E946F2400E916EB24F0668151382F5C2990BDB0FE295F72AD195CA5566BA8D",
+        "blob": "227cfee877a9422104850809fa51f5d9f305b3c3"
+      },
+      {
+        "path": ".github/workflows/whatsapp-product-journey.yml",
+        "bytes": 7947,
+        "sha256": "A4181EBD57D157D081A40E975C0FEBE65041B71484CCA0AB34E0B942E2BDDB38",
+        "blob": "4744b06a5d6176b05e31f0e8faf90d4d7a265bd4"
+      },
+      {
+        "path": "bridges/whatsapp-baileys/fixtures/hosted-product-helper.mjs",
+        "bytes": 7668,
+        "sha256": "95C478E31AE1E825D657EDA7938EF8EF10D52CB0E15DE30F72295E48A734CC1C",
+        "blob": "c1d042807eab0c0893a8bfe7586621d9d5e84a5e"
+      },
+      {
+        "path": "docs/verification/gold-wave2511-whatsapp-product-journey.json",
+        "bytes": 2407,
+        "sha256": "F31F43D168F9D20C177F8D1A7D5559B7ADFE4C053E58B369E06E59B64D15A32F",
+        "blob": "fdd1c831f0d58a4a6e02587cde6abd31490fed3c"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 30494,
+        "sha256": "270CCA6C0C1228476DF2C113A90A1026951B984CCC0C669D24D355D3B18B6EB3",
+        "blob": "2d7fb5916d1a06d041302e42e09a0b2602ca071e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2499791,
+        "sha256": "CBD47A2AD9440003EA5FADD8BBB970553353CB52B7FB7E1FDE09A34E8AE52148",
+        "blob": "0d9bb83d1f341dcb9eeed7404a224b9d0cf73ac7"
+      }
+    ],
+    "note": "Four serial actual daemon/MCP/production-sidecar scenarios. Fixture explicitly passes hosted guard through the production env_clear boundary. Controlled provider and socket, no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

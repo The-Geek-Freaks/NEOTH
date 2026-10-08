@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-07T16:29:51.2040190Z",
-  "validationStatus": "W2510-WHATSAPP-HOSTED-CONTRACTS-ACCEPTED",
+  "capturedUtc": "2026-10-08T05:44:42.2456707Z",
+  "validationStatus": "W2511 product journey implemented; hosted execution pending; prior scoped evidence retained",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -70,6 +70,16 @@
       "path": ".github/scripts/mobile/validate-mobile-interop-selection.py",
       "bytes": 14635,
       "sha256": "AF99B7A292D7A3B5336BA325D0E8F93C1F42FAEEFA2503D6BC052E0D4CC7A0B9"
+    },
+    {
+      "path": ".github/scripts/whatsapp/held-mcp.py",
+      "bytes": 1998,
+      "sha256": "1BADA3EA87E1DACEEF39BFD47324F5D2C3BD4048F02EBBC4DC14868228F96301"
+    },
+    {
+      "path": ".github/scripts/whatsapp/hosted-product-journey.py",
+      "bytes": 15943,
+      "sha256": "94E946F2400E916EB24F0668151382F5C2990BDB0FE295F72AD195CA5566BA8D"
     },
     {
       "path": ".github/workflows/ast-tree-sitter-lock-candidate.yml",
@@ -292,6 +302,11 @@
       "sha256": "E14A7D912E82FB94B83ABE4E22E4282946A771F96F1B1E9A27EA39B6C33FDE11"
     },
     {
+      "path": ".github/workflows/whatsapp-product-journey.yml",
+      "bytes": 7947,
+      "sha256": "A4181EBD57D157D081A40E975C0FEBE65041B71484CCA0AB34E0B942E2BDDB38"
+    },
+    {
       "path": ".github/workflows/windows-storage-regressions.yml",
       "bytes": 170236,
       "sha256": "4AC7D624FDA2126FBF08ED3C99FBAE3877F67369DBAF6E52371E31D2D4B3CEFC"
@@ -480,6 +495,11 @@
       "path": "bridges/companion-native/TEST_PLAN.md",
       "bytes": 1529,
       "sha256": "A0A8BD61787685A275EF7CAEBCC315A4839CAE6565D84E83A4C01C3FF62B8972"
+    },
+    {
+      "path": "bridges/whatsapp-baileys/fixtures/hosted-product-helper.mjs",
+      "bytes": 7668,
+      "sha256": "95C478E31AE1E825D657EDA7938EF8EF10D52CB0E15DE30F72295E48A734CC1C"
     },
     {
       "path": "bridges/whatsapp-baileys/README.md",
@@ -4012,6 +4032,11 @@
       "sha256": "70FAE3BD7FA0C23BF087FF0662C10034E72DA7D1B652EEB2953EAD602AF51CB6"
     },
     {
+      "path": "docs/verification/gold-wave2511-whatsapp-product-journey.json",
+      "bytes": 2407,
+      "sha256": "F31F43D168F9D20C177F8D1A7D5559B7ADFE4C053E58B369E06E59B64D15A32F"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5158,8 +5183,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 29039,
-      "sha256": "87412EA5311E3EEC59FB1B7BEEB7D96C623B5288DDBC0A81117D7FC0F2AFABAF"
+      "bytes": 30494,
+      "sha256": "270CCA6C0C1228476DF2C113A90A1026951B984CCC0C669D24D355D3B18B6EB3"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5168,8 +5193,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2498336,
-      "sha256": "51E975AC0F09C7DF7BADE98A73F7977ED9FA3D2B17520F7384B4C6AF914373F8"
+      "bytes": 2499791,
+      "sha256": "CBD47A2AD9440003EA5FADD8BBB970553353CB52B7FB7E1FDE09A34E8AE52148"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

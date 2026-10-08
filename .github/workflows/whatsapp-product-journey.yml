@@ -1,0 +1,154 @@
+name: WhatsApp MCP Product Journey
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  product-journey:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      CI: 'true'
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - name: Bind exact product producer
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/whatsapp-product"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          paths = subprocess.check_output([
+              "git", "ls-files", "-z", "--",
+              ".github/workflows/whatsapp-product-journey.yml", ".github/scripts/whatsapp",
+              "bridges/whatsapp-baileys", "SRC/Cargo.toml", "SRC/Cargo.lock",
+              "SRC/neothd/Cargo.toml", "SRC/neothd/src/channels/mod.rs",
+              "SRC/neothd/src/channels/whatsapp_baileys.rs", "SRC/neothd/src/cli/serve.rs",
+              "SRC/neothd/src/cli/serve_pipeline.rs", "SRC/neothd/src/cli/serve_tasks.rs",
+              "SRC/neothd/src/cli/chat.rs", "SRC/neothd/src/cli/consent.rs",
+              "SRC/neothd/src/mcp", "SRC/neothd/src/config/credentials.rs",
+              "SRC/neothd/src/config/types.rs", "SRC/neothd/src/providers/openai_compat.rs",
+          ]).decode().split("\0")
+          sources = []
+          for relative in sorted(p for p in paths if p):
+              path = pathlib.Path(relative)
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit("custody requires regular files")
+              data = path.read_bytes()
+              blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + relative], text=True).strip()
+              actual = subprocess.check_output(["git", "hash-object", "--no-filters", "--", relative], text=True).strip()
+              if actual != blob:
+                  raise SystemExit("checkout bytes differ from producer")
+              sources.append({"path": relative, "blob": blob, "bytes": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest().upper()})
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "sources": sources,
+                   "localExecution": False, "linkedWhatsAppAccount": False}
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-product/source-custody.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: '22.16.0' }
+      - name: Prepare pinned bridge runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          test "$(node --version)" = v22.16.0
+          test "$(pnpm --version)" = 10.32.1
+          pnpm --dir bridges/whatsapp-baileys install --frozen-lockfile --ignore-scripts
+          node --check bridges/whatsapp-baileys/fixtures/hosted-product-helper.mjs
+          python3 -m py_compile .github/scripts/whatsapp/hosted-product-journey.py .github/scripts/whatsapp/held-mcp.py
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: '1.91.0' }
+      - name: Restore admitted Cargo checkpoint
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-whatsapp-product-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-whatsapp-product-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-mobile-interop-rust-1.91-j1-i0-d0-schema2-${{ hashFiles('SRC/Cargo.lock', 'bridges/companion-native/Cargo.lock') }}
+      - name: Build actual locked NEOTH daemon
+        id: build
+        timeout-minutes: 50
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD -- SRC bridges .github
+          lock_before="$(sha256sum SRC/Cargo.lock)"
+          cargo build --manifest-path SRC/Cargo.toml --locked --package neoth --bin neoth
+          test "$lock_before" = "$(sha256sum SRC/Cargo.lock)"
+          git diff --exit-code HEAD -- SRC bridges .github
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "profile": "debug",
+                   "binarySha256": hashlib.sha256(pathlib.Path("SRC/target/debug/neoth").read_bytes()).hexdigest().upper(),
+                   "lockSha256": hashlib.sha256(pathlib.Path("SRC/Cargo.lock").read_bytes()).hexdigest().upper()}
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-product/build.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - name: Run actual MCP to sidecar product scenarios
+        id: journey
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/whatsapp/hosted-product-journey.py \
+            --binary SRC/target/debug/neoth \
+            --output "$RUNNER_TEMP/whatsapp-product/journey.json"
+      - name: Save built daemon checkpoint
+        if: ${{ always() && !cancelled() && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-whatsapp-product-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+      - name: Retain exact execution outcome
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          JOURNEY_OUTCOME: ${{ steps.journey.outcome }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "whatsapp-product"
+          output.mkdir(exist_ok=True)
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "build": os.environ["BUILD_OUTCOME"],
+                   "journey": os.environ["JOURNEY_OUTCOME"],
+                   "files": [{"name": p.name, "bytes": p.stat().st_size,
+                              "sha256": hashlib.sha256(p.read_bytes()).hexdigest().upper()}
+                             for p in sorted(output.glob("*.json")) if p.name != "execution.json"]}
+          (output / "execution.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: whatsapp-product-journey-${{ github.sha }}
+          path: ${{ runner.temp }}/whatsapp-product/
+          if-no-files-found: error
+          retention-days: 14
