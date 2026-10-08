@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import importlib.util
 import pathlib
 import queue
 import tempfile
 import time
+import threading
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 
 MODULE_PATH = pathlib.Path(__file__).with_name("hosted-mobile-interop.py")
@@ -53,6 +57,92 @@ class ControlledStream:
 
 
 class ScopedCollectorTests(unittest.TestCase):
+    def stream_server(self) -> SimpleNamespace:
+        server=SimpleNamespace(v3_prefix_sent=threading.Event(),v3_completed=threading.Event(),v3_release=threading.Event())
+        server.v3_prefix_sent.set()
+        return server
+
+    def stream_bridge(self, snapshots: list[dict], terminal_id: str = "00000000-0000-7000-8000-000000000123") -> tuple[object,object]:
+        payloads=[(INTEROP.STREAM,json.dumps(value).encode()) for value in snapshots]
+        payloads.append((INTEROP.OK,json.dumps({"kind":"chat","schema_version":3,"request_id":terminal_id,
+            "outcome":"accepted","records":[{"text":INTEROP.V3_REPLY}]}).encode()))
+        class FakeV3:
+            def __init__(self) -> None:
+                self.cancelled=self.freed=self.resizes=0
+            def neoth_companion_chat_start_v3(self,*_args: object) -> object: return object()
+            def neoth_companion_operation_cancel(self,_op: object) -> None: self.cancelled+=1
+            def neoth_companion_operation_free(self,_op: object) -> None: self.freed+=1
+            def neoth_companion_operation_poll_v3(self,_op: object,out: object,capacity: int,required: object) -> int:
+                code,raw=(INTEROP.FAILED,b'{"state":"cancelled"}') if self.cancelled else payloads[0]
+                if out is None:
+                    # Both growth and a final payload shorter than the probe.
+                    required._obj.value=8 if code==INTEROP.STREAM else len(raw)+100
+                    return INTEROP.BUFFER_TOO_SMALL
+                required._obj.value=len(raw)
+                if capacity<len(raw):
+                    self.resizes+=1; return INTEROP.BUFFER_TOO_SMALL
+                for index,byte in enumerate(raw): out[index]=byte
+                if not self.cancelled: payloads.pop(0)
+                return code
+        fake=FakeV3(); bridge=object.__new__(INTEROP.Bridge); bridge.handle=object(); bridge.lib=fake
+        return bridge,fake
+
+    def stream_snapshot(self,revision: int = 1) -> dict:
+        return {"kind":"chat_stream_snapshot","stream_schema_version":1,"request_id":"00000000-0000-7000-8000-000000000123",
+                "revision":revision,"text":INTEROP.V3_PREFIX,"truncated":False}
+
+    def test_v3_live_snapshot_releases_provider_and_uses_actual_read_length(self) -> None:
+        bridge,fake=self.stream_bridge([self.stream_snapshot()]); server=self.stream_server()
+        raw,observed=bridge.call_chat_v3_live_stream("descriptor","device",server,timeout=1.0)
+        self.assertEqual(json.loads(raw)["records"][0]["text"],INTEROP.V3_REPLY)
+        self.assertTrue(server.v3_release.is_set())
+        self.assertTrue(observed["provider_held_before_preview"])
+        self.assertTrue(observed["terminal_request_id_matched"])
+        self.assertEqual(observed["snapshot_count"],1)
+        self.assertEqual((fake.cancelled,fake.freed,fake.resizes),(0,1,1))
+
+    def test_v3_stale_foreign_and_invalid_snapshots_cancel_and_free_once(self) -> None:
+        cases=[
+            [self.stream_snapshot(),self.stream_snapshot()],
+            [{**self.stream_snapshot(),"revision":True}],
+            [{**self.stream_snapshot(),"kind":"wrong_snapshot"}],
+            [{key:value for key,value in self.stream_snapshot().items() if key != "kind"}],
+            [{**self.stream_snapshot(),"text":"private unexpected payload"}],
+            [{**self.stream_snapshot(),"extra":"private"}],
+            [{**self.stream_snapshot(),"truncated":True}],
+            [self.stream_snapshot(),{**self.stream_snapshot(2),"request_id":"00000000-0000-7000-8000-000000000124"}],
+        ]
+        for snapshots in cases:
+            with self.subTest(snapshots=snapshots):
+                bridge,fake=self.stream_bridge(snapshots)
+                with self.assertRaises(RuntimeError):
+                    bridge.call_chat_v3_live_stream("descriptor","device",self.stream_server(),timeout=1.0)
+                self.assertEqual((fake.cancelled,fake.freed),(1,1))
+
+    def test_v3_final_only_or_foreign_terminal_cannot_satisfy_live_proof(self) -> None:
+        for snapshots,terminal_id in [([],self.stream_snapshot()["request_id"]),
+            ([self.stream_snapshot()],"00000000-0000-7000-8000-000000000124")]:
+            bridge,fake=self.stream_bridge(snapshots,terminal_id)
+            with self.assertRaisesRegex(RuntimeError,"v3 terminal missing or request id differs"):
+                bridge.call_chat_v3_live_stream("descriptor","device",self.stream_server(),timeout=1.0)
+            self.assertEqual((fake.cancelled,fake.freed),(1,1))
+
+    def test_v3_resize_keeps_deadline_and_cancels_drains_frees_once(self) -> None:
+        bridge,fake=self.stream_bridge([self.stream_snapshot()])
+        original_poll=fake.neoth_companion_operation_poll_v3
+        def grow(op: object,out: object,capacity: int,required: object) -> int:
+            if fake.cancelled: return original_poll(op,out,capacity,required)
+            required._obj.value=capacity+1
+            fake.resizes+=1
+            return INTEROP.BUFFER_TOO_SMALL
+        fake.neoth_companion_operation_poll_v3=grow
+        ticks=iter(range(100))
+        with mock.patch.object(INTEROP.time,"monotonic",side_effect=lambda:float(next(ticks))):
+            with self.assertRaises(INTEROP.WorkDeadline):
+                bridge.call_chat_v3_live_stream("descriptor","device",self.stream_server(),timeout=5.0)
+        self.assertGreater(fake.resizes,1)
+        self.assertEqual((fake.cancelled,fake.freed),(1,1))
+
     def test_device_rpc_invoke_keeps_only_closed_failure_classification(self) -> None:
         from unittest.mock import patch
         from types import SimpleNamespace
@@ -81,6 +171,7 @@ class ScopedCollectorTests(unittest.TestCase):
             self.assertIn("provider_endpoint: http://127.0.0.1:12345/v1\n", text)
             self.assertIn("autonomy: custom\ncustom_autonomy:\n  overrides:\n    unbounded_paid_provider_call: allow\n", text)
             self.assertEqual(text.count(": allow\n"), 1)
+            self.assertIn("refusal_recovery:\n  enabled: false\n  abliterated_fallback_enabled: false\n  teacher_escalation_enabled: false\n", text)
             self.assertNotIn("autonomy: full", text)
             self.assertNotIn("mcp_tool_invocation: allow", text)
         for route in (

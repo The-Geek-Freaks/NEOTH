@@ -46,11 +46,11 @@ class SelectionContractTests(unittest.TestCase):
 
     def test_preserves_exact_selection_and_custody_inputs(self) -> None:
         custody = self._validate()
-        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 19, "core": 45, "no_cluster": 1, "bridge": 10}
+        expected_groups = {"libudx": 8, "peeroxide": 16, "dht": 19, "core": 45, "no_cluster": 1, "bridge": 11}
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
-            "collector": 25,
-            "sources": 50,
+            "collector": 29,
+            "sources": 53,
             "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["dht"]["identities"][2:6], [
@@ -110,6 +110,10 @@ class SelectionContractTests(unittest.TestCase):
             "test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free",
             "test_loopback_config_uses_one_explicit_cost_override_and_rejects_other_routes",
             "test_device_rpc_invoke_keeps_only_closed_failure_classification",
+            "test_v3_live_snapshot_releases_provider_and_uses_actual_read_length",
+            "test_v3_stale_foreign_and_invalid_snapshots_cancel_and_free_once",
+            "test_v3_final_only_or_foreign_terminal_cannot_satisfy_live_proof",
+            "test_v3_resize_keeps_deadline_and_cancels_drains_frees_once",
         ])
         self.assertIn("SRC/vendor/libudx/src/native/header.rs", custody["sourceSha256"])
         self.assertEqual(custody["dispatchHashSources"]["bridge_header_sha256"], (

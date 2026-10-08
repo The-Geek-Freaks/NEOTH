@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile-live-stream-policy-fixture-corrected-hosted-pending",
+  "status": "W2513 contracts/native accepted; W2514 actual carrier acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 407679,
-    "sha256": "E4DC27A0D028CF76E7E1D039DB0C9EBB052B82744393967F18606972D2566201"
+    "bytes": 407879,
+    "sha256": "E606D54681D730E8F26F73C73A3D6DE4305B650FD5EE926C2BA1032A5A7750CE"
   },
-  "sourceInputs": 2226,
+  "sourceInputs": 2227,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -79697,6 +79697,74 @@
       }
     ],
     "note": "Production deferral retained. Fixture proves early text only with post-provider mutators disabled and zero early text with default guard; legacy GUI admission diagnostic prefix preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2514-mobile-v3-wire": {
+    "base": "31d46070c407c1dd32a13c826f953dc8014aa326",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/build-host-interop-bridge.sh",
+        "bytes": 2985,
+        "sha256": "3A905EEA9C92D21D75605A6B12F8314FF984946E08C150CDB2A134CAF21B3817",
+        "blob": "62d118c5b51eb97e3af938e4122c05ff928f6faa"
+      },
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-interop.py",
+        "bytes": 70793,
+        "sha256": "F800DD70FC44B19A14A0EF93D27AE5F114F3B3B68C895FAF4DD5CEE03B14456C",
+        "blob": "707102467c9d77eab2121f3907bddc6d6c58ed5c"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 16023,
+        "sha256": "D249F6F15952607CF56F13B6CBA637178E0B8CF5005347937E81C7D926DAF805",
+        "blob": "0ef566caed1c3d3f3cd1d86cb8b2dd074a037ede"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_interop_diagnostics.py",
+        "bytes": 47694,
+        "sha256": "E5005EEAAAE920233D341A4265E47D1CF78E7A2F8091160FA97A92DCA74DA313",
+        "blob": "791b0c66befef2b3145f46b0dc7ab9551a83e884"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 11104,
+        "sha256": "891D654B09F1FCEF5A1CD01AD8DFD7F3F0F1C3EEABD7871660E28A85F0B98AF0",
+        "blob": "16149bba1ad8a4860147b88326bd96f4bc56a262"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 19972,
+        "sha256": "6CF520CEB9C0F308A36436EE8F28CE0CDC72127CE88788C7A619A58EA1DF175F",
+        "blob": "29f3d9c7bf125b604ba974525761ed0bd26ed1bb"
+      },
+      {
+        "path": "docs/verification/gold-wave2513-mobile-live.json",
+        "bytes": 2741,
+        "sha256": "11188A3E0977D0215B143DE834AF7FCE781922A3C2D1D8B067FDD700EE5937E6",
+        "blob": "affe1d39fdca321aac4bc4b280a8a024e8e84125"
+      },
+      {
+        "path": "docs/verification/gold-wave2514-mobile-v3-wire.json",
+        "bytes": 1917,
+        "sha256": "B5DB8F74D1F5118492E35CBF3EF352A775DFAAD6C9C0DF1F44E251863AAD84F9",
+        "blob": "f0c61d0614621dfcea2aa2173d86ec948710ba1b"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 37621,
+        "sha256": "88C5BAA20CC88806CAD52A8851B67FF08201B31D9514726B0D0DDD3023CF1735",
+        "blob": "d9c69eb0a60c9c6e42f91b6a340f6318fa9c409f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2506918,
+        "sha256": "CC69515462C3791AF6A8645AD86121D6FA9472690A3C17B702A3F47B5B9E44C0",
+        "blob": "9af72e67af410b25e693e550c2e94bca7a8c9f7f"
+      }
+    ],
+    "note": "Serial text-only integration; W2513 native run37765558012 independently admitted. W2514 adds actual held SSE to v3 encrypted carrier; 100 Rust/29 collector/53 sources/12 exports selected; hosted execution pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

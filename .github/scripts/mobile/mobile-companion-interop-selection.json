@@ -127,7 +127,8 @@
         "tests::ffi_v2_probe_retains_then_code6_delivery_consumes_snapshot",
         "tests::ffi_v2_terminal_beats_snapshot_and_legacy_poll_stays_pending",
         "tests::ffi_cancel_then_free_drains_exactly_one_held_worker",
-        "tests::ffi_v2_larger_replacement_after_old_probe_is_retained_after_code5"
+        "tests::ffi_v2_larger_replacement_after_old_probe_is_retained_after_code5",
+        "tests::ffi_v3_preview_resize_legacy_isolation_and_terminal_priority"
       ]
     }
   },
@@ -159,7 +160,11 @@
       "test_v2_fake_ffi_resize_deadline_cancels_and_frees_once",
       "test_chat_failure_diagnostic_is_closed_chunk_safe_and_content_free",
       "test_loopback_config_uses_one_explicit_cost_override_and_rejects_other_routes",
-      "test_device_rpc_invoke_keeps_only_closed_failure_classification"
+      "test_device_rpc_invoke_keeps_only_closed_failure_classification",
+      "test_v3_live_snapshot_releases_provider_and_uses_actual_read_length",
+      "test_v3_stale_foreign_and_invalid_snapshots_cancel_and_free_once",
+      "test_v3_final_only_or_foreign_terminal_cannot_satisfy_live_proof",
+      "test_v3_resize_keeps_deadline_and_cancels_drains_frees_once"
     ]
   },
   "sourcePaths": [
@@ -212,7 +217,10 @@
     "SRC/neothd/src/cli/chat.rs",
     "SRC/neothd/src/cli/chat_turn_pipeline.rs",
     "SRC/neothd/src/daemon/chat_runtime.rs",
-    "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py"
+    "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py",
+    "SRC/neothd/src/daemon/companion_stream.rs",
+    "SRC/neothd/src/daemon/companion_authority.rs",
+    "SRC/neothd/src/providers/openai_api.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

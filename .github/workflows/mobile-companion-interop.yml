@@ -251,7 +251,7 @@ jobs:
         run: |
           set -euo pipefail
           readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
-          test "${#bridge_identities[@]}" -eq 10
+          test "${#bridge_identities[@]}" -eq 11
           : > "$RUNNER_TEMP/companion-bridge-result-regression.log"
           for identity in "${bridge_identities[@]}"; do
             cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "$identity" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-case.log"

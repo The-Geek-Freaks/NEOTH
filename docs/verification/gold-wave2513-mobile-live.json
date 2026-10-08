@@ -1,7 +1,7 @@
 {
   "schema": "neoth.gold.wave2513.mobile-live.v1",
   "base": "e704ed8c63c76241bde4eb6cdb35019a12b62587",
-  "status": "implemented-hosted-pending",
+  "status": "hosted-contracts-and-native-artifacts-admitted",
   "localExecutableValidationRan": false,
   "behavior": [
     "signed additive chat_stream_v1 negotiation",
@@ -19,11 +19,42 @@
     "native Android/iOS export and device acceptance"
   ],
   "open": [
+    "Actual encrypted v3 carrier journey (W2514)",
     "JM05 device-bound multi-turn conversation registry and canonical history",
-    "reconnect replay",
-    "native rebuild and physical devices",
+    "Reconnect replay",
+    "Physical Android/iOS devices",
     "JM07 preview optin and JM08 media",
-    "signed release and remaining Road Gold"
+    "Signed release and remaining Road Gold"
   ],
-  "initialHostedResult": "Run37762616216 compiled; storage3, GUI21 and protocol11 passed; first live fixture wrongly retained default refusal recovery, so early-text assertion failed. Fixture now covers both ungated live output and default deferred policy."
+  "initialHostedResult": "Run37762616216 compiled; storage3, GUI21 and protocol11 passed; first live fixture wrongly retained default refusal recovery, so early-text assertion failed. Fixture now covers both ungated live output and default deferred policy.",
+  "contractsAcceptance": {
+    "producer": "31d46070c407c1dd32a13c826f953dc8014aa326",
+    "run": 37764113534,
+    "core": 64,
+    "bridge": 31,
+    "flutter": 38,
+    "originalArtifact": 11543443962,
+    "zipSha256": "819C101FC3FE7AC7EDA2C4BF598592C1A2C013DEF0979D25C661D2E8B96B2DED",
+    "entries": 17,
+    "rawSourceBindings": 29,
+    "rootProof": "work/gold-20260906/wave2513-mobile-live/admission-policy/ROOT_MOBILE_LIVE_ADMISSION.json",
+    "rootProofSha256": "710393A9C1D9FAA144796F9E42F5834873C2557A405060088383E3443D9CCFF4"
+  },
+  "nativeAcceptance": {
+    "producer": "31d46070c407c1dd32a13c826f953dc8014aa326",
+    "run": 37765558012,
+    "flutter": 38,
+    "archives": 4,
+    "entries": 155,
+    "rawSourceBindings": 57,
+    "androidAbis": 3,
+    "iOSXcframework": true,
+    "flutterAppsBuilt": true,
+    "definedFfiExports": 12,
+    "kotlinSourceAndApkBound": true,
+    "rootProof": "work/gold-20260906/wave2513-mobile-live/native-preparation/ROOT_MOBILE_ADMISSION.json",
+    "rootProofSha256": "8B434154CD2A51C26870E76DCDC0C4BE3ECD5652769F81DB3725E4BAC76F4179",
+    "deviceAccepted": false,
+    "releaseReady": false
+  }
 }

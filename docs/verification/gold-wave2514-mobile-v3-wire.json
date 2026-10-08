@@ -1,0 +1,44 @@
+{
+  "schema": "neoth.gold.wave2514.mobile-v3-wire.v1",
+  "base": "31d46070c407c1dd32a13c826f953dc8014aa326",
+  "status": "implemented-static-reviewed-hosted-pending",
+  "localExecutableValidationRan": false,
+  "behavior": [
+    "Actual daemon and native v3 FFI over the encrypted Companion carrier",
+    "Loopback SSE sends a visible UTF8 prefix and withholds final completion until native code7 is read",
+    "Same request UUID, monotonic snapshot revision, bounded preview and exact canonical one-record terminal",
+    "V1 chat and V2 held-tool journey retained, plus a third durable device revoke",
+    "Fixture-only live output policy; production full-body mutator defaults unchanged"
+  ],
+  "selectedRust": 100,
+  "selectedCollector": 29,
+  "sourceBindings": 53,
+  "ffiExports": 12,
+  "newRegressions": [
+    "test_v3_live_snapshot_releases_provider_and_uses_actual_read_length",
+    "test_v3_stale_foreign_and_invalid_snapshots_cancel_and_free_once",
+    "test_v3_final_only_or_foreign_terminal_cannot_satisfy_live_proof",
+    "test_v3_resize_keeps_deadline_and_cancels_drains_frees_once"
+  ],
+  "upstreamContracts": {
+    "bridge": 31,
+    "run": 37764113534,
+    "rootProofSha256": "710393A9C1D9FAA144796F9E42F5834873C2557A405060088383E3443D9CCFF4",
+    "core": 64,
+    "flutter": 38,
+    "producer": "31d46070c407c1dd32a13c826f953dc8014aa326"
+  },
+  "open": [
+    "Fresh hosted encrypted v3 carrier acceptance",
+    "JM05 device-bound session/history/reconnect",
+    "Physical Android/iOS devices",
+    "JM07 previews and JM08 media",
+    "Signed release and remaining Road Gold"
+  ],
+  "upstreamNative": {
+    "producer": "31d46070c407c1dd32a13c826f953dc8014aa326",
+    "run": 37765558012,
+    "rootProofSha256": "8B434154CD2A51C26870E76DCDC0C4BE3ECD5652769F81DB3725E4BAC76F4179",
+    "scope": "Native app and bridge artifacts on upstream producer; this batch changes hosted acceptance fixtures only"
+  }
+}

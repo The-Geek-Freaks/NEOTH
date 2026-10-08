@@ -6,7 +6,7 @@ import signal, socket, socketserver, subprocess, sys, tempfile, threading, time
 import urllib.request
 from typing import Any, Callable
 
-PENDING, OK, FAILED, BUFFER_TOO_SMALL, ACTIVITY = 0, 1, 3, 5, 6
+PENDING, OK, FAILED, BUFFER_TOO_SMALL, ACTIVITY, STREAM = 0, 1, 3, 5, 6, 7
 MAX_PUBLIC, PAIR_JSON_MAX, PAIR_URL_MAX, DEADLINE = 80 * 1024, 8 * 1024, 512, 140.0
 HOSTED_STEP_SECONDS, CLEANUP_RESERVE_SECONDS, START_MARGIN_SECONDS = 600.0, 180.0, 30.0
 WORK_SECONDS = HOSTED_STEP_SECONDS - CLEANUP_RESERVE_SECONDS - START_MARGIN_SECONDS
@@ -20,11 +20,15 @@ class CliFailure(RuntimeError):
 REPLY = "W2328 deterministic loopback reply"
 V2_REPLY = "W2491 deterministic held-tool reply"
 V2_PROMPT = "W2491 held tool activity interop canary"
+V3_PROMPT = "W2514 held streaming interop canary"
+V3_PREFIX = "visible ä " * 700
+V3_REPLY = V3_PREFIX + "canonical final"
 ACTIVITY_SERVER = "w2491-activity-fixture"
 SYMBOLS = ("neoth_companion_bridge_new","neoth_companion_pair_start",
  "neoth_companion_reconnect_start","neoth_companion_chat_start",
  "neoth_companion_operation_poll","neoth_companion_operation_cancel",
- "neoth_companion_operation_free","neoth_companion_bridge_free","neoth_companion_chat_start_v2","neoth_companion_operation_poll_v2")
+ "neoth_companion_operation_free","neoth_companion_bridge_free","neoth_companion_chat_start_v2","neoth_companion_operation_poll_v2",
+ "neoth_companion_chat_start_v3","neoth_companion_operation_poll_v3")
 SHUTDOWN_MARKERS = (
     ("background_entry", b"shutdown checkpoint: background entry"),
     ("generation_effects_retired", b"shutdown checkpoint: generation effects retired"),
@@ -265,6 +269,9 @@ class Provider(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length > 65536: self.send_error(413); return
         request_body=self.rfile.read(length)
+        if self.server.v3_mode:
+            self.serve_v3(request_body)
+            return
         with self.server.provider_lock:
             self.server.request_count += 1
             if self.server.v2_mode:
@@ -290,6 +297,41 @@ class Provider(http.server.BaseHTTPRequestHandler):
           "finish_reason":"stop"}]}, separators=(",", ":")).encode()
         self.send_response(200); self.send_header("Content-Type","application/json")
         self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def serve_v3(self, request_body: bytes) -> None:
+        with self.server.provider_lock:
+            self.server.request_count += 1
+            self.server.v3_request_count += 1
+            try:
+                request = json.loads(request_body)
+                messages = request.get("messages")
+                valid = (request.get("stream") is True and isinstance(messages, list)
+                         and bool(messages) and messages[-1] == {"role":"user","content":V3_PROMPT})
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError): valid = False
+            if not valid or self.server.v3_request_count != 1:
+                self.send_error(400); return
+            self.server.v3_prompt_verified = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        def chunk(text: str, finish: str | None = None) -> None:
+            body = {"id":"w2514-stream","object":"chat.completion.chunk",
+                    "model":"w2328-loopback-model","choices":[{"index":0,
+                    "delta":{"content":text},"finish_reason":finish}]}
+            self.wfile.write(b"data: " + json.dumps(body, separators=(",", ":")).encode() + b"\n\n")
+            self.wfile.flush()
+        try:
+            # Only the FFI receiver may release this completion. A final-only
+            # implementation cannot make this journey pass.
+            self.server.v3_prefix_sent.set()
+            chunk(V3_PREFIX)
+            if not self.server.v3_release.wait(timeout=60.0): return
+            chunk("canonical final", "stop")
+            self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+            self.server.v3_completed.set()
+        except (BrokenPipeError, ConnectionResetError):
+            return
     def log_message(self, *_: Any) -> None: pass
 
 class Loopback:
@@ -299,15 +341,27 @@ class Loopback:
         self.server.v2_request_count = 0
         self.server.v2_prompt_verified = False
         self.server.v2_mode = False
+        self.server.v3_mode = False
+        self.server.v3_request_count = 0
+        self.server.v3_prompt_verified = False
+        self.server.v3_prefix_sent = threading.Event()
+        self.server.v3_release = threading.Event()
+        self.server.v3_completed = threading.Event()
         self.server.provider_lock = threading.Lock()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True); self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"; return self
     def __exit__(self, *_: Any) -> None:
+        self.server.v3_release.set()
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
     def begin_v2_activity_journey(self) -> int:
         with self.server.provider_lock:
             if self.server.v2_mode: raise RuntimeError("v2 loopback journey already selected")
             self.server.v2_mode = True
+            return self.server.request_count
+    def begin_v3_stream_journey(self) -> int:
+        with self.server.provider_lock:
+            if self.server.v3_mode: raise RuntimeError("v3 loopback journey already selected")
+            self.server.v3_mode = True
             return self.server.request_count
 
 def write_config(home: pathlib.Path, provider_url: str, health_port: int, companion_port: int) -> pathlib.Path:
@@ -321,6 +375,9 @@ def write_config(home: pathlib.Path, provider_url: str, health_port: int, compan
       f"operator_id: w2328-hosted\nonboarding_complete: true\nsecrets_backend: file\nprovider_kind: openai_compat\n"
       f"provider_endpoint: {provider_url}\nprovider_model: w2328-loopback-model\n"
       "autonomy: custom\ncustom_autonomy:\n  overrides:\n    unbounded_paid_provider_call: allow\n"
+      # Fixture-only live policy. Production defaults continue to defer when
+      # complete-body mutators are active; the core contract covers both modes.
+      "refusal_recovery:\n  enabled: false\n  abliterated_fallback_enabled: false\n  teacher_escalation_enabled: false\n"
       f"observability_listen: 127.0.0.1:{health_port}\nsecurity:\n  smart_approve: true\ncompanion:\n  enabled: true\n"
       f"  port: {companion_port}\n  p2p_enabled: true\n", encoding="utf-8")
     # Local canary value only. It is never emitted and the provider ignores it.
@@ -470,9 +527,11 @@ class Bridge:
         self.lib.neoth_companion_reconnect_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_chat_start.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size]
         self.lib.neoth_companion_chat_start_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
-        for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start","neoth_companion_chat_start_v2"): getattr(self.lib,name).restype=ptr
+        self.lib.neoth_companion_chat_start_v3.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,ctypes.POINTER(u8),size,u8]
+        for name in ("neoth_companion_pair_start","neoth_companion_reconnect_start","neoth_companion_chat_start","neoth_companion_chat_start_v2","neoth_companion_chat_start_v3"): getattr(self.lib,name).restype=ptr
         self.lib.neoth_companion_operation_poll.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll.restype=ctypes.c_int32
         self.lib.neoth_companion_operation_poll_v2.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll_v2.restype=ctypes.c_int32
+        self.lib.neoth_companion_operation_poll_v3.argtypes=[ptr,ctypes.POINTER(u8),size,ctypes.POINTER(size)]; self.lib.neoth_companion_operation_poll_v3.restype=ctypes.c_int32
         self.lib.neoth_companion_operation_cancel.argtypes=[ptr]; self.lib.neoth_companion_operation_free.argtypes=[ptr]; self.lib.neoth_companion_bridge_free.argtypes=[ptr]
         self.seed=(u8*32).from_buffer_copy(secrets.token_bytes(32)); self.handle=self.lib.neoth_companion_bridge_new(self.seed,32)
         if not self.handle: raise RuntimeError("bridge_new rejected transient seed")
@@ -594,6 +653,86 @@ class Bridge:
         except Exception:
             if not cancelled:
                 self.lib.neoth_companion_operation_cancel(op); cancelled=True; drain_until_terminal()
+            raise
+        finally:
+            self.lib.neoth_companion_operation_free(op)
+            for value in buffers: ctypes.memset(ctypes.addressof(value),0,len(value))
+
+    def call_chat_v3_live_stream(self, descriptor: str, device_id: str, server: Any,
+                                 timeout: float = DEADLINE) -> tuple[bytes,dict[str,Any]]:
+        buffers=[(ctypes.c_ubyte*len(value.encode())).from_buffer_copy(value.encode())
+                 for value in (descriptor, device_id, V3_PROMPT)]
+        op=self.lib.neoth_companion_chat_start_v3(self.handle,buffers[0],len(buffers[0]),
+            buffers[1],len(buffers[1]),buffers[2],len(buffers[2]),0)
+        if not op: raise RuntimeError("chat_start_v3 returned null")
+        observed={"v3_started":True,"stream_code7_seen":False,"provider_held_before_preview":False,
+                  "release_after_preview":False,"terminal_request_id_matched":False,"snapshot_count":0}
+        request_id: str | None = None
+        revision=0
+        def poll(deadline: float) -> tuple[int,bytes]:
+            if time.monotonic() >= deadline: raise WorkDeadline("v3 poll deadline exhausted")
+            required=ctypes.c_size_t()
+            code=self.lib.neoth_companion_operation_poll_v3(op,None,0,ctypes.byref(required))
+            if code == PENDING: return code,b""
+            if code != BUFFER_TOO_SMALL or not 0 < required.value <= MAX_PUBLIC:
+                raise RuntimeError("v3 poll probe invalid")
+            while True:
+                if time.monotonic() >= deadline: raise WorkDeadline("v3 resize deadline exhausted")
+                capacity=required.value; out=(ctypes.c_ubyte*capacity)()
+                code=self.lib.neoth_companion_operation_poll_v3(op,out,capacity,ctypes.byref(required))
+                if code == BUFFER_TOO_SMALL:
+                    if not capacity < required.value <= MAX_PUBLIC: raise RuntimeError("v3 resize invalid")
+                    continue
+                if required.value > capacity: raise RuntimeError("v3 returned length exceeds buffer")
+                return code,bytes(out[:required.value])
+        try:
+            until=time.monotonic()+timeout
+            while time.monotonic()<until:
+                code,raw=poll(until)
+                if code == PENDING:
+                    time.sleep(.125); continue
+                value=cli_json(raw,"v3 frame")
+                if code == STREAM:
+                    if (not isinstance(value,dict) or set(value) != {"kind","stream_schema_version","request_id","revision","text","truncated"}
+                        or value["kind"] != "chat_stream_snapshot"
+                        or type(value["stream_schema_version"]) is not int or value["stream_schema_version"] != 1
+                        or type(value["revision"]) is not int or not revision < value["revision"] <= 2**64-1
+                        or not isinstance(value["text"],str) or not 0 < len(value["text"].encode()) <= 10*1024
+                        or value["truncated"] is not False or not V3_REPLY.startswith(value["text"])):
+                        raise RuntimeError("v3 snapshot bounds or revision invalid")
+                    try: uuid.UUID(value["request_id"])
+                    except (ValueError,TypeError,AttributeError): raise RuntimeError("v3 snapshot request id invalid")
+                    if request_id is not None and value["request_id"] != request_id:
+                        raise RuntimeError("v3 snapshot request id changed")
+                    request_id=value["request_id"]; revision=value["revision"]
+                    observed["stream_code7_seen"]=True; observed["snapshot_count"]+=1
+                    if not observed["release_after_preview"]:
+                        if (not server.v3_prefix_sent.is_set() or server.v3_completed.is_set()
+                            or server.v3_release.is_set() or not V3_PREFIX.startswith(value["text"])):
+                            raise RuntimeError("v3 provider not held before preview")
+                        observed["provider_held_before_preview"]=True
+                        server.v3_release.set(); observed["release_after_preview"]=True
+                    continue
+                if (code != OK or request_id is None or not observed["release_after_preview"]
+                    or not isinstance(value,dict) or value.get("kind") != "chat"
+                    or value.get("schema_version") != CHAT_SCHEMA_VERSION or value.get("outcome") != "accepted"
+                    or value.get("request_id") != request_id):
+                    raise RuntimeError("v3 terminal missing or request id differs")
+                records=value.get("records")
+                if not isinstance(records,list) or len(records) != 1 or not isinstance(records[0],dict) or records[0].get("text") != V3_REPLY:
+                    raise RuntimeError("v3 canonical terminal text differs")
+                observed["terminal_request_id_matched"]=True
+                observed["reply_sha256"]=hashlib.sha256(V3_REPLY.encode()).hexdigest().upper()
+                return raw,observed
+            raise WorkDeadline("chat_start_v3 work deadline exhausted")
+        except Exception:
+            self.lib.neoth_companion_operation_cancel(op)
+            server.v3_release.set()
+            drain_until=time.monotonic()+15.0
+            while time.monotonic()<drain_until:
+                code,_=poll(drain_until)
+                if code not in (PENDING,STREAM,ACTIVITY): break
+                time.sleep(.125)
             raise
         finally:
             self.lib.neoth_companion_operation_free(op)
@@ -915,6 +1054,36 @@ def main() -> int:
                     or provider.server.request_count != 3):
                     raise RuntimeError("v2 revoke/provider boundary missing")
                 receipt["steps"]["revoke_v2"]={"revoked":True,"grant_state":"revoked","revision_advanced":True,"loopback_request_count":3}
+                receipt["stage"]="pair_chat_v3_mint"
+                v3_pair_url=pair_url(mint_pair("chat-send","pair_chat_v3_send_mint"))
+                v3_before=provider.begin_v3_stream_journey()
+                v3_bridge=Bridge(library)
+                try:
+                    receipt["stage"]="pair_chat_v3_start"
+                    code,raw=v3_bridge.call("neoth_companion_pair_start",v3_pair_url,"w2514-chat-v3",timeout=budget(work_deadline))
+                    if code != OK: raise RuntimeError("v3 pair rejected")
+                    v3_pair=terminal(raw,"paired")
+                    receipt["steps"]["chat_v3_pair"]={"code":OK,"validated":True}
+                    receipt["stage"]="chat_v3_start"
+                    _,v3_observed=v3_bridge.call_chat_v3_live_stream(
+                        json.dumps(v3_pair["descriptor"],separators=(",",":")),v3_pair["device_id"],
+                        provider.server,timeout=budget(work_deadline))
+                    if (v3_before != 3 or provider.server.request_count != 4
+                        or provider.server.v3_request_count != 1 or not provider.server.v3_prompt_verified
+                        or not provider.server.v3_completed.wait(timeout=min(1.0,budget(work_deadline)))):
+                        raise RuntimeError("v3 exact streaming provider boundary missing")
+                    receipt["steps"]["chat_v3"]={**v3_observed,"code":OK,"outcome":"accepted",
+                        "loopback_request_delta":1,"loopback_request_count":4,"provider_completed":True}
+                finally: v3_bridge.close()
+                receipt["stage"]="device_v3_revoke"
+                v3_revoke=cli_json(invoke([str(binary),"--output","json","companion","devices","revoke",v3_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"v3 revoke")
+                v3_views=cli_json(invoke([str(binary),"--output","json","companion","devices","status",v3_pair["device_id"]],env,budget(work_deadline,20.0),companion_rpc=True),"v3 device status")
+                if (v3_revoke != {"revoked":True} or not isinstance(v3_views,list) or len(v3_views) != 1
+                    or not isinstance(v3_views[0],dict) or v3_views[0].get("device_id") != v3_pair["device_id"]
+                    or v3_views[0].get("grant_state") != "revoked" or type(v3_pair.get("revision")) is not int
+                    or v3_views[0].get("revision") != v3_pair["revision"]+1 or provider.server.request_count != 4):
+                    raise RuntimeError("v3 durable revoke/provider boundary missing")
+                receipt["steps"]["revoke_v3"]={"revoked":True,"grant_state":"revoked","revision_advanced":True,"loopback_request_count":4}
             finally: bridge.close()
             receipt["outcome"]="passed"
         except WorkDeadline:
