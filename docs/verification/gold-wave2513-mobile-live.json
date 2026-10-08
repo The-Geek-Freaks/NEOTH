@@ -8,7 +8,8 @@
     "actual shared core visible output into request-bound absolute previews",
     "10 KiB UTF8 preview bound with explicit truncation; untruncated bounded final response",
     "separate v3 start/poll ABI, code7, old clients preserved",
-    "one native poll/free owner; Flutter epoch/request/revision checks; terminal replaces preview"
+    "one native poll/free owner; Flutter epoch/request/revision checks; terminal replaces preview",
+    "Visible output follows existing post-provider policy: enabled complete-body mutators withhold previews until their accepted result; no guard bypass."
   ],
   "checksRequired": [
     "real core/lease/provider/WAL held-stream regression",
@@ -23,5 +24,6 @@
     "native rebuild and physical devices",
     "JM07 preview optin and JM08 media",
     "signed release and remaining Road Gold"
-  ]
+  ],
+  "initialHostedResult": "Run37762616216 compiled; storage3, GUI21 and protocol11 passed; first live fixture wrongly retained default refusal recovery, so early-text assertion failed. Fixture now covers both ungated live output and default deferred policy."
 }

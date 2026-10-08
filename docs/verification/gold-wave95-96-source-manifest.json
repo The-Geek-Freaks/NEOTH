@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T10:14:05.8280295Z",
-  "validationStatus": "mobile-live-checkout-custody-repaired-tests-pending",
+  "capturedUtc": "2026-10-08T10:27:41.7976931Z",
+  "validationStatus": "mobile-live-stream-policy-fixture-corrected-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4053,8 +4053,8 @@
     },
     {
       "path": "docs/verification/gold-wave2513-mobile-live.json",
-      "bytes": 1126,
-      "sha256": "5B10392C4B208923B031405AC617333D2E04486AD28300EA5478F88C1229AD29"
+      "bytes": 1541,
+      "sha256": "72636F62801C4B9FABAC7A6C938CE95C72C8BF4689E42735B031E86AE1315507"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -7108,8 +7108,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 87821,
-      "sha256": "7D1C080E26DD375C6D847F389BA12537DF01049791D6750E552FAF0AFA11D1AC"
+      "bytes": 89104,
+      "sha256": "35BFB74DEA958849AA327BFFCED81F1DAA336556D56D7CF84BEA167FB4482611"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",

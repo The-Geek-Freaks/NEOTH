@@ -100,7 +100,13 @@ enum AdmissionError {
 
 impl std::fmt::Display for AdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "chat admission failed: {self:?}")
+        let reason = match self {
+            Self::Closing => "closing",
+            Self::Busy => "busy",
+            Self::ProviderUnavailable => "provider unavailable",
+            Self::ProviderConfigChanged => "provider epoch changed",
+        };
+        write!(formatter, "GUI admission failed: {reason}")
     }
 }
 impl std::error::Error for AdmissionError {}
@@ -1275,6 +1281,7 @@ mod tests {
             grant_consent,
             published_epoch,
             Arc::clone(&provider) as Arc<dyn Provider>,
+            false,
         )
         .await;
         (runtime, provider, home, writer, writer_join)
@@ -1295,7 +1302,8 @@ mod tests {
             inner: Arc::clone(&provider),
         });
         let (runtime, home, writer, writer_join) =
-            test_runtime_with_published_provider(grant_consent, published_epoch, published).await;
+            test_runtime_with_published_provider(grant_consent, published_epoch, published, false)
+                .await;
         (runtime, provider, home, writer, writer_join)
     }
 
@@ -1303,6 +1311,7 @@ mod tests {
         grant_consent: bool,
         published_epoch: u64,
         provider: Arc<dyn Provider>,
+        allow_live_fixture: bool,
     ) -> (
         Arc<DaemonChatRuntime>,
         tempfile::TempDir,
@@ -1325,6 +1334,11 @@ mod tests {
         };
         config.council.disabled = Some(true);
         config.memory.recall_shortcut = false;
+        if allow_live_fixture {
+            config.refusal_recovery.enabled = false;
+            config.refusal_recovery.abliterated_fallback_enabled = false;
+            config.refusal_recovery.teacher_escalation_enabled = false;
+        }
         let config_path = home.path().join("freedom.yaml");
         std::fs::write(
             &config_path,
@@ -1508,6 +1522,7 @@ mod tests {
 
     struct MobileLiveProvider {
         release: Arc<Notify>,
+        first_consumed: Arc<Notify>,
     }
     #[async_trait]
     impl Provider for MobileLiveProvider {
@@ -1540,8 +1555,10 @@ mod tests {
                 .context("live fixture needs authenticated start")?;
             effect.begin_start().await?.started().await?;
             let release = Arc::clone(&self.release);
+            let first_consumed = Arc::clone(&self.first_consumed);
             Ok(Box::pin(async_stream::try_stream! {
                 yield mobile_chunk(&"first ".repeat(1000), false);
+                first_consumed.notify_one();
                 release.notified().await;
                 yield mobile_chunk("second", true);
             }))
@@ -1562,12 +1579,19 @@ mod tests {
 
     #[tokio::test]
     async fn companion_live_preview_precedes_provider_completion_and_retains_one_terminal() {
+        verify_mobile_stream_policy(true).await;
+        verify_mobile_stream_policy(false).await;
+    }
+
+    async fn verify_mobile_stream_policy(allow_live: bool) {
         let release = Arc::new(Notify::new());
+        let first_consumed = Arc::new(Notify::new());
         let provider: Arc<dyn Provider> = Arc::new(MobileLiveProvider {
             release: Arc::clone(&release),
+            first_consumed: Arc::clone(&first_consumed),
         });
         let (runtime, home, writer, writer_join) =
-            test_runtime_with_published_provider(true, 0, provider).await;
+            test_runtime_with_published_provider(true, 0, provider, allow_live).await;
         let authority = DeviceAuthority::load(home.path()).unwrap();
         let signing = SigningKey::from_bytes(&[41; 32]);
         let descriptor = ReconnectDescriptor {
@@ -1621,11 +1645,17 @@ mod tests {
             tokio::pin!(chat);
             tokio::select! {
                 result = &mut chat => panic!("completed before first live text: {result:?}"),
-                changed = receiver.changed() => changed.unwrap(),
+                changed = receiver.changed(), if allow_live => changed.unwrap(),
+                () = first_consumed.notified(), if !allow_live => {}
                 _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("missing live text"),
             }
-            assert!(!receiver.borrow().text.is_empty());
-            assert!("first ".repeat(1000).starts_with(&receiver.borrow().text));
+            if allow_live {
+                assert!(!receiver.borrow().text.is_empty());
+                assert!("first ".repeat(1000).starts_with(&receiver.borrow().text));
+            } else {
+                assert_eq!(receiver.borrow().revision, 0);
+                assert!(receiver.borrow().text.is_empty());
+            }
             lease.check_chat_delivery().unwrap();
             release.notify_one();
             let result = tokio::time::timeout(Duration::from_secs(10), chat)
