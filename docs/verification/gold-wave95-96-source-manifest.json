@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T10:10:35.5935312Z",
-  "validationStatus": "mobile-live-hosted-format-applied-functional-pending",
+  "capturedUtc": "2026-10-08T10:14:05.8280295Z",
+  "validationStatus": "mobile-live-checkout-custody-repaired-tests-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -173,8 +173,8 @@
     },
     {
       "path": ".github/workflows/mobile-live-output-contracts.yml",
-      "bytes": 10213,
-      "sha256": "E47F4353A3B707ABF504AB43AEDD54368A6882ADB027A058BB8A9D4276079882"
+      "bytes": 10273,
+      "sha256": "638CE65C6D49E54D156369163285BAF55A8920BC2629BF87AE62E85725A00682"
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",

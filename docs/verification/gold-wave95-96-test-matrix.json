@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile-live-hosted-format-applied-functional-pending",
+  "status": "mobile-live-checkout-custody-repaired-tests-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 407673,
-    "sha256": "BC88E66A8F4E76962C8BA70853677CBFA42DA88D7FE2132B8B61C212455054F0"
+    "bytes": 407672,
+    "sha256": "33AB199501A130DCDA20DF6E5EF531B510769E7E8BC67A56AA781341A7B5A075"
   },
   "sourceInputs": 2226,
   "requiredNativeTests": [
@@ -79663,6 +79663,20 @@
       }
     ],
     "note": "Original preflight37761704537 format archive/source/internal hashes and five full Git postimages verified; no local rustfmt.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2513CheckoutCustody": {
+    "base": "498738fb72d7b5278e6f22b9607ff8fdf31faf82",
+    "sources": [
+      {
+        "path": ".github/workflows/mobile-live-output-contracts.yml",
+        "bytes": 10273,
+        "sha256": "638CE65C6D49E54D156369163285BAF55A8920BC2629BF87AE62E85725A00682",
+        "blob": "2890ec71f97b1d015e9db6a858caa4f87bbd6860"
+      }
+    ],
+    "note": "Run37762158858 stopped before compilation: forced ps1 CRLF differs from raw blob. Verify normalized checkout Git OID and bind raw Git bytes; exact producer protection retained.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

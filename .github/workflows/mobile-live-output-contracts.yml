@@ -52,11 +52,11 @@ jobs:
               path = pathlib.Path(relative)
               if path.is_symlink() or not path.is_file():
                   raise SystemExit("source absent")
-              data = path.read_bytes()
               blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + relative], text=True).strip()
-              actual = subprocess.check_output(["git", "hash-object", "--no-filters", "--", relative], text=True).strip()
+              actual = subprocess.check_output(["git", "hash-object", "--path=" + relative, "--", relative], text=True).strip()
               if actual != blob:
-                  raise SystemExit("checkout differs from producer")
+                  raise SystemExit("checkout differs from producer: " + relative)
+              data = subprocess.check_output(["git", "cat-file", "blob", blob])
               sources.append({"path": relative, "blob": blob, "bytes": len(data),
                               "sha256": hashlib.sha256(data).hexdigest().upper()})
           proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chat-replay"
