@@ -184,6 +184,20 @@ class _CompanionHomeState extends State<CompanionHome> {
                         Padding(padding: const EdgeInsets.only(top: 12), child: CompanionActivityCard(snapshot: activity)),
                     if (widget.controller.chatLocalMessage case final message?)
                       Padding(padding: const EdgeInsets.only(top: 12), child: Text(message)),
+                    if (widget.controller.chatPending)
+                      if (widget.controller.chatPreview case final preview?)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Card(child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text('Answer in progress', style: Theme.of(context).textTheme.labelLarge),
+                              const SizedBox(height: 8),
+                              SelectableText(preview.text),
+                              if (preview.truncated) const Text('Preview limit reached. Waiting for the complete response.'),
+                            ]),
+                          )),
+                        ),
                     if (widget.controller.chatTerminal case final terminal?)
                       Padding(padding: const EdgeInsets.only(top: 12), child: CompanionTerminalCard(terminal: terminal)),
                   ],

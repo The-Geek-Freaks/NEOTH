@@ -76,6 +76,8 @@ pub mod companion_authority;
 /// the v2 preview/loopback companion and is reached only through its typed
 /// protocol/authority/runtime boundaries.
 pub mod companion_protocol;
+#[cfg(any(test, feature = "cluster"))]
+mod companion_stream;
 #[cfg(feature = "cluster")]
 pub(crate) mod companion_runtime;
 #[cfg(not(feature = "cluster"))]

@@ -136,7 +136,9 @@ try {
             'neoth_companion_operation_cancel',
             'neoth_companion_operation_free',
             'neoth_companion_chat_start_v2',
-            'neoth_companion_operation_poll_v2'
+            'neoth_companion_operation_poll_v2',
+            'neoth_companion_chat_start_v3',
+            'neoth_companion_operation_poll_v3'
         )
         $matchedFfiExports = @()
         foreach ($symbol in $requiredFfiExports) {

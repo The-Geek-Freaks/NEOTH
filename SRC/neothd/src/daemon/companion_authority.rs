@@ -214,6 +214,11 @@ impl StatusLease {
             revision: self.revision,
         })
     }
+
+    #[cfg(any(test, feature = "cluster"))]
+    pub(crate) fn check_chat_delivery(&self) -> Result<()> {
+        check_chat_effect_authority(&self.shared, self.id, self.delivery_id, self.revision)
+    }
 }
 
 #[cfg(any(test, feature = "cluster"))]

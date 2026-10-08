@@ -1,0 +1,27 @@
+{
+  "schema": "neoth.gold.wave2513.mobile-live.v1",
+  "base": "e704ed8c63c76241bde4eb6cdb35019a12b62587",
+  "status": "implemented-hosted-pending",
+  "localExecutableValidationRan": false,
+  "behavior": [
+    "signed additive chat_stream_v1 negotiation",
+    "actual shared core visible output into request-bound absolute previews",
+    "10 KiB UTF8 preview bound with explicit truncation; untruncated bounded final response",
+    "separate v3 start/poll ABI, code7, old clients preserved",
+    "one native poll/free owner; Flutter epoch/request/revision checks; terminal replaces preview"
+  ],
+  "checksRequired": [
+    "real core/lease/provider/WAL held-stream regression",
+    "legacy protocol and GUI controls",
+    "native v3 resize and terminal dominance",
+    "Flutter stale/foreign/forget and model bounds",
+    "native Android/iOS export and device acceptance"
+  ],
+  "open": [
+    "JM05 device-bound multi-turn conversation registry and canonical history",
+    "reconnect replay",
+    "native rebuild and physical devices",
+    "JM07 preview optin and JM08 media",
+    "signed release and remaining Road Gold"
+  ]
+}

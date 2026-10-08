@@ -206,6 +206,24 @@ int _positiveInt(Object? value) {
 
 enum CompanionToolActivityPhase { started, succeeded, failed, rejected, unknown }
 
+class CompanionChatStreamSnapshot {
+  const CompanionChatStreamSnapshot({required this.requestId, required this.revision, required this.text, required this.truncated});
+  final String requestId;
+  final int revision;
+  final String text;
+  final bool truncated;
+
+  factory CompanionChatStreamSnapshot.fromBridgeJson(Map<String, Object?> value) {
+    const keys = {'kind', 'stream_schema_version', 'request_id', 'revision', 'text', 'truncated'};
+    if (value.length != keys.length || !value.keys.toSet().containsAll(keys) ||
+        value['kind'] != 'chat_stream_snapshot' || value['stream_schema_version'] != 1 ||
+        value['truncated'] is! bool) throw const FormatException('invalid stream snapshot');
+    return CompanionChatStreamSnapshot(requestId: _uuid(value['request_id']),
+        revision: _positiveInt(value['revision']), text: _boundedMaybeEmptyText(value['text'], 10 * 1024),
+        truncated: value['truncated']! as bool);
+  }
+}
+
 class CompanionToolActivityEvent {
   const CompanionToolActivityEvent({required this.eventSeq, required this.ordinal, required this.phase, required this.label});
   final int eventSeq;

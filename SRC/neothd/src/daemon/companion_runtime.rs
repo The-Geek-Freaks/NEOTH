@@ -1381,6 +1381,9 @@ impl CompanionRuntime {
         } else {
             None
         };
+        let stream_requested = request.capabilities.chat_stream_v1;
+        let (mut stream_sink, mut stream_receiver) =
+            super::companion_stream::CompanionStreamSink::new(request_id);
         let daemon_request = crate::daemon::audit_rpc::DaemonPlainChatRequest {
             schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
             message: request.message,
@@ -1394,12 +1397,18 @@ impl CompanionRuntime {
             device_stop,
             cancelled_by_owner_task,
         ));
-        let chat = self.chat_runtime.execute_companion_chat_turn(
-            daemon_request,
-            cancellation.clone(),
-            effect_gate,
-            tool_activity_sink.as_ref(),
-        );
+        let chat = async {
+            if stream_requested {
+                self.chat_runtime.execute_companion_stream_turn(
+                    daemon_request, cancellation.clone(), effect_gate,
+                    tool_activity_sink.as_ref(), &mut stream_sink,
+                ).await
+            } else {
+                self.chat_runtime.execute_companion_chat_turn(
+                    daemon_request, cancellation.clone(), effect_gate, tool_activity_sink.as_ref(),
+                ).await
+            }
+        };
         tokio::pin!(chat);
         // This is the existing request/connection owner.  It never creates a
         // transport task: while an activity frame is in flight the chat future
@@ -1407,20 +1416,20 @@ impl CompanionRuntime {
         // already-started bounded frame has either completed or made the
         // carrier indeterminate.  Unsent snapshots are coalesced by taking a
         // fresh bounded sink snapshot after each generation change.
-        let result = if let Some(sink) = tool_activity_sink.as_ref() {
-            let mut observed_revision = sink.activity_revision();
+        let result = {
+            let mut observed_revision = 0;
             loop {
                 tokio::select! {
                     biased;
                     result = &mut chat => break result,
-                    changed = sink.changed_after(observed_revision) => {
-                        observed_revision = changed;
-                        let frame = ServerFrame::ChatActivitySnapshot(
-                            companion_activity_snapshot(request_id, sink),
-                        );
+                    frame = next_chat_progress(request_id, tool_activity_sink.as_ref(),
+                        &mut observed_revision, &mut stream_receiver, stream_requested) => {
                         match race_admitted_chat_with_activity_write(
                             &mut chat,
-                            write_activity_frame(&mut connection, &frame),
+                            async {
+                                lease.check_chat_delivery()?;
+                                write_activity_frame(&mut connection, &frame).await
+                            },
                         ).await {
                             InFlightActivityOutcome::ActivityWritten => {}
                             other @ InFlightActivityOutcome::TerminalAfterActivity(_) => {
@@ -1462,8 +1471,6 @@ impl CompanionRuntime {
                     }
                 }
             }
-        } else {
-            chat.await
         };
         cancellation.close();
         if let Err(error) = owner_cancel
@@ -2077,8 +2084,8 @@ async fn write_chat_challenge_with_activity_advertisement(
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
     let bytes =
-        crate::daemon::companion_protocol::encode_chat_challenge_with_activity_advertisement(
-            challenge, true,
+        crate::daemon::companion_protocol::encode_chat_challenge_with_stream_advertisement(
+            challenge,
         )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
         .await
@@ -2089,6 +2096,30 @@ async fn write_chat_challenge_with_activity_advertisement(
 /// Activity delivery is an admitted connection effect, not a timeout future.
 /// Once framing starts the owner awaits its actual terminal result before it
 /// sends the chat terminal or retires this connection.
+async fn next_chat_progress(
+    request_id: Uuid,
+    activity: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
+    observed: &mut u64,
+    stream: &mut tokio::sync::watch::Receiver<super::companion_protocol::CompanionChatStreamSnapshot>,
+    stream_requested: bool,
+) -> ServerFrame {
+    tokio::select! {
+        changed = async {
+            match activity {
+                Some(sink) => sink.changed_after(*observed).await,
+                None => std::future::pending::<u64>().await,
+            }
+        } => {
+            *observed = changed;
+            ServerFrame::ChatActivitySnapshot(companion_activity_snapshot(request_id, activity.expect("observed activity")))
+        }
+        changed = stream.changed(), if stream_requested => {
+            if changed.is_err() { return std::future::pending().await; }
+            ServerFrame::ChatStreamSnapshot(stream.borrow_and_update().clone())
+        }
+    }
+}
+
 async fn write_activity_frame(
     connection: &mut peeroxide::SwarmConnection,
     frame: &ServerFrame,

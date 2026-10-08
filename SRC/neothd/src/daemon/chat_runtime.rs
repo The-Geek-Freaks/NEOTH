@@ -98,6 +98,13 @@ enum AdmissionError {
     ProviderConfigChanged,
 }
 
+impl std::fmt::Display for AdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "chat admission failed: {self:?}")
+    }
+}
+impl std::error::Error for AdmissionError {}
+
 #[cfg(any(test, feature = "cluster"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompanionChatTurnError {
@@ -381,20 +388,31 @@ impl DaemonChatRuntime {
         sink: &mut dyn ChatTurnEventSink,
         effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     ) -> Result<ChatTurnTerminal> {
+        self.execute_stream_turn(message, model, skill, admitted_session_id, incognito,
+            reasoning_display, staged_attachments, ephemeral_consent, cancellation,
+            sink, effect_gate, None).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_stream_turn(
+        &self,
+        message: String,
+        model: Option<String>,
+        skill: Option<String>,
+        admitted_session_id: Option<String>,
+        incognito: bool,
+        reasoning_display: bool,
+        staged_attachments: Vec<PathBuf>,
+        ephemeral_consent: crate::consent::EphemeralConsent,
+        cancellation: chat_turn_pipeline::ChatTurnCancellation,
+        sink: &mut dyn ChatTurnEventSink,
+        effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+        tool_activity_sink: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
+    ) -> Result<ChatTurnTerminal> {
         let admission = self
             .admit_with_cancellation(cancellation.clone())
             .await
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "GUI admission failed: {}",
-                    match error {
-                        AdmissionError::Closing => "closing",
-                        AdmissionError::Busy => "busy",
-                        AdmissionError::ProviderUnavailable => "provider unavailable",
-                        AdmissionError::ProviderConfigChanged => "provider epoch changed",
-                    }
-                )
-            })?;
+            .map_err(anyhow::Error::new)?;
         let _active = ActiveOperationGuard {
             runtime: self,
             id: admission.id,
@@ -432,7 +450,7 @@ impl DaemonChatRuntime {
             &self.active_segment_path,
             sink,
             effect_gate,
-            None,
+            tool_activity_sink,
         )
         .await?;
         cancellation.close();
@@ -451,6 +469,46 @@ impl DaemonChatRuntime {
         )
         .await;
         Ok(terminal)
+    }
+
+    /// Companion delegates to the same stream core, with its own signed lease
+    /// and bounded visible projection. No GUI capability is accepted here.
+    #[cfg(any(test, feature = "cluster"))]
+    pub(crate) async fn execute_companion_stream_turn(
+        &self,
+        request: DaemonPlainChatRequest,
+        cancellation: chat_turn_pipeline::ChatTurnCancellation,
+        effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate>,
+        activity: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
+        sink: &mut super::companion_stream::CompanionStreamSink,
+    ) -> std::result::Result<DaemonPlainChatResponse, CompanionChatTurnError> {
+        validate_request(&request).map_err(|_| CompanionChatTurnError::Denied)?;
+        let accepted = self.reload_controller.accepted_snapshot();
+        crate::consent::ensure_all_still_granted(&self.selected_home, accepted.config().as_ref())
+            .map_err(|_| CompanionChatTurnError::Denied)?;
+        let result = self.execute_stream_turn(
+            request.message, None, None, None, false, false, Vec::new(),
+            crate::consent::EphemeralConsent::default(), cancellation.clone(),
+            sink, Some(effect_gate), activity,
+        ).await;
+        cancellation.close();
+        let terminal = result.map_err(|error| {
+            if let Some(admission) = error.downcast_ref::<AdmissionError>() {
+                match admission {
+                    AdmissionError::Busy => CompanionChatTurnError::Busy,
+                    _ => CompanionChatTurnError::Unavailable,
+                }
+            } else if error.downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>().is_some() {
+                CompanionChatTurnError::Timeout
+            } else { CompanionChatTurnError::Indeterminate }
+        })?;
+        let response = DaemonPlainChatResponse {
+            records: vec![DaemonPlainChatRecord { kind: DaemonPlainChatRecordKind::Stdout, text: sink.response_text() }],
+            terminal: terminal.into(),
+        };
+        let bytes = serde_json::to_vec(&response).map_err(|_| CompanionChatTurnError::Indeterminate)?;
+        validate_daemon_plain_chat_response(&response, bytes.len()).map_err(|_| CompanionChatTurnError::Indeterminate)?;
+        Ok(response)
     }
 
     /// Register one non-incognito terminal response only after a FIFO durability
@@ -1414,6 +1472,76 @@ mod tests {
     }
 
     struct DiscardingGuiSink;
+
+    struct MobileLiveProvider { release: Arc<Notify> }
+    #[async_trait]
+    impl Provider for MobileLiveProvider {
+        fn name(&self) -> &'static str { "claude_cli" }
+        fn default_model(&self) -> Option<&str> { Some("runtime-test-model") }
+        fn streams_on_wire(&self) -> bool { true }
+        fn w41_effect_start_adapter(&self, _: crate::providers::W41EffectStartProbe) -> bool { true }
+        async fn complete(&self, _: Request) -> Result<Completion> { anyhow::bail!("stream required") }
+        async fn stream_raw(&self, _: Request, permit: &crate::providers::ProviderDispatchPermit) -> Result<crate::providers::ChunkStream> {
+            let effect = permit.prepare_effect(crate::providers::ChatTurnEffectKind::Provider {
+                call_scope: "daemon.chat_runtime.mobile_live_fixture", streaming: true,
+            }).await?.context("live fixture needs authenticated start")?;
+            effect.begin_start().await?.started().await?;
+            let release = Arc::clone(&self.release);
+            Ok(Box::pin(async_stream::try_stream! {
+                yield mobile_chunk(&"first ".repeat(1000), false);
+                release.notified().await;
+                yield mobile_chunk("second", true);
+            }))
+        }
+    }
+    fn mobile_chunk(text: &str, done: bool) -> crate::providers::CompletionChunk {
+        crate::providers::CompletionChunk { delta: text.into(), done,
+            termination: Default::default(), identity: Default::default(),
+            input_tokens: None, output_tokens: None, cache_creation_tokens: None, cache_read_tokens: None }
+    }
+
+    #[tokio::test]
+    async fn companion_live_preview_precedes_provider_completion_and_retains_one_terminal() {
+        let release = Arc::new(Notify::new());
+        let provider: Arc<dyn Provider> = Arc::new(MobileLiveProvider { release: Arc::clone(&release) });
+        let (runtime, home, writer, writer_join) = test_runtime_with_published_provider(true, 0, provider).await;
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let signing = SigningKey::from_bytes(&[41; 32]);
+        let descriptor = ReconnectDescriptor { schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1 };
+        let proof = EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32],
+            CompanionScope::ChatSend, "mobile-live".into(), &signing).unwrap();
+        let enrolled = authority.begin_enrollment(proof, [4; 32], descriptor, 1).unwrap();
+        authority.reconcile_audit(enrolled.mutation_id, AuditObservation::Observed).unwrap();
+        let challenge = authority.begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], 2).unwrap();
+        let request = CompanionChatRequest::signed_with_chat_stream_v1(&challenge, uuid::Uuid::now_v7(), "ordinary request".into(), false, &signing).unwrap();
+        let lease = authority.authorize_chat(&request, 3).unwrap();
+        let (mut sink, mut receiver) = super::super::companion_stream::CompanionStreamSink::new(request.request_id);
+        {
+            let chat = runtime.execute_companion_stream_turn(DaemonPlainChatRequest {
+                schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION, message: request.message,
+            }, chat_turn_pipeline::ChatTurnCancellation::default(), lease.chat_effect_gate(), None, &mut sink);
+            tokio::pin!(chat);
+            tokio::select! {
+                result = &mut chat => panic!("completed before first live text: {result:?}"),
+                changed = receiver.changed() => changed.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("missing live text"),
+            }
+            assert!(!receiver.borrow().text.is_empty());
+            assert!("first ".repeat(1000).starts_with(&receiver.borrow().text));
+            lease.check_chat_delivery().unwrap();
+            release.notify_one();
+            let result = tokio::time::timeout(Duration::from_secs(10), chat).await.unwrap().unwrap();
+            assert_eq!(result.records.len(), 1);
+            assert_eq!(result.records[0].text, "first ".repeat(1000) + "second");
+        }
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+    }
 
     impl ChatTurnEventSink for DiscardingGuiSink {
         fn emit(&mut self, _event: ChatTurnEvent) -> Result<()> {

@@ -24,6 +24,7 @@ class CompanionController extends ChangeNotifier {
   CompanionStatus? status;
   CompanionChatTerminal? chatTerminal;
   CompanionChatActivitySnapshot? chatActivity;
+  CompanionChatStreamSnapshot? chatPreview;
   String? chatLocalMessage;
   bool chatPending = false;
   bool chatCancelRequested = false;
@@ -122,6 +123,7 @@ class CompanionController extends ChangeNotifier {
     chatCancelRequested = false;
     chatTerminal = null;
     chatActivity = null;
+    chatPreview = null;
     _chatRequestId = null;
     _activityMaximum = -1;
     _activityIncomplete = false;
@@ -129,7 +131,10 @@ class CompanionController extends ChangeNotifier {
     _notify();
     try {
       final bridge = _ensureBridge();
-      final result = bridge is NativeBridgeWithActivity
+      final result = bridge is NativeBridgeWithStream
+          ? await bridge.chatWithStream(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message,
+              (snapshot) => _acceptActivity(epoch, snapshot), (snapshot) => _acceptStream(epoch, snapshot))
+          : bridge is NativeBridgeWithActivity
           ? await bridge.chatWithActivity(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message, (snapshot) => _acceptActivity(epoch, snapshot))
           : await bridge.chat(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId, message);
       if (epoch != _chatEpoch) return;
@@ -140,6 +145,7 @@ class CompanionController extends ChangeNotifier {
         final terminal = CompanionChatTerminal.fromBridgeJson(result.publicJson!);
         if (epoch != _chatEpoch || (_chatRequestId != null && _chatRequestId != terminal.requestId)) throw const FormatException('cross-request terminal');
         chatActivity = null;
+        chatPreview = null;
         chatTerminal = terminal;
       } else if (result.kind == NativeOperationResult.cancelled) {
         chatLocalMessage = 'Waiting stopped before a terminal was confirmed.';
@@ -151,7 +157,7 @@ class CompanionController extends ChangeNotifier {
     } on StateError {
       if (epoch == _chatEpoch) chatLocalMessage = 'NEOTH is unavailable. No message is retried automatically.';
     } finally {
-      if (epoch == _chatEpoch) { chatPending = false; chatCancelRequested = false; _notify(); }
+      if (epoch == _chatEpoch) { chatPreview = null; chatPending = false; chatCancelRequested = false; _notify(); }
     }
   }
 
@@ -168,11 +174,21 @@ class CompanionController extends ChangeNotifier {
     _notify();
   }
 
+  void _acceptStream(int epoch, CompanionChatStreamSnapshot snapshot) {
+    if (_disposed || epoch != _chatEpoch || !chatPending || chatTerminal != null || chatCancelRequested) return;
+    if (_chatRequestId != null && _chatRequestId != snapshot.requestId) return;
+    if (snapshot.revision <= (chatPreview?.revision ?? 0)) return;
+    _chatRequestId = snapshot.requestId;
+    chatPreview = snapshot;
+    _notify();
+  }
+
   /// Stops waiting for this one local operation. This is not a provider or
   /// daemon abort claim: the bridge still owns the terminal poll and drain.
   Future<void> cancelChat() async {
     if (_disposed || !canStopWaiting) return;
     chatCancelRequested = true;
+    chatPreview = null;
     chatLocalMessage = 'Stopping the wait…';
     _notify();
     // The native cancel call drains synchronously. Yield once so the disabled
@@ -192,6 +208,7 @@ class CompanionController extends ChangeNotifier {
     // Invalidate before the awaited store mutation: a prior operation is still
     // owned and drained by native, but may not mutate this cleared session.
     ++_chatEpoch;
+    chatPreview = null;
     _activityMaximum = -1;
     _activityIncomplete = false;
     chatPending = false;

@@ -88,6 +88,16 @@ int32_t neoth_companion_operation_poll(neoth_companion_operation *operation,
 int32_t neoth_companion_operation_poll_v2(neoth_companion_operation *operation,
     uint8_t *out, size_t out_len, size_t *required_len);
 void neoth_companion_operation_cancel(neoth_companion_operation *operation);
+/* Optional paired v3 entrypoints: explicit stream negotiation, never a resend.
+ * poll_v3 adds code 7: an absolute chat_stream_snapshot preview (10 KiB text).
+ * Revisions may skip because snapshots coalesce; replace instead of append.
+ * A confirmed terminal supersedes previews; codes 0..6 retain v2 meanings. */
+neoth_companion_operation *neoth_companion_chat_start_v3(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *message, size_t message_len, uint8_t request_tool_activity);
+int32_t neoth_companion_operation_poll_v3(neoth_companion_operation *operation,
+    uint8_t *out, size_t out_len, size_t *required_len);
 void neoth_companion_operation_free(neoth_companion_operation *operation);
 
 #ifdef __cplusplus

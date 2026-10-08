@@ -1,0 +1,168 @@
+name: Mobile Live Output Contracts
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head: { required: true, type: string }
+permissions: { contents: read }
+jobs:
+  replay-contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with: { fetch-depth: 1, persist-credentials: false }
+      - name: Bind exact replay producer
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/chat-replay"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          paths = [
+              ".github/workflows/mobile-live-output-contracts.yml", "SRC/Cargo.toml", "SRC/Cargo.lock",
+              "SRC/neothd/Cargo.toml", "SRC/neothd/src/daemon/mod.rs",
+              "SRC/neothd/src/daemon/chat_replay.rs", "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+              "SRC/neothd/src/daemon/gui_chat_protocol.rs", "SRC/neothd/src/daemon/chat_runtime.rs",
+              "SRC/neothd/src/daemon/companion_protocol.rs",
+              "SRC/neothd/src/daemon/companion_stream.rs", "SRC/neothd/src/daemon/companion_runtime.rs",
+              "SRC/neothd/src/daemon/companion_authority.rs", "SRC/neothd/src/cli/chat.rs",
+              "SRC/neothd/src/cli/chat_turn_pipeline.rs", "SRC/neothd/src/providers/mod.rs",
+              "bridges/companion-native/Cargo.toml", "bridges/companion-native/Cargo.lock",
+              "bridges/companion-native/src/lib.rs", "bridges/companion-native/include/neoth_companion_bridge.h",
+              "apps/neoth_companion/lib/models.dart", "apps/neoth_companion/lib/native_bridge.dart",
+              "apps/neoth_companion/lib/companion_controller.dart", "apps/neoth_companion/lib/main.dart",
+              "apps/neoth_companion/test/companion_controller_test.dart",
+              "apps/neoth_companion/pubspec.yaml", "apps/neoth_companion/pubspec.lock",
+              "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
+              ".github/scripts/mobile/materialize-neoth-companion.ps1",
+          ]
+          sources = []
+          for relative in paths:
+              path = pathlib.Path(relative)
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit("source absent")
+              data = path.read_bytes()
+              blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + relative], text=True).strip()
+              actual = subprocess.check_output(["git", "hash-object", "--no-filters", "--", relative], text=True).strip()
+              if actual != blob:
+                  raise SystemExit("checkout differs from producer")
+              sources.append({"path": relative, "blob": blob, "bytes": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest().upper()})
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chat-replay"
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "sources": sources}
+          (proof / "source-custody.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: '1.91.0' }
+      - name: Restore compiled core checkpoint
+        id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-whatsapp-product-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-whatsapp-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-
+      - name: Run replay storage and existing carrier regressions
+        id: contracts
+        working-directory: SRC
+        timeout-minutes: 50
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/chat-replay"
+          ordinal=0
+          for group in daemon::companion_stream::tests:: daemon::gui_chat_runtime:: daemon::companion_protocol::tests:: daemon::chat_runtime::tests::companion_ daemon::companion_runtime::tests::; do
+            ordinal=$((ordinal + 1))
+            timeout --kill-after=10s 2400s cargo test -p neoth --lib --locked "$group" -- --list 2>&1 | tee "$proof/discovery-$ordinal.log"
+            timeout --kill-after=10s 300s cargo test -p neoth --lib --locked "$group" -- --test-threads=1 2>&1 | tee "$proof/execution-$ordinal.log"
+          done
+          git diff --exit-code HEAD -- Cargo.lock
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          proof = pathlib.Path(os.environ["RUNNER_TEMP"]) / "chat-replay"
+          groups = []
+          for ordinal, prefix in enumerate(("daemon::companion_stream::tests::", "daemon::gui_chat_runtime::", "daemon::companion_protocol::tests::", "daemon::chat_runtime::tests::companion_", "daemon::companion_runtime::tests::"), 1):
+              discovery = (proof / f"discovery-{ordinal}.log").read_text()
+              execution = (proof / f"execution-{ordinal}.log").read_text()
+              found = re.findall(r"^(" + re.escape(prefix) + r"[A-Za-z0-9_:]+): test$", discovery, re.M)
+              passed = re.findall(r"^test (" + re.escape(prefix) + r"[A-Za-z0-9_:]+) \.\.\. ok$", execution, re.M)
+              if not found or len(set(found)) != len(found) or len(set(passed)) != len(passed) or set(found) != set(passed):
+                  raise SystemExit("case identity mismatch")
+              if len(re.findall(r"^test result: ok\. " + str(len(found)) + r" passed; 0 failed; 0 ignored;", execution, re.M)) != 1:
+                  raise SystemExit("suite terminal absent")
+              groups.append({"prefix": prefix, "identities": sorted(passed)})
+          required = [
+              "daemon::companion_stream::tests::visible_snapshots_coalesce_without_losing_text_or_duplicating_terminal",
+              "daemon::companion_stream::tests::preview_bound_preserves_utf8_and_full_terminal_or_errors_before_growth",
+              "daemon::companion_stream::tests::private_and_plain_outputs_do_not_become_stream_text",
+              "daemon::companion_protocol::tests::jm05_stream_negotiation_keeps_legacy_advertisement_and_signatures",
+              "daemon::companion_protocol::tests::jm05_stream_frames_bound_escaped_text_and_reject_invalid_revision",
+              "daemon::chat_runtime::tests::companion_live_preview_precedes_provider_completion_and_retains_one_terminal",
+          ]
+          identities = [case for group in groups for case in group["identities"]]
+          if not set(required).issubset(identities):
+              raise SystemExit("mandatory regression missing")
+          value = {"producer": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+                   "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "groups": groups, "required": required,
+                   "logs": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest().upper()}
+                            for p in sorted(proof.glob("*.log"))]}
+          (proof / "cases.json").write_text(json.dumps(value, indent=2) + "\n")
+          PY
+      - name: Native bridge stream and legacy contracts
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked -- --list 2>&1 | tee "$RUNNER_TEMP/chat-replay/bridge-discovery.log"
+          cargo test --manifest-path bridges/companion-native/Cargo.toml --locked -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/chat-replay/bridge-execution.log"
+          git diff --exit-code HEAD -- bridges/companion-native/Cargo.lock SRC/Cargo.lock
+      - name: Flutter live preview and existing controller contracts
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --max-time 240 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.5-stable.tar.xz --output "$RUNNER_TEMP/flutter.tar.xz"
+          tar -xJf "$RUNNER_TEMP/flutter.tar.xz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version | tee "$RUNNER_TEMP/chat-replay/flutter-version.log"
+          cd apps/neoth_companion
+          "$RUNNER_TEMP/flutter/bin/flutter" pub get
+          git diff --exit-code HEAD -- pubspec.lock
+          "$RUNNER_TEMP/flutter/bin/flutter" analyze 2>&1 | tee "$RUNNER_TEMP/chat-replay/flutter-analysis.log"
+          "$RUNNER_TEMP/flutter/bin/flutter" test --reporter expanded 2>&1 | tee "$RUNNER_TEMP/chat-replay/flutter-execution.log"
+      - name: Save admitted replay checkpoint
+        if: ${{ success() && steps.cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-chat-replay-rust-1.91-j1-i0-d0-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mobile-live-output-contracts-${{ github.sha }}
+          path: ${{ runner.temp }}/chat-replay/
+          if-no-files-found: error
+          retention-days: 14

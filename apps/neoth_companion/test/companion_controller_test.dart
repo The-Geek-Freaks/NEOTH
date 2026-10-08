@@ -9,6 +9,7 @@ import 'package:neoth_companion/secure_store.dart';
 
 void main() {
   activityModelRegressionCases();
+  streamRegressionCases();
   group('CompanionController', () {
     test('persists a public enrollment only after a real accepted bridge frame', () async {
       final store = _MemoryStore();
@@ -448,5 +449,67 @@ void activityModelRegressionCases() {
     expect(() => CompanionChatActivitySnapshot.fromBridgeJson(<String, Object?>{...valid, 'unexpected': true}), throwsFormatException);
     expect(() => CompanionToolActivityEvent.fromJson(<String, Object?>{'event_seq': 1, 'ordinal': 1, 'phase': 'other', 'label': 'Read file'}, 0), throwsFormatException);
     expect(() => CompanionToolActivityEvent.fromJson(<String, Object?>{'event_seq': 1, 'ordinal': 1, 'phase': 'started', 'label': 'sensitive path'}, 0), throwsFormatException);
+  });
+}
+
+class _StreamBridge extends _FakeBridge implements NativeBridgeWithStream {
+  _StreamBridge(Future<NativeBridgeResult> result) : super(chatFuture: result);
+  void Function(CompanionChatStreamSnapshot)? observer;
+  @override
+  Future<NativeBridgeResult> chatWithStream(String descriptorJson, String deviceId, String message,
+      void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) {
+    observer = onStream;
+    return chatWithActivity(descriptorJson, deviceId, message, onActivity);
+  }
+}
+
+void streamRegressionCases() {
+  test('stream model bounds UTF8 and rejects invalid revisions and extra keys', () {
+    final valid = <String, Object?>{'kind': 'chat_stream_snapshot', 'stream_schema_version': 1,
+      'request_id': _deviceId, 'revision': 1, 'text': 'hello', 'truncated': false};
+    expect(CompanionChatStreamSnapshot.fromBridgeJson(valid).text, 'hello');
+    expect(() => CompanionChatStreamSnapshot.fromBridgeJson({...valid, 'revision': 0}), throwsFormatException);
+    expect(() => CompanionChatStreamSnapshot.fromBridgeJson({...valid, 'text': List.filled(4000, '€').join()}), throwsFormatException);
+    expect(() => CompanionChatStreamSnapshot.fromBridgeJson({...valid, 'secret': true}), throwsFormatException);
+  });
+  test('live preview replaces skipped revisions and terminal removes it once', () async {
+    final done = Completer<NativeBridgeResult>();
+    final bridge = _StreamBridge(done.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: _chatAccepted()), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    final running = controller.sendChat('hello');
+    void preview(int revision, String text, [String request = '11111111-1111-1111-1111-111111111111']) =>
+        bridge.observer!(CompanionChatStreamSnapshot(requestId: request, revision: revision, text: text, truncated: false));
+    preview(1, 'hel'); preview(3, 'hello');
+    preview(2, 'stale'); preview(9, 'foreign', _deviceId);
+    expect(controller.chatPreview?.text, 'hello');
+    expect(controller.chatPending, isTrue);
+    done.complete(_chatAcceptedResult()); await running;
+    expect(controller.chatPreview, isNull);
+    expect(controller.chatTerminal?.records.single.text, 'hello');
+    preview(4, 'too late');
+    expect(controller.chatPreview, isNull);
+    expect(bridge.chatCalls, 1);
+    controller.dispose();
+  });
+  test('forget clears live content before waiting and fences old stream callbacks', () async {
+    final done = Completer<NativeBridgeResult>();
+    final bridge = _StreamBridge(done.future);
+    final controller = CompanionController(store: _MemoryStore(enrollment: _chatAccepted()), bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    final running = controller.sendChat('hello');
+    final callback = bridge.observer!;
+    const preview = CompanionChatStreamSnapshot(requestId: '11111111-1111-1111-1111-111111111111',
+      revision: 1, text: 'private preview', truncated: false);
+    callback(preview);
+    expect(controller.chatPreview, isNotNull);
+    final clearing = controller.forgetLocalEnrollment();
+    expect(controller.chatPreview, isNull);
+    callback(preview);
+    done.complete(_chatAcceptedResult()); await running; await clearing;
+    expect(controller.chatPreview, isNull);
+    expect(controller.chatTerminal, isNull);
+    expect(bridge.chatCalls, 1);
+    controller.dispose();
   });
 }

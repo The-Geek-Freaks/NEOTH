@@ -25,7 +25,8 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use companion_protocol::{
-    decode_chat_challenge_with_activity_advertisement, decode_server_frame, encode_frame,
+    decode_chat_challenge_with_stream_advertisement, decode_server_frame, encode_frame,
+    CompanionChatStreamSnapshot,
     CompanionChatActivitySnapshot, CompanionChatOutcome, CompanionChatRecordKind,
     CompanionChatRequest, CompanionChatTerminal, CompanionDeniedCode, CompanionReadiness, CompanionScope,
     CompanionStatusSnapshot, EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
@@ -86,6 +87,7 @@ struct Completion {
     // Kept beside completion under the same lock so terminal priority is an
     // atomic observation, never a race across two state holders.
     activity: Option<PublicActivitySnapshot>,
+    preview: Option<PublicStreamSnapshot>,
 }
 type ActivitySlot = Arc<(Mutex<Completion>, Condvar)>;
 
@@ -138,6 +140,13 @@ struct PublicChatResult {
 
 #[derive(Clone, Serialize)]
 struct PublicChatRecord { kind: &'static str, text: String }
+
+#[derive(Clone, Serialize)]
+struct PublicStreamSnapshot {
+    kind: &'static str,
+    #[serde(flatten)]
+    snapshot: CompanionChatStreamSnapshot,
+}
 
 /// Additive, redacted, request-bound progress. This does not share the
 /// terminal's untagged JSON shape, so old poll callers cannot mistake it for a
@@ -236,10 +245,14 @@ impl Bridge {
     }
 
     fn start_chat_with_activity(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String, request_activity: bool) -> Operation {
+        self.start_chat_with_stream(descriptor, device_id, message, request_activity, false)
+    }
+
+    fn start_chat_with_stream(&self, descriptor: ReconnectDescriptor, device_id: Uuid, message: String, request_activity: bool, request_stream: bool) -> Operation {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
         Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
-            chat(device_secret, descriptor, device_id, message, request_activity, activity, cancel_rx).await
+            chat(device_secret, descriptor, device_id, message, request_activity, request_stream, activity, cancel_rx).await
         })
     }
 }
@@ -250,7 +263,7 @@ impl Operation {
         F: FnOnce(ActivitySlot) -> Fut + Send + 'static,
         Fut: Future<Output = PublicResult> + Send + 'static,
     {
-        let completion = Arc::new((Mutex::new(Completion { result: None, done: false, activity: None }), Condvar::new()));
+        let completion = Arc::new((Mutex::new(Completion { result: None, done: false, activity: None, preview: None }), Condvar::new()));
         let done = Arc::clone(&completion);
         let activity_for_work = Arc::clone(&completion);
         runtime.spawn(async move {
@@ -259,6 +272,7 @@ impl Operation {
             let (lock, wake) = &*done;
             let mut state = lock_unpoison(lock);
             state.result = Some(result);
+            state.preview = None;
             state.done = true;
             wake.notify_all();
         });
@@ -287,6 +301,10 @@ impl Operation {
     }
 
     fn poll_v2_for_delivery(&self, out_len: usize) -> Result<PollV2Delivery, ()> {
+        self.poll_for_delivery(out_len, false)
+    }
+
+    fn poll_for_delivery(&self, out_len: usize, stream: bool) -> Result<PollV2Delivery, ()> {
         let (lock, _) = &*self.completion;
         let mut state = lock_unpoison(lock);
         // Select, encode, compare capacity, and consume under one lock. This
@@ -298,6 +316,15 @@ impl Operation {
             if encoded.len() > MAX_PUBLIC_RESULT_BYTES { return Err(()); }
             return Ok(if out_len < encoded.len() { PollV2Delivery::Need(encoded.len()) }
             else { PollV2Delivery::Ready(encoded, result_code(&result)) });
+        }
+        if stream {
+            if let Some(preview) = state.preview.as_ref() {
+                let encoded = serde_json::to_vec(preview).map_err(|_| ())?;
+                if encoded.len() > MAX_PUBLIC_RESULT_BYTES { return Err(()); }
+                if out_len < encoded.len() { return Ok(PollV2Delivery::Need(encoded.len())); }
+                state.preview.take();
+                return Ok(PollV2Delivery::Ready(encoded, 7));
+            }
         }
         let Some(snapshot) = state.activity.as_ref() else { return Ok(PollV2Delivery::Pending) };
         let encoded = serde_json::to_vec(snapshot).map_err(|_| ())?;
@@ -596,6 +623,7 @@ async fn chat(
     expected_device_id: Uuid,
     message: String,
     request_activity: bool,
+    request_stream: bool,
     activity: ActivitySlot,
     mut cancel: watch::Receiver<bool>,
 ) -> PublicResult {
@@ -604,7 +632,7 @@ async fn chat(
     let signing_key = match derive_signing_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
     let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1; config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS)).await { Ok(value) => value, Err(result) => return result };
-    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, &activity, &signing_key, &mut cancel).await;
+    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, request_stream, &activity, &signing_key, &mut cancel).await;
     // Cancellation must not detach a rendezvous worker. Destroy the carrier
     // and await the sole worker before publishing this terminal result.
     let _ = swarm.destroy().await;
@@ -619,6 +647,7 @@ async fn chat_on_swarm(
     expected_device_id: Uuid,
     message: String,
     request_activity: bool,
+    request_stream: bool,
     activity: &ActivitySlot,
     signing_key: &SigningKey,
     cancel: &mut watch::Receiver<bool>,
@@ -627,8 +656,8 @@ async fn chat_on_swarm(
     if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
     let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await { Wait::Value(Some(value)) => value, Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" }, Wait::Expired => return PublicResult::Failed { code: "chat_connect_timeout" }, Wait::Cancelled => return PublicResult::Cancelled };
     if conn.remote_public_key() != &descriptor.daemon_noise_public_key { return PublicResult::Denied { code: "daemon_key_mismatch" }; }
-    let (challenge, activity_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
-        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_activity_advertisement(&frame) {
+    let (challenge, activity_advertised, stream_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_stream_advertisement(&frame) {
             Ok(value) => value,
             Err(_) => match decode_server_frame(&frame) {
                 Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
@@ -644,7 +673,9 @@ async fn chat_on_swarm(
     // An old daemon therefore receives the original request; after any signed
     // request write ambiguity this function returns indeterminate and never
     // retries through the legacy path.
-    let request = if request_activity && activity_advertised {
+    let request = if request_stream && stream_advertised {
+        CompanionChatRequest::signed_with_chat_stream_v1(&challenge, request_id, message, request_activity && activity_advertised, signing_key)
+    } else if request_activity && activity_advertised {
         CompanionChatRequest::signed_with_tool_activity_v1(&challenge, request_id, message, signing_key)
     } else {
         CompanionChatRequest::signed(&challenge, request_id, message, signing_key)
@@ -659,12 +690,23 @@ async fn chat_on_swarm(
     // Progress is observational only. It cannot extend the single existing
     // post-send response budget forever by resetting a per-frame timeout.
     let response_deadline = Instant::now() + timeout;
+    let mut stream_revision = 0;
     loop {
         let Some(remaining) = response_deadline.checked_duration_since(Instant::now()) else {
             return public_indeterminate(request_id);
         };
         match await_cancelable(cancel, remaining, conn.read()).await {
             Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
+                Ok(ServerFrame::ChatStreamSnapshot(snapshot)) if request_stream && stream_advertised => {
+                    if snapshot.validate().is_err() || snapshot.request_id != request_id || snapshot.revision <= stream_revision {
+                        return public_indeterminate(request_id);
+                    }
+                    stream_revision = snapshot.revision;
+                    let (lock, _) = &**activity;
+                    let mut state = lock_unpoison(lock);
+                    state.preview = Some(PublicStreamSnapshot { kind: "chat_stream_snapshot", snapshot });
+                    continue;
+                }
                 Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if request_activity && activity_advertised => {
                     if let Some(snapshot) = public_activity_snapshot(snapshot, request_id) {
                         let (lock, _) = &**activity;
@@ -1069,6 +1111,30 @@ pub extern "C" fn neoth_companion_chat_start_v2(
 }) }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_chat_start_v3(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8,
+    descriptor_json_len: usize,
+    device_id: *const u8,
+    device_id_len: usize,
+    message: *const u8,
+    message_len: usize,
+    request_tool_activity: u8,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    if request_tool_activity > 1 { return ptr::null_mut(); }
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(message) = input(message, message_len, MAX_CHAT_MESSAGE_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()) else { return ptr::null_mut() };
+    let Ok(message) = chat_message_from(message) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation {
+        inner: bridge.inner.start_chat_with_stream(descriptor, device_id, message, request_tool_activity == 1, true),
+    }))
+}) }
+
+#[unsafe(no_mangle)]
 pub extern "C" fn neoth_companion_operation_poll(
     operation: *mut neoth_companion_operation,
     out: *mut u8,
@@ -1110,6 +1176,30 @@ pub extern "C" fn neoth_companion_operation_poll_v2(
 }) }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_operation_poll_v3(
+    operation: *mut neoth_companion_operation,
+    out: *mut u8,
+    out_len: usize,
+    required_len: *mut usize,
+) -> i32 { ffi_code(|| unsafe {
+    let Some(operation) = borrowed(operation) else { return -1 };
+    let available = if out.is_null() { 0 } else { out_len };
+    match operation.inner.poll_for_delivery(available, true) {
+        Ok(PollV2Delivery::Pending) => 0,
+        Ok(PollV2Delivery::Need(required)) => {
+            if !required_len.is_null() { *required_len = required; }
+            5
+        }
+        Ok(PollV2Delivery::Ready(encoded, code)) => {
+            if !required_len.is_null() { *required_len = encoded.len(); }
+            ptr::copy_nonoverlapping(encoded.as_ptr(), out, encoded.len());
+            code
+        }
+        Err(()) => -1,
+    }
+}) }
+
+#[unsafe(no_mangle)]
 pub extern "C" fn neoth_companion_operation_cancel(operation: *mut neoth_companion_operation) { ffi_void(|| unsafe { if let Some(operation) = borrowed(operation) { operation.inner.cancel_and_drain(); } }); }
 
 #[unsafe(no_mangle)]
@@ -1118,6 +1208,44 @@ pub extern "C" fn neoth_companion_operation_free(operation: *mut neoth_companion
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ffi_v3_preview_resize_legacy_isolation_and_terminal_priority() {
+        let operation = operation_with_state(None, false, None);
+        let set_preview = |revision, text: &str| {
+            let operation = unsafe { &*operation };
+            lock_unpoison(&operation.inner.completion.0).preview = Some(PublicStreamSnapshot {
+                kind: "chat_stream_snapshot",
+                snapshot: CompanionChatStreamSnapshot { stream_schema_version: 1, request_id: Uuid::nil(),
+                    revision, text: text.into(), truncated: false },
+            });
+        };
+        set_preview(1, "first");
+        let mut required = 0;
+        assert_eq!(neoth_companion_operation_poll_v2(operation, ptr::null_mut(), 0, &mut required), 0);
+        assert_eq!(neoth_companion_operation_poll_v3(operation, ptr::null_mut(), 0, &mut required), 5);
+        let mut small = vec![0; required];
+        set_preview(2, &"longer".repeat(100));
+        assert_eq!(neoth_companion_operation_poll_v3(operation, small.as_mut_ptr(), small.len(), &mut required), 5);
+        let mut enough = vec![0; required];
+        assert_eq!(neoth_companion_operation_poll_v3(operation, enough.as_mut_ptr(), enough.len(), &mut required), 7);
+        let value: serde_json::Value = serde_json::from_slice(&enough).unwrap();
+        assert_eq!(value["revision"], 2);
+        assert_eq!(value["text"], "longer".repeat(100));
+        assert_eq!(neoth_companion_operation_poll_v3(operation, ptr::null_mut(), 0, &mut required), 0);
+        set_preview(3, "never delivered after terminal");
+        {
+            let operation = unsafe { &*operation };
+            let mut state = lock_unpoison(&operation.inner.completion.0);
+            state.done = true;
+            state.result = Some(public_indeterminate(Uuid::nil()));
+        }
+        assert_eq!(neoth_companion_operation_poll_v3(operation, ptr::null_mut(), 0, &mut required), 5);
+        let mut output = vec![0; required];
+        assert_eq!(neoth_companion_operation_poll_v3(operation, output.as_mut_ptr(), output.len(), &mut required), 3);
+        assert!(!String::from_utf8(output).unwrap().contains("never delivered"));
+        unsafe { drop_unstarted_operation(operation) };
+    }
 
     #[test]
     fn valid_v3_invite_is_exact_and_lowercase() {
@@ -1288,7 +1416,7 @@ mod tests {
             inner: Operation {
                 _runtime: runtime,
                 cancel: watch::channel(false).0,
-                completion: Arc::new((Mutex::new(Completion { result, done, activity }), Condvar::new())),
+                completion: Arc::new((Mutex::new(Completion { result, done, activity, preview: None }), Condvar::new())),
             },
         }))
     }
@@ -1406,14 +1534,14 @@ mod tests {
     #[test]
     fn v2_poll_terminal_priority_and_probe_retention_are_explicit() {
         let snapshot = activity(7, false);
-        let pending = Completion { result: None, done: false, activity: Some(snapshot.clone()) };
+        let pending = Completion { result: None, done: false, activity: Some(snapshot.clone()), preview: None };
         assert!(matches!(select_poll_v2(&pending), Ok(PollV2::Activity(value)) if value.max_event_seq == 7));
         // A size probe must not consume this value; a later sized read sees it.
         assert!(matches!(select_poll_v2(&pending), Ok(PollV2::Activity(value)) if value.max_event_seq == 7));
         let terminal = Completion {
             result: Some(PublicResult::Failed { code: "transport_closed" }),
             done: true,
-            activity: Some(snapshot),
+            activity: Some(snapshot), preview: None,
         };
         assert!(matches!(select_poll_v2(&terminal), Ok(PollV2::Terminal(PublicResult::Failed { code: "transport_closed" }))));
     }
