@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T06:21:34.9148136Z",
-  "validationStatus": "W2512 shared chat replay and empty-queue gap correction; hosted pending",
+  "capturedUtc": "2026-10-08T06:35:06.4094215Z",
+  "validationStatus": "W2512 replay storage, full GUI runtime and Companion protocol 35-case acceptance on 807fae85; mobile history/stream carrier still open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4043,8 +4043,8 @@
     },
     {
       "path": "docs/verification/gold-wave2512-chat-replay.json",
-      "bytes": 1968,
-      "sha256": "68546AEB3F50BF187DA36E30C76E1F78E6A3F8D9EDA3B40045B4A2F929312FC5"
+      "bytes": 2917,
+      "sha256": "CFCA80475A80C1748EC62E60C92A630F2CDCCAAFF88CDF4B2882841AADA50C95"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5193,8 +5193,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 33404,
-      "sha256": "E3625C3158C7F054957D2080E611E2B3246FFF37A6F306F34A67D7746E0C27A8"
+      "bytes": 34685,
+      "sha256": "FE12FC916D5F8C39F8825980035DE6ED08C50CCD681477B54DAF705A5E182EE6"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5203,8 +5203,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2502701,
-      "sha256": "03621F985B3EF0B4391EDFE2DC3B9629565A31042329801BE4F486AAF38EF365"
+      "bytes": 2503982,
+      "sha256": "C22153D77D563471BD64A26443C83B7FCA7D0A1D7E02BF68092CE62F66E527A6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

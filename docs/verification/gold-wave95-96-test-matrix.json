@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2512 shared chat replay and empty-queue gap correction; hosted pending",
+  "status": "W2512 replay storage, full GUI runtime and Companion protocol 35-case acceptance on 807fae85; mobile history/stream carrier still open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 407146,
-    "sha256": "49DACDB2BB9C94E15C3389E9DF43BD4B6E38B479D7AF6F1289DD15FDD56F8A61"
+    "bytes": 407209,
+    "sha256": "0B52808B447640CB177398008B5B95C2E6A191D85BF15E835C2CA43F5F69E385"
   },
   "sourceInputs": 2223,
   "requiredNativeTests": [
@@ -79441,6 +79441,32 @@
       }
     ],
     "note": "Five retention cases and one real runtime/WAL three-reader regression newly registered. Existing GUI and Companion protocol groups retained. Mobile history and stream carrier remain open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2512HostedAcceptance": {
+    "base": "807fae854c8499312acb6aacbb67ca8cd4960e0b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2512-chat-replay.json",
+        "bytes": 2917,
+        "sha256": "CFCA80475A80C1748EC62E60C92A630F2CDCCAAFF88CDF4B2882841AADA50C95",
+        "blob": "1d54bef3c853428ae330d823375136e9307a6aa3"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 34685,
+        "sha256": "FE12FC916D5F8C39F8825980035DE6ED08C50CCD681477B54DAF705A5E182EE6",
+        "blob": "5e998dba07a12804b3d03613bd56553ff46a8fe4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2503982,
+        "sha256": "C22153D77D563471BD64A26443C83B7FCA7D0A1D7E02BF68092CE62F66E527A6",
+        "blob": "45f15e4556cafe22d44bbe39704a4b180bae3524"
+      }
+    ],
+    "note": "Original ZIP/API digest, eight entries, ten raw Git bindings, six mandatory regression identities and all35 discovered/executed case identities admitted. Docs/inventory publication only; no fresh runtime-run claim.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

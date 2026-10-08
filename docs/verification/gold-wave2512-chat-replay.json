@@ -1,7 +1,7 @@
 {
   "schema": "neoth.gold.wave2512.chat-replay.v1",
   "base": "76b16b3fd795c237b72a00823d1cbb9d8370d8ff",
-  "status": "implemented_static_reviewed_hosted_pending",
+  "status": "hosted_35_cases_independently_accepted_on_807fae85",
   "localExecutableValidationRan": false,
   "problem": "Eviction of a delta larger than the whole replay byte budget empties the deque. Three readers previously reset the earliest cursor to zero, hiding a replay gap.",
   "change": "Extract private payload-generic bounded replay storage. Preserve the latest emitted cursor even when no frames remain; all replay and attach readers reject missing output. Retained frames clear their sensitive text on eviction, clear and drop.",
@@ -21,6 +21,34 @@
     "daemon::chat_replay::tests::replay_from_last_seen_sequence_never_duplicates_prior_text",
     "daemon::gui_chat_runtime::lifecycle_tests::replay_and_both_attach_paths_report_gap_after_full_byte_eviction"
   ],
-  "validation": "New six cases plus full existing gui_chat_runtime and companion_protocol test groups on a single hosted runner; source/identity/archive admission pending.",
-  "boundary": "JM05 shared retention prerequisite and concrete existing GUI gap repair only; mobile session registry, history, negotiated stream/ABI and Flutter consumer remain open. No device/release acceptance."
+  "validation": "All five replay storage, 21 existing/new GUI runtime and nine Companion protocol cases passed on the exact producer. Independent original archive, raw-source and complete test identity admission.",
+  "boundary": "JM05 shared retention prerequisite and concrete existing GUI gap repair only; mobile session registry, history, negotiated stream/ABI and Flutter consumer remain open. No device/release acceptance.",
+  "hostedAcceptance": {
+    "producer": "807fae854c8499312acb6aacbb67ca8cd4960e0b",
+    "run": 37737581495,
+    "attempt": 1,
+    "job": 113180547315,
+    "artifact": 11532677692,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37737581495",
+    "originalZipSha256": "3421B91501F5E2640ABC83FEE593E74291876A1154AB595ABF532BD1F8E8C9F2",
+    "entries": 8,
+    "rawSourceBindings": 10,
+    "passed": 35,
+    "groups": [
+      {
+        "prefix": "daemon::chat_replay::tests::",
+        "count": 5
+      },
+      {
+        "prefix": "daemon::gui_chat_runtime::",
+        "count": 21
+      },
+      {
+        "prefix": "daemon::companion_protocol::tests::",
+        "count": 9
+      }
+    ],
+    "rootProofPath": "work/gold-20260906/wave2512-chat-replay/admission/ROOT_REPLAY_ADMISSION.json",
+    "rootProofSha256": "BEBE6102E559A1FA43F9810E93A85C317F83055FC8BAD11C7B0AFCC2CE79A20F"
+  }
 }
