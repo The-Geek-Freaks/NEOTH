@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile-restart-routing-hosted-pending",
+  "status": "hosted-runtime-admitted-flutter-lint-repair-native-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 410677,
-    "sha256": "227AB239A94DF4D159CD7150BD9CC99C3069D87FCDB4CC443EE146CF3931681D"
+    "bytes": 410698,
+    "sha256": "A56FC9E5561D5EEC1930CCBEB14B12137B182A65A9A6F4FAA74A8E444F5E5424"
   },
   "sourceInputs": 2242,
   "requiredNativeTests": [
@@ -80395,6 +80395,38 @@
       }
     ],
     "note": "Prefer advertised routes after actual restart handshake starvation; mobile follow/reading and native initialization lifetime changes. Existing failing journey remains the required proof; no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2518FlutterLintRepair": {
+    "base": "141621920157a07456e47f9b20d37433505693ab",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 24082,
+        "sha256": "BA18A1B76C91F13247728E0ED8A83A405D079A0D40B84E295C1B7CDF137CB3C5",
+        "blob": "96debce642931e5341fc7e23a8594b4c23303f15"
+      },
+      {
+        "path": "apps/neoth_companion/test/conversation_presentation_test.dart",
+        "bytes": 6507,
+        "sha256": "3413EF0DF39FAAD931614DDE7D1191B8E95A94047F7B7D1C556BEA7C70374D76",
+        "blob": "63572f1483304de493c345bf9bac4b38349d40e9"
+      },
+      {
+        "path": "docs/verification/gold-wave2518-mobile-restart-routing.json",
+        "bytes": 2645,
+        "sha256": "2DC67A8B859AD1DB84BDB444C14400603610B18D2FBC026ADFE743E6400A3EBF",
+        "blob": "8d2c3e50e5a1411e937b0f3283480d85ce071c48"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2519435,
+        "sha256": "A3B01D5AC322FCB3D92E20FD7CB91F902E62903D536EAC84AF170057165C0951",
+        "blob": "daa365051b88d2ff45697cde987674526b85b2de"
+      }
+    ],
+    "note": "Runtime proof37914390018 remains bound to14162192; two analyzer-only Dart changes require fresh native QA. Runtime reuse requires unchanged Git closure and does not claim new execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

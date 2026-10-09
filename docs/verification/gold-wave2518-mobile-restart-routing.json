@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2518.mobile-restart-routing.v1",
-  "status": "implemented-hosted-unproven",
+  "status": "runtime-admitted-flutter-lint-repair-awaiting-native",
   "base": "e1c9c703d84526d89108294b33fe157bab104e90",
   "priorRun": 37909911052,
   "priorPassed": {
@@ -26,15 +26,38 @@
     "nativeSources": 65,
     "ffiExports": 14,
     "localRuntimeExecuted": false,
-    "hostedAccepted": false,
+    "hostedAccepted": true,
     "nativeAccepted": false,
     "deviceAccepted": false,
     "releaseAccepted": false
   },
   "remaining": [
-    "Unchanged real encrypted restart journey must pass on final producer",
-    "Exact hosted case and original archive admission",
-    "Flutter and Android/iOS native validation",
+    "Fresh Flutter and Android/iOS native validation",
     "Physical devices, JM07/JM08, signed release and all original Gold backlog"
-  ]
+  ],
+  "hostedExecution": {
+    "producer": "141621920157a07456e47f9b20d37433505693ab",
+    "run": "37914390018",
+    "proof": "work/gold-20260906/wave2518-mobile-scroll-candidate/journey-admission/ROOT_INTEROP_ADMISSION.json",
+    "proofSha256": "4BD76D5ACB4985C24BAE1EC70A16C5B91FE520D82547CDF5AFB9454F050562AD",
+    "rustPassed": 159,
+    "collectorPassed": 29,
+    "observerPassed": 6,
+    "sourceBindings": 81,
+    "actualConversationRestart": true,
+    "providerCalls": 2,
+    "canonicalRows": 4,
+    "cleanDaemonGenerations": 2
+  },
+  "flutterAnalysisRepair": {
+    "failedRun": "37917618428",
+    "issues": [
+      "unnecessary_cast at companion_controller.dart:311",
+      "prefer_const_constructors at conversation_presentation_test.dart:26"
+    ],
+    "testsExecuted": 0,
+    "nativeBuildsExecuted": 0,
+    "changes": "Remove redundant store cast and const-qualify one immutable widget fixture",
+    "runtimeReuse": "Only with explicit unchanged runtime source proof; no new execution claimed"
+  }
 }

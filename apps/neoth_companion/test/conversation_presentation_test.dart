@@ -23,9 +23,9 @@ void main() {
           ConversationTurn(role: 'agent', text: 'visible reply', truncated: false)]);
       const terminal = CompanionChatTerminal(requestId: requestId, outcome: 'accepted',
         records: [CompanionChatRecord(kind: 'stdout', text: 'visible reply')], provider: 'provider-a', model: 'model-a');
-      await tester.pumpWidget(MaterialApp(theme: CompanionTheme.neothDark(), home: MediaQuery(
-        data: const MediaQueryData(textScaler: TextScaler.linear(2)),
-        child: const Scaffold(body: SingleChildScrollView(child: Column(children: [
+      await tester.pumpWidget(MaterialApp(theme: CompanionTheme.neothDark(), home: const MediaQuery(
+        data: MediaQueryData(textScaler: TextScaler.linear(2)),
+        child: Scaffold(body: SingleChildScrollView(child: Column(children: [
           ConversationHistoryCard(history: history), CompanionTerminalCard(terminal: terminal, recordsInHistory: true),
         ]))),
       )));

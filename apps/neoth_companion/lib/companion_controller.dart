@@ -308,7 +308,7 @@ class CompanionController extends ChangeNotifier {
       final next = ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision, conversationIds: ids,
         selectedId: admittedId ?? current.selectedId, pendingRequestId: unresolved ? requestId : null,
         pendingConversationId: unresolved ? (admittedId ?? selected) : null, pendingIncognito: unresolved && pending.pendingIncognito);
-      await (_store as CompanionConversationStore).saveConversationCheckpoint(next);
+      await _store.saveConversationCheckpoint(next);
       if (_disposed || epoch != _chatEpoch) return;
       _conversation = next; chatTerminal = terminal; chatActivity = null; chatPreview = null;
       if (history != null) conversationHistory = history;
