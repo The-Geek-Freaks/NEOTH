@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2518.mobile-restart-routing.v1",
-  "status": "runtime-admitted-flutter-lint-repair-awaiting-native",
+  "status": "runtime-and-flutter-admitted-ios-export-repair-awaiting-native",
   "base": "e1c9c703d84526d89108294b33fe157bab104e90",
   "priorRun": 37909911052,
   "priorPassed": {
@@ -59,5 +59,20 @@
     "nativeBuildsExecuted": 0,
     "changes": "Remove redundant store cast and const-qualify one immutable widget fixture",
     "runtimeReuse": "Only with explicit unchanged runtime source proof; no new execution claimed"
+  },
+  "iosLinkerRepair": {
+    "failedRun": "37918461541",
+    "producer": "5c8613bf228c163c971235135b9aa57ac08b066d",
+    "sourceQaPassed": 56,
+    "materializedFlutterPassed": 56,
+    "androidAbisBuilt": 3,
+    "unsignedIosAppBuilt": true,
+    "requiredExportCheck": "failed",
+    "firstMissingExport": "neoth_companion_conversation_start_v1",
+    "cause": "Two conversation exports were absent from explicit iOS linker roots and could be dead-stripped before Dart FFI lookup",
+    "change": "Add explicit roots for conversation_start_v1 and conversation_poll_v1; preserve all twelve existing roots",
+    "nativeAcceptance": false,
+    "freshNativeRunRequired": true,
+    "localRuntimeExecuted": false
   }
 }

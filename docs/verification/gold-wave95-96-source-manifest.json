@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T10:29:15.7448903Z",
-  "validationStatus": "hosted-runtime-admitted-flutter-lint-repair-native-pending",
+  "capturedUtc": "2026-10-09T10:53:07.5885113Z",
+  "validationStatus": "W2518 runtime admitted; 56 Flutter pass; explicit iOS conversation linker roots repaired; fresh native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -373,8 +373,8 @@
     },
     {
       "path": "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
-      "bytes": 1484,
-      "sha256": "42FE0BFA345B12F2ED08D0249C176AA039F59055CE67ED790D7DEE44554B195C"
+      "bytes": 1575,
+      "sha256": "9BC3CDC1BB6C8B3FE119C25E13102D3BC2664F004D70DBA661BF02B6FCD81D07"
     },
     {
       "path": "apps/neoth_companion/ios/Frameworks/README.md",
@@ -4128,8 +4128,8 @@
     },
     {
       "path": "docs/verification/gold-wave2518-mobile-restart-routing.json",
-      "bytes": 2645,
-      "sha256": "2DC67A8B859AD1DB84BDB444C14400603610B18D2FBC026ADFE743E6400A3EBF"
+      "bytes": 3360,
+      "sha256": "DCD32F813FC21A26AC2A0DD4299E5AEBDB42F08F3FF16A4F3AE5BB5A508A500E"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5288,8 +5288,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2519435,
-      "sha256": "A3B01D5AC322FCB3D92E20FD7CB91F902E62903D536EAC84AF170057165C0951"
+      "bytes": 2520309,
+      "sha256": "2E3DED1E2C1E7B5CA8308457C36ABECF7E77609675999DD2FAFF30549F8F111A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

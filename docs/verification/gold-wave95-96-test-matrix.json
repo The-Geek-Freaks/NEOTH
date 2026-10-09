@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "hosted-runtime-admitted-flutter-lint-repair-native-pending",
+  "status": "W2518 runtime admitted; 56 Flutter pass; explicit iOS conversation linker roots repaired; fresh native pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 410698,
-    "sha256": "A56FC9E5561D5EEC1930CCBEB14B12137B182A65A9A6F4FAA74A8E444F5E5424"
+    "bytes": 410750,
+    "sha256": "94C01B37ACA0840762B02AA3EA607C05FBE51A0C943044E58C08F2BEABB1677D"
   },
   "sourceInputs": 2242,
   "requiredNativeTests": [
@@ -80427,6 +80427,32 @@
       }
     ],
     "note": "Runtime proof37914390018 remains bound to14162192; two analyzer-only Dart changes require fresh native QA. Runtime reuse requires unchanged Git closure and does not claim new execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2518IosConversationRoots": {
+    "base": "5c8613bf228c163c971235135b9aa57ac08b066d",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
+        "bytes": 1575,
+        "sha256": "9BC3CDC1BB6C8B3FE119C25E13102D3BC2664F004D70DBA661BF02B6FCD81D07",
+        "blob": "9d5a6edb31124f68fe61cada4d525d123105cbb2"
+      },
+      {
+        "path": "docs/verification/gold-wave2518-mobile-restart-routing.json",
+        "bytes": 3360,
+        "sha256": "DCD32F813FC21A26AC2A0DD4299E5AEBDB42F08F3FF16A4F3AE5BB5A508A500E",
+        "blob": "ba1d9dde6e5deddd93e8099e9881664470c324bb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2520309,
+        "sha256": "2E3DED1E2C1E7B5CA8308457C36ABECF7E77609675999DD2FAFF30549F8F111A",
+        "blob": "79118a60d9c8a08662cc4f173c04e7633f8a3872"
+      }
+    ],
+    "note": "Actual run37918461541 built APKs and Runner but failed required conversation_start_v1 symbol. Add both conversation roots; retain exact14 global-T export gate. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
