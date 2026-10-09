@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-08T11:55:48.0956385Z",
+  "capturedUtc": "2026-10-09T05:33:02.0399383Z",
   "validationStatus": "hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -4067,6 +4067,11 @@
       "sha256": "B5DB8F74D1F5118492E35CBF3EF352A775DFAAD6C9C0DF1F44E251863AAD84F9"
     },
     {
+      "path": "docs/verification/gold-wave2514-stack-frame-repair.json",
+      "bytes": 923,
+      "sha256": "9AE987ED4BC14027FFAD145A275BF0958281F45F74B600F232A359F157561F46"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5213,8 +5218,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 37991,
-      "sha256": "E9AA642F264BA911FB93AD548C7E6F58840463576CDF2D6FCE0DCF4B65085DA1"
+      "bytes": 38370,
+      "sha256": "E9C55D1B1151E005B939E6F0CE589DAD780E2BD5E5D7D359EBA43B93CFE0CC0F"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5223,8 +5228,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2507288,
-      "sha256": "1670FDA5E71874D155FF5F88E03D850C9407D76816C2F5EDAEC72027B03A15A7"
+      "bytes": 2507667,
+      "sha256": "10F61CFCB6331F4258D81B09DD8F73246603ADE1AE5E907F11792A6F275AFAB0"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7143,8 +7148,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 120673,
-      "sha256": "1963E5A0B96DD6765D80A36B913CF181F9D107D166DBAD81A3A1901956308791"
+      "bytes": 120741,
+      "sha256": "5FE8D2D7F62327177EDFE9C9DAA764FFD7CA51C007FE01EE03CCBA80223FEFE5"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_stream.rs",

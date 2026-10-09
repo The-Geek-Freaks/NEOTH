@@ -1,0 +1,24 @@
+{
+  "schema": "neoth.gold.wave2514.stack-frame-repair.v1",
+  "status": "implemented-hosted-pending",
+  "failedProducer": "162d54c3198f725ab125d69756744f254378d3db",
+  "failedRun": 37773983347,
+  "fatalRuntimeKinds": [
+    "stack_overflow"
+  ],
+  "daemonExit": -6,
+  "failureStage": "chat_v2_start",
+  "verifiedArtifactSha256": "21058BD847A404085B2CB3B29766AF84CB167BA7D4A56043E09F6AC339C59CE6",
+  "unitSourceProofSha256": "3AC724D2A2FE5CA98B5F40B3A667FD00DB22B9B0A277DC5B41E13451B1737F67",
+  "rustPassed": 100,
+  "collectorPassed": 29,
+  "repair": "Heap-pin each selected Companion chat engine future within the existing connection owner",
+  "repairAccepted": false,
+  "localRuntimeExecuted": false,
+  "open": [
+    "Actual V1/V2/V3 carrier and clean shutdown acceptance",
+    "Native source change requires fresh native qualification",
+    "JM05 session/history/reconnect",
+    "Physical devices and signed release"
+  ]
+}

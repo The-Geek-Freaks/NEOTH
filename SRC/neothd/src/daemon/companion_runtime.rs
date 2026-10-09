@@ -1398,25 +1398,25 @@ impl CompanionRuntime {
             cancelled_by_owner_task,
         ));
         let chat = async {
+            // Keep each large engine future out of the connection owner's stack
+            // frame for both legacy and streaming requests.
             if stream_requested {
-                self.chat_runtime
-                    .execute_companion_stream_turn(
-                        daemon_request,
-                        cancellation.clone(),
-                        effect_gate,
-                        tool_activity_sink.as_ref(),
-                        &mut stream_sink,
-                    )
-                    .await
+                Box::pin(self.chat_runtime.execute_companion_stream_turn(
+                    daemon_request,
+                    cancellation.clone(),
+                    effect_gate,
+                    tool_activity_sink.as_ref(),
+                    &mut stream_sink,
+                ))
+                .await
             } else {
-                self.chat_runtime
-                    .execute_companion_chat_turn(
-                        daemon_request,
-                        cancellation.clone(),
-                        effect_gate,
-                        tool_activity_sink.as_ref(),
-                    )
-                    .await
+                Box::pin(self.chat_runtime.execute_companion_chat_turn(
+                    daemon_request,
+                    cancellation.clone(),
+                    effect_gate,
+                    tool_activity_sink.as_ref(),
+                ))
+                .await
             }
         };
         tokio::pin!(chat);
