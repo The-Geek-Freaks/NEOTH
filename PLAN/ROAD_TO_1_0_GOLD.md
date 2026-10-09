@@ -18874,3 +18874,11 @@ Der originale Hosted-Lauf 37952271667 auf b15ec976c707e6a9aab184d27afeb2ff801a5c
 Der Solver-Workflow bewahrt jetzt das ungekürzte Solver-Ergebnis als Beleg, ersetzt im Baseline-Text ausschließlich hickory-resolver, hickory-net und hickory-proto durch die vom Solver erzeugten 0.26.3-Blöcke und verlangt genau sechs Paketidentitätsänderungen. Alle anderen Blöcke bleiben erhalten. Erst die tatsächliche erneute locked-Kompilation und die reproduzierten Lizenzhinweise qualifizieren diesen engeren Kandidaten für Root-Übernahme. Die lokale, uncommittete Lockdatei bleibt unverändert; eine spätere akzeptierte Übernahme erfolgt ausschließlich im Index.
 
 Workflow statisch geprüft; neue Hosted-Ausführung steht aus. Keine Laufzeit-, Plattform-, Geräte-, Release- oder Gold-Abnahme wird behauptet. Alle ursprünglichen Backlog-Zeilen bleiben erhalten. Bericht: docs/verification/gold-wave2538-hickory-minimal-graph.json.
+
+### W2539 — minimale Hickory-Familie und passende Lizenzhinweise abgenommen
+
+Run 37954256997 auf 1916b09f1ddd85e363965a0d76437ff74210a987 besteht die tatsächliche locked-Kompilation von cluster-iroh, fünf Lizenzgenerator-Tests sowie die Generierung und Reproduktion der Distributionshinweise. Root prüfte den API-/ZIP-SHA256 9C2C7A50A9A12EB0BCB646E11B65C2FD049A9D3C44A82F091556314B839BB802, alle 18 Archiveinträge und sechs rohe Git-Quellbindungen. Eine unabhängige Textrekonstruktion bestätigt ausschließlich drei Versions- und drei Checksum-Änderungen. Die 21 fremden Windows-Abhängigkeitsänderungen des vorherigen Solvers sind nicht enthalten.
+
+hickory-net, hickory-proto und hickory-resolver stehen damit gemeinsam auf 0.26.3. Die geprüfte Lockdatei wird nur in den Git-Index übernommen; die bestehende uncommittete physische Lockdatei und .gitignore bleiben hashgleich. Die passenden Lizenzhinweise werden aus demselben geprüften Originalarchiv übernommen.
+
+Dies behebt den belegten Hickory-Compile-Konflikt und den dazugehörigen Stand der Lizenzhinweise. Die 56 Owner-Fokusfälle, Companion-/Workspace-Clippy-Abnahme, elf gezielten Windows-Fälle und die vollständige Integration benötigen den endgültigen Producer. Produktlaufzeit, native Geräte und signierte Releases sind dadurch nicht abgenommen; alle ursprünglichen Roadmap-Zeilen bleiben unverändert. Bericht: docs/verification/gold-wave2539-hickory-minimal-acceptance.json.

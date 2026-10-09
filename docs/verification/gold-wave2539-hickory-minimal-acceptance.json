@@ -1,0 +1,79 @@
+{
+  "schema": "neoth.wave2539.hickory-minimal-acceptance.v1",
+  "base": "1916b09f1ddd85e363965a0d76437ff74210a987",
+  "status": "hosted-minimal-candidate-admitted-and-integrated",
+  "admission": {
+    "schema": "neoth.root.minimal-hickory-admission.v1",
+    "run": 37954256997,
+    "producer": "1916b09f1ddd85e363965a0d76437ff74210a987",
+    "artifact": 11627761521,
+    "archiveSha256": "9C2C7A50A9A12EB0BCB646E11B65C2FD049A9D3C44A82F091556314B839BB802",
+    "archiveEntries": 18,
+    "sourceBindings": [
+      {
+        "sha256": "c5a501434048fad98c6b4476cf55073c67ba93a2e499bd45ab49c2a3e8f2e498",
+        "path": "SRC/Cargo.lock",
+        "blob": "0bd5778da51e83d97b18548759fcb2a3ddb96dc9"
+      },
+      {
+        "sha256": "6124446dacaea94eaaa1202686e3a9a2af30a23ea991bbcb9a9c47dcecc8b0b6",
+        "path": "SRC/Cargo.toml",
+        "blob": "07e4c6c05e514702090e309e345d5dbd4920921e"
+      },
+      {
+        "sha256": "7576bb05c5084dd214be59294d2c87a2096f29ab2bc7150da8117b2e9e3ca63a",
+        "path": "SRC/neothd/Cargo.toml",
+        "blob": "747573eddb0621048f391963549a508df1e7ca88"
+      },
+      {
+        "sha256": "b7735a72de1fe2dc377aee2e534284c545fff017b67df3059fd74c550b82f918",
+        "path": "packaging/generate_rust_notices.py",
+        "blob": "9181381f1b73e7f34e361540964e4ea44866b39b"
+      },
+      {
+        "sha256": "527ef42dbc8b7b34150de11e6d148744d91177b94ef7eb86bac9b0d83c0bd3d5",
+        "path": "packaging/rust-license-snapshots.json",
+        "blob": "4ff13bce6dcf22f28e96ff5971ed066c5fb79dd2"
+      },
+      {
+        "sha256": "529273a25126bf03fceacf944e09202fe92bab089ed87c48426f9a3987b01683",
+        "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+        "blob": "986ccaa985e130aefd6722a8d91c7b1d7193ffdd"
+      }
+    ],
+    "lockSha256": "6CB6188C26019CDEDE860A2BA599EA066F70C299B12B1ADE16F60926087C43B0",
+    "noticeSha256": "781AF720C2EA48E13F724824552C739D4EC99C8528D67A6794A3597DC99E5D94",
+    "packageIdentityChanges": 6,
+    "unrelatedPackageChanges": 0,
+    "independentExactTextReconstruction": true,
+    "irohFeatureCompile": "success",
+    "noticeUnitTests": 5,
+    "noticeReproduction": "success",
+    "accepted": true,
+    "imported": false,
+    "localRuntimeExecuted": false,
+    "productRuntimeTested": false,
+    "goldComplete": false
+  },
+  "admissionPath": "work\\gold-20260906\\wave2539-hickory-minimal-admission\\ROOT_ADMISSION.json",
+  "admissionSha256": "AA4ACEC348DAB5D9DFD85637D158037871294155B0CAE2EF606FEBD552E4F3E8",
+  "import": {
+    "lockMode": "index-only",
+    "version": "0.26.3",
+    "changedPackageFamilies": [
+      "hickory-net",
+      "hickory-proto",
+      "hickory-resolver"
+    ],
+    "lockBlob": "a6779849c0124e34971ed32469d94e223ef62c9e",
+    "licenseSha256": "781AF720C2EA48E13F724824552C739D4EC99C8528D67A6794A3597DC99E5D94",
+    "unrelatedDependencyChanges": 0,
+    "lockSha256": "6CB6188C26019CDEDE860A2BA599EA066F70C299B12B1ADE16F60926087C43B0",
+    "physicalDirtyLockSha256": "A53BF380469CD0242E9F64735AEAAF2ABF6BCE4098E32200E8EF00DB61B2552A"
+  },
+  "portableRegistrations": 2890,
+  "fullPlatformAcceptance": "pending",
+  "nativeDeviceReleaseAcceptance": false,
+  "localRuntimeExecuted": false,
+  "goldComplete": false
+}

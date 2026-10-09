@@ -555,9 +555,9 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `hex-conservative 0.2.2` - `CC0-1.0` - https://github.com/rust-bitcoin/hex-conservative - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hex-conservative 1.2.0` - `CC0-1.0` - https://github.com/rust-bitcoin/hex-conservative - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hf-hub 0.5.0` - `Apache-2.0` - https://github.com/huggingface/hf-hub - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `hickory-net 0.26.1` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `hickory-proto 0.26.1` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `hickory-resolver 0.26.1` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `hickory-net 0.26.3` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `hickory-proto 0.26.3` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `hickory-resolver 0.26.3` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `hkdf 0.12.4` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/KDFs/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hmac 0.12.1` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/MACs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hnsw_rs 0.3.4` - `MIT/Apache-2.0` - https://github.com/jean-pierreBoth/hnswlib-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -23074,7 +23074,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `8ad46ef9138e85f8bb3a6349f4736ebcfb73115cb5a11c2788f94a20f7b792ad`
 
-Applies to: `hickory-net 0.26.1`, `hickory-proto 0.26.1`, `hickory-resolver 0.26.1`
+Applies to: `hickory-net 0.26.3`, `hickory-proto 0.26.3`, `hickory-resolver 0.26.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -33602,7 +33602,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #### SHA-256 `dc470946f0a127507a9e577a20da1eb19eae0abc383b2be1f786f6427944f06c`
 
-Applies to: `hickory-net 0.26.1`, `hickory-proto 0.26.1`, `hickory-resolver 0.26.1`
+Applies to: `hickory-net 0.26.3`, `hickory-proto 0.26.3`, `hickory-resolver 0.26.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2015 The Hickory DNS Developers

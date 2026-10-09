@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T15:42:16.1908745Z",
-  "validationStatus": "static-reviewed-hickory-minimal-workflow-hosted-pending",
+  "capturedUtc": "2026-10-09T15:51:49.2836727Z",
+  "validationStatus": "minimal-hickory-hosted-admitted-full-integration-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4187,6 +4187,11 @@
       "sha256": "C3FC9648EE37088E8824765863032087BB01FBD54D7F9E639DDC86D42CACF1B1"
     },
     {
+      "path": "docs/verification/gold-wave2539-hickory-minimal-acceptance.json",
+      "bytes": 3225,
+      "sha256": "B3B5C467D8325EBC7F624A3DE2BB6F139C5B75BCF134690C94A6E630A3910F1B"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5343,8 +5348,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2543206,
-      "sha256": "7D004A126DA04EE892CB0C2316A0EDD46824FBF3AF8ADD9CF17D622E67212E61"
+      "bytes": 2544667,
+      "sha256": "CBCCBB76152920886B83332D2C7EE6B879E3A80687AA42AF6F0CF40F6302E80A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5414,7 +5419,7 @@
     {
       "path": "SRC/Cargo.lock",
       "bytes": 386992,
-      "sha256": "C5A501434048FAD98C6B4476CF55073C67BA93A2E499BD45AB49C2A3E8F2E498"
+      "sha256": "6CB6188C26019CDEDE860A2BA599EA066F70C299B12B1ADE16F60926087C43B0"
     },
     {
       "path": "SRC/Cargo.toml",
@@ -11264,7 +11269,7 @@
     {
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2313117,
-      "sha256": "C4BA455F7F54CDEAADBD2EC98AAF661D8EBF45C2DB9FAE49D4B592563F241144"
+      "sha256": "781AF720C2EA48E13F724824552C739D4EC99C8528D67A6794A3597DC99E5D94"
     },
     {
       "path": "work/gold-20260906/wave1572-rollback-publication-repair/REPORT.md",
