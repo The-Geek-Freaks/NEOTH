@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile-conversation-formatted-hosted-pending",
+  "status": "mobile-conversation-journey-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 409715,
-    "sha256": "53840B3733EF15C88C25F94C97D2D5A2D2684FA4C225E0DDF8C0D4D7857FC92E"
+    "bytes": 410488,
+    "sha256": "B3A43602D9F0B1C0829CB1D44BA6B2E07B81649C2D00E1FF3FC95E73517985E8"
   },
-  "sourceInputs": 2237,
+  "sourceInputs": 2241,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -80247,6 +80247,86 @@
       }
     ],
     "note": "Exact source-bound hosted rustfmt original archive admitted for four owned Rust files; fresh behavioral/native/product proof pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2517ConversationJourney": {
+    "base": "24dd76086a1f06f18abb4f2d6980ac9b4264186e",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-conversation.py",
+        "bytes": 22594,
+        "sha256": "E939FBA15DE7B39B3798252DF755868A73070759D098FCF867338D8E682D8B78",
+        "blob": "b25d936243cb2eeaf7e58bb4ca2fce1e4552c595"
+      },
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 24456,
+        "sha256": "2BC7FF3058C8ABBC7690541F07B7FB04B1E1499E009C08E7693A0984B2CC9AB1",
+        "blob": "cac8649055b6b822b0e7facfc2c477fae00bad00"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
+        "bytes": 6242,
+        "sha256": "FBE3539DEF5DFC2DE01E84182B0B37C899D9D4D843801E245F93E67DD3492066",
+        "blob": "6322c210414e68ff0e467fc257849f5e9f38c1bc"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 11104,
+        "sha256": "0BD5B9DE88B536819C48A2BCD04C335544A0E080F70E871D70F55ABD0E4031BC",
+        "blob": "1624af7c73c4298ffe11383e85ab952a4709c3d3"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 21920,
+        "sha256": "A104FEBF47846EC507EE900F2B3213CA2F95C9B5D21F674BDEF310D380531E57",
+        "blob": "00f93037cae7ca23ff4cb01ae6da4c4b87f67a40"
+      },
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 23858,
+        "sha256": "BC26510C19508E3F2B72DC633821B443E01598F3AE5A0D8F25CEEC4BC0CAE312",
+        "blob": "45e3317db60c59bac2ef5107bd5f6189a492c61f"
+      },
+      {
+        "path": "apps/neoth_companion/lib/secure_store.dart",
+        "bytes": 6622,
+        "sha256": "4ACD8777F7673D6FF75B7038EBC2563AADB893D07EE70FB05571856EC6B43C3C",
+        "blob": "6ebf191246ae1f8e360efb4c5613584d2e114f9a"
+      },
+      {
+        "path": "apps/neoth_companion/README.md",
+        "bytes": 5253,
+        "sha256": "C0244CBCC0990BD36F4889D8D8A62859D1E466B28F629407C6DE5622E4EDE653",
+        "blob": "80659b5b0dd758fe6b9f25cdc25ad401b7926de7"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 36929,
+        "sha256": "DF1785E6B8B8849359D769621BD47AC5F1553A98ECB2EC4E898A9741B84BA462",
+        "blob": "0b52af6c55a7df6a378f631ad596404d4317d719"
+      },
+      {
+        "path": "apps/neoth_companion/test/secure_store_conversation_test.dart",
+        "bytes": 3287,
+        "sha256": "9FAF8A25E69CD3178653043D49B21139DF81516F52928CAAAEDEB5C47C5C51E3",
+        "blob": "78d4d26a6ba4133ca382434a79040e185a6301c2"
+      },
+      {
+        "path": "docs/verification/gold-wave2517-mobile-conversation-journey.json",
+        "bytes": 1636,
+        "sha256": "A3B5C01AF81A26FA41507D069C9B0904CA7231426FB71311E9BE3F3E8202AA00",
+        "blob": "c55f2a299675ff90e4ca26fb69d8adcbcc29272e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2515934,
+        "sha256": "BCDA51290EE0B9A4F5361CC52EC24AC3571F185B052A99D532C028005DC40A67",
+        "blob": "597e0210cfe18f50081538924ca96821a6dd802b"
+      }
+    ],
+    "note": "Actual encrypted conversation restart observer, complete canonical bridge selection and Flutter forget/downgrade repairs; only static review, new hosted/native proof pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

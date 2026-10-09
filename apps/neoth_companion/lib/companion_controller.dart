@@ -31,6 +31,9 @@ class CompanionController extends ChangeNotifier {
   bool chatCancelRequested = false;
   CompanionViewState state = CompanionViewState.unpaired;
   bool _disposed = false;
+  bool _forgetting = false;
+  int _authorityEpoch = 0;
+  bool _ownsAuthority(int epoch) => !_disposed && !_forgetting && epoch == _authorityEpoch;
   int _chatEpoch = 0;
   String? _chatRequestId;
   int _activityMaximum = -1;
@@ -57,9 +60,10 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> _restoreConversation(EnrollmentAccepted enrollment) async {
+    final epoch = _authorityEpoch;
     if (_store case final CompanionConversationStore store) {
       final value = await store.loadConversationCheckpoint(enrollment);
-      if (!_disposed && _enrollment?.deviceId == enrollment.deviceId && _enrollment?.revision == enrollment.revision) {
+      if (_ownsAuthority(epoch) && _enrollment?.deviceId == enrollment.deviceId && _enrollment?.revision == enrollment.revision) {
         _conversation = value ?? ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision);
         if (conversationNeedsRecovery) chatLocalMessage = 'A previous send has an unconfirmed outcome. Recover saved history before continuing.';
       }
@@ -67,52 +71,61 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> restore() async {
-    _enrollment = await _store.loadEnrollment();
+    if (_disposed || _forgetting) return;
+    final epoch = _authorityEpoch;
+    final enrollment = await _store.loadEnrollment();
+    if (!_ownsAuthority(epoch)) return;
+    _enrollment = enrollment;
     if (_enrollment == null) {
       _set(CompanionViewState.unpaired);
       return;
     }
     await _restoreConversation(_enrollment!);
-    _set(CompanionViewState.offline);
+    if (_ownsAuthority(epoch)) _set(CompanionViewState.offline);
   }
 
   Future<void> pair(String rawInvite, String label) async {
-    if (_disposed || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || state == CompanionViewState.pairing) return;
     // A retained active enrollment must be deliberately cleared by the person
     // holding the device; a pasted invite cannot silently replace it.
     if (_enrollment != null) {
       _set(CompanionViewState.failed);
       return;
     }
+    final epoch = _authorityEpoch;
     _set(CompanionViewState.pairing);
     try {
       final result = await _ensureBridge().pair(rawInvite.trim(), label.trim());
+      if (!_ownsAuthority(epoch)) return;
       if (result.kind == NativeOperationResult.ok && result.publicJson != null) {
         final accepted = EnrollmentAccepted.fromBridgeJson(result.publicJson!);
         await _store.saveEnrollment(accepted); // durable only after actual success
+        if (!_ownsAuthority(epoch)) return;
         _enrollment = accepted;
         await _restoreConversation(accepted);
-        _set(CompanionViewState.offline);
+        if (_ownsAuthority(epoch)) _set(CompanionViewState.offline);
       } else {
         _setForResult(result);
       }
     } on FormatException {
-      _set(CompanionViewState.failed);
+      if (_ownsAuthority(epoch)) _set(CompanionViewState.failed);
     } on StateError {
-      _set(CompanionViewState.failed);
+      if (_ownsAuthority(epoch)) _set(CompanionViewState.failed);
     }
   }
 
   Future<void> refresh() async {
-    if (_disposed || state == CompanionViewState.pairing) return;
+    if (_disposed || _forgetting || state == CompanionViewState.pairing) return;
     final enrollment = _enrollment;
     if (enrollment == null) {
       _set(CompanionViewState.unpaired);
       return;
     }
+    final epoch = _authorityEpoch;
     _set(CompanionViewState.pairing);
     try {
       final result = await _ensureBridge().reconnect(jsonEncode(enrollment.reconnectDescriptor), enrollment.deviceId);
+      if (!_ownsAuthority(epoch)) return;
       if (result.kind == NativeOperationResult.ok && result.publicJson != null) {
         final snapshot = CompanionStatus.fromBridgeJson(result.publicJson!);
         if (snapshot.deviceId != enrollment.deviceId) throw const FormatException('cross-device status');
@@ -122,9 +135,9 @@ class CompanionController extends ChangeNotifier {
         _setForResult(result);
       }
     } on FormatException {
-      _set(CompanionViewState.failed);
+      if (_ownsAuthority(epoch)) _set(CompanionViewState.failed);
     } on StateError {
-      _set(CompanionViewState.offline);
+      if (_ownsAuthority(epoch)) _set(CompanionViewState.offline);
     }
   }
 
@@ -137,7 +150,7 @@ class CompanionController extends ChangeNotifier {
   /// before the bridge worker starts; every remote terminal is rendered from
   /// its typed public outcome and is never retried here.
   Future<void> sendChat(String message) async {
-    if (_disposed || chatPending) return;
+    if (_disposed || _forgetting || chatPending) return;
     final enrollment = _enrollment;
     if (enrollment == null || !canSendChat) {
       chatLocalMessage = 'This phone does not have chat permission. Pair again with a chat invite.';
@@ -148,6 +161,11 @@ class CompanionController extends ChangeNotifier {
       validateOrdinaryChatMessage(message);
     } on FormatException {
       chatLocalMessage = 'Enter one ordinary message of at most 640 UTF-8 bytes. Slash actions are unavailable.';
+      _notify();
+      return;
+    }
+    if (!conversationsAvailable && (selectedConversationId != null || conversationNeedsRecovery)) {
+      chatLocalMessage = 'Saved conversation support is unavailable on this installation. No message was sent.';
       _notify();
       return;
     }
@@ -212,7 +230,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> selectConversation(String? conversationId) async {
-    if (_disposed || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
+    if (_disposed || _forgetting || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
     final enrollment = _enrollment!;
     final current = _conversation ?? ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision);
     final next = ConversationCheckpoint(deviceId: enrollment.deviceId, revision: enrollment.revision,
@@ -232,7 +250,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   void setConversationIncognito(bool value) {
-    if (_disposed || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
+    if (_disposed || _forgetting || chatPending || conversationNeedsRecovery || !conversationsAvailable) return;
     conversationIncognito = value; conversationHistory = null; chatTerminal = null;
     conversationPendingMessage = null; chatLocalMessage = null; _notify();
   }
@@ -303,7 +321,7 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> recoverConversation() async {
-    if (_disposed || chatPending || !conversationsAvailable) return;
+    if (_disposed || _forgetting || chatPending || !conversationsAvailable) return;
     if (conversationIncognito && !conversationNeedsRecovery) return;
     final enrollment = _enrollment!;
     final current = _conversation;
@@ -377,7 +395,11 @@ class CompanionController extends ChangeNotifier {
   }
 
   Future<void> forgetLocalEnrollment() async {
-    if (_disposed) return;
+    if (_disposed || _forgetting) return;
+    _forgetting = true;
+    ++_authorityEpoch;
+    _enrollment = null;
+    status = null;
     // Invalidate before the awaited store mutation: a prior operation is still
     // owned and drained by native, but may not mutate this cleared session.
     ++_chatEpoch;
@@ -393,10 +415,12 @@ class CompanionController extends ChangeNotifier {
     _chatRequestId = null;
     final bridge = _bridge;
     if (bridge != null) unawaited(bridge.cancelActiveChat());
-    await _store.clearEnrollment();
-    _enrollment = null;
-    status = null;
-    _set(CompanionViewState.unpaired);
+    try {
+      await _store.clearEnrollment();
+      _set(CompanionViewState.unpaired);
+    } finally {
+      _forgetting = false;
+    }
   }
 
   NativeBridge _ensureBridge() => _bridge ?? (throw StateError('protected device identity is not ready'));

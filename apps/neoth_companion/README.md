@@ -1,43 +1,27 @@
 # NEOTH Companion
 
-NEOTH Companion is the phone client for narrowly scoped NEOTH v3 device
-grants. It pairs once with an invite issued by a running daemon, retains a
-device identity locally, and either shows redacted status or sends one
-ordinary text turn when the invite explicitly grants chat. It is not a prompt
-client, a file client, or a general remote-control surface.
+NEOTH Companion is the phone client for scoped NEOTH v3 device grants. It pairs
+with an invite issued by a running daemon and retains its device identity in
+protected local storage. A status grant shows redacted daemon status. A chat
+grant allows ordinary messages, live visible answers and tool progress. The
+daemon owns model calls and the canonical conversation transcript.
 
 ## Pairing and device management
 
-Run the daemon with `companion.enabled` and `companion.p2p_enabled` set to true, then mint a one-time mobile invite:
+Run the daemon with `companion.enabled` and `companion.p2p_enabled` enabled,
+then mint a one-time mobile invite:
 
 ```text
 neoth companion pair-mobile --scope status-read
 neoth companion pair-mobile --scope chat-send
 ```
 
-Open the displayed QR/deep link on the phone or paste the invite into the app.
-An invite is short-lived and single-use. `status-read` grants only status;
-`chat-send` is an explicit new permission and requires a new pairing. Existing
-status devices are never upgraded by a pasted link. The app never silently
-retries an ambiguous pairing and never silently pairs again after a denial or
-revocation.
+Open the QR/deep link on the phone or paste the invite into the app. Invites
+are short-lived and single-use. A status grant cannot send chat; changing the
+scope requires deliberate new pairing. An ambiguous pairing is never retried
+automatically.
 
-## One-shot chat
-
-A chat-scoped device can send one ordinary message of at most 640 UTF-8 bytes.
-It receives one typed terminal outcome: accepted, denied, busy, unavailable,
-timeout, or indeterminate. While one chat is pending, **Stop waiting** sends
-the existing local bridge cancellation signal and disables itself after one
-press. It stops this phone from waiting; it does not claim that a daemon or
-provider turn was aborted. A terminal that arrives in the same race remains
-authoritative: accepted stays accepted, and a post-write indeterminate result
-still means delivery or execution is uncertain. The app does not repeat the
-message. Slash actions, streaming, remote turn cancellation, attachments,
-files, notification delivery, history sync, and offline queueing are
-unavailable.
-
-The daemon keeps authority for device records. These commands talk to the
-running daemon through its same-user control path:
+The daemon owns device grants. These commands use its same-user control path:
 
 ```text
 neoth companion devices list
@@ -45,47 +29,75 @@ neoth companion devices status <device-id>
 neoth companion devices revoke <device-id>
 ```
 
-`<device-id>` is the UUID reported by `devices list`. Revocation is durable;
-the phone shows its revoked/denied state and requires a person to explicitly
-forget its public enrollment before a newly minted invite can be used.
+Revocation is durable. **Forget this device** clears the local enrollment and
+conversation checkpoint before another invite can be used. The protected
+device seed is retained. This local action does not delete the daemon's saved
+transcript or replace a daemon-side revocation.
 
-## What the app keeps private
+## Conversations, history and recovery
 
-On Android, the device seed is protected by Android Keystore-backed secure
-storage. On iOS, it is protected by Keychain storage with device-only
-accessibility. The native bridge derives the signing and Noise identities from
-that seed; the app does not display, log, sync, or include the seed in errors.
+Send one ordinary message at a time, up to 640 UTF-8 bytes. Compatible daemon
+and native bridge versions provide **New conversation** and a selector for up
+to eight saved conversations per device revision. Continuing a conversation
+uses its daemon-authorized history as bounded context. A different device or
+grant revision cannot resume that conversation.
 
-After a successful enrollment, the app persists only the public enrollment
-descriptor and device identifier needed for reconnect. The invite is visible only in the pairing input and is cleared after the attempt.
-The app does not persist that URL or its PSK, bearer credentials, private signing material,
-prompt content, or provider data. A denied or revoked result does not erase
-the protected device identity or create a fallback network path.
+**Load saved history** reads the most recent canonical messages without a
+provider call. This view contains at most 32 records, 16 KiB per available
+record and 64 KiB of text; escaped JSON has its own limit. Older records can
+fall outside the view. Oversized records show an explicit notice while their
+full text remains in the daemon's canonical storage. A confirmed answer is
+shown once when its visible history row matches its accepted terminal; model
+and provider information remain visible.
 
-## Hosted build and lock custody
+Before sending, the phone stores the public request identifier. If delivery or
+completion cannot be confirmed, further sending is blocked until **Recover
+previous send** checks the saved history. This read can recover a newly created
+conversation after loss of the local admission, including after a daemon
+restart. It does not resend the message, start a model request, or infer a new
+successful turn from the presence of older messages. A restored conversation
+is never silently downgraded to a legacy one-off send when native support is
+unavailable.
 
-The tracked hosted workflow is
-`.github/workflows/mobile-companion.yml`; its materializer is
-`.github/scripts/mobile/materialize-neoth-companion.ps1`.
+**Incognito** uses no saved conversation context, creates no persistent
+conversation binding and saves no canonical conversation history. There is no
+saved history to recover for an unconfirmed incognito send.
 
-Normal hosted qualification uses the already committed bridge and Flutter lock
-files, requiring their exact hashes before and after dependency resolution.
-`bootstrap_locks=true` is retained only as the historical, hosted-only
-recovery path that produced original lock candidates for Root review before
-those locks were committed; it is not the normal build instruction and does
-not qualify a release.
+**Stop waiting** signals the current native operation once. It does not claim
+that an already started daemon/provider effect was undone. An accepted terminal
+can still win that race. Slash actions, attachments, remote turn cancellation,
+notification delivery and offline message queues remain unavailable.
 
-The materializer starts from a pinned Flutter 3.24.5 template, preserves its
-generated Gradle/wrapper/plugin files, and packages only explicitly
-hash-verified bridge inputs. CocoaPods consumes the local framework directory. The iOS gate requires all
-eight bridge entry points to be present in the final Runner binary, including
-the one-shot chat entry point. These
-checks still require a successful hosted execution.
+## What stays on the phone
 
-## Acceptance boundary
+Android protects the device seed with Keystore-backed secure storage; iOS uses
+device-only Keychain storage. The native bridge derives the signing and Noise
+identities from that seed. It does not display or return private key material.
 
-This documentation describes the intended integration path. It is not proof
-that an Android APK or iOS app has been built, installed, signed, accepted by
-a physical device, or released. Device pairing, reconnect, revocation and the
-final native-symbol linkage remain subject to the hosted qualification and
-physical-device acceptance gates.
+Protected storage contains the public enrollment, device revision, public
+conversation identifiers and any pending request identifier. It does not
+persist prompts, answers, private daemon session identifiers or provider data.
+An invite is cleared from the pairing input after its attempt; its URL and PSK
+are not retained. Enrollment and conversation checkpoint writes share one
+ordering so an older in-flight write cannot recreate a forgotten checkpoint.
+
+## Hosted build and acceptance
+
+`.github/workflows/mobile-companion.yml` uses pinned Flutter 3.24.5 and the
+committed Rust/Flutter locks. Native inputs and locks are hash-bound. The iOS
+gate requires all fourteen FFI exports in the final Runner binary, including
+the additive conversation start/poll pair. Legacy chat APIs keep their original
+result limits and behavior. `bootstrap_locks=true` is a historical recovery
+path, not normal qualification.
+
+The hosted interop workflow checks the actual daemon and encrypted native
+client. The conversation journey sends two messages around a daemon/native
+owner restart, verifies restored context and four canonical records, proves
+that recovery/history reads add no provider calls, checks durable revocation
+and drains both daemon generations. Its controlled provider and hosted client
+do not establish physical phone acceptance.
+
+The new conversation path still requires fresh successful hosted execution and
+independent original-artifact admission on its exact producer. Android/iOS
+builds, physical-device operation, signing and release acceptance are separate
+gates. This document does not itself establish any of those results.

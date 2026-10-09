@@ -304,7 +304,10 @@
     "apps/neoth_companion/lib/companion_terminal_presentation.dart",
     "apps/neoth_companion/lib/conversation_models.dart",
     "apps/neoth_companion/lib/conversation_presentation.dart",
-    "apps/neoth_companion/test/conversation_presentation_test.dart"
+    "apps/neoth_companion/test/conversation_presentation_test.dart",
+    ".github/scripts/mobile/hosted-mobile-conversation.py",
+    ".github/scripts/mobile/test_hosted_mobile_conversation.py",
+    "apps/neoth_companion/test/secure_store_conversation_test.dart"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

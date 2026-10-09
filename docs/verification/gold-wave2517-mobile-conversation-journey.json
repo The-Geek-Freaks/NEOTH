@@ -1,0 +1,34 @@
+{
+  "schema": "neoth.gold-wave2517.mobile-conversation-journey.v1",
+  "status": "implemented-awaiting-hosted-validation",
+  "base": "24dd76086a1f06f18abb4f2d6980ac9b4264186e",
+  "priorRun": 37906701472,
+  "priorRunConclusion": "failure",
+  "localRuntimeExecuted": false,
+  "changes": [
+    "Bridge workflow enumerates the complete canonical selection instead of a stale eleven-case limit",
+    "Hosted actual encrypted new/resume messages around a real daemon/native-owner restart",
+    "Public-checkpoint creator recovery, exact four canonical rows and effect-free history/missing-creator reads",
+    "Exact two provider calls, prior-context observation, durable revoke and two separately drained daemon generations",
+    "Protected enrollment/checkpoint operations serialize so late writes cannot revive forgotten metadata",
+    "Controller blocks new sends/pairing during forget and never downgrades a restored conversation to legacy chat",
+    "App documentation describes current conversation, storage and acceptance boundaries"
+  ],
+  "validation": {
+    "rustCases": 159,
+    "collectorCases": 29,
+    "conversationObserverCases": 5,
+    "rawSourceBindings": 81,
+    "flutterCases": 50,
+    "ffiExports": 14,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "physicalDeviceAccepted": false
+  },
+  "remaining": [
+    "Exact-producer fast checks and full selected interop execution",
+    "Independent original-artifact and observer/product receipt admission",
+    "Fresh Android/iOS native source/build qualification",
+    "Physical device, remaining JM05/JM07/JM08, signed release and all remaining Gold goals"
+  ]
+}

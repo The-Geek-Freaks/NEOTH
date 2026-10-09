@@ -50,7 +50,7 @@ class SelectionContractTests(unittest.TestCase):
         self.assertEqual(custody["counts"], {
             "rust": sum(expected_groups.values()),
             "collector": 29,
-            "sources": 78,
+            "sources": 81,
             "groups": expected_groups,
         })
         self.assertEqual(custody["groups"]["dht"]["identities"][2:6], [

@@ -383,12 +383,16 @@ NativeBridgeResult _chatBusyResult() => const NativeBridgeResult(NativeOperation
 class _MemoryStore implements CompanionStore {
   _MemoryStore({this.enrollment});
   EnrollmentAccepted? enrollment;
+  Future<EnrollmentAccepted?>? loadFuture;
   Uint8List secret = Uint8List.fromList(List<int>.filled(32, 9));
 
   @override
   Future<void> clearEnrollment() async => enrollment = null;
   @override
-  Future<EnrollmentAccepted?> loadEnrollment() async => enrollment;
+  Future<EnrollmentAccepted?> loadEnrollment() async {
+    if (loadFuture != null) return loadFuture!;
+    return enrollment;
+  }
   @override
   Future<Uint8List> loadOrCreateDeviceSecret() async => Uint8List.fromList(secret);
   @override
@@ -401,11 +405,13 @@ CompanionChatActivitySnapshot _activity({required String request, required int m
 );
 
 class _FakeBridge implements NativeBridgeWithActivity {
-  _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult, this.chatFuture});
+  _FakeBridge({this.pairResult, this.reconnectResult, this.chatResult, this.chatFuture, this.pairFuture, this.reconnectFuture});
   NativeBridgeResult? pairResult;
   NativeBridgeResult? reconnectResult;
   NativeBridgeResult? chatResult;
   Future<NativeBridgeResult>? chatFuture;
+  Future<NativeBridgeResult>? pairFuture;
+  Future<NativeBridgeResult>? reconnectFuture;
   int pairCalls = 0;
   int reconnectCalls = 0;
   int chatCalls = 0;
@@ -419,11 +425,13 @@ class _FakeBridge implements NativeBridgeWithActivity {
   @override
   Future<NativeBridgeResult> pair(String inviteUrl, String label) async {
     pairCalls++;
+    if (pairFuture != null) return pairFuture!;
     return pairResult ?? const NativeBridgeResult(NativeOperationResult.failed);
   }
   @override
   Future<NativeBridgeResult> reconnect(String descriptorJson, String deviceId) async {
     reconnectCalls++;
+    if (reconnectFuture != null) return reconnectFuture!;
     return reconnectResult ?? const NativeBridgeResult(NativeOperationResult.failed);
   }
   @override
@@ -523,6 +531,7 @@ class _ConversationStore extends _MemoryStore implements CompanionConversationSt
   _ConversationStore() : super(enrollment: _chatAccepted());
   ConversationCheckpoint? checkpoint;
   bool failSave = false;
+  Future<void>? clearGate;
   @override
   Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async =>
       checkpoint?.deviceId == enrollment.deviceId && checkpoint?.revision == enrollment.revision ? checkpoint : null;
@@ -532,7 +541,10 @@ class _ConversationStore extends _MemoryStore implements CompanionConversationSt
     checkpoint = ConversationCheckpoint.fromJson(jsonDecode(jsonEncode(value.toJson())) as Map<String, Object?>);
   }
   @override
-  Future<void> clearEnrollment() async { await super.clearEnrollment(); checkpoint = null; }
+  Future<void> clearEnrollment() async {
+    if (clearGate != null) await clearGate;
+    await super.clearEnrollment(); checkpoint = null;
+  }
 }
 
 class _ConversationBridge extends _FakeBridge implements NativeBridgeWithConversation {
@@ -577,6 +589,67 @@ Future<CompanionController> _conversationController(_ConversationStore store, _C
 }
 
 void conversationRegressionCases() {
+  test('JM05 forget fences late enrollment restore pairing and status completions', () async {
+    for (final operation in ['restore', 'pair', 'refresh']) {
+      final store = _MemoryStore(enrollment: operation == 'pair' ? null : _accepted());
+      final loaded = Completer<EnrollmentAccepted?>();
+      final result = Completer<NativeBridgeResult>();
+      final bridge = _FakeBridge(
+        pairFuture: operation == 'pair' ? result.future : null,
+        reconnectFuture: operation == 'refresh' ? result.future : null);
+      final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+      await controller.prepareBridge();
+      if (operation == 'refresh') await controller.restore();
+      if (operation == 'restore') store.loadFuture = loaded.future;
+      final pending = operation == 'restore' ? controller.restore()
+          : operation == 'pair' ? controller.pair(_invite, 'Pixel') : controller.refresh();
+      await controller.forgetLocalEnrollment();
+      if (operation == 'restore') {
+        loaded.complete(_accepted());
+      } else {
+        result.complete(operation == 'pair' ? _acceptedResult() : _statusResult());
+      }
+      await pending;
+      expect(controller.state, CompanionViewState.unpaired, reason: operation);
+      expect(controller.grantedScope, isNull, reason: operation);
+      expect(controller.status, isNull, reason: operation);
+      expect(store.enrollment, isNull, reason: operation);
+      expect(bridge.chatCalls, 0, reason: operation);
+      controller.dispose();
+    }
+  });
+
+  test('JM05 restored conversation never downgrades to a legacy one-off send', () async {
+    final store = _ConversationStore();
+    store.checkpoint = ConversationCheckpoint(deviceId: _deviceId, revision: 2,
+      conversationIds: [_conversationId], selectedId: _conversationId);
+    final bridge = _FakeBridge();
+    final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+    await controller.prepareBridge(); await controller.restore();
+    await controller.sendChat('must retain this conversation');
+    expect(bridge.chatCalls, 0);
+    expect(controller.selectedConversationId, _conversationId);
+    expect(controller.chatLocalMessage, contains('support is unavailable'));
+    expect(store.checkpoint?.pendingRequestId, isNull);
+    controller.dispose();
+  });
+
+  test('JM05 forget blocks new sends before protected storage has finished clearing', () async {
+    final gate = Completer<void>();
+    final store = _ConversationStore()..clearGate = gate.future;
+    final bridge = _ConversationBridge();
+    final controller = await _conversationController(store, bridge);
+    final clearing = controller.forgetLocalEnrollment();
+    expect(controller.canSendChat, isFalse);
+    await controller.sendChat('must not start during forget');
+    await controller.pair(_invite, 'must not pair during forget');
+    expect(bridge.commands, isEmpty); expect(bridge.chatCalls, 0); expect(bridge.pairCalls, 0);
+    gate.complete(); await clearing;
+    expect(controller.state, CompanionViewState.unpaired);
+    expect(store.enrollment, isNull); expect(store.checkpoint, isNull);
+    controller.dispose();
+  });
+
   test('JM05 conversation persists public intent before send and resumes one canonical history', () async {
     final store = _ConversationStore(); final bridge = _ConversationBridge();
     bridge.handler = (command) async {

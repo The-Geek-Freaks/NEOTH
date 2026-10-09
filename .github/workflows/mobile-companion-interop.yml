@@ -56,6 +56,9 @@ jobs:
       - name: Run bounded scoped diagnostics collector regressions
         timeout-minutes: 2
         run: python3 -m unittest discover -s .github/scripts/mobile -p 'test_hosted_mobile_interop_diagnostics.py' -v
+      - name: Run mobile conversation observer regressions
+        timeout-minutes: 2
+        run: python3 -m unittest discover -s .github/scripts/mobile -p 'test_hosted_mobile_conversation.py' -v
       - name: Run exact locked libudx OS-send completion regression
         id: exact_libudx_os_completion
         timeout-minutes: 10
@@ -254,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           readarray -t bridge_identities < "$RUNNER_TEMP/mobile-interop-selection/bridge.txt"
-          test "${#bridge_identities[@]}" -eq 11
+          test "${#bridge_identities[@]}" -gt 0
           : > "$RUNNER_TEMP/companion-bridge-result-regression.log"
           for identity in "${bridge_identities[@]}"; do
             cargo test --manifest-path bridges/companion-native/Cargo.toml --locked "$identity" -- --exact --nocapture 2>&1 | tee "$RUNNER_TEMP/companion-bridge-case.log"
@@ -265,10 +268,14 @@ jobs:
       - name: Run fixed isolated-home pair/status/chat/revoke
         timeout-minutes: 10
         run: python3 -I .github/scripts/mobile/hosted-mobile-interop.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/w2328-receipt.json" --allow-external-udp
+      - name: Run encrypted mobile conversation restart and history
+        timeout-minutes: 12
+        run: python3 -I .github/scripts/mobile/hosted-mobile-conversation.py --staging "$RUNNER_TEMP/w2328-stage" --receipt "$RUNNER_TEMP/mobile-conversation-receipt.json" --allow-external-udp
       - name: Require successful-run receipt custody
         run: |
           test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
           test -s "$RUNNER_TEMP/w2328-receipt.json"
+          test -s "$RUNNER_TEMP/mobile-conversation-receipt.json"
       - name: Preserve immediate product diagnosis
         if: ${{ always() && !cancelled() && steps.exact_host_build.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -277,6 +284,7 @@ jobs:
           path: |
             ${{ runner.temp }}/w2328-stage/host-interop-manifest.json
             ${{ runner.temp }}/w2328-receipt.json
+            ${{ runner.temp }}/mobile-conversation-receipt.json
             ${{ runner.temp }}/mobile-interop-selection/selection-custody.json
             ${{ runner.temp }}/mobile-interop-selection/mobile-companion-interop-selection.json
           if-no-files-found: error
@@ -338,6 +346,7 @@ jobs:
           path: |
             ${{ runner.temp }}/w2328-stage/host-interop-manifest.json
             ${{ runner.temp }}/w2328-receipt.json
+            ${{ runner.temp }}/mobile-conversation-receipt.json
             ${{ runner.temp }}/mobile-interop-selection/selection-custody.json
             ${{ runner.temp }}/mobile-interop-selection/mobile-companion-interop-selection.json
           if-no-files-found: warn

@@ -35,6 +35,16 @@ class SecureCompanionStore implements CompanionConversationStore {
   static const _descriptorKey = 'neoth_companion.reconnect.v3';
   static const _conversationKey = 'neoth_companion.conversation.v1';
   final FlutterSecureStorage _storage;
+  Future<void> _authorityTail = Future<void>.value();
+
+  // Enrollment and checkpoint mutations share one order. A late checkpoint
+  // write cannot recreate data after Forget has finished. The caller still
+  // receives every error; only the scheduling tail recovers for later cleanup.
+  Future<T> _authorityOperation<T>(Future<T> Function() action) {
+    final operation = _authorityTail.then((_) => action());
+    _authorityTail = operation.then<void>((_) {}, onError: (Object error, StackTrace stack) {});
+    return operation;
+  }
 
   @override
   Future<Uint8List> loadOrCreateDeviceSecret() async {
@@ -50,7 +60,9 @@ class SecureCompanionStore implements CompanionConversationStore {
   }
 
   @override
-  Future<EnrollmentAccepted?> loadEnrollment() async {
+  Future<EnrollmentAccepted?> loadEnrollment() => _authorityOperation(_loadEnrollment);
+
+  Future<EnrollmentAccepted?> _loadEnrollment() async {
     final values = await _storage.readAll();
     final id = values[_deviceIdKey];
     final revision = int.tryParse(values[_revisionKey] ?? '');
@@ -62,7 +74,7 @@ class SecureCompanionStore implements CompanionConversationStore {
         scope is! String ||
         (scope != companionStatusReadScope && scope != companionChatSendScope) ||
         descriptor == null) {
-      await clearEnrollment();
+      await _clearEnrollment();
       return null;
     }
     try {
@@ -70,13 +82,13 @@ class SecureCompanionStore implements CompanionConversationStore {
       if (decoded is! Map<String, Object?>) throw const FormatException('descriptor');
       return EnrollmentAccepted(deviceId: id, revision: revision, grantedScope: scope, reconnectDescriptor: decoded);
     } on FormatException {
-      await clearEnrollment();
+      await _clearEnrollment();
       return null;
     }
   }
 
   @override
-  Future<void> saveEnrollment(EnrollmentAccepted enrollment) async {
+  Future<void> saveEnrollment(EnrollmentAccepted enrollment) => _authorityOperation(() async {
     // The device id is the enrollment commit marker. Clearing it first means
     // an interrupted update cannot combine a new descriptor with an old id.
     // The protected device secret remains intact for a deliberate retry.
@@ -86,10 +98,12 @@ class SecureCompanionStore implements CompanionConversationStore {
     await _storage.write(key: _scopeKey, value: enrollment.grantedScope);
     await _storage.write(key: _descriptorKey, value: jsonEncode(enrollment.reconnectDescriptor));
     await _storage.write(key: _deviceIdKey, value: enrollment.deviceId);
-  }
+  });
 
   @override
-  Future<void> clearEnrollment() async {
+  Future<void> clearEnrollment() => _authorityOperation(_clearEnrollment);
+
+  Future<void> _clearEnrollment() async {
     // Retain the hardware-protected identity across a denied/revoked result.
     // The controller must never silently make a fresh pair with a new key.
     await _storage.delete(key: _deviceIdKey);
@@ -100,7 +114,7 @@ class SecureCompanionStore implements CompanionConversationStore {
   }
 
   @override
-  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async {
+  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) => _authorityOperation(() async {
     final encoded = await _storage.read(key: _conversationKey);
     if (encoded == null) return null;
     try {
@@ -114,16 +128,16 @@ class SecureCompanionStore implements CompanionConversationStore {
       await _storage.delete(key: _conversationKey);
       return null;
     }
-  }
+  });
 
   @override
-  Future<void> saveConversationCheckpoint(ConversationCheckpoint checkpoint) async {
+  Future<void> saveConversationCheckpoint(ConversationCheckpoint checkpoint) => _authorityOperation(() async {
     final encoded = jsonEncode(checkpoint.toJson());
     if (utf8.encode(encoded).length > 4096) throw const FormatException('checkpoint size');
-    final enrollment = await loadEnrollment();
+    final enrollment = await _loadEnrollment();
     if (enrollment == null || enrollment.deviceId != checkpoint.deviceId || enrollment.revision != checkpoint.revision) throw StateError('conversation enrollment changed');
     await _storage.write(key: _conversationKey, value: encoded);
-  }
+  });
 }
 
 Uint8List _decodeHex(String value) {
