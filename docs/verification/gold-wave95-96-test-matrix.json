@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "mobile-conversation-journey-hosted-pending",
+  "status": "mobile-restart-routing-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 410488,
-    "sha256": "B3A43602D9F0B1C0829CB1D44BA6B2E07B81649C2D00E1FF3FC95E73517985E8"
+    "bytes": 410677,
+    "sha256": "227AB239A94DF4D159CD7150BD9CC99C3069D87FCDB4CC443EE146CF3931681D"
   },
-  "sourceInputs": 2241,
+  "sourceInputs": 2242,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -80327,6 +80327,74 @@
       }
     ],
     "note": "Actual encrypted conversation restart observer, complete canonical bridge selection and Flutter forget/downgrade repairs; only static review, new hosted/native proof pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2518MobileRestartRouting": {
+    "base": "e1c9c703d84526d89108294b33fe157bab104e90",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/hosted-mobile-conversation.py",
+        "bytes": 24296,
+        "sha256": "4739517C293A58D5CAECF86787BA58833AB091E812D71A70B654332EED46F667",
+        "blob": "7d1aa1a39557ea8c0d891f3b9d2b26434294047e"
+      },
+      {
+        "path": ".github/scripts/mobile/test_hosted_mobile_conversation.py",
+        "bytes": 7523,
+        "sha256": "18C52F468B5EDAD9EBAA526457840C860976D1A0F44CD66FAC7AC5A7F71FFFF4",
+        "blob": "868ca0e979cc5d9f3afc22788b036282c1e95d12"
+      },
+      {
+        "path": "apps/neoth_companion/lib/companion_controller.dart",
+        "bytes": 24114,
+        "sha256": "C5C2FE9410EBFA219C03B64211F376921FDD921E67311C2EF1FD8EBE6E56B34B",
+        "blob": "f891057925c459b48853dfc7d5af64837b71bb11"
+      },
+      {
+        "path": "apps/neoth_companion/lib/conversation_presentation.dart",
+        "bytes": 5027,
+        "sha256": "AAF95EFD66DAF9E39153B3255FDCCDD7AC9804A34858ADCC21F7EF29F5CE84AD",
+        "blob": "2e820a8fdb175b5ed6f9f56c6259609b9969bb07"
+      },
+      {
+        "path": "apps/neoth_companion/lib/main.dart",
+        "bytes": 15471,
+        "sha256": "D28183C0B8E289A4B06F7C335B96DAF37B21676365A0A589715E4A9B42299382",
+        "blob": "6f28d63c927cf1391e13133f2e10c6416237a09f"
+      },
+      {
+        "path": "apps/neoth_companion/test/companion_controller_test.dart",
+        "bytes": 38715,
+        "sha256": "011BB5E1BD25F9E0BCB57E7EAF3714426FE503B465FCFD782B8F4C4D3F4431F1",
+        "blob": "5eb8166e4dc468ce0a9b5a59b7389e508f2167ab"
+      },
+      {
+        "path": "apps/neoth_companion/test/conversation_presentation_test.dart",
+        "bytes": 6513,
+        "sha256": "19E4F99619EE7EF11FE4D0C98F1CE58BD6D0D4CA24409942B6397B141A5D3A62",
+        "blob": "8f82467187784a850b953e3686585933f5cdc67d"
+      },
+      {
+        "path": "docs/verification/gold-wave2518-mobile-restart-routing.json",
+        "bytes": 1742,
+        "sha256": "0D1E160482C022A5CA88F1EEBBC16D7FCBF7B6C0D4E4E644D1107CB0C68CE403",
+        "blob": "8ccebadb54f732c422002c01c8ba2c9aa91ea907"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2518468,
+        "sha256": "3647956A76A36188CBA28DF43DCE751B11CFAE7129F47E9E1C219509CF9D44A8",
+        "blob": "6d80211b7725aff01cc2dc84884cacb43a6f4615"
+      },
+      {
+        "path": "SRC/vendor/peeroxide-dht/src/hyperdht.rs",
+        "bytes": 165721,
+        "sha256": "0C7132EFF50BB35FFED30F8BA6FC06886B9EA46CD610652A02773678E1ABF1C2",
+        "blob": "634ba4251995ea0ec1f429532b3d6bfacb58491f"
+      }
+    ],
+    "note": "Prefer advertised routes after actual restart handshake starvation; mobile follow/reading and native initialization lifetime changes. Existing failing journey remains the required proof; no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

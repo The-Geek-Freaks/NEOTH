@@ -21,6 +21,7 @@ class CompanionController extends ChangeNotifier {
   final CompanionStore _store;
   final NativeBridgeFactory _bridgeFactory;
   NativeBridge? _bridge;
+  Future<void>? _bridgePreparation;
   EnrollmentAccepted? _enrollment;
   CompanionStatus? status;
   CompanionChatTerminal? chatTerminal;
@@ -425,13 +426,22 @@ class CompanionController extends ChangeNotifier {
 
   NativeBridge _ensureBridge() => _bridge ?? (throw StateError('protected device identity is not ready'));
 
-  Future<void> prepareBridge() async {
-    if (_disposed || _bridge != null) return;
-    final secret = await _store.loadOrCreateDeviceSecret();
+  Future<void> prepareBridge() {
+    if (_disposed || _bridge != null) return Future<void>.value();
+    return _bridgePreparation ??= _prepareBridge();
+  }
+
+  Future<void> _prepareBridge() async {
     try {
-      _bridge = _bridgeFactory(secret);
+      final secret = await _store.loadOrCreateDeviceSecret();
+      try {
+        if (_disposed) return;
+        _bridge = _bridgeFactory(secret);
+      } finally {
+        secret.fillRange(0, secret.length, 0);
+      }
     } finally {
-      secret.fillRange(0, secret.length, 0);
+      _bridgePreparation = null;
     }
   }
 

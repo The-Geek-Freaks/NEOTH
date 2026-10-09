@@ -384,6 +384,8 @@ class _MemoryStore implements CompanionStore {
   _MemoryStore({this.enrollment});
   EnrollmentAccepted? enrollment;
   Future<EnrollmentAccepted?>? loadFuture;
+  Future<Uint8List>? secretFuture;
+  int secretLoads = 0;
   Uint8List secret = Uint8List.fromList(List<int>.filled(32, 9));
 
   @override
@@ -394,7 +396,11 @@ class _MemoryStore implements CompanionStore {
     return enrollment;
   }
   @override
-  Future<Uint8List> loadOrCreateDeviceSecret() async => Uint8List.fromList(secret);
+  Future<Uint8List> loadOrCreateDeviceSecret() async {
+    secretLoads++;
+    if (secretFuture != null) return secretFuture!;
+    return Uint8List.fromList(secret);
+  }
   @override
   Future<void> saveEnrollment(EnrollmentAccepted value) async => enrollment = value;
 }
@@ -589,6 +595,46 @@ Future<CompanionController> _conversationController(_ConversationStore store, _C
 }
 
 void conversationRegressionCases() {
+  test('JM05 bridge preparation shares one seed read and cannot allocate after disposal', () async {
+    final loaded = Completer<Uint8List>();
+    final seed = Uint8List.fromList(List.filled(32, 7));
+    final store = _MemoryStore()..secretFuture = loaded.future;
+    var allocations = 0;
+    final controller = CompanionController(store: store, bridgeFactory: (_) { allocations++; return _FakeBridge(); });
+    final first = controller.prepareBridge();
+    final second = controller.prepareBridge();
+    expect(identical(first, second), isTrue);
+    expect(store.secretLoads, 1);
+    controller.dispose();
+    loaded.complete(seed);
+    await first;
+    await second;
+    expect(allocations, 0);
+    expect(seed, everyElement(0));
+    await controller.prepareBridge();
+    expect(store.secretLoads, 1);
+  });
+
+  test('JM05 failed bridge preparation releases its slot and erases the failed seed', () async {
+    final seed = Uint8List.fromList(List.filled(32, 7));
+    final store = _MemoryStore()..secretFuture = Future.value(seed);
+    var allocations = 0;
+    final bridge = _FakeBridge();
+    final controller = CompanionController(store: store, bridgeFactory: (_) {
+      allocations++;
+      if (allocations == 1) throw StateError('fixture unavailable library');
+      return bridge;
+    });
+    await expectLater(controller.prepareBridge(), throwsStateError);
+    expect(seed, everyElement(0));
+    store.secretFuture = null;
+    await controller.prepareBridge();
+    expect(allocations, 2);
+    expect(store.secretLoads, 2);
+    controller.dispose();
+    await Future<void>.microtask(() {});
+    expect(bridge.disposeCalls, 1);
+  });
   test('JM05 forget fences late enrollment restore pairing and status completions', () async {
     for (final operation in ['restore', 'pair', 'refresh']) {
       final store = _MemoryStore(enrollment: operation == 'pair' ? null : _accepted());

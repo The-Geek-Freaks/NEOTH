@@ -80,6 +80,24 @@ def validate_chat(value: Any, request_id: str, revision: int, expected_id: str |
     return conversation_id
 
 
+class ConversationFrameError(RuntimeError):
+    """Only fixed public classifications cross into diagnostic receipts."""
+    def __init__(self, code: int, value: dict[str, Any], request_id: str):
+        def selected(field: str, allowed: set[str]) -> str:
+            observed = value.get(field)
+            return observed if isinstance(observed, str) and observed in allowed else "other"
+        self.public_failure = {
+            "poll_code": code if type(code) is int and code in (-1, 0, 1, 2, 3, 4, 5, 6, 7) else -1,
+            "kind": selected("kind", {"chat", "conversation_history"}),
+            "outcome": selected("outcome", {"accepted", "denied", "busy", "unavailable", "timeout", "indeterminate"}),
+            "code": selected("code", {"cancelled", "device_denied", "unknown_device", "revoked", "invalid_signature",
+                "transport_join_failed", "transport_closed", "chat_connect_timeout", "daemon_key_mismatch",
+                "invalid_server_frame", "transport_read_failed", "chat_challenge_timeout", "invalid_chat_challenge",
+                "conversation_not_supported", "stale_conversation_revision", "invalid_chat_request"}),
+            "request_matches": value.get("request_id") == request_id,
+        }
+        super().__init__("conversation terminal rejected: " + json.dumps(self.public_failure, sort_keys=True))
+
 class ConversationBridge(H.Bridge):
     def __init__(self, shared: pathlib.Path):
         super().__init__(shared)
@@ -128,7 +146,8 @@ class ConversationBridge(H.Bridge):
                     else:
                         require(value.get("kind") == "chat_activity_snapshot", "invalid activity frame")
                     continue
-                require(code == H.OK and value.get("request_id") == request_id, "conversation terminal is not request-bound success")
+                if code != H.OK or value.get("request_id") != request_id or (read and value.get("kind") != "conversation_history"):
+                    raise ConversationFrameError(code, value, request_id)
                 return value
             raise H.WorkDeadline("conversation work deadline exhausted")
         except Exception:
@@ -343,6 +362,11 @@ def main() -> int:
             require(len(receipt["generations"]) == 2, "two daemon generations were not drained")
             receipt["outcome"] = "passed"
             receipt["stage"] = "complete"
+    except Exception as error:
+        receipt["failure_class"] = "public_terminal" if isinstance(error, ConversationFrameError) else "journey_check"
+        if isinstance(error, ConversationFrameError):
+            receipt["public_failure"] = error.public_failure
+        raise
     finally:
         if bridge is not None:
             bridge.close()

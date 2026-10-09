@@ -1487,11 +1487,11 @@ impl HyperDhtHandle {
 
     /// Connect to a remote peer, optionally using known relay addresses first.
     ///
-    /// Connection strategy (matches Node.js `findAndConnect`):
+    /// Connection strategy:
     /// 1. Try provided `relay_addresses` first (optimistic pre-connect).
-    /// 2. Run FIND_NODE to discover all DHT nodes close to the target,
-    ///    then try `connect_through_node` for each one.
-    /// 3. Try relay addresses found in peer records via FIND_PEER query.
+    /// 2. Try advertised peer-record addresses before generic node probes.
+    /// 3. Run FIND_NODE and try the remaining nearby nodes as a fallback.
+    /// Every attempted route still authenticates the same remote public key.
     pub async fn connect_with_nodes(
         &self,
         key_pair: &KeyPair,
@@ -1547,11 +1547,64 @@ impl HyperDhtHandle {
             }
         }
 
-        // Phase 2: Walk the DHT to find nodes close to hash(remotePublicKey).
+        // Phase 2: Resolve advertised peer routes before probing generic nodes.
+        // After a restart, the optimistic address may be stale. Serial generic
+        // node timeouts must not consume the caller's whole connection budget
+        // before we even discover the peer's newly advertised endpoint.
+        let target = hash(&remote_public_key);
+        diagnostics.phase("find_peer_fallback_started");
+        diagnostics.fallback_started();
+        let peer_replies = match self.query_find_peer(target).await {
+            Ok(replies) => {
+                diagnostics.phase("find_peer_fallback_completed");
+                diagnostics.fallback_completed();
+                replies
+            }
+            Err(error) => {
+                // Discovery failure does not suppress the remaining FIND_NODE
+                // route. Every actual connection still pins the remote key.
+                last_err = error;
+                Vec::new()
+            }
+        };
+        for reply in &peer_replies {
+            if let Some(value) = &reply.value {
+                if let Ok(peer) = decode_hyper_peer_from_bytes(value) {
+                    for relay in &peer.relay_addresses {
+                        if tried
+                            .iter()
+                            .any(|(h, p)| h == &relay.host && *p == relay.port)
+                        {
+                            continue;
+                        }
+                        diagnostics.add_fallback_candidate();
+                        tried.push((relay.host.clone(), relay.port));
+                        match self
+                            .connect_through_node(
+                                key_pair,
+                                &remote_public_key,
+                                relay,
+                                false,
+                                runtime,
+                                diagnostics,
+                            )
+                            .await
+                        {
+                            Ok(result) => return Ok(result),
+                            Err(e) => {
+                                tracing::debug!(relay = %format!("{}:{}", relay.host, relay.port), err = %e, "peer record relay attempt failed");
+                                last_err = e;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 3: Walk the DHT to find nodes close to hash(remotePublicKey).
         // Use FIND_NODE (internal command all DHT nodes handle) to ensure we
         // discover the server's own node — FIND_PEER (user command) might not
         // reach all nodes in small networks.
-        let target = hash(&remote_public_key);
         let table_size = self.dht.table_size().await.unwrap_or(0);
         tracing::debug!(
             table_size,
@@ -1572,7 +1625,7 @@ impl HyperDhtHandle {
             "connect_with_nodes: FIND_NODE completed"
         );
 
-        if relay_addresses.is_empty() && node_replies.is_empty() {
+        if tried.is_empty() && node_replies.is_empty() {
             return Err(HyperDhtError::PeerNotFound);
         }
 
@@ -1625,46 +1678,6 @@ impl HyperDhtHandle {
                 Err(e) => {
                     tracing::debug!(relay = %format!("{}:{}", candidate.host, candidate.port), err = %e, "query relay attempt failed");
                     last_err = e;
-                }
-            }
-        }
-
-        // Phase 3: Also try relay addresses from a FIND_PEER query (peer records).
-        diagnostics.phase("find_peer_fallback_started");
-        diagnostics.fallback_started();
-        let peer_replies = self.query_find_peer(target).await?;
-        diagnostics.phase("find_peer_fallback_completed");
-        diagnostics.fallback_completed();
-        for reply in &peer_replies {
-            if let Some(value) = &reply.value {
-                if let Ok(peer) = decode_hyper_peer_from_bytes(value) {
-                    for relay in &peer.relay_addresses {
-                        if tried
-                            .iter()
-                            .any(|(h, p)| h == &relay.host && *p == relay.port)
-                        {
-                            continue;
-                        }
-                        diagnostics.add_fallback_candidate();
-                        tried.push((relay.host.clone(), relay.port));
-                        match self
-                            .connect_through_node(
-                                key_pair,
-                                &remote_public_key,
-                                relay,
-                                false,
-                                runtime,
-                                diagnostics,
-                            )
-                            .await
-                        {
-                            Ok(result) => return Ok(result),
-                            Err(e) => {
-                                tracing::debug!(relay = %format!("{}:{}", relay.host, relay.port), err = %e, "peer record relay attempt failed");
-                                last_err = e;
-                            }
-                        }
-                    }
                 }
             }
         }

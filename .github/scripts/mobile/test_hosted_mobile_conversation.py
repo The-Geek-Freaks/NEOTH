@@ -27,6 +27,20 @@ def history(*, read: bool = False) -> dict:
 
 
 class ConversationObserverTests(unittest.TestCase):
+    def test_failure_receipt_classification_retains_no_foreign_text_ids_or_secrets(self) -> None:
+        value = {"kind": "chat", "outcome": "indeterminate", "request_id": REQUEST,
+                 "code": "secret-sentinel", "records": [{"text": "private-message-sentinel"}],
+                 "private_session_id": FOREIGN, "seed": "private-seed-sentinel"}
+        error = M.ConversationFrameError(M.H.OK, value, REQUEST)
+        self.assertEqual(error.public_failure, {"poll_code": M.H.OK, "kind": "chat", "outcome": "indeterminate",
+            "code": "other", "request_matches": True})
+        for marker in (REQUEST, FOREIGN, "secret-sentinel", "private-message-sentinel", "private-seed-sentinel"):
+            self.assertNotIn(marker, str(error))
+        foreign = M.ConversationFrameError(3, {"code": "transport_closed", "request_id": FOREIGN}, REQUEST)
+        self.assertEqual(foreign.public_failure["code"], "transport_closed")
+        self.assertFalse(foreign.public_failure["request_matches"])
+        unknown = M.ConversationFrameError(999, {"kind": "secret", "outcome": ["secret"], "code": {"secret": True}}, REQUEST)
+        self.assertEqual(unknown.public_failure, {"poll_code": -1, "kind": "other", "outcome": "other", "code": "other", "request_matches": False})
     def test_chat_requires_exact_admission_context_rows_and_public_fields(self) -> None:
         value = {"kind": "chat", "schema_version": 3, "request_id": REQUEST, "outcome": "accepted",
                  "records": [{"kind": "stdout", "text": M.REPLIES[0]}], "provider": "provider-a", "model": "w2328-loopback-model",

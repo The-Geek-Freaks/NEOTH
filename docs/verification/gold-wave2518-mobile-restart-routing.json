@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.gold-wave2518.mobile-restart-routing.v1",
+  "status": "implemented-hosted-unproven",
+  "base": "e1c9c703d84526d89108294b33fe157bab104e90",
+  "priorRun": 37909911052,
+  "priorPassed": {
+    "rust": 159,
+    "collector": 29,
+    "observer": 5,
+    "legacyProductStep": "success"
+  },
+  "observedFailure": "Recovery after daemon/native restart reaches no handshake response; each attempt exhausts its budget before FIND_PEER records are tried.",
+  "changes": [
+    "Prefer advertised peer-record routes before generic FIND_NODE probes; retain optimistic routes, key authentication, deduplication and existing caller deadline",
+    "Continue generic node discovery if the peer-record query fails",
+    "Bounded conversation viewport follows only while reader chooses; retains reading position, handles scope/layout changes and explicit latest action",
+    "Share native initialization and prevent late allocation after controller disposal; erase temporary seeds on every factory outcome",
+    "Persist fixed public terminal failure classes without arbitrary text or identifiers"
+  ],
+  "verification": {
+    "rustExpected": 159,
+    "collectorExpected": 29,
+    "observerExpected": 6,
+    "flutterExpected": 56,
+    "interopSources": 81,
+    "nativeSources": 65,
+    "ffiExports": 14,
+    "localRuntimeExecuted": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "deviceAccepted": false,
+    "releaseAccepted": false
+  },
+  "remaining": [
+    "Unchanged real encrypted restart journey must pass on final producer",
+    "Exact hosted case and original archive admission",
+    "Flutter and Android/iOS native validation",
+    "Physical devices, JM07/JM08, signed release and all original Gold backlog"
+  ]
+}
