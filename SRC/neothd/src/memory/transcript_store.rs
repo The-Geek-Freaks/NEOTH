@@ -603,8 +603,17 @@ pub(crate) fn read_admitted_session_context_at(
     db_path: &std::path::Path,
     session_id: &str,
 ) -> anyhow::Result<Vec<AdmittedContextTurn>> {
+    Ok(read_admitted_companion_history_at(db_path, session_id)?.unwrap_or_default())
+}
+
+/// Shares all context bounds while distinguishing absent canonical storage
+/// from a real empty conversation for the public history projection.
+pub(crate) fn read_admitted_companion_history_at(
+    db_path: &std::path::Path,
+    session_id: &str,
+) -> anyhow::Result<Option<Vec<AdmittedContextTurn>>> {
     match std::fs::symlink_metadata(db_path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
         Ok(_) => {}
     }
@@ -618,7 +627,7 @@ pub(crate) fn read_admitted_session_context_at(
         |row| row.get::<_, bool>(0),
     )?;
     if !has_raw_turns {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let mut stmt = conn.prepare(
         "SELECT role, CASE WHEN length(CAST(text AS BLOB)) <= 16384 THEN text ELSE NULL END \
@@ -665,7 +674,7 @@ pub(crate) fn read_admitted_session_context_at(
         turns.push(turn);
     }
     turns.reverse();
-    Ok(turns)
+    Ok(Some(turns))
 }
 
 /// Bounded browser projection. A missing database or an older database without

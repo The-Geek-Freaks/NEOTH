@@ -149,7 +149,16 @@
         "daemon::gui_chat_runtime::w458_test_support::real_start_persists_only_non_incognito_webchat_default_provenance",
         "daemon::gui_chat_runtime::webchat_provenance_tests::durable_webchat_provenance_rejects_wrong_origin_incognito_legacy_and_mixed_rows",
         "daemon::gui_chat_runtime::webchat_provenance_tests::durable_webchat_provenance_streams_historical_rows_and_rejects_overlong_records",
-        "memory::transcript_store::tests::admitted_context_sql_bounds_preserve_recent_order_and_declare_missing_text"
+        "memory::transcript_store::tests::admitted_context_sql_bounds_preserve_recent_order_and_declare_missing_text",
+        "daemon::companion_protocol::tests::jm05_conversation_selection_binds_public_id_and_incognito_without_changing_legacy",
+        "daemon::companion_protocol::tests::jm05_conversation_selection_rejects_private_identity_and_nil_resume",
+        "daemon::companion_protocol::tests::jm05_read_recovery_is_signed_separately_and_advertises_without_legacy_drift",
+        "daemon::companion_protocol::tests::jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit",
+        "daemon::companion_authority::conversation_tests::jm05_conversation_binding_survives_restart_and_denies_foreign_owner_and_revoke",
+        "daemon::companion_authority::conversation_tests::jm05_conversation_incognito_and_replayed_creation_do_not_create_second_binding",
+        "daemon::companion_authority::conversation_tests::jm05_conversation_state_capacity_and_corrupt_private_binding_fail_closed",
+        "daemon::companion_authority::conversation_tests::jm05_read_recovery_rejects_foreign_revision_signature_replay_and_revocation",
+        "daemon::chat_runtime::tests::companion_signed_conversation_joins_context_and_recovers_without_provider_effect"
       ]
     },
     "no_cluster": {
@@ -171,7 +180,14 @@
         "tests::ffi_v2_terminal_beats_snapshot_and_legacy_poll_stays_pending",
         "tests::ffi_cancel_then_free_drains_exactly_one_held_worker",
         "tests::ffi_v2_larger_replacement_after_old_probe_is_retained_after_code5",
-        "tests::ffi_v3_preview_resize_legacy_isolation_and_terminal_priority"
+        "tests::ffi_v3_preview_resize_legacy_isolation_and_terminal_priority",
+        "companion_protocol::tests::jm05_conversation_selection_binds_public_id_and_incognito_without_changing_legacy",
+        "companion_protocol::tests::jm05_conversation_selection_rejects_private_identity_and_nil_resume",
+        "companion_protocol::tests::jm05_read_recovery_is_signed_separately_and_advertises_without_legacy_drift",
+        "companion_protocol::tests::jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit",
+        "tests::conversation_commands_bind_revision_public_ids_and_reject_private_or_effectful_reads",
+        "tests::conversation_history_needs_matching_admission_and_read_never_claims_commit",
+        "tests::conversation_poll_keeps_large_history_bounded_and_legacy_poll_limit_unchanged"
       ]
     }
   },
@@ -283,7 +299,12 @@
     "SRC/vendor/peeroxide/src/error.rs",
     "SRC/vendor/peeroxide/src/lib.rs",
     "SRC/vendor/peeroxide/src/peer_discovery.rs",
-    "SRC/vendor/peeroxide/src/swarm.rs"
+    "SRC/vendor/peeroxide/src/swarm.rs",
+    "apps/neoth_companion/lib/secure_store.dart",
+    "apps/neoth_companion/lib/companion_terminal_presentation.dart",
+    "apps/neoth_companion/lib/conversation_models.dart",
+    "apps/neoth_companion/lib/conversation_presentation.dart",
+    "apps/neoth_companion/test/conversation_presentation_test.dart"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",

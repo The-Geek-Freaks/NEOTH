@@ -1,0 +1,65 @@
+{
+  "schema": "neoth.gold-wave2516.mobile-conversation.v1",
+  "status": "implemented-awaiting-hosted-validation",
+  "base": "56afa74c239ff80acc57db5802c3382bb5206a23",
+  "localRuntimeExecuted": false,
+  "changes": [
+    "Signed new/resume/incognito selection with durable device/revision-owned public-to-private binding",
+    "Bounded canonical history and separately signed effect-free read/recovery requests",
+    "Additive native start/poll API with unchanged legacy terminal limits and progress codes",
+    "Protected public-identity checkpoint persisted before native send; no automatic resend",
+    "Flutter conversation choice, incognito, explicit recovery and canonical history display"
+  ],
+  "bounds": {
+    "conversationsPerDevice": 8,
+    "globalConversations": 128,
+    "historyRows": 32,
+    "rowBytes": 16384,
+    "textBytes": 65536,
+    "encodedRowsBytes": 98304,
+    "historyFrameBytes": 102400,
+    "combinedResultBytes": 188416,
+    "checkpointBytes": 4096
+  },
+  "newPortableTests": [
+    "daemon::companion_protocol::tests::jm05_conversation_selection_binds_public_id_and_incognito_without_changing_legacy",
+    "daemon::companion_protocol::tests::jm05_conversation_selection_rejects_private_identity_and_nil_resume",
+    "daemon::companion_protocol::tests::jm05_read_recovery_is_signed_separately_and_advertises_without_legacy_drift",
+    "daemon::companion_protocol::tests::jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit",
+    "daemon::companion_authority::conversation_tests::jm05_conversation_binding_survives_restart_and_denies_foreign_owner_and_revoke",
+    "daemon::companion_authority::conversation_tests::jm05_conversation_incognito_and_replayed_creation_do_not_create_second_binding",
+    "daemon::companion_authority::conversation_tests::jm05_conversation_state_capacity_and_corrupt_private_binding_fail_closed",
+    "daemon::companion_authority::conversation_tests::jm05_read_recovery_rejects_foreign_revision_signature_replay_and_revocation",
+    "daemon::chat_runtime::tests::companion_signed_conversation_joins_context_and_recovers_without_provider_effect"
+  ],
+  "newBridgeTests": [
+    "companion_protocol::tests::jm05_conversation_selection_binds_public_id_and_incognito_without_changing_legacy",
+    "companion_protocol::tests::jm05_conversation_selection_rejects_private_identity_and_nil_resume",
+    "companion_protocol::tests::jm05_read_recovery_is_signed_separately_and_advertises_without_legacy_drift",
+    "companion_protocol::tests::jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit",
+    "tests::conversation_commands_bind_revision_public_ids_and_reject_private_or_effectful_reads",
+    "tests::conversation_history_needs_matching_admission_and_read_never_claims_commit",
+    "tests::conversation_poll_keeps_large_history_bounded_and_legacy_poll_limit_unchanged"
+  ],
+  "validation": {
+    "rustCases": 159,
+    "collectorCases": 29,
+    "rawSourceBindings": 78,
+    "flutterCases": 45,
+    "requiredFfiExports": 14,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "physicalDeviceAccepted": false
+  },
+  "review": {
+    "method": "Serial static source/diff review",
+    "corrected": "Unwrapped optional pending-revoke receipt in new authority test",
+    "localExecutableValidation": "not run under BSOD hold"
+  },
+  "remaining": [
+    "Fresh hosted format, type and behavioral validation",
+    "Actual encrypted new/resume/restart/recovery product journey",
+    "Fresh Android/iOS builds and original artifact admission",
+    "Physical device, JM07/JM08, signed release and remaining Gold goals"
+  ]
+}

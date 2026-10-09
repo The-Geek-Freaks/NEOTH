@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,10 +7,12 @@ import 'package:neoth_companion/companion_controller.dart';
 import 'package:neoth_companion/models.dart';
 import 'package:neoth_companion/native_bridge.dart';
 import 'package:neoth_companion/secure_store.dart';
+import 'package:neoth_companion/conversation_models.dart';
 
 void main() {
   activityModelRegressionCases();
   streamRegressionCases();
+  conversationRegressionCases();
   group('CompanionController', () {
     test('persists a public enrollment only after a real accepted bridge frame', () async {
       final store = _MemoryStore();
@@ -511,5 +514,160 @@ void streamRegressionCases() {
     expect(controller.chatTerminal, isNull);
     expect(bridge.chatCalls, 1);
     controller.dispose();
+  });
+}
+
+const _conversationId = '00000000-0000-4000-8000-000000000010';
+
+class _ConversationStore extends _MemoryStore implements CompanionConversationStore {
+  _ConversationStore() : super(enrollment: _chatAccepted());
+  ConversationCheckpoint? checkpoint;
+  bool failSave = false;
+  @override
+  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async =>
+      checkpoint?.deviceId == enrollment.deviceId && checkpoint?.revision == enrollment.revision ? checkpoint : null;
+  @override
+  Future<void> saveConversationCheckpoint(ConversationCheckpoint value) async {
+    if (failSave) throw StateError('save failure');
+    checkpoint = ConversationCheckpoint.fromJson(jsonDecode(jsonEncode(value.toJson())) as Map<String, Object?>);
+  }
+  @override
+  Future<void> clearEnrollment() async { await super.clearEnrollment(); checkpoint = null; }
+}
+
+class _ConversationBridge extends _FakeBridge implements NativeBridgeWithConversation {
+  final commands = <Map<String, Object?>>[];
+  Future<NativeBridgeResult> Function(Map<String, Object?>)? handler;
+  @override
+  bool get conversationSupported => true;
+  @override
+  Future<NativeBridgeResult> conversation(String descriptorJson, String deviceId, String commandJson,
+      void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) async {
+    final command = jsonDecode(commandJson) as Map<String, Object?>;
+    commands.add(command);
+    return handler!(command);
+  }
+  @override
+  Future<NativeBridgeResult> chatWithStream(String descriptorJson, String deviceId, String message,
+      void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) =>
+      throw StateError('conversation must not downgrade or resend');
+}
+
+Map<String, Object?> _conversationHistory(String requestId, {bool incognito = false, bool committed = true}) => {
+  'conversation_schema_version': 1, 'request_id': requestId, 'revision': 2,
+  'conversation_id': incognito ? null : _conversationId, 'state': incognito ? 'incognito' : 'available',
+  'current_turn_committed': committed && !incognito, 'bounded_tail': true,
+  'turns': incognito ? <Object?>[] : <Object?>[
+    {'role': 'operator', 'text': 'ordinary message', 'truncated': false},
+    {'role': 'agent', 'text': 'visible reply', 'truncated': false},
+  ],
+};
+
+NativeBridgeResult _conversationTerminal(Map<String, Object?> command, {bool incognito = false}) => NativeBridgeResult(NativeOperationResult.ok, {
+  'kind': 'chat', 'schema_version': 3, 'request_id': command['request_id'], 'outcome': 'accepted',
+  'records': <Object?>[{'kind': 'stdout', 'text': 'visible reply'}], 'provider': 'provider-a', 'model': 'model-a',
+  'conversation_admission': {'conversation_schema_version': 1, 'request_id': command['request_id'], 'revision': 2,
+    'conversation_id': incognito ? null : _conversationId, 'incognito': incognito},
+  'conversation_history': _conversationHistory(command['request_id']! as String, incognito: incognito),
+});
+
+Future<CompanionController> _conversationController(_ConversationStore store, _ConversationBridge bridge) async {
+  final controller = CompanionController(store: store, bridgeFactory: (_) => bridge);
+  await controller.prepareBridge(); await controller.restore(); return controller;
+}
+
+void conversationRegressionCases() {
+  test('JM05 conversation persists public intent before send and resumes one canonical history', () async {
+    final store = _ConversationStore(); final bridge = _ConversationBridge();
+    bridge.handler = (command) async {
+      expect(store.checkpoint?.pendingRequestId, command['request_id']);
+      expect(jsonEncode(store.checkpoint!.toJson()), isNot(contains('ordinary message')));
+      return _conversationTerminal(command);
+    };
+    final controller = await _conversationController(store, bridge);
+    await controller.sendChat('ordinary message');
+    expect(controller.terminalCoveredByHistory, isTrue);
+    expect(controller.selectedConversationId, _conversationId);
+    expect(controller.conversationPendingMessage, isNull);
+    expect(store.checkpoint?.pendingRequestId, isNull);
+    await controller.sendChat('ordinary follow-up');
+    expect(bridge.commands, hasLength(2));
+    final action = bridge.commands.last['action']! as Map;
+    expect(action['operation'], 'resume'); expect(action['conversation_id'], _conversationId);
+    expect(bridge.commands.first['request_id'], isNot(bridge.commands.last['request_id']));
+    expect(bridge.chatCalls, 0);
+    controller.dispose();
+  });
+
+  test('JM05 restart recovers lost admission with a read command and never repeats the prompt', () async {
+    final store = _ConversationStore(); final bridge = _ConversationBridge();
+    const pending = '00000000-0000-4000-8000-000000000011';
+    store.checkpoint = ConversationCheckpoint(deviceId: _deviceId, revision: 2, pendingRequestId: pending);
+    bridge.handler = (command) async => NativeBridgeResult(NativeOperationResult.ok,
+      {'kind': 'conversation_history', ..._conversationHistory(command['request_id']! as String, committed: false)});
+    final controller = await _conversationController(store, bridge);
+    await controller.sendChat('must not be sent'); expect(bridge.commands, isEmpty);
+    await controller.recoverConversation();
+    expect(bridge.commands, hasLength(1));
+    final action = bridge.commands.single['action']! as Map;
+    expect(action, {'operation': 'recover', 'created_by_request': pending});
+    expect(controller.selectedConversationId, _conversationId);
+    expect(controller.conversationNeedsRecovery, isFalse);
+    expect(controller.chatTerminal, isNull);
+    expect(controller.chatLocalMessage, contains('unconfirmed'));
+    controller.dispose();
+  });
+
+  test('JM05 store failure prevents start and foreign revision preserves unresolved intent', () async {
+    final store = _ConversationStore()..failSave = true; final bridge = _ConversationBridge();
+    final controller = await _conversationController(store, bridge);
+    await controller.sendChat('not started'); expect(bridge.commands, isEmpty);
+    store.failSave = false;
+    bridge.handler = (command) async {
+      final value = _conversationTerminal(command);
+      final json = <String, Object?>{...value.publicJson!};
+      json['conversation_admission'] = {...(json['conversation_admission']! as Map<String, Object?>), 'revision': 99};
+      return NativeBridgeResult(NativeOperationResult.ok, json);
+    };
+    await controller.sendChat('ordinary message');
+    expect(controller.chatTerminal, isNull); expect(controller.selectedConversationId, isNull);
+    expect(controller.conversationNeedsRecovery, isTrue); expect(bridge.commands, hasLength(1));
+    controller.dispose();
+  });
+
+  test('JM05 forget wins a late conversation completion and clears the public checkpoint', () async {
+    final store = _ConversationStore(); final bridge = _ConversationBridge();
+    final entered = Completer<Map<String, Object?>>(); final reply = Completer<NativeBridgeResult>();
+    bridge.handler = (command) { entered.complete(command); return reply.future; };
+    final controller = await _conversationController(store, bridge);
+    final sending = controller.sendChat('ordinary message');
+    final command = await entered.future;
+    await controller.forgetLocalEnrollment(); reply.complete(_conversationTerminal(command)); await sending;
+    expect(store.checkpoint, isNull); expect(controller.conversationIds, isEmpty);
+    expect(controller.conversationHistory, isNull); expect(controller.chatTerminal, isNull);
+    expect(bridge.commands, hasLength(1)); controller.dispose();
+  });
+
+  test('JM05 incognito stays outside saved history and unavailable rows do not hide the terminal', () async {
+    final store = _ConversationStore(); final bridge = _ConversationBridge();
+    bridge.handler = (command) async => _conversationTerminal(command, incognito: true);
+    final controller = await _conversationController(store, bridge);
+    controller.setConversationIncognito(true); await controller.sendChat('private message');
+    expect((bridge.commands.single['action']! as Map)['incognito'], isTrue);
+    expect(controller.conversationIds, isEmpty); expect(controller.conversationHistory?.turns, isEmpty);
+    expect(controller.terminalCoveredByHistory, isFalse);
+    expect(jsonEncode(store.checkpoint!.toJson()), isNot(contains('private message')));
+    final rowless = _conversationHistory(controller.chatTerminal!.requestId);
+    rowless['turns'] = <Object?>[{'role': 'agent', 'text': null, 'truncated': true}];
+    controller.conversationHistory = ConversationHistory.fromJson(rowless);
+    expect(controller.terminalCoveredByHistory, isFalse); controller.dispose();
+  });
+
+  test('JM05 public history rejects private fields oversized escaped rows and missing text lies', () {
+    final value = _conversationHistory('00000000-0000-4000-8000-000000000011');
+    expect(() => ConversationHistory.fromJson({...value, 'private_session_id': 'forbidden'}), throwsFormatException);
+    expect(() => ConversationHistory.fromJson({...value, 'turns': [{'role': 'agent', 'text': null, 'truncated': false}]}), throwsFormatException);
+    expect(() => ConversationHistory.fromJson({...value, 'turns': [{'role': 'operator', 'text': List.filled(16384, '\u0001').join(), 'truncated': false}]}), throwsFormatException);
+    expect(() => ConversationHistory.fromJson({...value, 'state': 'unavailable'}), throwsFormatException);
   });
 }

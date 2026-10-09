@@ -1,7 +1,9 @@
 //! W2306 R5: recovery-safe v3 companion authority candidate.
 //! A persisted delivery marker is written before the daemon may begin status I/O.
 use super::companion_protocol::{
+    CompanionConversationReadRequest, CompanionConversationReadSelection,
     COMPANION_V3_SCHEMA_VERSION, ChatChallenge, CompanionChatRequest, CompanionDeviceId,
+    CompanionConversationSelection,
     CompanionScope, CompanionStatusSnapshot, EnrollmentProof, ProtocolError, ReconnectDescriptor,
     ServerFrame, StatusChallenge, StatusProof, device_key_fingerprint, encode_chat_terminal,
     encode_server_frame,
@@ -22,6 +24,34 @@ const MAX: usize = 128;
 const MAX_BYTES: usize = 256 * 1024;
 const AGE: i64 = 60;
 const TERMINAL_RECEIPTS: usize = 256;
+const MAX_CONVERSATIONS: usize = 128;
+const MAX_DEVICE_CONVERSATIONS: usize = 8;
+
+/// Opaque authority-owned binding; the private session is never a peer input.
+pub struct AdmittedCompanionConversation {
+    conversation_id: Option<Uuid>,
+    session_id: Option<String>,
+    incognito: bool,
+}
+impl AdmittedCompanionConversation {
+    pub fn conversation_id(&self) -> Option<Uuid> { self.conversation_id }
+    pub fn is_incognito(&self) -> bool {
+        debug_assert_eq!(self.incognito, self.session_id.is_none());
+        self.incognito
+    }
+    #[cfg(any(test, feature = "cluster"))]
+    pub(crate) fn session_id(&self) -> Option<&str> { self.session_id.as_deref() }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationBinding {
+    conversation_id: Uuid,
+    device_id: Uuid,
+    revision: u64,
+    created_by_request: Uuid,
+    private_session_id: Uuid,
+}
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -107,6 +137,8 @@ struct State {
     terminal_receipts: BTreeMap<Uuid, TerminalReceipt>,
     #[serde(default)]
     delivery_markers: BTreeMap<Uuid, DeliveryMarker>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    conversations: BTreeMap<Uuid, ConversationBinding>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -115,6 +147,7 @@ impl Default for State {
             devices: BTreeMap::new(),
             terminal_receipts: BTreeMap::new(),
             delivery_markers: BTreeMap::new(),
+            conversations: BTreeMap::new(),
         }
     }
 }
@@ -163,8 +196,14 @@ pub struct StatusLease {
     id: Uuid,
     delivery_id: Uuid,
     pub revision: u64,
+    conversation: Option<AdmittedCompanionConversation>,
+    read_only: bool,
 }
 impl StatusLease {
+    pub fn admitted_conversation(&self) -> Option<&AdmittedCompanionConversation> {
+        debug_assert!(!self.read_only || !self.conversation.as_ref().is_some_and(|value| value.is_incognito()));
+        self.conversation.as_ref()
+    }
     /// Caller must move this lease into the owned carrier task before I/O.
     pub fn status_frame(&self, snapshot: CompanionStatusSnapshot) -> Result<Vec<u8>> {
         snapshot.validate().map_err(pe)?;
@@ -212,6 +251,7 @@ impl StatusLease {
             device_id: self.id,
             delivery_id: self.delivery_id,
             revision: self.revision,
+            read_only: self.read_only,
         })
     }
 
@@ -227,6 +267,7 @@ struct CompanionChatEffectGate {
     device_id: Uuid,
     delivery_id: Uuid,
     revision: u64,
+    read_only: bool,
 }
 
 #[cfg(any(test, feature = "cluster"))]
@@ -286,6 +327,7 @@ impl crate::providers::ChatTurnEffectGate for CompanionChatEffectGate {
         _kind: crate::providers::ChatTurnEffectKind,
         _request_binding_sha256: &str,
     ) -> Result<crate::providers::PreparingEffect> {
+        anyhow::ensure!(!self.read_only, "conversation read cannot start a provider effect");
         let admission = Arc::clone(&self.shared.effect_admission).lock_owned().await;
         check_chat_effect_authority(
             &self.shared,
@@ -791,6 +833,8 @@ impl DeviceAuthority {
             id: p.device_id.0,
             delivery_id,
             revision: p.revision,
+            conversation: None,
+            read_only: true,
         })
     }
     /// Fresh chat admission is distinct from status: the expected durable
@@ -889,6 +933,7 @@ impl DeviceAuthority {
         );
         let delivery_id = Uuid::now_v7();
         let mut next = c.state.clone();
+        let conversation = resolve_conversation(&mut next, request)?;
         next.delivery_markers.insert(
             delivery_id,
             DeliveryMarker {
@@ -907,6 +952,52 @@ impl DeviceAuthority {
             id: request.device_id.0,
             delivery_id,
             revision: request.revision,
+            conversation,
+            read_only: false,
+        })
+    }
+    /// Shares the existing one-shot chat challenge and delivery owner. It
+    /// persists no prompt/turn and grants no provider-start authority.
+    pub fn authorize_conversation_read(&self, request: &CompanionConversationReadRequest, now: i64) -> Result<CompanionChatLease> {
+        request.validate().map_err(pe)?;
+        let mut c = self.core()?;
+        anyhow::ensure!(c.state.delivery_markers.is_empty(), "companion delivery already active");
+        let grant = c.state.devices.get(&request.device_id.0).context("unknown device")?;
+        anyhow::ensure!(grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend
+            && grant.revision == request.revision, "conversation read denied");
+        request.verify_with(&grant.signing_key).map_err(pe)?;
+        let challenge = c.chat_challenges.get(&request.device_id.0).context("no authenticated chat challenge")?;
+        anyhow::ensure!(now >= challenge.value.issued_at_unix && now - challenge.value.issued_at_unix <= AGE
+            && challenge.value.device_id == request.device_id && challenge.value.revision == request.revision
+            && challenge.value.listener_generation == request.listener_generation
+            && challenge.value.daemon_boot_id == request.daemon_boot_id
+            && challenge.value.challenge_nonce == request.challenge_nonce, "conversation read challenge mismatch");
+        let binding = match request.selection {
+            CompanionConversationReadSelection::History { conversation_id } => {
+                let binding = c.state.conversations.get(&conversation_id).context("conversation read denied")?;
+                anyhow::ensure!(binding.device_id == request.device_id.0 && binding.revision == request.revision,
+                    "conversation read denied");
+                Some(binding)
+            }
+            CompanionConversationReadSelection::Recover { created_by_request } => c.state.conversations.values().find(|binding|
+                binding.device_id == request.device_id.0 && binding.revision == request.revision
+                    && binding.created_by_request == created_by_request),
+        };
+        let conversation = binding.map(|binding| AdmittedCompanionConversation {
+            conversation_id: Some(binding.conversation_id), session_id: Some(binding.private_session_id.to_string()), incognito: false,
+        });
+        let delivery_id = Uuid::now_v7();
+        let mut next = c.state.clone();
+        next.delivery_markers.insert(delivery_id, DeliveryMarker {
+            delivery_id, device_id: request.device_id.clone(), revision: request.revision,
+        });
+        self.publish(&mut c, next)?;
+        c.owned_deliveries.insert(delivery_id);
+        c.chat_challenges.remove(&request.device_id.0);
+        *c.leases.entry(request.device_id.0).or_insert(0) += 1;
+        Ok(StatusLease {
+            store: self.store.clone(), shared: Arc::clone(&self.shared), id: request.device_id.0,
+            delivery_id, revision: request.revision, conversation, read_only: true,
         })
     }
     pub fn device(&self, id: &CompanionDeviceId) -> Result<DeviceGrant> {
@@ -922,6 +1013,60 @@ impl DeviceAuthority {
         Ok(c.state.devices.values().cloned().collect())
     }
 }
+fn resolve_conversation(
+    state: &mut State,
+    request: &CompanionChatRequest,
+) -> Result<Option<AdmittedCompanionConversation>> {
+    let Some(selection) = &request.capabilities.conversation_v1 else { return Ok(None); };
+    // authorize_chat already checked scope, revision, signature and challenge.
+    // Recheck the local grant here so this resolver cannot mint a foreign binding.
+    let grant = state.devices.get(&request.device_id.0).context("unknown conversation device")?;
+    anyhow::ensure!(grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend
+        && grant.revision == request.revision, "conversation admission denied");
+    anyhow::ensure!(!request.request_id.is_nil(), "invalid conversation request identity");
+    selection.validate().map_err(pe)?;
+    if matches!(selection, CompanionConversationSelection::New { incognito: true }) {
+        return Ok(Some(AdmittedCompanionConversation {
+            conversation_id: None, session_id: None, incognito: true,
+        }));
+    }
+    let devices = &state.devices;
+    state.conversations.retain(|_, binding| devices.get(&binding.device_id).is_some_and(|grant|
+        grant.phase == Phase::Active && grant.scope == CompanionScope::ChatSend
+            && grant.revision == binding.revision));
+    let binding = match selection {
+        CompanionConversationSelection::New { incognito: false } => {
+            anyhow::ensure!(!state.conversations.values().any(|binding|
+                binding.device_id == request.device_id.0 && binding.revision == request.revision
+                    && binding.created_by_request == request.request_id),
+                "conversation creation already recorded; recover instead of retrying");
+            let owned = state.conversations.values().filter(|binding|
+                binding.device_id == request.device_id.0 && binding.revision == request.revision).count();
+            anyhow::ensure!(owned < MAX_DEVICE_CONVERSATIONS && state.conversations.len() < MAX_CONVERSATIONS,
+                "conversation capacity reached");
+            let binding = ConversationBinding {
+                conversation_id: Uuid::new_v4(), device_id: request.device_id.0,
+                revision: request.revision, created_by_request: request.request_id,
+                private_session_id: Uuid::new_v4(),
+            };
+            anyhow::ensure!(!state.conversations.contains_key(&binding.conversation_id), "conversation identity collision");
+            state.conversations.insert(binding.conversation_id, binding.clone());
+            binding
+        }
+        CompanionConversationSelection::Resume { conversation_id } => {
+            let binding = state.conversations.get(conversation_id).context("conversation unavailable")?;
+            anyhow::ensure!(binding.device_id == request.device_id.0 && binding.revision == request.revision,
+                "conversation admission denied");
+            binding.clone()
+        }
+        CompanionConversationSelection::New { incognito: true } => anyhow::bail!("invalid persistent conversation selection"),
+    };
+    Ok(Some(AdmittedCompanionConversation {
+        conversation_id: Some(binding.conversation_id),
+        session_id: Some(binding.private_session_id.to_string()), incognito: false,
+    }))
+}
+
 fn active<'a>(s: &'a State, id: &CompanionDeviceId) -> Result<&'a DeviceGrant> {
     let g = s.devices.get(&id.0).context("unknown device")?;
     anyhow::ensure!(
@@ -981,9 +1126,26 @@ fn valid(s: &State) -> Result<()> {
         s.version == VER
             && s.devices.len() <= MAX
             && s.terminal_receipts.len() <= TERMINAL_RECEIPTS
-            && s.delivery_markers.len() <= 1,
+            && s.delivery_markers.len() <= 1
+            && s.conversations.len() <= MAX_CONVERSATIONS,
         "bad authority state"
     );
+    let mut conversation_sessions = BTreeSet::new();
+    let mut conversation_requests = BTreeSet::new();
+    let mut conversation_counts = BTreeMap::new();
+    for (id, binding) in &s.conversations {
+        let grant = s.devices.get(&binding.device_id).context("bad conversation owner")?;
+        anyhow::ensure!(*id == binding.conversation_id && !id.is_nil()
+            && binding.revision > 0 && binding.revision <= grant.revision
+            && !binding.created_by_request.is_nil() && !binding.private_session_id.is_nil()
+            && binding.private_session_id != binding.conversation_id
+            && conversation_sessions.insert(binding.private_session_id)
+            && conversation_requests.insert((binding.device_id, binding.revision, binding.created_by_request)),
+            "bad conversation binding");
+        let count = conversation_counts.entry((binding.device_id, binding.revision)).or_insert(0usize);
+        *count += 1;
+        anyhow::ensure!(*count <= MAX_DEVICE_CONVERSATIONS, "conversation owner capacity exceeded");
+    }
     let (mut signing, mut noise, mut pending) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     for (id, g) in &s.devices {
         anyhow::ensure!(
@@ -1246,6 +1408,178 @@ mod real_store_regression {
     }
 }
 #[cfg(test)]
+mod conversation_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn enroll(authority: &DeviceAuthority, signing: &SigningKey, noise: [u8; 32], now: i64) {
+        let descriptor = ReconnectDescriptor {
+            schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1,
+        };
+        let proof = EnrollmentProof::signed(
+            [3; 32], [4; 32], noise, [6; 32], CompanionScope::ChatSend, "conversation-device".into(), signing,
+        ).unwrap();
+        let pending = authority.begin_enrollment(proof, [4; 32], descriptor, now).unwrap();
+        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+    }
+
+    fn request(
+        authority: &DeviceAuthority, signing: &SigningKey, noise: [u8; 32],
+        selection: CompanionConversationSelection, now: i64,
+    ) -> CompanionChatRequest {
+        let challenge = authority.begin_chat_reconnect_for_observed_noise(
+            noise, 1, "conversation-boot".into(), [7; 32], now,
+        ).unwrap();
+        CompanionChatRequest::signed_with_conversation_v1(
+            &challenge, Uuid::new_v4(), "ordinary conversation".into(), selection, true, signing,
+        ).unwrap()
+    }
+
+    #[test]
+    fn jm05_read_recovery_rejects_foreign_revision_signature_replay_and_revocation() {
+        let home = tempfile::tempdir().unwrap();
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let signing = SigningKey::from_bytes(&[13; 32]);
+        enroll(&authority, &signing, [5; 32], 1);
+        let first = request(&authority, &signing, [5; 32], CompanionConversationSelection::New { incognito: false }, 2);
+        let lease = authority.authorize_chat(&first, 3).unwrap();
+        let public = lease.admitted_conversation().unwrap().conversation_id().unwrap();
+        lease.complete_confirmed().unwrap(); drop(lease);
+        let challenge = authority.begin_chat_reconnect_for_observed_noise([5; 32], 1, "read-boot".into(), [8; 32], 4).unwrap();
+        let read = CompanionConversationReadRequest::signed(&challenge, Uuid::new_v4(),
+            CompanionConversationReadSelection::Recover { created_by_request: first.request_id }, &signing).unwrap();
+        let mut tampered = read.clone(); tampered.signature[0] ^= 1;
+        assert!(authority.authorize_conversation_read(&tampered, 5).is_err());
+        tampered = read.clone(); tampered.revision += 1;
+        assert!(authority.authorize_conversation_read(&tampered, 5).is_err());
+        assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+        let read_lease = authority.authorize_conversation_read(&read, 5).unwrap();
+        assert_eq!(read_lease.admitted_conversation().unwrap().conversation_id(), Some(public));
+        assert!(read_lease.read_only);
+        assert_eq!(authority.core().unwrap().state.conversations.len(), 1);
+        read_lease.complete_confirmed().unwrap(); drop(read_lease);
+        assert!(authority.authorize_conversation_read(&read, 6).is_err());
+        let foreign_key = SigningKey::from_bytes(&[17; 32]);
+        enroll(&authority, &foreign_key, [18; 32], 7);
+        let challenge = authority.begin_chat_reconnect_for_observed_noise([18; 32], 1, "foreign".into(), [9; 32], 8).unwrap();
+        let foreign = CompanionConversationReadRequest::signed(&challenge, Uuid::new_v4(),
+            CompanionConversationReadSelection::History { conversation_id: public }, &foreign_key).unwrap();
+        assert!(authority.authorize_conversation_read(&foreign, 9).is_err());
+        let unknown = CompanionConversationReadRequest::signed(&challenge, Uuid::new_v4(),
+            CompanionConversationReadSelection::Recover { created_by_request: first.request_id }, &foreign_key).unwrap();
+        let missing = authority.authorize_conversation_read(&unknown, 9).unwrap();
+        assert!(missing.admitted_conversation().is_none(), "creator UUID cannot disclose another owner's conversation");
+        missing.complete_confirmed().unwrap(); drop(missing);
+        let revoke = authority.begin_revoke_pending(&first.device_id).unwrap().unwrap();
+        authority.reconcile_audit(revoke.mutation_id, AuditObservation::Observed).unwrap();
+        assert!(authority.authorize_conversation_read(&read, 10).is_err());
+    }
+
+    #[test]
+    fn jm05_conversation_binding_survives_restart_and_denies_foreign_owner_and_revoke() {
+        let home = tempfile::tempdir().unwrap();
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let signing = SigningKey::from_bytes(&[13; 32]);
+        enroll(&authority, &signing, [5; 32], 1);
+        let first = request(&authority, &signing, [5; 32], CompanionConversationSelection::New { incognito: false }, 2);
+        let lease = authority.authorize_chat(&first, 3).unwrap();
+        let admitted = lease.admitted_conversation().unwrap();
+        let public = admitted.conversation_id().unwrap();
+        let private = admitted.session_id().unwrap().to_owned();
+        assert!(!admitted.is_incognito());
+        assert_ne!(public.to_string(), private);
+        assert!(!serde_json::to_string(&authority.list().unwrap()).unwrap().contains(&private));
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        drop(authority);
+
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let resumed = request(&authority, &signing, [5; 32], CompanionConversationSelection::Resume { conversation_id: public }, 4);
+        let lease = authority.authorize_chat(&resumed, 5).unwrap();
+        assert_eq!(lease.admitted_conversation().unwrap().session_id(), Some(private.as_str()));
+        assert_eq!(lease.admitted_conversation().unwrap().conversation_id(), Some(public));
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+
+        let foreign_signing = SigningKey::from_bytes(&[17; 32]);
+        enroll(&authority, &foreign_signing, [18; 32], 6);
+        let foreign = request(&authority, &foreign_signing, [18; 32], CompanionConversationSelection::Resume { conversation_id: public }, 7);
+        assert!(authority.authorize_chat(&foreign, 8).is_err());
+        assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+        let pending = authority.begin_revoke_pending(&first.device_id).unwrap().unwrap();
+        assert!(authority.authorize_chat(&resumed, 9).is_err());
+        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        assert!(authority.begin_chat_reconnect_for_observed_noise([5; 32], 2, "restarted".into(), [19; 32], 10).is_err());
+        assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+    }
+
+    #[test]
+    fn jm05_conversation_incognito_and_replayed_creation_do_not_create_second_binding() {
+        let home = tempfile::tempdir().unwrap();
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let signing = SigningKey::from_bytes(&[13; 32]);
+        enroll(&authority, &signing, [5; 32], 1);
+        let first = request(&authority, &signing, [5; 32], CompanionConversationSelection::New { incognito: false }, 2);
+        let lease = authority.authorize_chat(&first, 3).unwrap();
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        let challenge = authority.begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot2".into(), [8; 32], 4).unwrap();
+        let replay = CompanionChatRequest::signed_with_conversation_v1(
+            &challenge, first.request_id, "ordinary conversation".into(),
+            CompanionConversationSelection::New { incognito: false }, true, &signing,
+        ).unwrap();
+        assert!(authority.authorize_chat(&replay, 5).is_err());
+        assert_eq!(authority.core().unwrap().state.conversations.len(), 1);
+        assert!(authority.core().unwrap().state.delivery_markers.is_empty());
+        let private = CompanionChatRequest::signed_with_conversation_v1(
+            &challenge, Uuid::new_v4(), "private canary".into(),
+            CompanionConversationSelection::New { incognito: true }, false, &signing,
+        ).unwrap();
+        let lease = authority.authorize_chat(&private, 5).unwrap();
+        let admitted = lease.admitted_conversation().unwrap();
+        assert!(admitted.is_incognito());
+        assert!(admitted.session_id().is_none());
+        assert!(admitted.conversation_id().is_none());
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        let state = authority.core().unwrap().state.clone();
+        assert_eq!(state.conversations.len(), 1);
+        assert!(!serde_json::to_string(&state).unwrap().contains(&private.request_id.to_string()));
+        assert!(!serde_json::to_string(&state).unwrap().contains("private canary"));
+    }
+
+    #[test]
+    fn jm05_conversation_state_capacity_and_corrupt_private_binding_fail_closed() {
+        let home = tempfile::tempdir().unwrap();
+        let authority = DeviceAuthority::load(home.path()).unwrap();
+        let signing = SigningKey::from_bytes(&[13; 32]);
+        enroll(&authority, &signing, [5; 32], 1);
+        let first = request(&authority, &signing, [5; 32], CompanionConversationSelection::New { incognito: false }, 2);
+        let mut state = authority.core().unwrap().state.clone();
+        for _ in 0..MAX_DEVICE_CONVERSATIONS {
+            let mut next = first.clone();
+            next.request_id = Uuid::new_v4();
+            resolve_conversation(&mut state, &next).unwrap();
+        }
+        valid(&state).unwrap();
+        let mut excess = first.clone();
+        excess.request_id = Uuid::new_v4();
+        assert!(resolve_conversation(&mut state, &excess).is_err());
+        assert_eq!(state.conversations.len(), MAX_DEVICE_CONVERSATIONS);
+        let encoded = serde_json::to_vec(&state).unwrap();
+        let reloaded: State = serde_json::from_slice(&encoded).unwrap();
+        valid(&reloaded).unwrap();
+        state.conversations.values_mut().next().unwrap().private_session_id = Uuid::nil();
+        assert!(valid(&state).is_err());
+        let legacy = State::default();
+        let legacy_json = serde_json::to_string(&legacy).unwrap();
+        assert!(!legacy_json.contains("conversations"));
+        assert!(serde_json::from_str::<State>(&legacy_json).unwrap().conversations.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::daemon::companion_protocol::{CompanionReadiness, decode_server_frame};
@@ -1270,6 +1604,8 @@ mod tests {
             id,
             delivery_id: Uuid::now_v7(),
             revision: 1,
+            conversation: None,
+            read_only: false,
         }
     }
     #[test]

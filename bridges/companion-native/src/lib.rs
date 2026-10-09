@@ -25,7 +25,9 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use companion_protocol::{
-    decode_chat_challenge_with_stream_advertisement, decode_server_frame, encode_frame,
+    decode_chat_challenge_with_conversation_advertisement, decode_server_frame, encode_frame,
+    CompanionConversationAdmission, CompanionConversationHistory, CompanionConversationReadRequest,
+    CompanionConversationReadSelection, CompanionConversationSelection, CompanionHistoryState,
     CompanionChatStreamSnapshot,
     CompanionChatActivitySnapshot, CompanionChatOutcome, CompanionChatRecordKind,
     CompanionChatRequest, CompanionChatTerminal, CompanionDeniedCode, CompanionReadiness, CompanionScope,
@@ -39,6 +41,8 @@ const PSK_BYTES: usize = 16;
 const MAX_URL_BYTES: usize = 512;
 const MAX_DESCRIPTOR_BYTES: usize = 8 * 1024;
 const MAX_PUBLIC_RESULT_BYTES: usize = 80 * 1024;
+const MAX_CONVERSATION_RESULT_BYTES: usize = 184 * 1024;
+const MAX_CONVERSATION_COMMAND_BYTES: usize = 4096;
 const MAX_LABEL_BYTES: usize = 64;
 const MAX_CHAT_MESSAGE_BYTES: usize = 640;
 const MAX_TTL_SECS: u64 = 300;
@@ -123,6 +127,8 @@ enum PublicResult {
     Cancelled,
     #[serde(untagged)]
     Chat(PublicChatResult),
+    #[serde(untagged)]
+    Conversation(PublicConversationResult),
 }
 
 #[derive(Clone, Serialize)]
@@ -136,6 +142,90 @@ struct PublicChatResult {
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_admission: Option<CompanionConversationAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_history: Option<CompanionConversationHistory>,
+}
+
+#[derive(Clone, Serialize)]
+struct PublicConversationResult {
+    kind: &'static str,
+    #[serde(flatten)]
+    history: CompanionConversationHistory,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationCommand {
+    command_schema_version: u8,
+    request_id: Uuid,
+    revision: u64,
+    action: ConversationAction,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+enum ConversationAction {
+    New { message: String, incognito: bool },
+    Resume { message: String, conversation_id: Uuid },
+    History { conversation_id: Uuid },
+    Recover { created_by_request: Uuid },
+}
+
+impl ConversationCommand {
+    fn validate(&self) -> Result<(), ()> {
+        if self.command_schema_version != 1 || self.request_id.is_nil() || self.revision == 0 { return Err(()); }
+        match &self.action {
+            ConversationAction::New { message, .. } | ConversationAction::Resume { message, .. }
+                if message.is_empty() || message.len() > MAX_CHAT_MESSAGE_BYTES || message.trim_start().starts_with('/') => return Err(()),
+            _ => {}
+        }
+        match &self.action {
+            ConversationAction::Resume { conversation_id, .. } | ConversationAction::History { conversation_id }
+                if conversation_id.is_nil() => Err(()),
+            ConversationAction::Recover { created_by_request } if created_by_request.is_nil() => Err(()),
+            _ => Ok(()),
+        }
+    }
+    fn message(&self) -> String {
+        match &self.action {
+            ConversationAction::New { message, .. } | ConversationAction::Resume { message, .. } => message.clone(),
+            _ => String::new(),
+        }
+    }
+    fn chat_selection(&self) -> Option<CompanionConversationSelection> {
+        match self.action {
+            ConversationAction::New { incognito, .. } => Some(CompanionConversationSelection::New { incognito }),
+            ConversationAction::Resume { conversation_id, .. } => Some(CompanionConversationSelection::Resume { conversation_id }),
+            _ => None,
+        }
+    }
+    fn read_selection(&self) -> Option<CompanionConversationReadSelection> {
+        match self.action {
+            ConversationAction::History { conversation_id } => Some(CompanionConversationReadSelection::History { conversation_id }),
+            ConversationAction::Recover { created_by_request } => Some(CompanionConversationReadSelection::Recover { created_by_request }),
+            _ => None,
+        }
+    }
+    fn accepts_admission(&self, value: &CompanionConversationAdmission) -> bool {
+        if value.validate().is_err() || value.request_id != self.request_id || value.revision != self.revision { return false; }
+        match self.action {
+            ConversationAction::New { incognito, .. } => value.incognito == incognito,
+            ConversationAction::Resume { conversation_id, .. } => !value.incognito && value.conversation_id == Some(conversation_id),
+            _ => false,
+        }
+    }
+    fn accepts_history(&self, value: &CompanionConversationHistory, admission: Option<&CompanionConversationAdmission>) -> bool {
+        if value.validate().is_err() || value.request_id != self.request_id || value.revision != self.revision { return false; }
+        if self.read_selection().is_some() && value.current_turn_committed { return false; }
+        match self.action {
+            ConversationAction::History { conversation_id } => value.conversation_id == Some(conversation_id),
+            ConversationAction::Recover { .. } => value.state != CompanionHistoryState::Incognito,
+            _ => admission.is_some_and(|admitted| value.conversation_id == admitted.conversation_id
+                && (value.state == CompanionHistoryState::Incognito) == admitted.incognito),
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -185,6 +275,7 @@ fn result_code(result: &PublicResult) -> i32 {
     match result {
         PublicResult::Paired { .. } | PublicResult::Status { .. } => 1,
         PublicResult::Chat(value) => match value.outcome { "accepted" => 1, "denied" => 2, _ => 3 },
+        PublicResult::Conversation(_) => 1,
         PublicResult::Denied { .. } => 2,
         PublicResult::Failed { .. } => 3,
         PublicResult::Cancelled => 4,
@@ -252,7 +343,15 @@ impl Bridge {
         let (cancel, cancel_rx) = watch::channel(false);
         let device_secret = self.device_secret.copy();
         Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
-            chat(device_secret, descriptor, device_id, message, request_activity, request_stream, activity, cancel_rx).await
+            chat(device_secret, descriptor, device_id, message, request_activity, request_stream, None, activity, cancel_rx).await
+        })
+    }
+
+    fn start_conversation(&self, descriptor: ReconnectDescriptor, device_id: Uuid, command: ConversationCommand) -> Operation {
+        let (cancel, cancel_rx) = watch::channel(false);
+        let device_secret = self.device_secret.copy();
+        Operation::spawn(Arc::clone(&self.runtime), cancel, move |activity| async move {
+            chat(device_secret, descriptor, device_id, command.message(), true, true, Some(command), activity, cancel_rx).await
         })
     }
 }
@@ -305,6 +404,10 @@ impl Operation {
     }
 
     fn poll_for_delivery(&self, out_len: usize, stream: bool) -> Result<PollV2Delivery, ()> {
+        self.poll_for_delivery_limit(out_len, stream, MAX_PUBLIC_RESULT_BYTES)
+    }
+
+    fn poll_for_delivery_limit(&self, out_len: usize, stream: bool, byte_limit: usize) -> Result<PollV2Delivery, ()> {
         let (lock, _) = &*self.completion;
         let mut state = lock_unpoison(lock);
         // Select, encode, compare capacity, and consume under one lock. This
@@ -313,7 +416,7 @@ impl Operation {
         if state.done {
             let result = state.result.clone().ok_or(())?;
             let encoded = encode_public_result(&result).map_err(|_| ())?;
-            if encoded.len() > MAX_PUBLIC_RESULT_BYTES { return Err(()); }
+            if encoded.len() > byte_limit { return Err(()); }
             return Ok(if out_len < encoded.len() { PollV2Delivery::Need(encoded.len()) }
             else { PollV2Delivery::Ready(encoded, result_code(&result)) });
         }
@@ -624,6 +727,7 @@ async fn chat(
     message: String,
     request_activity: bool,
     request_stream: bool,
+    conversation: Option<ConversationCommand>,
     activity: ActivitySlot,
     mut cancel: watch::Receiver<bool>,
 ) -> PublicResult {
@@ -632,7 +736,7 @@ async fn chat(
     let signing_key = match derive_signing_key(&device_secret.0) { Ok(key) => key, Err(()) => return PublicResult::Failed { code: "key_derivation_failed" } };
     let mut config = SwarmConfig::with_public_bootstrap(); config.key_pair = Some(noise_key); config.max_peers = 1; config.max_parallel = 1; config.outbound_expected_remote_static_key = Some(descriptor.daemon_noise_public_key);
     let (swarm_task, swarm, mut connections) = match start_owned_swarm(config, &mut cancel, Duration::from_secs(CHAT_OUTER_TIMEOUT_SECS)).await { Ok(value) => value, Err(result) => return result };
-    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, request_stream, &activity, &signing_key, &mut cancel).await;
+    let result = chat_on_swarm(&swarm, &mut connections, &descriptor, expected_device_id, message, request_activity, request_stream, conversation, &activity, &signing_key, &mut cancel).await;
     // Cancellation must not detach a rendezvous worker. Destroy the carrier
     // and await the sole worker before publishing this terminal result.
     let _ = swarm.destroy().await;
@@ -648,6 +752,7 @@ async fn chat_on_swarm(
     message: String,
     request_activity: bool,
     request_stream: bool,
+    conversation: Option<ConversationCommand>,
     activity: &ActivitySlot,
     signing_key: &SigningKey,
     cancel: &mut watch::Receiver<bool>,
@@ -656,8 +761,8 @@ async fn chat_on_swarm(
     if swarm.join(descriptor.rendezvous_topic, client_only_join_opts()).await.is_err() { return PublicResult::Failed { code: "transport_join_failed" }; }
     let mut conn = match await_cancelable(cancel, timeout, connections.recv()).await { Wait::Value(Some(value)) => value, Wait::Value(None) => return PublicResult::Failed { code: "transport_closed" }, Wait::Expired => return PublicResult::Failed { code: "chat_connect_timeout" }, Wait::Cancelled => return PublicResult::Cancelled };
     if conn.remote_public_key() != &descriptor.daemon_noise_public_key { return PublicResult::Denied { code: "daemon_key_mismatch" }; }
-    let (challenge, activity_advertised, stream_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
-        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_stream_advertisement(&frame) {
+    let (challenge, activity_advertised, stream_advertised, conversation_advertised) = match await_cancelable(cancel, timeout, conn.read()).await {
+        Wait::Value(Ok(Some(frame))) => match decode_chat_challenge_with_conversation_advertisement(&frame) {
             Ok(value) => value,
             Err(_) => match decode_server_frame(&frame) {
                 Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
@@ -667,12 +772,26 @@ async fn chat_on_swarm(
         Wait::Value(Ok(None)) => return PublicResult::Failed { code: "transport_closed" }, Wait::Value(Err(_)) => return PublicResult::Failed { code: "transport_read_failed" }, Wait::Expired => return PublicResult::Failed { code: "chat_challenge_timeout" }, Wait::Cancelled => return PublicResult::Cancelled,
     };
     if challenge.device_id.0 != expected_device_id || challenge.validate().is_err() { return PublicResult::Denied { code: "invalid_chat_challenge" }; }
-    let request_id = Uuid::now_v7();
+    if let Some(command) = &conversation {
+        if !conversation_advertised { return PublicResult::Failed { code: "conversation_not_supported" }; }
+        if command.validate().is_err() || command.revision != challenge.revision {
+            return PublicResult::Denied { code: "stale_conversation_revision" };
+        }
+    }
+    let request_id = conversation.as_ref().map_or_else(Uuid::now_v7, |command| command.request_id);
     // The v2 caller merely asks for activity. The authenticated server's
     // top-level challenge advertisement is the only authority that enables it.
     // An old daemon therefore receives the original request; after any signed
     // request write ambiguity this function returns indeterminate and never
     // retries through the legacy path.
+    let bytes = if let Some(command) = &conversation {
+        if let Some(selection) = command.read_selection() {
+            CompanionConversationReadRequest::signed(&challenge, request_id, selection, signing_key).and_then(|request| encode_frame(&request))
+        } else if let Some(selection) = command.chat_selection() {
+            CompanionChatRequest::signed_with_conversation_v1(&challenge, request_id, message, selection,
+                request_activity && activity_advertised, signing_key).and_then(|request| encode_frame(&request))
+        } else { return PublicResult::Failed { code: "invalid_conversation_command" }; }
+    } else {
     let request = if request_stream && stream_advertised {
         CompanionChatRequest::signed_with_chat_stream_v1(&challenge, request_id, message, request_activity && activity_advertised, signing_key)
     } else if request_activity && activity_advertised {
@@ -680,8 +799,9 @@ async fn chat_on_swarm(
     } else {
         CompanionChatRequest::signed(&challenge, request_id, message, signing_key)
     };
-    let request = match request { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
-    let bytes = match encode_frame(&request) { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
+    request.and_then(|request| encode_frame(&request))
+    };
+    let bytes = match bytes { Ok(value) => value, Err(_) => return PublicResult::Failed { code: "invalid_chat_request" } };
     if *cancel.borrow() { return PublicResult::Cancelled; }
     match write_cancelable(&mut conn, &bytes, timeout, cancel).await {
         Write::Sent => {}
@@ -691,15 +811,34 @@ async fn chat_on_swarm(
     // post-send response budget forever by resetting a per-frame timeout.
     let response_deadline = Instant::now() + timeout;
     let mut stream_revision = 0;
-    loop {
+    let mut admission = None;
+    let mut history = None;
+    let result = loop {
         let Some(remaining) = response_deadline.checked_duration_since(Instant::now()) else {
-            return public_indeterminate(request_id);
+            break public_indeterminate(request_id);
         };
         match await_cancelable(cancel, remaining, conn.read()).await {
             Wait::Value(Ok(Some(frame))) => match decode_server_frame(&frame) {
-                Ok(ServerFrame::ChatStreamSnapshot(snapshot)) if request_stream && stream_advertised => {
+                Ok(ServerFrame::ConversationAdmission(value)) if conversation.is_some() => {
+                    if admission.is_some() || !conversation.as_ref().is_some_and(|command| command.accepts_admission(&value)) {
+                        break public_indeterminate(request_id);
+                    }
+                    admission = Some(value);
+                }
+                Ok(ServerFrame::ConversationHistory(value)) if conversation.is_some() => {
+                    let command = conversation.as_ref().expect("matched conversation command");
+                    if history.is_some() || !command.accepts_history(&value, admission.as_ref()) {
+                        break public_indeterminate(request_id);
+                    }
+                    if command.read_selection().is_some() {
+                        break PublicResult::Conversation(PublicConversationResult { kind: "conversation_history", history: value });
+                    }
+                    history = Some(value);
+                }
+                Ok(ServerFrame::ChatStreamSnapshot(snapshot)) if request_stream && stream_advertised
+                    && !conversation.as_ref().is_some_and(|command| command.read_selection().is_some()) => {
                     if snapshot.validate().is_err() || snapshot.request_id != request_id || snapshot.revision <= stream_revision {
-                        return public_indeterminate(request_id);
+                        break public_indeterminate(request_id);
                     }
                     stream_revision = snapshot.revision;
                     let (lock, _) = &**activity;
@@ -707,7 +846,8 @@ async fn chat_on_swarm(
                     state.preview = Some(PublicStreamSnapshot { kind: "chat_stream_snapshot", snapshot });
                     continue;
                 }
-                Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if request_activity && activity_advertised => {
+                Ok(ServerFrame::ChatActivitySnapshot(snapshot)) if request_activity && activity_advertised
+                    && !conversation.as_ref().is_some_and(|command| command.read_selection().is_some()) => {
                     if let Some(snapshot) = public_activity_snapshot(snapshot, request_id) {
                         let (lock, _) = &**activity;
                         let mut state = lock_unpoison(lock);
@@ -716,15 +856,30 @@ async fn chat_on_swarm(
                         }
                         continue;
                     }
-                    return public_indeterminate(request_id);
+                    break public_indeterminate(request_id);
                 }
-                Ok(ServerFrame::ChatTerminal(value)) => return public_chat_terminal(value, request_id),
-                Ok(ServerFrame::Denied(value)) => return public_denied(value.code),
-                Ok(_) | Err(_) => return public_indeterminate(request_id),
+                Ok(ServerFrame::ChatTerminal(value)) => {
+                    if conversation.as_ref().is_some_and(|command| command.read_selection().is_some())
+                        || (conversation.is_some() && (admission.is_none() || history.is_none())) {
+                        break public_indeterminate(request_id);
+                    }
+                    break public_chat_terminal(value, request_id);
+                }
+                Ok(ServerFrame::Denied(value)) => break public_denied(value.code),
+                Ok(_) | Err(_) => break public_indeterminate(request_id),
             },
-            Wait::Value(Ok(None)) | Wait::Value(Err(_)) | Wait::Expired | Wait::Cancelled => return public_indeterminate(request_id),
+            Wait::Value(Ok(None)) | Wait::Value(Err(_)) | Wait::Expired | Wait::Cancelled => break public_indeterminate(request_id),
         }
+    };
+    attach_conversation_result(result, admission, history)
+}
+
+fn attach_conversation_result(mut result: PublicResult, admission: Option<CompanionConversationAdmission>, history: Option<CompanionConversationHistory>) -> PublicResult {
+    if let PublicResult::Chat(chat) = &mut result {
+        chat.conversation_admission = admission;
+        chat.conversation_history = history;
     }
+    result
 }
 
 enum Wait<T> { Value(T), Expired, Cancelled }
@@ -806,14 +961,14 @@ fn public_denied(code: CompanionDeniedCode) -> PublicResult {
 }
 
 fn public_indeterminate(request_id: Uuid) -> PublicResult {
-    PublicResult::Chat(PublicChatResult { kind: "chat", schema_version: COMPANION_V3_SCHEMA_VERSION, request_id: request_id.to_string(), outcome: "indeterminate", records: Vec::new(), provider: None, model: None })
+    PublicResult::Chat(PublicChatResult { kind: "chat", schema_version: COMPANION_V3_SCHEMA_VERSION, request_id: request_id.to_string(), outcome: "indeterminate", records: Vec::new(), provider: None, model: None, conversation_admission: None, conversation_history: None })
 }
 
 fn public_chat_terminal(terminal: CompanionChatTerminal, expected_request_id: Uuid) -> PublicResult {
     if terminal.validate().is_err() || terminal.request_id != expected_request_id { return public_indeterminate(expected_request_id); }
     let outcome = match terminal.outcome { CompanionChatOutcome::Accepted => "accepted", CompanionChatOutcome::Denied => "denied", CompanionChatOutcome::Busy => "busy", CompanionChatOutcome::Unavailable => "unavailable", CompanionChatOutcome::Timeout => "timeout", CompanionChatOutcome::Indeterminate => "indeterminate" };
     let records = terminal.records.into_iter().map(|record| PublicChatRecord { kind: match record.kind { CompanionChatRecordKind::Stdout => "stdout", CompanionChatRecordKind::Stderr => "stderr", CompanionChatRecordKind::Notice => "notice" }, text: record.text }).collect();
-    PublicResult::Chat(PublicChatResult { kind: "chat", schema_version: terminal.schema_version, request_id: terminal.request_id.to_string(), outcome, records, provider: terminal.provider, model: terminal.model })
+    PublicResult::Chat(PublicChatResult { kind: "chat", schema_version: terminal.schema_version, request_id: terminal.request_id.to_string(), outcome, records, provider: terminal.provider, model: terminal.model, conversation_admission: None, conversation_history: None })
 }
 
 fn public_activity_snapshot(
@@ -995,8 +1150,60 @@ fn chat_message_from(bytes: &[u8]) -> Result<String, ()> {
 }
 
 fn encode_public_result(result: &PublicResult) -> Result<Vec<u8>, ()> {
-    match result { PublicResult::Chat(value) => serde_json::to_vec(value).map_err(|_| ()), _ => serde_json::to_vec(result).map_err(|_| ()) }
+    match result {
+        PublicResult::Chat(value) => serde_json::to_vec(value).map_err(|_| ()),
+        PublicResult::Conversation(value) => serde_json::to_vec(value).map_err(|_| ()),
+        _ => serde_json::to_vec(result).map_err(|_| ()),
+    }
 }
+
+fn conversation_command_from(bytes: &[u8]) -> Result<ConversationCommand, ()> {
+    if bytes.is_empty() || bytes.len() > MAX_CONVERSATION_COMMAND_BYTES { return Err(()); }
+    let command: ConversationCommand = serde_json::from_slice(bytes).map_err(|_| ())?;
+    command.validate()?;
+    Ok(command)
+}
+
+/// Caller persists the public request UUID before starting. No fallback or
+/// resend is allowed when conversation support/revision is unavailable.
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_conversation_start_v1(
+    bridge: *mut neoth_companion_bridge,
+    descriptor_json: *const u8, descriptor_json_len: usize,
+    device_id: *const u8, device_id_len: usize,
+    command_json: *const u8, command_json_len: usize,
+) -> *mut neoth_companion_operation { ffi_ptr(|| unsafe {
+    let Some(bridge) = borrowed(bridge) else { return ptr::null_mut() };
+    let Some(descriptor_json) = input(descriptor_json, descriptor_json_len, MAX_DESCRIPTOR_BYTES) else { return ptr::null_mut() };
+    let Some(device_id) = input(device_id, device_id_len, 36) else { return ptr::null_mut() };
+    let Some(command_json) = input(command_json, command_json_len, MAX_CONVERSATION_COMMAND_BYTES) else { return ptr::null_mut() };
+    let Ok(descriptor) = decode_public_descriptor(descriptor_json) else { return ptr::null_mut() };
+    let Some(device_id) = std::str::from_utf8(device_id).ok().and_then(|id| Uuid::parse_str(id).ok()).filter(|id| !id.is_nil()) else { return ptr::null_mut() };
+    let Ok(command) = conversation_command_from(command_json) else { return ptr::null_mut() };
+    Box::into_raw(Box::new(neoth_companion_operation { inner: bridge.inner.start_conversation(descriptor, device_id, command) }))
+}) }
+
+/// Same lifecycle/progress codes as poll_v3; only this new API admits the
+/// explicitly bounded combined terminal plus canonical history payload.
+#[unsafe(no_mangle)]
+pub extern "C" fn neoth_companion_conversation_poll_v1(
+    operation: *mut neoth_companion_operation,
+    out: *mut u8, out_len: usize, required_len: *mut usize,
+) -> i32 { ffi_code(|| unsafe {
+    let Some(operation) = borrowed(operation) else { return -1 };
+    let available = if out.is_null() { 0 } else { out_len };
+    match operation.inner.poll_for_delivery_limit(available, true, MAX_CONVERSATION_RESULT_BYTES) {
+        Ok(PollV2Delivery::Pending) => 0,
+        Ok(PollV2Delivery::Need(required)) => {
+            if !required_len.is_null() { *required_len = required; } 5
+        }
+        Ok(PollV2Delivery::Ready(encoded, code)) => {
+            if !required_len.is_null() { *required_len = encoded.len(); }
+            ptr::copy_nonoverlapping(encoded.as_ptr(), out, encoded.len()); code
+        }
+        Err(()) => -1,
+    }
+}) }
 
 unsafe fn borrowed<'a, T>(value: *mut T) -> Option<&'a T> { unsafe { value.as_ref() } }
 unsafe fn owned<T>(value: *mut T) -> Option<Box<T>> {
@@ -1209,6 +1416,77 @@ pub extern "C" fn neoth_companion_operation_free(operation: *mut neoth_companion
 mod tests {
     use super::*;
 
+    fn conversation_command(action: serde_json::Value) -> ConversationCommand {
+        conversation_command_from(&serde_json::to_vec(&serde_json::json!({
+            "command_schema_version": 1, "request_id": Uuid::from_u128(1), "revision": 2, "action": action,
+        })).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn conversation_commands_bind_revision_public_ids_and_reject_private_or_effectful_reads() {
+        let command = conversation_command(serde_json::json!({"operation":"resume","message":"hello","conversation_id":Uuid::from_u128(3)}));
+        let mut admission = CompanionConversationAdmission { conversation_schema_version: 1, request_id: Uuid::from_u128(1),
+            revision: 2, conversation_id: Some(Uuid::from_u128(3)), incognito: false };
+        assert!(command.accepts_admission(&admission));
+        admission.revision = 3; assert!(!command.accepts_admission(&admission));
+        admission.revision = 2; admission.conversation_id = Some(Uuid::from_u128(4)); assert!(!command.accepts_admission(&admission));
+        let mut value = serde_json::json!({"command_schema_version":1,"request_id":Uuid::from_u128(1),"revision":2,
+            "action":{"operation":"history","conversation_id":Uuid::from_u128(3),"message":"forbidden"}});
+        assert!(conversation_command_from(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["action"] = serde_json::json!({"operation":"new","message":"hello","incognito":false,"private_session_id":"forbidden"});
+        assert!(conversation_command_from(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["action"] = serde_json::json!({"operation":"new","message":" /delete","incognito":false});
+        assert!(conversation_command_from(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["action"] = serde_json::json!({"operation":"recover","created_by_request":Uuid::nil()});
+        assert!(conversation_command_from(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
+    #[test]
+    fn conversation_history_needs_matching_admission_and_read_never_claims_commit() {
+        let command = conversation_command(serde_json::json!({"operation":"new","message":"hello","incognito":false}));
+        let admission = CompanionConversationAdmission { conversation_schema_version: 1, request_id: Uuid::from_u128(1),
+            revision: 2, conversation_id: Some(Uuid::from_u128(3)), incognito: false };
+        let mut history = CompanionConversationHistory { conversation_schema_version: 1, request_id: Uuid::from_u128(1), revision: 2,
+            conversation_id: Some(Uuid::from_u128(3)), state: CompanionHistoryState::Available, current_turn_committed: true,
+            bounded_tail: true, turns: Vec::new() };
+        assert!(!command.accepts_history(&history, None));
+        assert!(command.accepts_history(&history, Some(&admission)));
+        history.request_id = Uuid::from_u128(9); assert!(!command.accepts_history(&history, Some(&admission)));
+        history.request_id = Uuid::from_u128(1);
+        let read = conversation_command(serde_json::json!({"operation":"history","conversation_id":Uuid::from_u128(3)}));
+        assert!(!read.accepts_history(&history, None));
+        history.current_turn_committed = false; assert!(read.accepts_history(&history, None));
+        let result = attach_conversation_result(public_indeterminate(Uuid::from_u128(1)), Some(admission), None);
+        let encoded = encode_public_result(&result).unwrap();
+        let decoded: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded["outcome"], "indeterminate");
+        assert_eq!(decoded["conversation_admission"]["conversation_id"], Uuid::from_u128(3).to_string());
+        assert!(decoded.get("conversation_history").is_none());
+    }
+
+    #[test]
+    fn conversation_poll_keeps_large_history_bounded_and_legacy_poll_limit_unchanged() {
+        let history = CompanionConversationHistory { conversation_schema_version: 1, request_id: Uuid::from_u128(1), revision: 2,
+            conversation_id: Some(Uuid::from_u128(3)), state: CompanionHistoryState::Available, current_turn_committed: false,
+            bounded_tail: true, turns: (0..3).map(|_| companion_protocol::CompanionHistoryTurn {
+                role: "operator".into(), text: Some("\u{1}".repeat(5000)), truncated: false,
+            }).collect() };
+        history.validate().unwrap();
+        let operation = operation_with_state(Some(PublicResult::Conversation(PublicConversationResult { kind: "conversation_history", history })), true, None);
+        let mut required = 0;
+        assert_eq!(neoth_companion_operation_poll_v3(operation, ptr::null_mut(), 0, &mut required), -1);
+        assert_eq!(neoth_companion_conversation_poll_v1(operation, ptr::null_mut(), 0, &mut required), 5);
+        assert!(required > MAX_PUBLIC_RESULT_BYTES && required <= MAX_CONVERSATION_RESULT_BYTES);
+        let mut small = vec![0u8; required - 1];
+        assert_eq!(neoth_companion_conversation_poll_v1(operation, small.as_mut_ptr(), small.len(), &mut required), 5);
+        let mut output = vec![0u8; required];
+        assert_eq!(neoth_companion_conversation_poll_v1(operation, output.as_mut_ptr(), output.len(), &mut required), 1);
+        let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["kind"], "conversation_history"); assert!(value.get("outcome").is_none());
+        assert_eq!(value["turns"].as_array().unwrap().len(), 3);
+        unsafe { drop_unstarted_operation(operation) };
+    }
+
     #[test]
     fn ffi_v3_preview_resize_legacy_isolation_and_terminal_priority() {
         let operation = operation_with_state(None, false, None);
@@ -1375,6 +1653,7 @@ mod tests {
             request_id: "00000000-0000-7000-8000-000000000002".to_owned(),
             outcome: "accepted", records: Vec::new(),
             provider: Some("provider".to_owned()), model: Some("model".to_owned()),
+            conversation_admission: None, conversation_history: None,
         })).unwrap();
         assert_eq!(chat, serde_json::json!({
             "kind": "chat", "schema_version": 3,

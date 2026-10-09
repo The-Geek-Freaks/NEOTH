@@ -36,6 +36,12 @@ abstract interface class NativeBridgeWithStream implements NativeBridgeWithActiv
       void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream);
 }
 
+abstract interface class NativeBridgeWithConversation implements NativeBridgeWithStream {
+  bool get conversationSupported;
+  Future<NativeBridgeResult> conversation(String descriptorJson, String deviceId, String commandJson,
+      void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream);
+}
+
 final class _Bridge extends Opaque {}
 final class _Operation extends Opaque {}
 
@@ -61,7 +67,7 @@ typedef _OperationVoidDart = void Function(Pointer<_Operation>);
 /// Owns one Rust bridge allocation and exactly one in-flight operation.  The
 /// opaque native bridge derives the signing and Noise identities from the
 /// protected seed; neither private material nor invite data crosses back.
-class FfiNativeBridge implements NativeBridgeWithStream {
+class FfiNativeBridge implements NativeBridgeWithConversation {
   FfiNativeBridge._(DynamicLibrary library, Uint8List seed)
       : _bridgeFree = library.lookupFunction<_BridgeFreeNative, _BridgeFreeDart>('neoth_companion_bridge_free'),
         _pairStart = library.lookupFunction<_PairStartNative, _PairStartDart>('neoth_companion_pair_start'),
@@ -69,6 +75,8 @@ class FfiNativeBridge implements NativeBridgeWithStream {
         _chatStart = library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_chat_start'),
         _chatStartV2 = _lookupChatStartV2(library),
         _chatStartV3 = _lookupChatStartV3(library),
+        _conversationStart = _lookupConversationStart(library),
+        _conversationPoll = _lookupConversationPoll(library),
         _poll = library.lookupFunction<_PollNative, _PollDart>('neoth_companion_operation_poll'),
         _pollV2 = _lookupPollV2(library),
         _pollV3 = _lookupPollV3(library),
@@ -90,6 +98,8 @@ class FfiNativeBridge implements NativeBridgeWithStream {
   final _ChatStartDart _chatStart;
   final _ChatStartV2Dart? _chatStartV2;
   final _ChatStartV2Dart? _chatStartV3;
+  final _ChatStartDart? _conversationStart;
+  final _PollDart? _conversationPoll;
   final _PollDart _poll;
   final _PollV2Dart? _pollV2;
   final _PollV2Dart? _pollV3;
@@ -167,6 +177,22 @@ class FfiNativeBridge implements NativeBridgeWithStream {
         descriptorJson, deviceId, message, poll: poll, onActivity: onActivity, onStream: onStream);
   }
 
+  @override
+  bool get conversationSupported => _conversationStart != null && _conversationPoll != null;
+
+  @override
+  Future<NativeBridgeResult> conversation(String descriptorJson, String deviceId, String commandJson,
+      void Function(CompanionChatActivitySnapshot) onActivity, void Function(CompanionChatStreamSnapshot) onStream) {
+    final start = _conversationStart; final poll = _conversationPoll;
+    // A selected conversation is never silently downgraded to one-off chat.
+    if (start == null || poll == null || !isBoundedReconnectInput(descriptorJson, deviceId)
+        || utf8.encode(commandJson).length > 4096) return Future.value(const NativeBridgeResult(NativeOperationResult.failed));
+    return _startThree((descriptor, descriptorLength, id, idLength, command, commandLength) =>
+        start(_bridge, descriptor, descriptorLength, id, idLength, command, commandLength),
+        descriptorJson, deviceId, commandJson, poll: poll, onActivity: onActivity, onStream: onStream,
+        maxResultBytes: 184 * 1024);
+  }
+
   Future<NativeBridgeResult> _start(
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int) invoke, String first, String second) async {
     _requireLive();
@@ -198,7 +224,7 @@ class FfiNativeBridge implements NativeBridgeWithStream {
       Pointer<_Operation> Function(Pointer<Uint8>, int, Pointer<Uint8>, int, Pointer<Uint8>, int) invoke,
       String first,
       String second,
-      String third, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream}) async {
+      String third, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream, int maxResultBytes = 80 * 1024}) async {
     _requireLive();
     if (_active != null) return const NativeBridgeResult(NativeOperationResult.failed);
     final firstBytes = utf8.encode(first);
@@ -216,7 +242,7 @@ class FfiNativeBridge implements NativeBridgeWithStream {
       _active = operation;
       _activeCancelRequested = false;
       _activeFinished = Completer<void>();
-      return await _pollUntilTerminal(operation, poll: poll, onActivity: onActivity, onStream: onStream);
+      return await _pollUntilTerminal(operation, poll: poll, onActivity: onActivity, onStream: onStream, maxResultBytes: maxResultBytes);
     } finally {
       firstNative.asTypedList(firstBytes.length).fillRange(0, firstBytes.length, 0);
       secondNative.asTypedList(secondBytes.length).fillRange(0, secondBytes.length, 0);
@@ -230,10 +256,10 @@ class FfiNativeBridge implements NativeBridgeWithStream {
     }
   }
 
-  Future<NativeBridgeResult> _pollUntilTerminal(Pointer<_Operation> operation, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream}) async {
+  Future<NativeBridgeResult> _pollUntilTerminal(Pointer<_Operation> operation, {_PollDart? poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream, int maxResultBytes = 80 * 1024}) async {
     try {
       while (_active == operation) {
-        final result = _readPoll(operation, poll ?? _poll, onActivity, onStream);
+        final result = _readPoll(operation, poll ?? _poll, onActivity, onStream, maxResultBytes);
         if (result.kind != NativeOperationResult.pending) return result;
         await Future<void>.delayed(const Duration(milliseconds: 125));
       }
@@ -247,7 +273,7 @@ class FfiNativeBridge implements NativeBridgeWithStream {
     }
   }
 
-  NativeBridgeResult _readPoll(Pointer<_Operation> operation, _PollDart poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream) {
+  NativeBridgeResult _readPoll(Pointer<_Operation> operation, _PollDart poll, void Function(CompanionChatActivitySnapshot)? onActivity, void Function(CompanionChatStreamSnapshot)? onStream, int maxResultBytes) {
     final required = calloc<IntPtr>();
     try {
       final first = poll(operation, nullptr, 0, required);
@@ -255,7 +281,7 @@ class FfiNativeBridge implements NativeBridgeWithStream {
       // ABI r1 returned 1 for a probe whose buffer was absent; ABI r2 uses 5.
       // Both spellings are accepted only for this size-discovery call, so a
       // deployed r1 bridge cannot turn into a false terminal success.
-      if ((first != 1 && first != 5) || required.value == 0 || required.value > 80 * 1024) {
+      if ((first != 1 && first != 5) || required.value == 0 || required.value > maxResultBytes) {
         return NativeBridgeResult(_resultKind(first));
       }
       final outputLength = required.value;
@@ -369,4 +395,6 @@ NativeOperationResult _resultKind(int raw) => switch (raw) {
     };
 
 _ChatStartV2Dart? _lookupChatStartV3(DynamicLibrary library) { try { return library.lookupFunction<_ChatStartV2Native, _ChatStartV2Dart>('neoth_companion_chat_start_v3'); } on ArgumentError { return null; } }
+_ChatStartDart? _lookupConversationStart(DynamicLibrary library) { try { return library.lookupFunction<_ChatStartNative, _ChatStartDart>('neoth_companion_conversation_start_v1'); } on ArgumentError { return null; } }
+_PollDart? _lookupConversationPoll(DynamicLibrary library) { try { return library.lookupFunction<_PollNative, _PollDart>('neoth_companion_conversation_poll_v1'); } on ArgumentError { return null; } }
 _PollV2Dart? _lookupPollV3(DynamicLibrary library) { try { return library.lookupFunction<_PollV2Native, _PollV2Dart>('neoth_companion_operation_poll_v3'); } on ArgumentError { return null; } }

@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'bridge_input.dart';
 import 'models.dart';
+import 'conversation_models.dart';
 
 abstract interface class CompanionStore {
   Future<Uint8List> loadOrCreateDeviceSecret();
@@ -14,7 +15,12 @@ abstract interface class CompanionStore {
   Future<void> clearEnrollment();
 }
 
-class SecureCompanionStore implements CompanionStore {
+abstract interface class CompanionConversationStore implements CompanionStore {
+  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment);
+  Future<void> saveConversationCheckpoint(ConversationCheckpoint checkpoint);
+}
+
+class SecureCompanionStore implements CompanionConversationStore {
   SecureCompanionStore([FlutterSecureStorage? storage])
       : _storage = storage ??
             const FlutterSecureStorage(
@@ -27,6 +33,7 @@ class SecureCompanionStore implements CompanionStore {
   static const _revisionKey = 'neoth_companion.revision.v3';
   static const _scopeKey = 'neoth_companion.scope.v3';
   static const _descriptorKey = 'neoth_companion.reconnect.v3';
+  static const _conversationKey = 'neoth_companion.conversation.v1';
   final FlutterSecureStorage _storage;
 
   @override
@@ -74,6 +81,7 @@ class SecureCompanionStore implements CompanionStore {
     // an interrupted update cannot combine a new descriptor with an old id.
     // The protected device secret remains intact for a deliberate retry.
     await _storage.delete(key: _deviceIdKey);
+    await _storage.delete(key: _conversationKey);
     await _storage.write(key: _revisionKey, value: '${enrollment.revision}');
     await _storage.write(key: _scopeKey, value: enrollment.grantedScope);
     await _storage.write(key: _descriptorKey, value: jsonEncode(enrollment.reconnectDescriptor));
@@ -88,6 +96,33 @@ class SecureCompanionStore implements CompanionStore {
     await _storage.delete(key: _revisionKey);
     await _storage.delete(key: _scopeKey);
     await _storage.delete(key: _descriptorKey);
+    await _storage.delete(key: _conversationKey);
+  }
+
+  @override
+  Future<ConversationCheckpoint?> loadConversationCheckpoint(EnrollmentAccepted enrollment) async {
+    final encoded = await _storage.read(key: _conversationKey);
+    if (encoded == null) return null;
+    try {
+      if (utf8.encode(encoded).length > 4096) throw const FormatException('checkpoint size');
+      final value = jsonDecode(encoded);
+      if (value is! Map<String, Object?>) throw const FormatException('checkpoint object');
+      final checkpoint = ConversationCheckpoint.fromJson(value);
+      if (checkpoint.deviceId != enrollment.deviceId || checkpoint.revision != enrollment.revision) throw const FormatException('checkpoint scope');
+      return checkpoint;
+    } on FormatException {
+      await _storage.delete(key: _conversationKey);
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveConversationCheckpoint(ConversationCheckpoint checkpoint) async {
+    final encoded = jsonEncode(checkpoint.toJson());
+    if (utf8.encode(encoded).length > 4096) throw const FormatException('checkpoint size');
+    final enrollment = await loadEnrollment();
+    if (enrollment == null || enrollment.deviceId != checkpoint.deviceId || enrollment.revision != checkpoint.revision) throw StateError('conversation enrollment changed');
+    await _storage.write(key: _conversationKey, value: encoded);
   }
 }
 

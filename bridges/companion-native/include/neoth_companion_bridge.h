@@ -100,6 +100,22 @@ int32_t neoth_companion_operation_poll_v3(neoth_companion_operation *operation,
     uint8_t *out, size_t out_len, size_t *required_len);
 void neoth_companion_operation_free(neoth_companion_operation *operation);
 
+/* Conversation v1 is explicit: no fallback to one-off chat, and no automatic
+ * resend. Persist public request_id scoped to the enrollment revision before
+ * start. The bounded JSON command has command_schema_version=1, request_id,
+ * revision, and action: new(message,incognito), resume(message,conversation_id),
+ * history(conversation_id), or recover(created_by_request). All IDs are public.
+ * Read commands have no provider message or side effect. Poll uses v3 codes;
+ * terminal chat may contain conversation_admission and conversation_history.
+ * Read result kind is conversation_history, never chat success. Maximum public
+ * result is 184 KiB. Private session IDs, credentials and database paths never cross. */
+neoth_companion_operation *neoth_companion_conversation_start_v1(
+    neoth_companion_bridge *bridge, const uint8_t *descriptor_json,
+    size_t descriptor_json_len, const uint8_t *device_id, size_t device_id_len,
+    const uint8_t *command_json, size_t command_json_len);
+int32_t neoth_companion_conversation_poll_v1(neoth_companion_operation *operation,
+    uint8_t *out, size_t out_len, size_t *required_len);
+
 #ifdef __cplusplus
 }
 #endif

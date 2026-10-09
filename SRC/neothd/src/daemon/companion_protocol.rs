@@ -27,6 +27,163 @@ pub const COMPANION_V3_CHAT_SCOPE: &str = "companion.chat.send";
 const ENROLL_DOMAIN: &[u8] = b"NEOTH/companion/v3/enroll";
 const STATUS_DOMAIN: &[u8] = b"NEOTH/companion/v3/status";
 const CHAT_DOMAIN: &[u8] = b"NEOTH/companion/v3/chat";
+const CONVERSATION_READ_DOMAIN: &[u8] = b"NEOTH/companion/v3/conversation-read/v1";
+pub const COMPANION_CONVERSATION_MAX_HISTORY_BYTES: usize = 100 * 1024;
+
+/// Read-only recovery has a separate signing domain and no provider message.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionConversationReadRequest {
+    pub conversation_schema_version: u8,
+    pub device_id: CompanionDeviceId,
+    pub revision: u64,
+    pub listener_generation: u64,
+    pub daemon_boot_id: String,
+    pub challenge_nonce: [u8; 32],
+    pub request_id: Uuid,
+    pub selection: CompanionConversationReadSelection,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CompanionConversationReadSelection {
+    History { conversation_id: Uuid },
+    Recover { created_by_request: Uuid },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum CompanionChatClientFrame {
+    Chat(CompanionChatRequest),
+    ConversationRead(CompanionConversationReadRequest),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionConversationAdmission {
+    pub conversation_schema_version: u8,
+    pub request_id: Uuid,
+    pub revision: u64,
+    pub conversation_id: Option<Uuid>,
+    pub incognito: bool,
+}
+
+impl CompanionConversationAdmission {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.conversation_schema_version != 1 || self.request_id.is_nil() || self.revision == 0
+            || self.incognito != self.conversation_id.is_none()
+            || self.conversation_id.is_some_and(|id| id.is_nil()) {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionHistoryState { Available, Unavailable, NotFound, Incognito }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionHistoryTurn {
+    pub role: String,
+    pub text: Option<String>,
+    pub truncated: bool,
+}
+
+/// Absolute bounded canonical snapshot, not a replay or an effect receipt.
+/// current_turn_committed is true only with the actual committed agent proof.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionConversationHistory {
+    pub conversation_schema_version: u8,
+    pub request_id: Uuid,
+    pub revision: u64,
+    pub conversation_id: Option<Uuid>,
+    pub state: CompanionHistoryState,
+    pub current_turn_committed: bool,
+    pub bounded_tail: bool,
+    pub turns: Vec<CompanionHistoryTurn>,
+}
+
+impl CompanionConversationHistory {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.conversation_schema_version != 1 || self.request_id.is_nil() || self.revision == 0
+            || !self.bounded_tail || self.turns.len() > 32
+            || self.conversation_id.is_some_and(|id| id.is_nil())
+            || (matches!(self.state, CompanionHistoryState::Available | CompanionHistoryState::Unavailable)
+                != self.conversation_id.is_some())
+            || (self.state != CompanionHistoryState::Available
+                && (!self.turns.is_empty() || self.current_turn_committed)) {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        let mut text_bytes = 0usize;
+        for turn in &self.turns {
+            if !matches!(turn.role.as_str(), "operator" | "agent") || turn.truncated != turn.text.is_none()
+                || turn.text.as_ref().is_some_and(|text| text.len() > 16384) {
+                return Err(ProtocolError::InvalidFrame);
+            }
+            text_bytes += turn.text.as_ref().map_or(0, String::len);
+        }
+        if text_bytes > 65536 || serde_json::to_vec(&self.turns).map_err(|_| ProtocolError::InvalidFrame)?.len() > 96 * 1024 {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+}
+
+impl CompanionConversationReadRequest {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        let selected = match self.selection {
+            CompanionConversationReadSelection::History { conversation_id } => conversation_id,
+            CompanionConversationReadSelection::Recover { created_by_request } => created_by_request,
+        };
+        if self.conversation_schema_version != 1 || self.request_id.is_nil() || selected.is_nil()
+            || self.revision == 0 || self.listener_generation == 0 || self.daemon_boot_id.is_empty()
+            || self.daemon_boot_id.len() > 128 {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, ProtocolError> {
+        self.validate()?;
+        let mut out = Vec::new();
+        push_field(&mut out, CONVERSATION_READ_DOMAIN);
+        push_field(&mut out, &[self.conversation_schema_version]);
+        push_field(&mut out, self.device_id.0.as_bytes());
+        push_field(&mut out, &self.revision.to_be_bytes());
+        push_field(&mut out, &self.listener_generation.to_be_bytes());
+        push_field(&mut out, self.daemon_boot_id.as_bytes());
+        push_field(&mut out, &self.challenge_nonce);
+        push_field(&mut out, self.request_id.as_bytes());
+        match self.selection {
+            CompanionConversationReadSelection::History { conversation_id } => {
+                push_field(&mut out, b"history"); push_field(&mut out, conversation_id.as_bytes());
+            }
+            CompanionConversationReadSelection::Recover { created_by_request } => {
+                push_field(&mut out, b"recover"); push_field(&mut out, created_by_request.as_bytes());
+            }
+        }
+        Ok(out)
+    }
+    pub fn verify_with(&self, public_key: &[u8; 32]) -> Result<(), ProtocolError> {
+        VerifyingKey::from_bytes(public_key).map_err(|_| ProtocolError::InvalidSignature)?
+            .verify(&self.signing_bytes()?, &signature_bytes(&self.signature)?)
+            .map_err(|_| ProtocolError::InvalidSignature)
+    }
+    pub fn signed(challenge: &ChatChallenge, request_id: Uuid,
+        selection: CompanionConversationReadSelection, key: &SigningKey) -> Result<Self, ProtocolError> {
+        challenge.validate()?;
+        let mut value = Self {
+            conversation_schema_version: 1, device_id: challenge.device_id.clone(), revision: challenge.revision,
+            listener_generation: challenge.listener_generation, daemon_boot_id: challenge.daemon_boot_id.clone(),
+            challenge_nonce: challenge.challenge_nonce, request_id, selection, signature: Vec::new(),
+        };
+        value.signature = key.sign(&value.signing_bytes()?).to_bytes().to_vec();
+        Ok(value)
+    }
+}
 
 /// Schema v1 carries only these producer-owned presentation labels. Any new
 /// label requires a coordinated schema revision instead of projecting tool
@@ -159,11 +316,34 @@ pub struct CompanionChatCapabilities {
     pub tool_activity_v1: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub chat_stream_v1: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_v1: Option<CompanionConversationSelection>,
+}
+
+/// Public conversation selection only. Private transcript session identities
+/// are minted and resolved by the authenticated daemon authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CompanionConversationSelection {
+    New {
+        #[serde(default, skip_serializing_if = "is_false")]
+        incognito: bool,
+    },
+    Resume { conversation_id: Uuid },
+}
+
+impl CompanionConversationSelection {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if matches!(self, Self::Resume { conversation_id } if conversation_id.is_nil()) {
+            return Err(ProtocolError::InvalidFrame);
+        }
+        Ok(())
+    }
 }
 
 impl CompanionChatCapabilities {
     pub const fn is_empty(&self) -> bool {
-        !self.tool_activity_v1 && !self.chat_stream_v1
+        !self.tool_activity_v1 && !self.chat_stream_v1 && self.conversation_v1.is_none()
     }
 }
 
@@ -318,6 +498,8 @@ pub enum ServerFrame {
     ChatChallenge(ChatChallenge),
     ChatActivitySnapshot(CompanionChatActivitySnapshot),
     ChatStreamSnapshot(CompanionChatStreamSnapshot),
+    ConversationAdmission(CompanionConversationAdmission),
+    ConversationHistory(CompanionConversationHistory),
     ChatTerminal(CompanionChatTerminal),
     Denied(CompanionDenied),
 }
@@ -481,6 +663,12 @@ impl CompanionChatRequest {
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_version(self.schema_version)?;
+        if let Some(selection) = &self.capabilities.conversation_v1 {
+            selection.validate()?;
+            if !self.capabilities.chat_stream_v1 || self.request_id.is_nil() {
+                return Err(ProtocolError::InvalidFrame);
+            }
+        }
         if self.daemon_boot_id.is_empty() || self.daemon_boot_id.len() > 128
             || self.message.is_empty()
             || self.message.len() > COMPANION_V3_MAX_CHAT_MESSAGE_BYTES
@@ -517,6 +705,19 @@ impl CompanionChatRequest {
         }
         if self.capabilities.chat_stream_v1 {
             push_field(&mut out, b"chat_stream_v1");
+        }
+        if let Some(selection) = &self.capabilities.conversation_v1 {
+            push_field(&mut out, b"conversation_v1");
+            match selection {
+                CompanionConversationSelection::New { incognito } => {
+                    push_field(&mut out, b"new");
+                    push_field(&mut out, &[u8::from(*incognito)]);
+                }
+                CompanionConversationSelection::Resume { conversation_id } => {
+                    push_field(&mut out, b"resume");
+                    push_field(&mut out, conversation_id.as_bytes());
+                }
+            }
         }
         Ok(out)
     }
@@ -561,6 +762,22 @@ impl CompanionChatRequest {
             .sign(&result.signing_bytes()?)
             .to_bytes()
             .to_vec();
+        Ok(result)
+    }
+
+    pub fn signed_with_conversation_v1(
+        challenge: &ChatChallenge,
+        request_id: Uuid,
+        message: String,
+        selection: CompanionConversationSelection,
+        tool_activity: bool,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ProtocolError> {
+        let mut result = Self::signed_with_chat_stream_v1(
+            challenge, request_id, message, tool_activity, signing_key,
+        )?;
+        result.capabilities.conversation_v1 = Some(selection);
+        result.signature = signing_key.sign(&result.signing_bytes()?).to_bytes().to_vec();
         Ok(result)
     }
 
@@ -751,6 +968,8 @@ impl ServerFrame {
             Self::ChatChallenge(value) => value.validate(),
             Self::ChatActivitySnapshot(value) => value.validate(),
             Self::ChatStreamSnapshot(value) => value.validate(),
+            Self::ConversationAdmission(value) => value.validate(),
+            Self::ConversationHistory(value) => value.validate(),
             Self::ChatTerminal(value) => value.validate(),
             Self::Denied(value) => value.validate(),
         }
@@ -772,6 +991,10 @@ pub fn encode_server_frame(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError
     frame.validate()?;
     match frame {
         ServerFrame::ChatTerminal(_) => encode_chat_terminal(frame),
+        ServerFrame::ConversationHistory(_) => {
+            let bytes = serde_json::to_vec(frame).map_err(|_| ProtocolError::InvalidFrame)?;
+            (bytes.len() <= COMPANION_CONVERSATION_MAX_HISTORY_BYTES).then_some(bytes).ok_or(ProtocolError::InvalidFrame)
+        }
         ServerFrame::ChatStreamSnapshot(_) => {
             let bytes = serde_json::to_vec(frame).map_err(|_| ProtocolError::InvalidFrame)?;
             (bytes.len() <= COMPANION_V3_MAX_CHAT_TERMINAL_BYTES)
@@ -860,6 +1083,19 @@ pub fn decode_chat_challenge_with_stream_advertisement(
     ))
 }
 
+pub fn encode_chat_challenge_with_conversation_advertisement(challenge: &ChatChallenge) -> Result<Vec<u8>, ProtocolError> {
+    let bytes = encode_chat_challenge_with_stream_advertisement(challenge)?;
+    let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    envelope["conversation_v1"] = serde_json::Value::Bool(true);
+    encode_frame(&envelope)
+}
+
+pub fn decode_chat_challenge_with_conversation_advertisement(bytes: &[u8]) -> Result<(ChatChallenge, bool, bool, bool), ProtocolError> {
+    let (challenge, activity, stream) = decode_chat_challenge_with_stream_advertisement(bytes)?;
+    let envelope: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| ProtocolError::InvalidFrame)?;
+    Ok((challenge, activity, stream, stream && envelope.get("conversation_v1") == Some(&serde_json::Value::Bool(true))))
+}
+
 pub fn encode_chat_terminal(frame: &ServerFrame) -> Result<Vec<u8>, ProtocolError> {
     let ServerFrame::ChatTerminal(value) = frame else {
         return Err(ProtocolError::InvalidFrame);
@@ -879,15 +1115,18 @@ pub fn decode_frame<T: for<'de> Deserialize<'de>>(frame: &[u8]) -> Result<T, Pro
 }
 
 pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame, ProtocolError> {
-    if frame.is_empty() || frame.len() > COMPANION_V3_MAX_CHAT_TERMINAL_BYTES {
+    if frame.is_empty() || frame.len() > COMPANION_CONVERSATION_MAX_HISTORY_BYTES {
         return Err(ProtocolError::InvalidFrame);
     }
     let value: ServerFrame =
         serde_json::from_slice(frame).map_err(|_| ProtocolError::InvalidFrame)?;
     value.validate()?;
+    if !matches!(value, ServerFrame::ConversationHistory(_)) && frame.len() > COMPANION_V3_MAX_CHAT_TERMINAL_BYTES {
+        return Err(ProtocolError::InvalidFrame);
+    }
     if !matches!(
         value,
-        ServerFrame::ChatTerminal(_) | ServerFrame::ChatStreamSnapshot(_)
+        ServerFrame::ChatTerminal(_) | ServerFrame::ChatStreamSnapshot(_) | ServerFrame::ConversationHistory(_)
     ) && frame.len() > COMPANION_V3_MAX_FRAME_BYTES
     {
         return Err(ProtocolError::InvalidFrame);
@@ -916,6 +1155,55 @@ fn signature_bytes(bytes: &[u8]) -> Result<Signature, ProtocolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jm05_read_recovery_is_signed_separately_and_advertises_without_legacy_drift() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let challenge = ChatChallenge { schema_version: 3, device_id: CompanionDeviceId(Uuid::from_u128(1)),
+            revision: 2, listener_generation: 3, daemon_boot_id: "read-boot".into(), challenge_nonce: [4; 32], issued_at_unix: 5 };
+        let bytes = encode_chat_challenge_with_conversation_advertisement(&challenge).unwrap();
+        assert_eq!(decode_chat_challenge_with_activity_advertisement(&bytes).unwrap(), (challenge.clone(), true));
+        assert_eq!(decode_chat_challenge_with_stream_advertisement(&bytes).unwrap(), (challenge.clone(), true, true));
+        assert!(decode_chat_challenge_with_conversation_advertisement(&bytes).unwrap().3);
+        let old = encode_chat_challenge_with_stream_advertisement(&challenge).unwrap();
+        assert!(!decode_chat_challenge_with_conversation_advertisement(&old).unwrap().3);
+        let request = CompanionConversationReadRequest::signed(&challenge, Uuid::from_u128(6),
+            CompanionConversationReadSelection::Recover { created_by_request: Uuid::from_u128(7) }, &key).unwrap();
+        request.verify_with(key.verifying_key().as_bytes()).unwrap();
+        let wire = encode_frame(&request).unwrap();
+        assert!(matches!(decode_frame::<CompanionChatClientFrame>(&wire).unwrap(), CompanionChatClientFrame::ConversationRead(_)));
+        assert!(decode_frame::<CompanionChatRequest>(&wire).is_err());
+        let mut tampered = request.clone();
+        tampered.selection = CompanionConversationReadSelection::History { conversation_id: Uuid::from_u128(7) };
+        assert!(tampered.verify_with(key.verifying_key().as_bytes()).is_err());
+        tampered = request.clone(); tampered.revision += 1;
+        assert!(tampered.verify_with(key.verifying_key().as_bytes()).is_err());
+        let mut value = serde_json::to_value(&request).unwrap(); value["message"] = serde_json::json!("must not become an effect");
+        assert!(serde_json::from_value::<CompanionChatClientFrame>(value).is_err());
+    }
+
+    #[test]
+    fn jm05_history_wire_bounds_escaped_rows_and_never_changes_legacy_terminal_limit() {
+        let mut value = CompanionConversationHistory { conversation_schema_version: 1, request_id: Uuid::from_u128(1), revision: 2,
+            conversation_id: Some(Uuid::from_u128(3)), state: CompanionHistoryState::Available,
+            current_turn_committed: true, bounded_tail: true,
+            turns: vec![CompanionHistoryTurn { role: "agent".into(), text: Some("visible".into()), truncated: false }] };
+        let wire = encode_server_frame(&ServerFrame::ConversationHistory(value.clone())).unwrap();
+        assert_eq!(decode_server_frame(&wire).unwrap(), ServerFrame::ConversationHistory(value.clone()));
+        value.turns[0].text = Some("\u{1}".repeat(16384));
+        assert!(value.validate().is_err(), "escaped JSON growth is bounded before encoding");
+        value.turns[0].text = None; value.turns[0].truncated = true;
+        value.validate().unwrap();
+        value.state = CompanionHistoryState::Unavailable;
+        assert!(value.validate().is_err(), "unavailable cannot carry committed rows");
+        value.turns.clear(); value.current_turn_committed = false; value.validate().unwrap();
+        let mut oversized = wire;
+        oversized.resize(COMPANION_CONVERSATION_MAX_HISTORY_BYTES + 1, b' ');
+        assert!(decode_server_frame(&oversized).is_err());
+        let mut old = encode_server_frame(&ServerFrame::Denied(CompanionDenied::new(CompanionDeniedCode::DeviceDenied).unwrap())).unwrap();
+        old.resize(COMPANION_V3_MAX_FRAME_BYTES + 1, b' ');
+        assert!(decode_server_frame(&old).is_err(), "larger history cap does not widen legacy frames");
+    }
 
     #[test]
     fn jm05_stream_negotiation_keeps_legacy_advertisement_and_signatures() {
@@ -977,6 +1265,74 @@ mod tests {
             live.signing_bytes().unwrap(),
             legacy.signing_bytes().unwrap()
         );
+    }
+
+    #[test]
+    fn jm05_conversation_selection_binds_public_id_and_incognito_without_changing_legacy() {
+        let signing = SigningKey::from_bytes(&[7; 32]);
+        let challenge = ChatChallenge {
+            schema_version: COMPANION_V3_SCHEMA_VERSION,
+            device_id: CompanionDeviceId(Uuid::from_u128(1)),
+            revision: 1,
+            listener_generation: 2,
+            daemon_boot_id: "conversation-boot".to_owned(),
+            challenge_nonce: [3; 32],
+            issued_at_unix: 4,
+        };
+        let legacy = CompanionChatRequest::signed(
+            &challenge, Uuid::from_u128(2), "hello".into(), &signing,
+        ).unwrap();
+        let legacy_wire = encode_frame(&legacy).unwrap();
+        let legacy_transcript = legacy.signing_bytes().unwrap();
+        assert!(!String::from_utf8(legacy_wire.clone()).unwrap().contains("conversation_v1"));
+        assert!(!String::from_utf8(legacy_wire.clone()).unwrap().contains("capabilities"));
+        let decoded: CompanionChatRequest = serde_json::from_slice(&legacy_wire).unwrap();
+        assert_eq!(decoded.signing_bytes().unwrap(), legacy_transcript);
+        assert_eq!(encode_frame(&decoded).unwrap(), legacy_wire);
+        decoded.verify_with(signing.verifying_key().as_bytes()).unwrap();
+
+        let mut resumed = CompanionChatRequest::signed_with_conversation_v1(
+            &challenge, Uuid::from_u128(2), "hello".into(),
+            CompanionConversationSelection::Resume { conversation_id: Uuid::from_u128(10) },
+            true, &signing,
+        ).unwrap();
+        resumed.verify_with(signing.verifying_key().as_bytes()).unwrap();
+        assert_ne!(resumed.signing_bytes().unwrap(), legacy_transcript);
+        resumed.capabilities.conversation_v1 = Some(
+            CompanionConversationSelection::Resume { conversation_id: Uuid::from_u128(11) },
+        );
+        assert!(resumed.verify_with(signing.verifying_key().as_bytes()).is_err());
+        resumed.capabilities.conversation_v1 = None;
+        assert!(resumed.verify_with(signing.verifying_key().as_bytes()).is_err());
+
+        let mut private = CompanionChatRequest::signed_with_conversation_v1(
+            &challenge, Uuid::from_u128(3), "private".into(),
+            CompanionConversationSelection::New { incognito: true }, false, &signing,
+        ).unwrap();
+        private.verify_with(signing.verifying_key().as_bytes()).unwrap();
+        private.capabilities.conversation_v1 = Some(CompanionConversationSelection::New { incognito: false });
+        assert!(private.verify_with(signing.verifying_key().as_bytes()).is_err());
+        private.capabilities.chat_stream_v1 = false;
+        assert!(private.validate().is_err());
+    }
+
+    #[test]
+    fn jm05_conversation_selection_rejects_private_identity_and_nil_resume() {
+        for wire in [
+            r#"{"operation":"resume","conversation_id":"00000000-0000-0000-0000-000000000001","private_session_id":"forbidden"}"#,
+            r#"{"operation":"new","private_session_id":"forbidden"}"#,
+            r#"{"operation":"resume","conversation_id":"bad"}"#,
+            r#"{"operation":"unknown"}"#,
+        ] {
+            assert!(serde_json::from_str::<CompanionConversationSelection>(wire).is_err());
+        }
+        let nil: CompanionConversationSelection = serde_json::from_str(
+            r#"{"operation":"resume","conversation_id":"00000000-0000-0000-0000-000000000000"}"#,
+        ).unwrap();
+        assert!(nil.validate().is_err());
+        let fresh: CompanionConversationSelection = serde_json::from_str(r#"{"operation":"new"}"#).unwrap();
+        assert_eq!(fresh, CompanionConversationSelection::New { incognito: false });
+        fresh.validate().unwrap();
     }
 
     #[test]

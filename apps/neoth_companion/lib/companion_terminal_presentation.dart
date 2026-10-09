@@ -5,8 +5,9 @@ import 'models.dart';
 
 /// Renders the already-validated V3 terminal. It owns no transport or action.
 class CompanionTerminalCard extends StatelessWidget {
-  const CompanionTerminalCard({super.key, required this.terminal});
+  const CompanionTerminalCard({super.key, required this.terminal, this.recordsInHistory = false});
   final CompanionChatTerminal terminal;
+  final bool recordsInHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +37,9 @@ class CompanionTerminalCard extends StatelessWidget {
               const SizedBox(height: 4),
               _CustodyLine(label: 'Model', value: terminal.model!),
               const SizedBox(height: 16),
-              if (terminal.records.isEmpty)
+              if (recordsInHistory)
+                const Text('The confirmed answer is shown in the saved conversation above.')
+              else if (terminal.records.isEmpty)
                 const Text('NEOTH accepted the request. No terminal records were returned.')
               else
                 for (final record in terminal.records) ...[_TerminalRecordRow(record: record), const SizedBox(height: 8)],

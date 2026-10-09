@@ -7,6 +7,7 @@ import 'companion_controller.dart';
 import 'companion_activity_presentation.dart';
 import 'companion_terminal_presentation.dart';
 import 'companion_theme.dart';
+import 'conversation_presentation.dart';
 import 'models.dart';
 import 'native_bridge.dart';
 import 'secure_store.dart';
@@ -134,7 +135,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                 ] else ...[
                   Text(
                     widget.controller.canSendChat
-                        ? 'This phone has the explicitly paired one-shot chat permission.'
+                        ? 'This phone has permission to chat with NEOTH.'
                         : 'This phone has the paired read-only status permission.',
                   ),
                   const SizedBox(height: 12),
@@ -148,21 +149,58 @@ class _CompanionHomeState extends State<CompanionHome> {
                   ],
                   if (widget.controller.canSendChat) ...[
                     const SizedBox(height: 20),
-                    Text('One-time chat', style: Theme.of(context).textTheme.titleMedium),
+                    Text(widget.controller.conversationsAvailable ? 'Conversation' : 'One-time chat', style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 8),
+                    if (widget.controller.conversationsAvailable) ...[
+                      DropdownButtonFormField<String>(
+                        value: widget.controller.selectedConversationId ?? 'new',
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'Saved conversation'),
+                        items: [
+                          const DropdownMenuItem(value: 'new', child: Text('New conversation')),
+                          for (var index = 0; index < widget.controller.conversationIds.length; index++)
+                            DropdownMenuItem(value: widget.controller.conversationIds[index], child: Text('Conversation ${index + 1}')),
+                        ],
+                        onChanged: widget.controller.chatPending || widget.controller.conversationNeedsRecovery || widget.controller.conversationIncognito
+                            ? null : (value) => unawaited(widget.controller.selectConversation(value == 'new' ? null : value)),
+                      ),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Incognito'),
+                        subtitle: const Text('Use no saved conversation context and save no conversation history.'),
+                        value: widget.controller.conversationIncognito,
+                        onChanged: widget.controller.chatPending || widget.controller.conversationNeedsRecovery
+                            ? null : widget.controller.setConversationIncognito,
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: widget.controller.chatPending
+                            || (!widget.controller.conversationNeedsRecovery && (widget.controller.selectedConversationId == null || widget.controller.conversationIncognito))
+                            ? null : () => unawaited(widget.controller.recoverConversation()),
+                        icon: const Icon(Icons.history),
+                        label: Text(widget.controller.conversationNeedsRecovery ? 'Recover previous send' : 'Load saved history'),
+                      ),
+                      if (widget.controller.conversationHistory case final history?)
+                        ConversationHistoryCard(history: history),
+                      if (widget.controller.conversationPendingMessage case final pending?)
+                        Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                            const Text('Your current message'), const SizedBox(height: 4), SelectableText(pending),
+                          ],
+                        ))),
+                    ],
                     TextField(
                       controller: _chat,
-                      enabled: !widget.controller.chatPending,
+                      enabled: !widget.controller.chatPending && !widget.controller.conversationNeedsRecovery,
                       minLines: 2,
                       maxLines: 5,
                       maxLength: 640,
                       decoration: const InputDecoration(
                         labelText: 'Ordinary message',
-                        helperText: 'One request only. Slash actions, files and streaming are unavailable.',
+                        helperText: 'Live progress is shown while NEOTH replies. Files and slash actions are unavailable.',
                       ),
                     ),
                     FilledButton.icon(
-                      onPressed: widget.controller.chatPending
+                      onPressed: widget.controller.chatPending || widget.controller.conversationNeedsRecovery
                           ? null
                           : () async {
                               await widget.controller.sendChat(_chat.text);
@@ -199,7 +237,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                           )),
                         ),
                     if (widget.controller.chatTerminal case final terminal?)
-                      Padding(padding: const EdgeInsets.only(top: 12), child: CompanionTerminalCard(terminal: terminal)),
+                      Padding(padding: const EdgeInsets.only(top: 12), child: CompanionTerminalCard(terminal: terminal, recordsInHistory: widget.controller.terminalCoveredByHistory)),
                   ],
                   const SizedBox(height: 12),
                   TextButton(
