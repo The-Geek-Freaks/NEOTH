@@ -1727,7 +1727,10 @@ mod tests {
             ("JM05 final alpha", "jm05-session-a", false),
         ] {
             execute_gui_turn_with_admitted_session(
-                &runtime, message.into(), Some(session.into()), incognito,
+                &runtime,
+                message.into(),
+                Some(session.into()),
+                incognito,
             )
             .await
             .expect("execute actual admitted conversation turn");
@@ -1752,10 +1755,15 @@ mod tests {
             assert!(!next.contains("JM05 foreign beta"));
         }
         let rows = crate::memory::transcript_store::read_session_turns_at(
-            &home.path().join("views.db"), "jm05-session-a",
-        ).unwrap();
+            &home.path().join("views.db"),
+            "jm05-session-a",
+        )
+        .unwrap();
         assert_eq!(rows.len(), 6);
-        assert!(rows.iter().all(|row| !row.text.contains("JM05 private canary")));
+        assert!(
+            rows.iter()
+                .all(|row| !row.text.contains("JM05 private canary"))
+        );
         runtime.close_and_drain().await;
         drop(runtime);
         drop(writer);

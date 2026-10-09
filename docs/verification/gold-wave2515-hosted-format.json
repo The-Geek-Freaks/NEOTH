@@ -1,0 +1,15 @@
+{
+  "schema": "neoth.gold-wave2515.hosted-format.v1",
+  "status": "hosted-format-imported-awaiting-fresh-checks",
+  "producer": "f4752cee6f12b88fd20463a86bc8ec7b45f3ee3b",
+  "run": "37895346429",
+  "artifact": "11600660044",
+  "zipSha256": "25A60985F51C0756DE140DCE879F4CE4352CAD5321BD464656B604E2212E49A5",
+  "files": [
+    "SRC/neothd/src/cli/chat.rs",
+    "SRC/neothd/src/daemon/chat_runtime.rs",
+    "SRC/neothd/src/memory/transcript_store.rs"
+  ],
+  "localRuntimeExecuted": false,
+  "behavioralAcceptance": false
+}

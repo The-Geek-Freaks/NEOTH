@@ -10103,7 +10103,10 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
             // Stored text is context, never a system instruction or authority.
             // Expose only visible roles/text, not database or session identifiers.
             let content = serde_json::to_string(&history)?;
-            anyhow::ensure!(content.len() <= 96 * 1024, "conversation context encoding limit");
+            anyhow::ensure!(
+                content.len() <= 96 * 1024,
+                "conversation context encoding limit"
+            );
             let context = crate::pipeline::UntrustedContext::new(
                 crate::pipeline::UntrustedContextClass::Memory,
                 "memory:admitted-conversation-visible-tail",

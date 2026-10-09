@@ -609,13 +609,17 @@ pub(crate) fn read_admitted_session_context_at(
         Ok(_) => {}
     }
     let conn = Connection::open_with_flags(
-        db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     let has_raw_turns = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_turns')",
-        [], |row| row.get::<_, bool>(0),
+        [],
+        |row| row.get::<_, bool>(0),
     )?;
-    if !has_raw_turns { return Ok(Vec::new()); }
+    if !has_raw_turns {
+        return Ok(Vec::new());
+    }
     let mut stmt = conn.prepare(
         "SELECT role, CASE WHEN length(CAST(text AS BLOB)) <= 16384 THEN text ELSE NULL END \
          FROM raw_turns WHERE session_id = ?1 ORDER BY id DESC LIMIT 32",
@@ -626,15 +630,26 @@ pub(crate) fn read_admitted_session_context_at(
     let mut encoded_bytes = 2usize;
     while let Some(row) = query.next()? {
         let role: String = row.get(0)?;
-        anyhow::ensure!(matches!(role.as_str(), "operator" | "agent"), "invalid admitted conversation role");
+        anyhow::ensure!(
+            matches!(role.as_str(), "operator" | "agent"),
+            "invalid admitted conversation role"
+        );
         let mut text: Option<String> = row.get(1)?;
         if role == "agent" {
             text = text.map(|value| crate::security::redact::sanitize_tool_output(&value));
         }
-        if text.as_ref().is_some_and(|value| value.len() > 16384) { text = None; }
+        if text.as_ref().is_some_and(|value| value.len() > 16384) {
+            text = None;
+        }
         let size = text.as_ref().map_or(0, String::len);
-        if bytes + size > 65536 { break; }
-        let mut turn = AdmittedContextTurn { role, truncated: text.is_none(), text };
+        if bytes + size > 65536 {
+            break;
+        }
+        let mut turn = AdmittedContextTurn {
+            role,
+            truncated: text.is_none(),
+            text,
+        };
         let mut encoded_size = serde_json::to_string(&turn)?.len();
         if encoded_size + 2 > 96 * 1024 {
             turn.text = None;
@@ -642,7 +657,9 @@ pub(crate) fn read_admitted_session_context_at(
             encoded_size = serde_json::to_string(&turn)?.len();
         }
         let separator_bytes = usize::from(!turns.is_empty());
-        if encoded_bytes + separator_bytes + encoded_size > 96 * 1024 { break; }
+        if encoded_bytes + separator_bytes + encoded_size > 96 * 1024 {
+            break;
+        }
         bytes += turn.text.as_ref().map_or(0, String::len);
         encoded_bytes += separator_bytes + encoded_size;
         turns.push(turn);
@@ -807,7 +824,14 @@ mod tests {
     fn admitted_context_sql_bounds_preserve_recent_order_and_declare_missing_text() {
         let (home, conn) = open_test_db();
         for index in 0..40 {
-            insert_turn(&conn, "context-session", "operator", index, &format!("context-{index}")).unwrap();
+            insert_turn(
+                &conn,
+                "context-session",
+                "operator",
+                index,
+                &format!("context-{index}"),
+            )
+            .unwrap();
         }
         insert_turn(&conn, "foreign-session", "operator", 41, "foreign-canary").unwrap();
         let path = home.path().join("views.db");
@@ -815,30 +839,77 @@ mod tests {
         assert_eq!(rows.len(), 32);
         assert_eq!(rows.first().unwrap().text.as_deref(), Some("context-8"));
         assert_eq!(rows.last().unwrap().text.as_deref(), Some("context-39"));
-        assert!(rows.iter().all(|row| !row.truncated && row.text.as_deref() != Some("foreign-canary")));
+        assert!(
+            rows.iter()
+                .all(|row| !row.truncated && row.text.as_deref() != Some("foreign-canary"))
+        );
         let long = "x".repeat(16385);
         insert_turn(&conn, "context-session", "operator", 42, &long).unwrap();
         let rows = read_admitted_session_context_at(&path, "context-session").unwrap();
         assert!(rows.last().unwrap().truncated);
         assert!(rows.last().unwrap().text.is_none());
-        assert_eq!(read_session_turns_at(&path, "context-session").unwrap().last().unwrap().text, long);
-        conn.execute("DELETE FROM raw_turns WHERE session_id='context-session'", []).unwrap();
+        assert_eq!(
+            read_session_turns_at(&path, "context-session")
+                .unwrap()
+                .last()
+                .unwrap()
+                .text,
+            long
+        );
+        conn.execute(
+            "DELETE FROM raw_turns WHERE session_id='context-session'",
+            [],
+        )
+        .unwrap();
         for index in 0..5 {
-            insert_turn(&conn, "context-session", "operator", index, &"x".repeat(16384)).unwrap();
+            insert_turn(
+                &conn,
+                "context-session",
+                "operator",
+                index,
+                &"x".repeat(16384),
+            )
+            .unwrap();
         }
         let rows = read_admitted_session_context_at(&path, "context-session").unwrap();
         assert_eq!(rows.len(), 4);
-        assert_eq!(rows.iter().map(|row| row.text.as_ref().unwrap().len()).sum::<usize>(), 65536);
-        assert_eq!(read_session_turns_at(&path, "context-session").unwrap().len(), 5);
-        conn.execute("DELETE FROM raw_turns WHERE session_id='context-session'", []).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.text.as_ref().unwrap().len())
+                .sum::<usize>(),
+            65536
+        );
+        assert_eq!(
+            read_session_turns_at(&path, "context-session")
+                .unwrap()
+                .len(),
+            5
+        );
+        conn.execute(
+            "DELETE FROM raw_turns WHERE session_id='context-session'",
+            [],
+        )
+        .unwrap();
         for index in 0..5 {
-            insert_turn(&conn, "context-session", "operator", index, &"\u{0001}".repeat(16384)).unwrap();
+            insert_turn(
+                &conn,
+                "context-session",
+                "operator",
+                index,
+                &"\u{0001}".repeat(16384),
+            )
+            .unwrap();
         }
         let rows = read_admitted_session_context_at(&path, "context-session").unwrap();
         assert!(!rows.is_empty());
         assert!(rows.iter().all(|row| row.truncated && row.text.is_none()));
         assert!(serde_json::to_string(&rows).unwrap().len() <= 96 * 1024);
-        assert_eq!(read_session_turns_at(&path, "context-session").unwrap().len(), 5);
+        assert_eq!(
+            read_session_turns_at(&path, "context-session")
+                .unwrap()
+                .len(),
+            5
+        );
     }
 
     #[test]
