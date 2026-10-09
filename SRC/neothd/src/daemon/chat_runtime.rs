@@ -1097,6 +1097,7 @@ mod tests {
 
     struct RuntimeProvider {
         calls: AtomicUsize,
+        requests: std::sync::Mutex<Vec<Request>>,
         called: Notify,
         reply: String,
     }
@@ -1105,6 +1106,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 calls: AtomicUsize::new(0),
+                requests: std::sync::Mutex::new(Vec::new()),
                 called: Notify::new(),
                 reply: "daemon runtime reply".into(),
             }
@@ -1121,7 +1123,8 @@ mod tests {
             Some("runtime-test-model")
         }
 
-        async fn complete(&self, _request: Request) -> Result<Completion> {
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.requests.lock().unwrap().push(request);
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.called.notify_waiters();
             Ok(Completion {
@@ -1274,6 +1277,7 @@ mod tests {
     ) {
         let provider = Arc::new(RuntimeProvider {
             calls: AtomicUsize::new(0),
+            requests: std::sync::Mutex::new(Vec::new()),
             called: Notify::new(),
             reply,
         });
@@ -1709,6 +1713,53 @@ mod tests {
                 None,
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn companion_admitted_context_reaches_next_provider_without_foreign_or_incognito_turns() {
+        let (runtime, provider, home, writer, writer_join) =
+            test_runtime_with_reply(true, 0, "JM05 visible assistant reply".into()).await;
+        for (message, session, incognito) in [
+            ("JM05 previous alpha", "jm05-session-a", false),
+            ("JM05 foreign beta", "jm05-session-b", false),
+            ("JM05 follow-up alpha", "jm05-session-a", false),
+            ("JM05 private canary", "jm05-session-a", true),
+            ("JM05 final alpha", "jm05-session-a", false),
+        ] {
+            execute_gui_turn_with_admitted_session(
+                &runtime, message.into(), Some(session.into()), incognito,
+            )
+            .await
+            .expect("execute actual admitted conversation turn");
+        }
+        {
+            let requests = provider.requests.lock().unwrap();
+            assert_eq!(requests.len(), 5);
+            let context = requests[2].system.as_deref().expect("second turn context");
+            assert!(context.contains("memory:admitted-conversation-visible-tail"));
+            assert!(context.contains(crate::pipeline::untrusted_context::GUARD_OPEN));
+            assert!(context.contains("JM05 previous alpha"));
+            assert!(context.contains("JM05 visible assistant reply"));
+            assert!(!context.contains("JM05 foreign beta"));
+            assert!(!context.contains("jm05-session-a"));
+            assert!(requests[2].prompt.contains("JM05 follow-up alpha"));
+            let private = requests[3].system.as_deref().unwrap_or("");
+            assert!(!private.contains("JM05 previous alpha"));
+            assert!(!private.contains("memory:admitted-conversation-visible-tail"));
+            let next = requests[4].system.as_deref().expect("third turn context");
+            assert!(next.contains("JM05 follow-up alpha"));
+            assert!(!next.contains("JM05 private canary"));
+            assert!(!next.contains("JM05 foreign beta"));
+        }
+        let rows = crate::memory::transcript_store::read_session_turns_at(
+            &home.path().join("views.db"), "jm05-session-a",
+        ).unwrap();
+        assert_eq!(rows.len(), 6);
+        assert!(rows.iter().all(|row| !row.text.contains("JM05 private canary")));
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
     }
 
     #[tokio::test]

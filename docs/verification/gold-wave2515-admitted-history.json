@@ -1,0 +1,41 @@
+{
+  "schema": "neoth.gold-wave2515.admitted-history.v1",
+  "status": "source-implemented-awaiting-hosted-validation",
+  "localRuntimeExecuted": false,
+  "behavior": {
+    "authority": "Existing daemon-admitted GUI session",
+    "context": "Chronological visible conversation tail in canonical untrusted Memory envelope",
+    "incognito": "Does not read or join stored conversation context",
+    "foreignSessions": "Excluded by exact admitted session query",
+    "canonicalStorage": "Unchanged; oversized context rows expose null text and explicit truncation",
+    "bounds": {
+      "rows": 32,
+      "rowBytes": 16384,
+      "totalTextBytes": 65536,
+      "encodedBytes": 98304
+    }
+  },
+  "newPortableTests": [
+    "daemon::chat_runtime::tests::companion_admitted_context_reaches_next_provider_without_foreign_or_incognito_turns",
+    "memory::transcript_store::tests::admitted_context_sql_bounds_preserve_recent_order_and_declare_missing_text"
+  ],
+  "validation": {
+    "route": "Single canonical mobile interop stream",
+    "rustCases": 143,
+    "collectorCases": 29,
+    "rawSourceBindings": 73,
+    "priorFocusedCasesRetained": 64,
+    "originalCoreIdentityOrderRetained": 46,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "physicalDeviceAccepted": false
+  },
+  "remaining": [
+    "Fresh hosted formatting, type and behavioral acceptance",
+    "Signed mobile conversation selection and durable device/revision binding",
+    "Canonical mobile history and reconnect protocol",
+    "Native and Flutter session/history wiring",
+    "Fresh native producer qualification and physical device acceptance",
+    "Signed release and remaining Gold targets"
+  ]
+}

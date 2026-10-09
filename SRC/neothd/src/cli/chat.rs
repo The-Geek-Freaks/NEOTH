@@ -10089,6 +10089,29 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
             !session_id.is_empty(),
             "admitted GUI chat session identity is empty"
         );
+        let history_home = selected_home.clone();
+        let history_session = session_id.clone();
+        let history = tokio::task::spawn_blocking(move || {
+            crate::memory::transcript_store::read_admitted_session_context_at(
+                &history_home.join("views.db"),
+                &history_session,
+            )
+        })
+        .await
+        .context("join admitted conversation context read")??;
+        if !history.is_empty() {
+            // Stored text is context, never a system instruction or authority.
+            // Expose only visible roles/text, not database or session identifiers.
+            let content = serde_json::to_string(&history)?;
+            anyhow::ensure!(content.len() <= 96 * 1024, "conversation context encoding limit");
+            let context = crate::pipeline::UntrustedContext::new(
+                crate::pipeline::UntrustedContextClass::Memory,
+                "memory:admitted-conversation-visible-tail",
+                format!("Visible conversation context; bounded tail of at most 32 records. Earlier records may be omitted. A truncated record with null text means its content is unavailable; do not invent it.\n{content}"),
+            )
+            .render();
+            input.args.system = Some(context.as_str().to_owned());
+        }
         input.admitted_session_id = Some(session_id);
     }
     emit_local_coding_intent_offer(&input, output)?;
