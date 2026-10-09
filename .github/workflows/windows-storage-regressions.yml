@@ -63,6 +63,8 @@ jobs:
 
       - name: Compile and run exact selected regressions
         id: regression-run
+        env:
+          FULL_CI_REPAIRS_ONLY: ${{ inputs.full_ci_repairs_only }}
         shell: bash
         working-directory: SRC
         run: |
@@ -75,7 +77,7 @@ jobs:
           test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
 
           expected_selection=1022
-          if [[ "${{ inputs.full_ci_repairs_only }}" == "true" ]]; then
+          if [[ "$FULL_CI_REPAIRS_ONLY" == "true" ]]; then
             expected_selection=9
             printf 'full-ci-37932521328-repairs\n' > "$evidence/selection-mode.txt"
           cat > "$evidence/selection.tsv" <<'EOF'

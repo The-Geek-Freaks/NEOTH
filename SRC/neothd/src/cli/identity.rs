@@ -258,11 +258,13 @@ mod tests {
             .filter(|path| path.extension().is_some_and(|extension| extension == "wal"))
             .collect();
         assert_eq!(segments.len(), 1);
-        assert!(segments[0]
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .contains("-identity-merge-000001.wal"));
+        assert!(
+            segments[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("-identity-merge-000001.wal")
+        );
         let mut receipts = Vec::new();
         let mut closing_markers = 0;
         crate::wal::scan::for_each_frame(&std::fs::read(&segments[0]).unwrap(), |_, frame| {
@@ -276,7 +278,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(receipts.len(), 1, "the merge audit must never be resent");
-        assert_eq!(closing_markers, 1, "success includes actual writer finalization");
+        assert_eq!(
+            closing_markers, 1,
+            "success includes actual writer finalization"
+        );
         let receipt = &receipts[0];
         assert_eq!(receipt["canonical"], "canonical");
         assert_eq!(receipt["victim"], "victim");

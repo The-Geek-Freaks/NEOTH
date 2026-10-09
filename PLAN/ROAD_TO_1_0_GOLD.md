@@ -18860,3 +18860,9 @@ Die Vorbereitung trennt jetzt den 150-Minuten-Testbuild vom 45-Minuten-CLI-Build
 Frische Hosted-Prüfung steht aus. Die ursprünglichen Roadmap-Zeilen bleiben unverändert; Windows/macOS, Geräte, signierte Distribution und Gold werden durch diesen Batch nicht als abgeschlossen markiert.
 
 Vollintegrations-Abschluss auf dem vorherigen Producer: failure. Fehlgeschlagene Jobs: Exact distribution license notices; Linux quality / Rust 1.91; Ubuntu beta compile + Clippy (advisory); windows-2022 tests / Rust 1.91; macos-14 tests / Rust 1.91; feature-flag compile / cluster-iroh; Gold CI. Neuer Quellstand bleibt ohne frischen Hosted-Nachweis.
+
+### W2536 — originale Hosted-Formatkorrektur und Windows-Workflow-Eingabe
+
+Producer d0a6fc67650b6fb8af6e61a44e9296060784cb5c besteht Code Quality 37951576638. Preflight 37951577612 stoppt ausschließlich an Rust-Formatierung. Das originale GitHub-Artefakt 11626127597 ist gegen den API-SHA256 F20A220A05F39514991929BF3114AFB80CC766952FFAA7BB757A7EBD52C0AB5A geprüft; der Patch wird auf genau vier eigene Rust-Dateien übernommen. Kein lokaler Formatter wurde ausgeführt.
+
+Der zusätzliche Workflow-Validierungsfehler 37951575897 meldet die maximale Ausdruckslänge 21000: Durch die neue direkte Input-Interpolation wurde der bestehende große Auswahlblock als GitHub-Ausdruck ausgewertet. Der boolesche Modus wird jetzt durch die Step-Umgebung übergeben. Alle 1022 Standardfälle und die explizite Auswahl von neun Bibliotheks- und zwei Integrationsfällen bleiben erhalten. Frische Preflight-/Workflow-Ausführung, Abhängigkeitslösung und Plattformabnahmen stehen weiterhin aus; keine Gold-Freigabe.

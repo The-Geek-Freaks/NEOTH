@@ -1,0 +1,58 @@
+{
+  "schema": "neoth.wave2536.hosted-followup.v1",
+  "base": "d0a6fc67650b6fb8af6e61a44e9296060784cb5c",
+  "status": "hosted-format-and-workflow-expression-repair-pending-fresh-checks",
+  "formatAdmission": {
+    "run": 37951577612,
+    "producer": "d0a6fc67650b6fb8af6e61a44e9296060784cb5c",
+    "artifact": 11626127597,
+    "zipSha256": "F20A220A05F39514991929BF3114AFB80CC766952FFAA7BB757A7EBD52C0AB5A",
+    "entries": [
+      {
+        "name": "SHA256SUMS",
+        "bytes": 162,
+        "sha256": "3B9C514B2BB7AB44DF3D0B83B553106902F4EE5CCFFFCE158B8D6A18BCF72FD0"
+      },
+      {
+        "name": "rustfmt.patch",
+        "bytes": 6834,
+        "sha256": "FD67ABBCDCCEF79AF7149665A3463019C636FA41F22AAB3B8C18D1354120F914"
+      },
+      {
+        "name": "source-head.txt",
+        "bytes": 41,
+        "sha256": "E73AD205E064847CB613EE3B3AEB71063D4C5BD4D1725635012E6921958D1C5B"
+      }
+    ],
+    "gitApplyCheck": true,
+    "applied": false,
+    "localFormatterExecuted": false
+  },
+  "formatApplied": true,
+  "formatSourcePaths": [
+    "SRC/neothd/src/cli/chat.rs",
+    "SRC/neothd/src/cli/consent.rs",
+    "SRC/neothd/src/cli/identity.rs",
+    "SRC/neothd/src/cli/todo.rs"
+  ],
+  "workflowDiagnostic": {
+    "run": 37951575897,
+    "producer": "d0a6fc67650b6fb8af6e61a44e9296060784cb5c",
+    "diagnostic": "Line68,Col14:Exceeded max expression length21000",
+    "source": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37951575897",
+    "repair": "Pass boolean through step env; large existing selection is no longer an Actions interpolated expression",
+    "hostedValidation": "pending",
+    "localRuntimeExecuted": false
+  },
+  "workflowCandidateSha256": "54242F9306A52EB11A5287148A996B1D393D00E07308320EECD71967F8207EB9",
+  "priorCodeQuality": {
+    "run": 37951576638,
+    "conclusion": "success",
+    "producer": "d0a6fc67650b6fb8af6e61a44e9296060784cb5c"
+  },
+  "portableTests": 2890,
+  "localFormatterExecuted": false,
+  "localRuntimeExecuted": false,
+  "freshHostedAcceptance": "pending",
+  "goldComplete": false
+}

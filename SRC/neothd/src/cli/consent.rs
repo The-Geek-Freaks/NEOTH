@@ -1795,10 +1795,8 @@ mod tests {
     #[tokio::test]
     async fn standalone_consent_decision_finalizes_without_persisting_permission() {
         let home = TempDir::new().unwrap();
-        let route = consent::ConsentRoute::new(
-            ProviderKind::OpenaiApi,
-            Some("https://api.openai.com/v1"),
-        );
+        let route =
+            consent::ConsentRoute::new(ProviderKind::OpenaiApi, Some("https://api.openai.com/v1"));
         emit_consent_decision(
             home.path(),
             &route,
@@ -1810,11 +1808,13 @@ mod tests {
         assert!(!consent::marker_path(home.path(), route.kind).exists());
         let segments = wal_segments(home.path());
         assert_eq!(segments.len(), 1);
-        assert!(segments[0]
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .contains("-consent-decision-000001.wal"));
+        assert!(
+            segments[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("-consent-decision-000001.wal")
+        );
         let mut decisions = Vec::new();
         let mut closing_markers = 0;
         crate::wal::scan::for_each_frame(&std::fs::read(&segments[0]).unwrap(), |_, frame| {

@@ -1199,7 +1199,11 @@ mod tests {
         .expect_err("an acknowledged frame must not hide writer finalization failure");
         assert!(format!("{error:#}").contains("injected compaction marker write failure"));
         let frames = oneshot_frames(home.path());
-        assert_eq!(frames.len(), 1, "audit was written once before shutdown failed");
+        assert_eq!(
+            frames.len(),
+            1,
+            "audit was written once before shutdown failed"
+        );
         assert_eq!(frames[0].2, oneshot_frame().payload);
     }
 
@@ -1253,7 +1257,9 @@ mod tests {
             .unwrap()
             .expect_err("pending ACK expires");
         assert!(format!("{error:#}").contains("append exceeded its absolute deadline"));
-        reaped_rx.await.expect("actual writer was reaped before returning");
+        reaped_rx
+            .await
+            .expect("actual writer was reaped before returning");
         assert_eq!(oneshot_frames(home.path()).len(), 1, "no audit redispatch");
     }
 
@@ -1294,7 +1300,11 @@ mod tests {
             .event_subtype(frame.event_subtype)
             .build();
         assert!(retained.append(header, frame.payload).await.is_err());
-        assert_eq!(oneshot_frames(home.path()).len(), 1, "cancellation never resends");
+        assert_eq!(
+            oneshot_frames(home.path()).len(),
+            1,
+            "cancellation never resends"
+        );
     }
 
     #[tokio::test]
@@ -1334,7 +1344,6 @@ mod tests {
         assert!(retained.append(header, frame.payload).await.is_err());
         assert_eq!(oneshot_frames(home.path()).len(), 1);
     }
-
 
     const ONESHOT_INTERLOCK_CHILD_PATH: &str = "NEOTH_ONESHOT_INTERLOCK_CHILD_PATH";
 
@@ -1455,9 +1464,13 @@ mod tests {
                 let error = result.expect_err("required audit cannot ignore the ownership race");
                 assert!(format!("{error:#}").contains("no local writer started"));
             } else {
-                result.expect("optional audit remains best effort without starting a second writer");
+                result
+                    .expect("optional audit remains best effort without starting a second writer");
             }
-            assert!(!home.path().join("wal").exists(), "no direct WAL effect before ownership");
+            assert!(
+                !home.path().join("wal").exists(),
+                "no direct WAL effect before ownership"
+            );
             assert_eq!(std::fs::read(&pidfile).unwrap(), original);
             drop(daemon);
         }

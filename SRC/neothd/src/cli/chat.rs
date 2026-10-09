@@ -9763,8 +9763,8 @@ async fn run_chat_with_consent_to(
     let wal_segment = args.wal_segment.clone(); // direct CLI custody; never enters prepared engine
     // Heap-own the large preparation and engine futures at the CLI adapter,
     // so nested callers do not carry either state machine on the Windows stack.
-    let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = Box::pin(
-        prepare_cli_chat_turn(
+    let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) =
+        Box::pin(prepare_cli_chat_turn(
             args,
             config,
             provider,
@@ -9773,9 +9773,8 @@ async fn run_chat_with_consent_to(
             stream_control_token,
             cancellation,
             output,
-        ),
-    )
-    .await?
+        ))
+        .await?
     else {
         return Ok(());
     };
