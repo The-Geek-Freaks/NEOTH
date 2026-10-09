@@ -101,3 +101,13 @@ The new conversation path still requires fresh successful hosted execution and
 independent original-artifact admission on its exact producer. Android/iOS
 builds, physical-device operation, signing and release acceptance are separate
 gates. This document does not itself establish any of those results.
+
+## Local Android message previews
+
+The Message previews card can display new WhatsApp, WhatsApp Business and Telegram notifications while NEOTH is open and the phone is unlocked. Turn on the local preview switch, select each allowed app, and explicitly grant NEOTH access in Android notification settings. The switch starts off each time the app starts; system access alone does not enable previews.
+
+Previews are local, read-only and temporary. They are not sent to NEOTH's daemon or an AI provider, stored as conversation history, marked as read, replied to, or forwarded through a messaging channel. Backgrounding the app, changing consent or losing listener access clears the card. Group summaries, posts before the current consent generation, future/stale posts and duplicates are ignored. The card expires 30 seconds after the original notification timestamp, even when delivery is delayed. Sender/text are capped at 80/512 Unicode codepoints. Hide preview clears the card without interacting with the originating notification.
+
+Quiet hours use the phone's local clock, including ranges across midnight. Equal start/end times pause previews all day. iOS does not expose this Android notification-listener surface; the app explains that the feature is unavailable there. NEOTH chat and conversation history keep their separate permissions and ownership.
+
+Hosted validation includes Flutter consent/lifecycle/presentation regressions and 14 exact Android JVM policy cases. The Android materializer uses the pinned JUnit 4.13.2 test dependency and records the exact passing identities. Real notification delivery, Android settings, lock/background transitions and device display still need physical-device acceptance; a build or unit pass alone does not prove those behaviors.

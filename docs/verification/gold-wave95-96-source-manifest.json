@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T10:53:07.5885113Z",
-  "validationStatus": "W2518 runtime admitted; 56 Flutter pass; explicit iOS conversation linker roots repaired; fresh native pending",
+  "capturedUtc": "2026-10-09T11:17:46.3846465Z",
+  "validationStatus": "W2518 native admitted; W2519 opt-in notification preview and app network metadata implemented; fresh hosted native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
-      "bytes": 12252,
-      "sha256": "9E66127D9DB562E14F1935CD2E33F12D183216985A833354A9ADEEBF77B9145A"
+      "bytes": 18647,
+      "sha256": "4989FBE892018577BEC0BC6A80B6FCA0F24E2DC54854E679E97CDD51CE893826"
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
-      "bytes": 15574,
-      "sha256": "C373084BC51CE9C3F483B2D486008EB929B2FB6AE49FCD5658D87207F7D8D6EB"
+      "bytes": 17859,
+      "sha256": "7B726E0E890EC18F1243FEBDD2D2396005F9E4B2BA9367A8E8DAD22CCFF30420"
     },
     {
       "path": ".github/workflows/mobile-live-output-contracts.yml",
@@ -353,8 +353,8 @@
     },
     {
       "path": "apps/neoth_companion/android/app/src/main/AndroidManifest.xml",
-      "bytes": 1433,
-      "sha256": "942102048C369F5E9E077B4A05F7B8AE514496C2A10F81B8B154C1E7265CA57E"
+      "bytes": 1879,
+      "sha256": "D3CC57B7517C47F4F5EDBE040342322C0170E38E601E1C94BA780BECF8187430"
     },
     {
       "path": "apps/neoth_companion/android/app/src/main/jniLibs/README.md",
@@ -363,13 +363,28 @@
     },
     {
       "path": "apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt",
-      "bytes": 1421,
-      "sha256": "5CEFB626054DC4D0FC6325598D504238008A518AF69AD7014B496ECD282BB7C4"
+      "bytes": 1953,
+      "sha256": "7203CE3ECA924598319932E8C3E59B2EE5C440C2F67FBEEFE68C8346EB0F2859"
+    },
+    {
+      "path": "apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/NeothNotificationPreviewService.kt",
+      "bytes": 7475,
+      "sha256": "C67C8F890393FFA03222381101568C34E9D8EF9AADA88B5D5B3AE1B4544D9778"
+    },
+    {
+      "path": "apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/NotificationPreviewAdmission.kt",
+      "bytes": 5341,
+      "sha256": "48A6D31E7485485A6C03F969AADB427CE8691667968684CCD161230033A159F4"
     },
     {
       "path": "apps/neoth_companion/android/app/src/main/res/values/styles.xml",
       "bytes": 359,
       "sha256": "62FF65E3BC411C2AF25749E149270108F7445116AA22F0069AEF9A7B88AF0B80"
+    },
+    {
+      "path": "apps/neoth_companion/android/app/src/test/kotlin/org/neoth/companion/NotificationPreviewAdmissionTest.kt",
+      "bytes": 6729,
+      "sha256": "EFEE586606E23F61065C25AAFF034D41EE1D752259DABBFA1BAB8C857E3012E8"
     },
     {
       "path": "apps/neoth_companion/ios/Frameworks/NEOTHCompanionBridge.podspec",
@@ -393,8 +408,8 @@
     },
     {
       "path": "apps/neoth_companion/ios/Runner/Info.plist",
-      "bytes": 1132,
-      "sha256": "AF0EE1CF694BF2343C676F9DFAEA94C2A7AB2DE1586860A349E9512DB2F41A93"
+      "bytes": 1270,
+      "sha256": "4A4C02A6B341B8738B0174959E74C640D8FF0FA9779F895F78A2DAC3F5C1E82C"
     },
     {
       "path": "apps/neoth_companion/lib/bridge_input.dart",
@@ -433,8 +448,8 @@
     },
     {
       "path": "apps/neoth_companion/lib/main.dart",
-      "bytes": 15471,
-      "sha256": "D28183C0B8E289A4B06F7C335B96DAF37B21676365A0A589715E4A9B42299382"
+      "bytes": 15607,
+      "sha256": "D40971B25CA0844CECE20DA4E9A3451F04D5FF0C69FA9F075BDE1032CBA477CD"
     },
     {
       "path": "apps/neoth_companion/lib/models.dart",
@@ -445,6 +460,16 @@
       "path": "apps/neoth_companion/lib/native_bridge.dart",
       "bytes": 21597,
       "sha256": "B827C77B01E9743CB77B9431377B57F35F0E46FBBBF0970C550478467D2429D4"
+    },
+    {
+      "path": "apps/neoth_companion/lib/notification_preview_controller.dart",
+      "bytes": 7481,
+      "sha256": "05891D0547000F432EC997A6E978F41C84E7AB287988B79928A278E740AA368E"
+    },
+    {
+      "path": "apps/neoth_companion/lib/notification_preview_panel.dart",
+      "bytes": 5073,
+      "sha256": "C1D90A36B6B383A9B5266D184A86ADC35155181D8AD478501F181F6B5A2D8C94"
     },
     {
       "path": "apps/neoth_companion/lib/secure_store.dart",
@@ -463,8 +488,8 @@
     },
     {
       "path": "apps/neoth_companion/README.md",
-      "bytes": 5253,
-      "sha256": "C0244CBCC0990BD36F4889D8D8A62859D1E466B28F629407C6DE5622E4EDE653"
+      "bytes": 7034,
+      "sha256": "C065DA22B0EED74297EB7044EBDD2CB2C9B46A057BCB38C0758394D1734FF28E"
     },
     {
       "path": "apps/neoth_companion/test/bridge_input_test.dart",
@@ -490,6 +515,11 @@
       "path": "apps/neoth_companion/test/conversation_presentation_test.dart",
       "bytes": 6507,
       "sha256": "3413EF0DF39FAAD931614DDE7D1191B8E95A94047F7B7D1C556BEA7C70374D76"
+    },
+    {
+      "path": "apps/neoth_companion/test/notification_preview_test.dart",
+      "bytes": 11713,
+      "sha256": "B21D897B4C23C72DF7ADE9B42CA9B2D5DB6CA6CCAAAFBB1FFDFB159BACEF190A"
     },
     {
       "path": "apps/neoth_companion/test/secure_store_conversation_test.dart",
@@ -4128,8 +4158,13 @@
     },
     {
       "path": "docs/verification/gold-wave2518-mobile-restart-routing.json",
-      "bytes": 3360,
-      "sha256": "DCD32F813FC21A26AC2A0DD4299E5AEBDB42F08F3FF16A4F3AE5BB5A508A500E"
+      "bytes": 4026,
+      "sha256": "4732A0A76120BAD6D58A44464A29A909F4BFF9216841E51F97A948A55D772A57"
+    },
+    {
+      "path": "docs/verification/gold-wave2519-notification-preview.json",
+      "bytes": 3321,
+      "sha256": "D630D58227B0F920CBF3D64960B0491F7F141E19B5F069B1B93F90F47863CAC8"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5278,8 +5313,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 40918,
-      "sha256": "E82B528652AB398D5CEE9F4A167E1867B80ADEA8FA1FF78BC820DB40AC93CBFE"
+      "bytes": 44201,
+      "sha256": "951F62C58B39F15AE1817CD034155A0A4A6F95E558FB777B2B9B8637F110EC9C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5288,8 +5323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2520309,
-      "sha256": "2E3DED1E2C1E7B5CA8308457C36ABECF7E77609675999DD2FAFF30549F8F111A"
+      "bytes": 2523592,
+      "sha256": "F97FF48216D6BB29F20C5E1153D95909A2C3A18A403BC473C75141165BC1E7A5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

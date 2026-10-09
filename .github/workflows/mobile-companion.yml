@@ -226,6 +226,22 @@ jobs:
           if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw 'Flutter Android build did not produce the CodeQL-traced APK input.' }
           $proof = [ordered]@{ schema='neoth.mobile.codeql-kotlin-input.v2'; source_root='.'; original_kotlin_path='apps/neoth_companion/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'; original_kotlin_sha256=$sourceKotlinSha256; materialized_output='.mobile-companion-build'; kotlin_path='.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt'; kotlin_sha256=$materializedKotlinSha256; apk_path='.mobile-companion-build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk'; apk_sha256=(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash } | ConvertTo-Json
           [System.IO.File]::WriteAllText((Join-Path $output 'codeql-kotlin-input.json'), $proof + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+          $previewSourcePaths = @(
+            'android/app/src/main/kotlin/org/neoth/companion/NotificationPreviewAdmission.kt',
+            'android/app/src/main/kotlin/org/neoth/companion/NeothNotificationPreviewService.kt',
+            'android/app/src/test/kotlin/org/neoth/companion/NotificationPreviewAdmissionTest.kt'
+          )
+          $previewSourceProof = @()
+          foreach ($relative in $previewSourcePaths) {
+            $original = Join-Path (Get-Location) ('apps/neoth_companion/' + $relative)
+            $materialized = Join-Path $output $relative
+            if (-not (Test-Path -LiteralPath $original -PathType Leaf) -or -not (Test-Path -LiteralPath $materialized -PathType Leaf)) { throw 'Preview Kotlin source input missing' }
+            $originalHash = (Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash
+            $materializedHash = (Get-FileHash -LiteralPath $materialized -Algorithm SHA256).Hash
+            if ($originalHash -cne $materializedHash) { throw 'Preview Kotlin materialization differs from its producer source' }
+            $previewSourceProof += [ordered]@{ original_path=('apps/neoth_companion/' + $relative); materialized_path=('.mobile-companion-build/' + $relative); sha256=$originalHash }
+          }
+          [ordered]@{ schema='neoth.mobile.notification-preview-kotlin-input.v1'; source_head=$head; sources=$previewSourceProof; apk_sha256=(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $output 'notification-preview-kotlin-input.json') -Encoding utf8
       - name: Analyze Kotlin compiled by the materialized Flutter build
         uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
         with:
@@ -244,6 +260,11 @@ jobs:
             ${{ github.workspace }}/.mobile-companion-build/ios-ffi-symbols.json
             ${{ github.workspace }}/.mobile-companion-build/codeql-kotlin-input.json
             ${{ github.workspace }}/.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/MainActivity.kt
+            ${{ github.workspace }}/.mobile-companion-build/notification-preview-kotlin-input.json
+            ${{ github.workspace }}/.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/NotificationPreviewAdmission.kt
+            ${{ github.workspace }}/.mobile-companion-build/android/app/src/main/kotlin/org/neoth/companion/NeothNotificationPreviewService.kt
+            ${{ github.workspace }}/.mobile-companion-build/android/app/src/test/kotlin/org/neoth/companion/NotificationPreviewAdmissionTest.kt
+            ${{ github.workspace }}/.mobile-companion-build/build/app/test-results/testReleaseUnitTest/TEST-org.neoth.companion.NotificationPreviewAdmissionTest.xml
             ${{ github.workspace }}/.mobile-companion-build/pubspec.lock
             ${{ github.workspace }}/.mobile-companion-build/build/app/outputs/flutter-apk
             ${{ github.workspace }}/.mobile-companion-build/build/ios/iphoneos/Runner.app

@@ -10,6 +10,7 @@ import 'companion_theme.dart';
 import 'conversation_presentation.dart';
 import 'models.dart';
 import 'native_bridge.dart';
+import 'notification_preview_panel.dart';
 import 'secure_store.dart';
 
 void main() {
@@ -118,6 +119,8 @@ class _CompanionHomeState extends State<CompanionHome> {
                 Text(_title(state), style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 8),
                 Text(_explanation(state)),
+                const SizedBox(height: 16),
+                const NotificationPreviewPanel(),
                 const SizedBox(height: 24),
                 if (!paired) ...[
                   TextField(controller: _invite, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'Pairing invite', hintText: 'neoth://companion/pair?...')),

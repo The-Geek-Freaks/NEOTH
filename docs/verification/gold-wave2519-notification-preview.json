@@ -1,0 +1,54 @@
+{
+  "schema": "neoth.gold-wave2519.notification-preview.v1",
+  "status": "implemented-static-reviewed-awaiting-hosted-and-native",
+  "base": "aed658d5e445df14167178ae5cc774b9f25c0390",
+  "pipelineItem": "JM-07",
+  "scope": "Android foreground-only opt-in notification previews adapted from the Jarvis behavior into NEOTH presentation and owners",
+  "changes": [
+    "Own Android NotificationListenerService protected by BIND_NOTIFICATION_LISTENER_SERVICE",
+    "App-session consent defaults off; separately selected WhatsApp, WhatsApp Business and Telegram packages plus Android system access",
+    "Only new posts after consent while NEOTH is foreground and phone unlocked; no notification enumeration or backfill",
+    "One card, original 30-second lifetime, 80/512 Unicode codepoint sender/text bounds, 128 live replay identities without eviction",
+    "Quiet hours, explicit dismiss, permission/disconnect/background/disposal clearing and stale-generation rejection",
+    "No notification actions, reply, read receipt, network forwarding, persistence or provider authority",
+    "NEOTH themed accessible Flutter presentation; explicit unsupported iOS explanation",
+    "Hosted Kotlin policy execution with exact test identities and original XML/log/source/APK digest binding",
+    "Declare Android INTERNET explicitly for the existing Companion socket transport; verify exactly one unrestricted permission in each actual release APK using hosted aapt2",
+    "Explain iOS local-network access for the paired daemon and verify this value in the built Runner.app Info.plist"
+  ],
+  "verification": {
+    "existingFlutterCases": 56,
+    "addedFlutterCaseSources": 11,
+    "expectedFlutterPassed": 67,
+    "addedKotlinCaseSources": 14,
+    "expectedKotlinPassed": 14,
+    "nativeSourceBindings": 73,
+    "ffiExports": 14,
+    "localRuntimeExecuted": false,
+    "hostedAccepted": false,
+    "nativeAccepted": false,
+    "deviceAccepted": false,
+    "releaseAccepted": false,
+    "androidApkPermissionProofsExpected": 3
+  },
+  "existingAuthority": "Companion chat/device/turn authority remains distinct; previews never obtain a chat bridge or send capability",
+  "sources": [
+    "https://developer.android.com/reference/android/service/notification/NotificationListenerService",
+    "https://developer.android.com/reference/android/app/NotificationManager#isNotificationListenerAccessGranted(android.content.ComponentName)",
+    "https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension",
+    "https://developer.android.com/reference/android/Manifest.permission#INTERNET",
+    "https://developer.android.com/tools/aapt2",
+    "https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy"
+  ],
+  "remaining": [
+    "Fresh hosted Flutter/Kotlin/native validation and independent original archive admission",
+    "Physical Android permission, lock, foreground/background, revocation and actual incoming-notification display",
+    "JM08 voice/media lifecycle, signed distribution and all original Gold backlog"
+  ],
+  "priorNativePrerequisite": {
+    "producer": "aed658d5e445df14167178ae5cc774b9f25c0390",
+    "run": "37920857872",
+    "proofSha256": "6010CE71AB21C6CD87E46FB891FD7B2E6EFC955CB069B86A13992BBDD547381A",
+    "validForNewFeature": false
+  }
+}

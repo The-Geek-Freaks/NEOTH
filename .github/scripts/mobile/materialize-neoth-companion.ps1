@@ -79,6 +79,7 @@ $gradleDependencyBlock = [string]::Join([Environment]::NewLine, @(
     'dependencies {',
     '    implementation "com.google.errorprone:error_prone_annotations:2.3.2"',
     '    implementation "com.google.code.findbugs:jsr305:3.0.2"',
+    '    testImplementation "junit:junit:4.13.2"',
     '}'
 ))
 $gradleText = $gradleText.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + $gradleDependencyBlock + [Environment]::NewLine
@@ -115,6 +116,71 @@ try {
     $proof = [ordered]@{ schema='neoth.mobile.flutter.hosted.materialization.v2'; stage=$Stage; flutter_version=$version.Trim(); native_artifact_manifest_sha256=$nativeManifestHash; lockfile_sha256=(Get-FileHash -LiteralPath 'pubspec.lock' -Algorithm SHA256).Hash; artifacts=@() }
     if ($Stage -in @('android','all')) {
         Invoke-Flutter -Name '05-build-android' -Arguments @('build','apk','--release','--split-per-abi')
+        # Inspect the actual release APKs on the hosted runner, never locally.
+        $androidSdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { $env:ANDROID_SDK_ROOT }
+        if ([string]::IsNullOrWhiteSpace($androidSdk)) { throw 'Android SDK path missing for APK permission verification' }
+        $buildTools = Join-Path $androidSdk 'build-tools'
+        $aaptCandidate = @(Get-ChildItem -LiteralPath $buildTools -Directory | Where-Object Name -match '^\d+\.\d+\.\d+$' | Sort-Object { [version]$_.Name } -Descending | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'aapt2') -PathType Leaf } | Select-Object -First 1)
+        if ($aaptCandidate.Count -ne 1) { throw 'Installed Android aapt2 missing' }
+        $aapt2 = Join-Path $aaptCandidate[0].FullName 'aapt2'
+        $aaptVersion = @(& $aapt2 version)
+        if ($LASTEXITCODE -ne 0) { throw 'Android aapt2 version failed' }
+        $proof.android_network_permissions = @()
+        foreach ($apkName in @('app-arm64-v8a-release.apk','app-armeabi-v7a-release.apk','app-x86_64-release.apk')) {
+            $apkPath = Join-Path 'build/app/outputs/flutter-apk' $apkName
+            if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) { throw 'Expected release APK missing for permission verification' }
+            $permissionLines = @(& $aapt2 dump permissions $apkPath)
+            if ($LASTEXITCODE -ne 0) { throw 'Android APK permissions could not be read' }
+            $internet = @($permissionLines | Where-Object { $_ -match "^uses-permission: name='android\.permission\.INTERNET'\s*$" })
+            if ($internet.Count -ne 1) { throw 'Release APK must declare exactly one unrestricted INTERNET permission' }
+            $permissionLog = Join-Path $logRoot ('05a-permissions-' + $apkName + '.txt')
+            [System.IO.File]::WriteAllText($permissionLog, [string]::Join([Environment]::NewLine, $permissionLines) + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+            $proof.android_network_permissions += [ordered]@{
+                apk=$apkName
+                apk_sha256=(Get-FileHash -LiteralPath $apkPath -Algorithm SHA256).Hash
+                permission='android.permission.INTERNET'
+                unrestricted=$true
+                report_sha256=(Get-FileHash -LiteralPath $permissionLog -Algorithm SHA256).Hash
+                aapt2_version=($aaptVersion -join ' ')
+                aapt2_sha256=(Get-FileHash -LiteralPath $aapt2 -Algorithm SHA256).Hash
+            }
+            Write-Output ('NEOTH_ANDROID_INTERNET_PASS=' + $apkName)
+        }
+        # Hosted Android JVM policy tests. Never invoke this materializer locally.
+        Push-Location 'android'
+        try {
+            $previewLog = Join-Path $logRoot '05b-notification-preview-unit-tests.log'
+            & './gradlew' --no-daemon --max-workers=1 --console=plain ':app:testReleaseUnitTest' '--tests' 'org.neoth.companion.NotificationPreviewAdmissionTest' 2>&1 | Tee-Object -LiteralPath $previewLog
+            if ($LASTEXITCODE -ne 0) { throw 'Android notification preview unit tests failed' }
+        } finally { Pop-Location }
+        $previewReportPath = 'build/app/test-results/testReleaseUnitTest/TEST-org.neoth.companion.NotificationPreviewAdmissionTest.xml'
+        if (-not (Test-Path -LiteralPath $previewReportPath -PathType Leaf)) { throw 'Preview unit-test report missing' }
+        [xml]$previewReport = Get-Content -LiteralPath $previewReportPath -Raw
+        $previewNames = @(
+            'disabledOrUnconfiguredOwnerRejects',
+            'permissionForegroundAndLockEachGateAdmission',
+            'everyPackageNeedsItsOwnExplicitSelection',
+            'quietHoursHandleSameDayOvernightAndAllDay',
+            'staleFutureAndPreConsentPostsReject',
+            'originalDeadlineCannotBeExtendedByDelayedDelivery',
+            'duplicateSourceDoesNotRefreshOrReplacePreview',
+            'sourceIdentitySeparatesApps',
+            'fullReplayWindowDropsNewEntriesWithoutEvictingLiveIdentities',
+            'suspensionAndNewConsentCannotReplayAnEarlierEvent',
+            'unicodeLimitsPreserveCompleteCodepoints',
+            'emptyAndGroupSummaryNotificationsNeverCreateCards',
+            'elapsedAndWallDriftCannotReopenExpiredReplayWindow',
+            'backwardsClocksFailClosed'
+        )
+        $previewSuite = $previewReport.testsuite
+        $previewCases = @($previewSuite.testcase)
+        if ($previewSuite.name -cne 'org.neoth.companion.NotificationPreviewAdmissionTest' -or [int]$previewSuite.tests -ne 14 -or [int]$previewSuite.failures -ne 0 -or [int]$previewSuite.errors -ne 0 -or [int]$previewSuite.skipped -ne 0 -or $previewCases.Count -ne 14) { throw 'Preview unit-test suite differs or did not pass' }
+        if (@(Compare-Object -CaseSensitive $previewNames @($previewCases.name)).Count -ne 0 -or @($previewCases.name | Sort-Object -Unique).Count -ne 14) { throw 'Preview test identity set differs' }
+        foreach ($previewCase in $previewCases) {
+            if ($previewCase.classname -cne 'org.neoth.companion.NotificationPreviewAdmissionTest' -or $null -ne $previewCase.failure -or $null -ne $previewCase.error -or $null -ne $previewCase.skipped) { throw 'Preview case lacks a success result' }
+            Write-Output ('NEOTH_PREVIEW_UNIT_PASS=' + $previewCase.name)
+        }
+        $proof.notification_preview_unit_tests = [ordered]@{ passed=14; names=$previewNames; report_sha256=(Get-FileHash -LiteralPath $previewReportPath -Algorithm SHA256).Hash; log_sha256=(Get-FileHash -LiteralPath $previewLog -Algorithm SHA256).Hash }
         foreach ($artifact in 'build\app\outputs\flutter-apk\app-arm64-v8a-release.apk','build\app\outputs\flutter-apk\app-armeabi-v7a-release.apk','build\app\outputs\flutter-apk\app-x86_64-release.apk') {
             if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { throw "expected Android export missing: $artifact" }
             $proof.artifacts += [ordered]@{ path=$artifact; sha256=(Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash }
@@ -124,6 +190,11 @@ try {
         Invoke-Flutter -Name '06-build-ios' -Arguments @('build','ios','--release','--no-codesign')
         $runner = Join-Path (Get-Location) 'build\ios\iphoneos\Runner.app\Runner'
         if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw 'unsigned iOS Runner binary is missing' }
+        $runnerPlist = Join-Path (Get-Location) 'build/ios/iphoneos/Runner.app/Info.plist'
+        if (-not (Test-Path -LiteralPath $runnerPlist -PathType Leaf)) { throw 'Built iOS application Info.plist missing' }
+        $localNetworkUsage = @(& /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' $runnerPlist)
+        if ($LASTEXITCODE -ne 0 -or $localNetworkUsage.Count -ne 1 -or $localNetworkUsage[0] -cne 'NEOTH uses the local network to connect securely to your paired NEOTH daemon.') { throw 'Built iOS application has no expected local-network privacy explanation' }
+        $proof.ios_local_network_usage = [ordered]@{ description=$localNetworkUsage[0]; info_plist_sha256=(Get-FileHash -LiteralPath $runnerPlist -Algorithm SHA256).Hash }
         $nmLines = @(& /usr/bin/nm -g $runner)
         if ($LASTEXITCODE -ne 0) { throw "nm failed for iOS Runner with exit code $LASTEXITCODE" }
         $requiredFfiExports = @(

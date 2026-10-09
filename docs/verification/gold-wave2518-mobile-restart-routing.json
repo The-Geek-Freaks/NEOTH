@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2518.mobile-restart-routing.v1",
-  "status": "runtime-and-flutter-admitted-ios-export-repair-awaiting-native",
+  "status": "runtime-and-native-admitted-on-recorded-producers-device-and-release-open",
   "base": "e1c9c703d84526d89108294b33fe157bab104e90",
   "priorRun": 37909911052,
   "priorPassed": {
@@ -27,12 +27,11 @@
     "ffiExports": 14,
     "localRuntimeExecuted": false,
     "hostedAccepted": true,
-    "nativeAccepted": false,
+    "nativeAccepted": true,
     "deviceAccepted": false,
     "releaseAccepted": false
   },
   "remaining": [
-    "Fresh Flutter and Android/iOS native validation",
     "Physical devices, JM07/JM08, signed release and all original Gold backlog"
   ],
   "hostedExecution": {
@@ -74,5 +73,22 @@
     "nativeAcceptance": false,
     "freshNativeRunRequired": true,
     "localRuntimeExecuted": false
+  },
+  "nativeExecution": {
+    "producer": "aed658d5e445df14167178ae5cc774b9f25c0390",
+    "run": "37920857872",
+    "proof": "work/gold-20260906/wave2518-ios-linker-roots/native-preparation/ROOT_MOBILE_ADMISSION.json",
+    "proofSha256": "6010CE71AB21C6CD87E46FB891FD7B2E6EFC955CB069B86A13992BBDD547381A",
+    "flutterExactPassed": 56,
+    "originalArchives": 4,
+    "archiveEntries": 155,
+    "rawSourceBindings": 65,
+    "androidAbis": 3,
+    "definedRunnerFfiExports": 14,
+    "originalRuntimeExecutionProducer": "141621920157a07456e47f9b20d37433505693ab",
+    "originalRuntimeExecutionRun": "37914390018",
+    "newRuntimeExecutionClaimed": false,
+    "deviceAccepted": false,
+    "releaseAccepted": false
   }
 }
