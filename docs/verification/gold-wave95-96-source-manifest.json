@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T11:28:35.8189684Z",
-  "validationStatus": "widget-fixture-timer-cleanup-pending-hosted",
+  "capturedUtc": "2026-10-09T11:55:50.6572178Z",
+  "validationStatus": "apk-inspector-provenance-repaired-native-rerun-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
-      "bytes": 18647,
-      "sha256": "4989FBE892018577BEC0BC6A80B6FCA0F24E2DC54854E679E97CDD51CE893826"
+      "bytes": 19249,
+      "sha256": "38C4FC268FB4C85D1D5575870BFEA2A361671984D956B5C821EAAC2EE3CD8B32"
     },
     {
       "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
@@ -178,8 +178,8 @@
     },
     {
       "path": ".github/workflows/mobile-companion.yml",
-      "bytes": 17859,
-      "sha256": "7B726E0E890EC18F1243FEBDD2D2396005F9E4B2BA9367A8E8DAD22CCFF30420"
+      "bytes": 21369,
+      "sha256": "67A8967FB20A9186474A1FF08BABAA2F362BA78390FFFB445E450DF02EB3AFA4"
     },
     {
       "path": ".github/workflows/mobile-live-output-contracts.yml",
@@ -4163,8 +4163,8 @@
     },
     {
       "path": "docs/verification/gold-wave2519-notification-preview.json",
-      "bytes": 4231,
-      "sha256": "4F2B4E9CC56DBAFC31154FE802BB663258666B954D2024464B79D5FD235C2687"
+      "bytes": 5438,
+      "sha256": "529D16A2D78151EF04F783B581927F55A335BC2968D5A66C3E7A5367EEC4948B"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5313,8 +5313,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 45040,
-      "sha256": "9E72C4122B901499AE30A9E746FA482167906C4E7C5FAAD5212B0D7B5090175B"
+      "bytes": 47207,
+      "sha256": "C6726ADE289B618419A4D599FEA2F895899B63CA047A0A6FF4C2AE167B3C6B1A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5323,8 +5323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2524431,
-      "sha256": "DEFDC1137C4211A13D23C14C346F2BB52740F8ECCF1E49ABE28B731C9D8CFB67"
+      "bytes": 2526598,
+      "sha256": "81460AB9A029CDB597886FCBDDC0C1C61599F0BEFA7D46BD5BF2747D1B68526F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

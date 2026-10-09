@@ -123,8 +123,12 @@ try {
         $aaptCandidate = @(Get-ChildItem -LiteralPath $buildTools -Directory | Where-Object Name -match '^\d+\.\d+\.\d+$' | Sort-Object { [version]$_.Name } -Descending | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'aapt2') -PathType Leaf } | Select-Object -First 1)
         if ($aaptCandidate.Count -ne 1) { throw 'Installed Android aapt2 missing' }
         $aapt2 = Join-Path $aaptCandidate[0].FullName 'aapt2'
-        $aaptVersion = @(& $aapt2 version)
+        $aaptVersionLines = @(& $aapt2 version 2>&1 | ForEach-Object { $_.ToString().Trim() })
         if ($LASTEXITCODE -ne 0) { throw 'Android aapt2 version failed' }
+        if ($aaptVersionLines.Count -ne 1 -or $aaptVersionLines[0] -notmatch '^Android Asset Packaging Tool \(aapt\) [0-9][A-Za-z0-9._-]{1,80}$') { throw 'Android aapt2 version is empty or malformed' }
+        $aaptVersion = $aaptVersionLines[0]
+        $aaptVersionLog = Join-Path $logRoot '05a-aapt2-version.txt'
+        [System.IO.File]::WriteAllText($aaptVersionLog, $aaptVersion + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
         $proof.android_network_permissions = @()
         foreach ($apkName in @('app-arm64-v8a-release.apk','app-armeabi-v7a-release.apk','app-x86_64-release.apk')) {
             $apkPath = Join-Path 'build/app/outputs/flutter-apk' $apkName
@@ -141,7 +145,8 @@ try {
                 permission='android.permission.INTERNET'
                 unrestricted=$true
                 report_sha256=(Get-FileHash -LiteralPath $permissionLog -Algorithm SHA256).Hash
-                aapt2_version=($aaptVersion -join ' ')
+                aapt2_version=$aaptVersion
+                aapt2_version_report_sha256=(Get-FileHash -LiteralPath $aaptVersionLog -Algorithm SHA256).Hash
                 aapt2_sha256=(Get-FileHash -LiteralPath $aapt2 -Algorithm SHA256).Hash
             }
             Write-Output ('NEOTH_ANDROID_INTERNET_PASS=' + $apkName)

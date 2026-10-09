@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "widget-fixture-timer-cleanup-pending-hosted",
+  "status": "apk-inspector-provenance-repaired-native-rerun-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 412166,
-    "sha256": "E43FBE88639E46389F53A0503C099AAC781371F54897EB1CBA0FCDC8923FF5F7"
+    "bytes": 412177,
+    "sha256": "CEF5A0E543E28F2392C6B1582420C6A3A1A281C9E7CDD18DC13FF74BC7290A89"
   },
   "sourceInputs": 2249,
   "requiredNativeTests": [
@@ -80595,6 +80595,44 @@
       }
     ],
     "note": "Three test controllers now dispose before widget-test completion. Prior hosted analyzer clean;64 passed,3 pending-timer failures; native skipped. No product behavior changed, no local runtime executed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2519ApkInspectorAnd2521ArchiveCache": {
+    "base": "a4258472388cd7f40e728aba090d7a1b09113568",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/materialize-neoth-companion.ps1",
+        "bytes": 19249,
+        "sha256": "38C4FC268FB4C85D1D5575870BFEA2A361671984D956B5C821EAAC2EE3CD8B32",
+        "blob": "a98e7b25c5da384eec996f731b5624c3c0efe38b"
+      },
+      {
+        "path": ".github/workflows/mobile-companion.yml",
+        "bytes": 21369,
+        "sha256": "67A8967FB20A9186474A1FF08BABAA2F362BA78390FFFB445E450DF02EB3AFA4",
+        "blob": "26fd9a49228ed8e8e6fd660c4a41f904dbf03ac2"
+      },
+      {
+        "path": "docs/verification/gold-wave2519-notification-preview.json",
+        "bytes": 5438,
+        "sha256": "529D16A2D78151EF04F783B581927F55A335BC2968D5A66C3E7A5367EEC4948B",
+        "blob": "941e6d213f78e3ff306e4b21021e88c1f274f88f"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 47207,
+        "sha256": "C6726ADE289B618419A4D599FEA2F895899B63CA047A0A6FF4C2AE167B3C6B1A",
+        "blob": "2aeb637c34740cd07e4f49cd073508efe96ccd0f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2526598,
+        "sha256": "81460AB9A029CDB597886FCBDDC0C1C61599F0BEFA7D46BD5BF2747D1B68526F",
+        "blob": "24a5dc0680323c0f55d091e559683557e1f7c907"
+      }
+    ],
+    "note": "Hosted prior run green with67Flutter/14Kotlin; independent admission rejected empty stderr-only aapt2 version. Capture and hash-bind original version report; cache only digest-verified original Flutter archives. No local runtime, physical device or release acceptance.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

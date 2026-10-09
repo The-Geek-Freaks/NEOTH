@@ -52,16 +52,53 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
-      - name: Fetch pinned Flutter SDK 3.24.5
+      - name: Select immutable Flutter SDK archive
+        id: flutter-archive
         shell: bash
         run: |
           set -euo pipefail
           case "$(uname -m)" in
-            arm64) archive='flutter_macos_arm64_3.24.5-stable.zip' ;;
-            x86_64) archive='flutter_macos_3.24.5-stable.zip' ;;
+            arm64)
+              archive='flutter_macos_arm64_3.24.5-stable.zip'
+              sha256='ca9624a6de7a1a8962f2f0a3e2a57b16434ca34f1137b8d9dc68c5ca1f187133'
+              ;;
+            x86_64)
+              archive='flutter_macos_3.24.5-stable.zip'
+              sha256='30f337aeb2f7a0d324cfae9a3718c1caa8a5abcb19eff933b337332465f9cfe8'
+              ;;
             *) echo "unsupported macOS runner architecture: $(uname -m)" >&2; exit 64 ;;
           esac
-          curl --fail --location --retry 3 --retry-delay 2 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive" --output "$RUNNER_TEMP/flutter-3.24.5.zip"
+          printf 'archive=%s\nsha256=%s\n' "$archive" "$sha256" >> "$GITHUB_OUTPUT"
+      - name: Restore verified Flutter download archive
+        id: flutter-archive-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flutter-3.24.5.zip
+          key: neoth-flutter-archive-v1-macos-${{ steps.flutter-archive.outputs.sha256 }}
+      - name: Fetch and verify pinned Flutter SDK archive
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ steps.flutter-archive.outputs.archive }}
+          ARCHIVE_SHA256: ${{ steps.flutter-archive.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          archive_path="$RUNNER_TEMP/flutter-3.24.5.zip"
+          if [ ! -f "$archive_path" ]; then
+            curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 600 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$ARCHIVE_NAME" --output "$archive_path"
+          fi
+          printf '%s  %s\n' "$ARCHIVE_SHA256" "$archive_path" | shasum -a 256 -c -
+          echo "NEOTH_FLUTTER_ARCHIVE_VERIFIED=$ARCHIVE_SHA256"
+      - name: Cache only the verified immutable Flutter archive
+        if: steps.flutter-archive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flutter-3.24.5.zip
+          key: ${{ steps.flutter-archive-cache.outputs.cache-primary-key }}
+      - name: Extract a fresh pinned Flutter SDK 3.24.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$RUNNER_TEMP/flutter"
           ditto -x -k "$RUNNER_TEMP/flutter-3.24.5.zip" "$RUNNER_TEMP"
           "$RUNNER_TEMP/flutter/bin/flutter" --version | grep -F 'Flutter 3.24.5'
       - name: Verify approved lock and run Flutter source QA
@@ -190,16 +227,53 @@ jobs:
         with:
           name: mobile-companion-ios-native
           path: ${{ runner.temp }}/native
-      - name: Fetch pinned Flutter SDK 3.24.5
+      - name: Select immutable Flutter SDK archive
+        id: flutter-archive
         shell: bash
         run: |
           set -euo pipefail
           case "$(uname -m)" in
-            arm64) archive='flutter_macos_arm64_3.24.5-stable.zip' ;;
-            x86_64) archive='flutter_macos_3.24.5-stable.zip' ;;
+            arm64)
+              archive='flutter_macos_arm64_3.24.5-stable.zip'
+              sha256='ca9624a6de7a1a8962f2f0a3e2a57b16434ca34f1137b8d9dc68c5ca1f187133'
+              ;;
+            x86_64)
+              archive='flutter_macos_3.24.5-stable.zip'
+              sha256='30f337aeb2f7a0d324cfae9a3718c1caa8a5abcb19eff933b337332465f9cfe8'
+              ;;
             *) echo "unsupported macOS runner architecture: $(uname -m)" >&2; exit 64 ;;
           esac
-          curl --fail --location --retry 3 --retry-delay 2 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$archive" --output "$RUNNER_TEMP/flutter-3.24.5.zip"
+          printf 'archive=%s\nsha256=%s\n' "$archive" "$sha256" >> "$GITHUB_OUTPUT"
+      - name: Restore verified Flutter download archive
+        id: flutter-archive-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flutter-3.24.5.zip
+          key: neoth-flutter-archive-v1-macos-${{ steps.flutter-archive.outputs.sha256 }}
+      - name: Fetch and verify pinned Flutter SDK archive
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ steps.flutter-archive.outputs.archive }}
+          ARCHIVE_SHA256: ${{ steps.flutter-archive.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          archive_path="$RUNNER_TEMP/flutter-3.24.5.zip"
+          if [ ! -f "$archive_path" ]; then
+            curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 600 "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/$ARCHIVE_NAME" --output "$archive_path"
+          fi
+          printf '%s  %s\n' "$ARCHIVE_SHA256" "$archive_path" | shasum -a 256 -c -
+          echo "NEOTH_FLUTTER_ARCHIVE_VERIFIED=$ARCHIVE_SHA256"
+      - name: Cache only the verified immutable Flutter archive
+        if: steps.flutter-archive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flutter-3.24.5.zip
+          key: ${{ steps.flutter-archive-cache.outputs.cache-primary-key }}
+      - name: Extract a fresh pinned Flutter SDK 3.24.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$RUNNER_TEMP/flutter"
           ditto -x -k "$RUNNER_TEMP/flutter-3.24.5.zip" "$RUNNER_TEMP"
           "$RUNNER_TEMP/flutter/bin/flutter" config --jdk-dir "$JAVA_HOME"
           "$RUNNER_TEMP/flutter/bin/flutter" --version | grep -F 'Flutter 3.24.5'

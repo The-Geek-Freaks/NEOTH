@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2519.notification-preview.v1",
-  "status": "implemented-test-fixture-lifecycle-repaired-awaiting-hosted-and-native",
+  "status": "hosted-tests-and-builds-green-root-native-admission-rejected-provenance-repair-pending",
   "base": "aed658d5e445df14167178ae5cc774b9f25c0390",
   "pipelineItem": "JM-07",
   "scope": "Android foreground-only opt-in notification previews adapted from the Jarvis behavior into NEOTH presentation and owners",
@@ -67,6 +67,32 @@
     "change": "Dispose each of the three affected controllers before its widget-test callback returns; retain fallback teardown and all assertions",
     "productBehaviorChanged": false,
     "expectedCaseCount": 67,
-    "hostedRerun": "pending"
+    "hostedRerun": "37924471118 passed all67 exact Flutter cases; analyzer clean"
+  },
+  "secondHostedAttempt": {
+    "run": "37924471118",
+    "producer": "a4258472388cd7f40e728aba090d7a1b09113568",
+    "hostedConclusion": "success",
+    "flutterPassed": 67,
+    "kotlinPassed": 14,
+    "nativeBuildsSucceeded": true,
+    "rootNativeAccepted": false,
+    "rejectionPath": "work\\gold-20260906\\wave2519-apk-provenance-repair\\PRIOR_RUN_REJECTION.json",
+    "rejectionSha256": "C1B4E35BEA78D3F8D1061EEE57A09A934AB0E2AD1B7AA0A0AF8EC1A409513D30"
+  },
+  "apkInspectorRepair": {
+    "cause": "aapt2 version is emitted on stderr; stdout-only capture produced empty provenance",
+    "change": "Capture both streams; require one well-formed version line; save the original report and bind its SHA256 in each APK proof",
+    "freshHostedAndRootAdmission": "pending"
+  },
+  "sdkArchiveCache": {
+    "wave": 2521,
+    "candidate": "work/gold-20260906/wave2521-flutter-archive-cache/CANDIDATE.json",
+    "scope": "Two macOS Flutter3.24.5 download steps",
+    "sha256CheckedOnEveryHitAndMiss": true,
+    "freshSdkExtraction": true,
+    "testsAndBuildOutputsCached": false,
+    "hostedValidated": false,
+    "speedupMeasured": false
   }
 }
