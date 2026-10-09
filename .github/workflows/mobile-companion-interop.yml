@@ -269,6 +269,18 @@ jobs:
         run: |
           test -s "$RUNNER_TEMP/w2328-stage/host-interop-manifest.json"
           test -s "$RUNNER_TEMP/w2328-receipt.json"
+      - name: Preserve immediate product diagnosis
+        if: ${{ always() && !cancelled() && steps.exact_host_build.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mobile-companion-product-diagnosis-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w2328-stage/host-interop-manifest.json
+            ${{ runner.temp }}/w2328-receipt.json
+            ${{ runner.temp }}/mobile-interop-selection/selection-custody.json
+            ${{ runner.temp }}/mobile-interop-selection/mobile-companion-interop-selection.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Run exact no-cluster companion refusal regression
         id: exact_no_cluster
         if: ${{ always() && !cancelled() && steps.selection_contract.outcome == 'success' && steps.exact_host_build.outcome == 'success' && steps.overlay_restored.outputs.restored == 'true' }}

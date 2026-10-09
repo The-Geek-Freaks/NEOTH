@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 408198,
-    "sha256": "F2BC1730D3887717912B6133440457579A45F2A69B44B3CF24EC271AEBA174BF"
+    "bytes": 408551,
+    "sha256": "9D6701C3E70E9E63720D2B2F8D7472451478D9BA149D2B888F07574AFC5599C5"
   },
-  "sourceInputs": 2229,
+  "sourceInputs": 2231,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -17132,6 +17132,12 @@
       "test": "daemon::chat_runtime::tests::companion_live_preview_precedes_provider_completion_and_retains_one_terminal",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
       "sourceSha256": "35BFB74DEA958849AA327BFFCED81F1DAA336556D56D7CF84BEA167FB4482611",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "adr::extractor::tests::unicode_marker_boundaries_preserve_text_without_panicking",
+      "sourcePath": "SRC/neothd/src/adr/extractor.rs",
+      "sourceSha256": "9E15DF4D8FBAC9F25EB5FB3E1FCDBE4D1796D3E6619B25A67D9E70BE436FE3CD",
       "junitClass": "neoth"
     }
   ],
@@ -79841,6 +79847,56 @@
       }
     ],
     "note": "Actual hostedV2 stack_overflow proved; heap-pin engine branches, existing authority/cancel/transport owner retained. No local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2514Utf8AdrRepair": {
+    "base": "8dad5be0e1e20d3d88d0d2697967dcb3226d3245",
+    "sources": [
+      {
+        "path": ".github/scripts/mobile/mobile-companion-interop-selection.json",
+        "bytes": 16154,
+        "sha256": "67E915BC12B3EBC93552C74308ED26D4ED061AC91A89886E02C5CF3985A22DCA",
+        "blob": "2ec7c302a5916ec1c2b9173daf37a003c4d9e3ba"
+      },
+      {
+        "path": ".github/scripts/mobile/test_mobile_interop_selection.py",
+        "bytes": 11104,
+        "sha256": "E98C429A33F05A4F1F4AD2C2114E591A2EE00ECBF6D7878B61A571AB95ADB890",
+        "blob": "fa1d79bfbee103309e648cb37b692fc32af25a65"
+      },
+      {
+        "path": ".github/workflows/mobile-companion-interop.yml",
+        "bytes": 21241,
+        "sha256": "B4498FB20BF56E61F81CAC1E50215DD0FE26AE76E2C36F8E86790FFD284D42A7",
+        "blob": "299d766e73089df99d67561d13b397189b3eb06b"
+      },
+      {
+        "path": "docs/verification/gold-wave2514-utf8-adr-repair.json",
+        "bytes": 1015,
+        "sha256": "20D0D65A90736CEA39A70716CC32F632CBF3F8DFB63B534F81231BBCE9E9FA69",
+        "blob": "0aa91803115fc29b8eeb20e430873cbd0272bcf2"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 38941,
+        "sha256": "AEDA0A5469ABEF02E56AC552F5B3750D48581F83A87995F34A6B9944B8E4496D",
+        "blob": "16f3ccb736fb8cc2e2a5b4787b0f1ea15dbd8d5f"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2508238,
+        "sha256": "6469F9FBDA7CC4AE843C946BDFEB630179091DC0801C0858B79D9B8621D754F6",
+        "blob": "5d8652b179aed1966036f609bf9254ed59975120"
+      },
+      {
+        "path": "SRC/neothd/src/adr/extractor.rs",
+        "bytes": 5793,
+        "sha256": "9E15DF4D8FBAC9F25EB5FB3E1FCDBE4D1796D3E6619B25A67D9E70BE436FE3CD",
+        "blob": "85e7686cb7b575a20e5cbc9bf57c55ba623fbb96"
+      }
+    ],
+    "note": "Prior actualV2 and100Rust29collector admitted; V3 UTF8 marker slicing panic fixed with regression. Early product diagnosis artifact, full admission retained. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -1,0 +1,26 @@
+{
+  "schema": "neoth.gold.wave2514.utf8-adr-repair.v1",
+  "status": "implemented-hosted-pending",
+  "priorProducer": "8dad5be0e1e20d3d88d0d2697967dcb3226d3245",
+  "priorRun": 37889467909,
+  "priorProofSha256": "FD016C79A586C779F71F58743BE42E4C7B65E91B65CC783AF668A307E72498D1",
+  "priorRustPassed": 100,
+  "priorCollectorPassed": 29,
+  "priorV2ProductAccepted": true,
+  "priorWalDrained": true,
+  "priorCleanExit": false,
+  "priorV3ProductAccepted": false,
+  "panicSite": "extractor.rs:59",
+  "repair": "UTF8-safe str.get prefix matching for ASCII ADR markers",
+  "selectedRust": 101,
+  "selectedCollector": 29,
+  "sourceBindings": 54,
+  "earlyArtifact": "Separate immediate product diagnosis; original final acceptance artifact unchanged",
+  "localRuntimeExecuted": false,
+  "open": [
+    "Fresh V3 and full interop admission",
+    "Native qualification on final product producer",
+    "W2515 admitted history candidate remains isolated",
+    "Mobile session/history/reconnect and device/release acceptance"
+  ]
+}

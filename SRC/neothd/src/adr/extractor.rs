@@ -56,7 +56,10 @@ pub fn extract_decisions(response: &str) -> Vec<Decision> {
 fn strip_marker(line: &str) -> Option<&str> {
     let lower = line.trim_start();
     for m in MARKERS {
-        if lower.len() >= m.len() && lower[..m.len()].eq_ignore_ascii_case(m) {
+        if lower
+            .get(..m.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(m))
+        {
             return Some(&lower[m.len()..]);
         }
     }
@@ -146,6 +149,22 @@ Next thing.";
     fn no_marker_no_decisions() {
         let ds = extract_decisions("just a regular reply with no marker at all.");
         assert!(ds.is_empty());
+    }
+
+    #[test]
+    fn unicode_marker_boundaries_preserve_text_without_panicking() {
+        for text in ["visible ä ", "ääääää", "🚀🚀🚀", "   visible ä "] {
+            assert!(extract_decisions(text).is_empty());
+        }
+        let live_text = "visible ä ".repeat(700) + "canonical final";
+        assert!(extract_decisions(&live_text).is_empty());
+        for marker in ["DECISION:", "Beschluss:", "ADR:", "decision:"] {
+            let body = "Änderung 🚀 bleibt vollständig";
+            let decisions = extract_decisions(&format!("{marker} {body}"));
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(decisions[0].title, body);
+            assert_eq!(decisions[0].body, body);
+        }
     }
 
     #[test]

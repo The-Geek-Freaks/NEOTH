@@ -106,7 +106,8 @@
         "daemon::chat_runtime::tests::companion_failure_diagnostics_discard_unclassified_error_text",
         "daemon::companion_runtime::tests::cancelled_revoke_wait_retains_listener_until_later_confirmed_join",
         "daemon::companion_runtime::tests::retained_revoke_join_preserves_terminal_failure_and_consumes_handle",
-        "daemon::companion_runtime::tests::active_discovery_distinguishes_owned_stop_from_discovery_failure"
+        "daemon::companion_runtime::tests::active_discovery_distinguishes_owned_stop_from_discovery_failure",
+        "adr::extractor::tests::unicode_marker_boundaries_preserve_text_without_panicking"
       ]
     },
     "no_cluster": {
@@ -220,7 +221,8 @@
     "SRC/neothd/tests/fixtures/mcp_stdio_held_activity_fixture.py",
     "SRC/neothd/src/daemon/companion_stream.rs",
     "SRC/neothd/src/daemon/companion_authority.rs",
-    "SRC/neothd/src/providers/openai_api.rs"
+    "SRC/neothd/src/providers/openai_api.rs",
+    "SRC/neothd/src/adr/extractor.rs"
   ],
   "dispatchHashSources": {
     "bridge_cargo_sha256": "bridges/companion-native/Cargo.toml",
