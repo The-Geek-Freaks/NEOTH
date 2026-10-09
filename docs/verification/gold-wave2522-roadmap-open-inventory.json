@@ -1,0 +1,2236 @@
+{
+  "schema": "neoth.roadmap-full-open-inventory.v1",
+  "producer": "ff82ed565a7af371905b03da0d537e919ea5f0eb",
+  "sourcePath": "PLAN/ROAD_TO_1_0_GOLD.md",
+  "sourceSha256": "DF19CC0F38FBFF9F0C28B0453F48E55206EEE130ED601215E8D59A674B9F9E7A",
+  "capturedUtc": "2026-10-09T13:05:08.1651698Z",
+  "method": "Bounded PowerShell Markdown text scan matching release-gate checkbox and fence rules; no project parser or runtime executed",
+  "summary": {
+    "total": 1324,
+    "complete": 1081,
+    "open": 241,
+    "partial": 2,
+    "rawBlockers": 243
+  },
+  "groups": [
+    {
+      "section": "3. Status Dashboard",
+      "rawBlockers": 85
+    },
+    {
+      "section": "5. Definition of GOLD (Release Gate)",
+      "rawBlockers": 3
+    },
+    {
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "rawBlockers": 7
+    },
+    {
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "rawBlockers": 30
+    },
+    {
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "rawBlockers": 14
+    },
+    {
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "rawBlockers": 76
+    },
+    {
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "rawBlockers": 28
+    }
+  ],
+  "items": [
+    {
+      "line": 10924,
+      "state": " ",
+      "identifier": "GOLD-R3-10",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-10 Release truth reconciliation:** update README, configuration/CLI/channel/migration/architecture/release docs and stale code comments to match the final wired behavior; regenerate derived CLI docs and require exact-head CI, Security and CodeQL green before the v1.0.0 tag.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 10926,
+      "state": " ",
+      "identifier": "GOLD-DEP-RUSSH-01",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-DEP-RUSSH-01 Direct optional SSH dependency remediation (R3-10 child; not an additional WS-R3 rollup):** Dependabot #21–26 represent GHSA-g9hv-x236-4qp3, GHSA-cqjc-rmpq-xprq and GHSA-5xvq-cp9x-6p6r for direct optional `russh 0.61.2`. The current worktree declares the patched `0.62.5` line and lock entry; retain `default-features = false` plus exactly the `ring` leaf. The unused compression and RSA leaves are forbidden: this tunnel does not negotiate compression, and RSA remains excluded until its remote-observable timing advisory has an upstream constant-time fix; do not misclassify an outbound SSH client as local-only. TOFU identity is host-wide: once any host-key algorithm is pinned for a host, an unseen algorithm for that host must fail closed while exact legacy pins remain usable. The independent review of `russh 0.62.4` found that it serialized password authentication into a debug-logged packet buffer and retained its plain `String` authentication method after success. The advisory patch to `russh 0.62.5` does not by itself re-authorize production password authentication; it must therefore remain fail-closed until a reviewed upstream/forked implementation both removes the packet dump and zeroizes/drops the method on every terminal path. Private-key authentication remains the supported client path and must prove encrypted OpenSSH-key/passphrase behavior. `ssh-tunnel` is a source-build opt-in absent from `default`, `release-desktop` and `release-server`; the CI feature matrix must locked-build it on Ubuntu and run its focused hermetic transport tests without silently adding SSH to stock release bundles. Current local evidence: feature-on Windows test compilation; post-fix exact **11/11** password/private-key/jump/reconnect/keychain-publication proofs; no audit vulnerability; locked all-feature deny green; exact notices current. The later authority review also requires successful keychain open/read before a missing compound bundle may authorize legacy fallback; its byte-exact unavailable-store regression is present but remains runtime-pending because the first invocation selected 0 tests. This child is still **OPEN** until exact-head CI and the final integration/full-release gate runs that regression and records the broader matrix; repeated broad local Cargo/Clippy passes are deliberately deferred until feature and wiring construction is complete. No advisory ignore or dismissal is permitted. This required child keeps WS-R3 at **19 total / 6 open / 13 done** until R3-10 closes.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 10998,
+      "state": " ",
+      "identifier": "GOLD-R3-13",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-13 Repository-local code-map recall:** apply canonical repo-root",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11004,
+      "state": " ",
+      "identifier": "GOLD-R3-14",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-14 Typed untrusted-context prompt framing:** repository paths,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11018,
+      "state": " ",
+      "identifier": "GOLD-R3-16",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-16 CRG adoption reconciliation:** merge the confirmed contextual",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11077,
+      "state": " ",
+      "identifier": "CRG-01",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **CRG-01 — prompt-targeted `code_map` context in the coding",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11159,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Finish unified file/caller/depth/token policy across Chat, Channel",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11162,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Wire GUI parity for code-map setup/status/inspect/rebuild/config and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11173,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Carry equivalent canonical context/citation evidence through the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11177,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add clean-install and packaged-binary tests covering absent index,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11209,
+      "state": " ",
+      "identifier": "CRG-02",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **CRG-02 — structural blast radius:",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11247,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Accept changed files and CRG-03 symbol seeds, reject unindexed/outside",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11254,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Expose one canonical typed service through CLI and a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11261,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add validated caps/config/reload, lifecycle/staleness handling,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11267,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add adversarial tests for cycles, diamonds, duplicate names,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11274,
+      "state": " ",
+      "identifier": "CRG-03",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **CRG-03 — git diff hunks to function-level nodes:",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11311,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Feed resulting concrete nodes into CRG-02 and expose one canonical",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11320,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add config/reload, stale-index lifecycle, Doctor, GUI diff-to-symbol",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11323,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Test malicious refs/paths, rename/copy/delete, CRLF, Unicode, combined",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11328,
+      "state": " ",
+      "identifier": "CRG-04",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **CRG-04 — `TestedBy` edge and transitive test-gap detection:",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11349,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Wire the same service into risk/review/apply/decomposer prompt and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11355,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add config/reload, incremental invalidation/rebuild/recovery, Doctor,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11358,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Test unit/integration/e2e naming, parameterized/generated tests,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11363,
+      "state": " ",
+      "identifier": "CRG-05",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **CRG-05 — per-tool codegraph enrichment:",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11400,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Introduce one real typed `PreToolUse` boundary that every relevant",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11405,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Implement bounded native enrichment for Read/Grep/Glob/Bash",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11409,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Parse/serialize one canonical result contract, sanitize and frame",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11413,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add default-off/on policy as deliberately chosen and documented,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11419,
+      "state": " ",
+      "identifier": null,
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] Add end-to-end tests proving actual Read/Grep/Glob/Bash-like and MCP",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11852,
+      "state": " ",
+      "identifier": "GOLD-R3-17",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-17 Explicit installed-Skill authority:** an imported or",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 11864,
+      "state": " ",
+      "identifier": "GOLD-R3-18",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-18 Secure remote Skill/update source boundary:** an installed",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12216,
+      "state": " ",
+      "identifier": "GOLD-R3-18A",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R3-18A Bounded standalone-WAL namespace lifecycle:** replace",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12261,
+      "state": " ",
+      "identifier": "GOLD-R3-18B",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R3-18B Bound updater lifecycle budgets and owned effect",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12318,
+      "state": " ",
+      "identifier": "GOLD-R4-01",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-01 Cross-platform distribution contract:** produce version-locked release artifacts containing the `neoth` CLI/daemon, `neothd-gui`, example config, README/notices/licenses and required runtime assets. Ship a normal Windows installer executable, a signed/notarizable macOS installer/app bundle, and first-class Linux packages plus a portable fallback; architecture and OS support must be explicit and machine-tested.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12332,
+      "state": " ",
+      "identifier": "GOLD-R4-01a",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01a Alpine exact-artifact qualification:** run the already",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12336,
+      "state": " ",
+      "identifier": "GOLD-R4-01b",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01b GNU glibc-floor qualification:** publish one explicit",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12340,
+      "state": " ",
+      "identifier": "GOLD-R4-01c",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01c Fedora/RHEL RPM qualification:** install the exact RPM",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12344,
+      "state": " ",
+      "identifier": "GOLD-R4-01d",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01d Windows installed-surface qualification:** from a fresh",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12348,
+      "state": " ",
+      "identifier": "GOLD-R4-01e",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01e macOS installed-surface qualification:** from a fresh",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12352,
+      "state": " ",
+      "identifier": "GOLD-R4-01f",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-01f Closed release-acceptance receipts:** every support-class",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12356,
+      "state": " ",
+      "identifier": "GOLD-R4-02",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-02 Package-manager and update reach:** wire GitHub Releases, crates.io where appropriate, WinGet, Homebrew and maintained Linux package metadata to the same signed version contract. Install, upgrade, downgrade/recovery and uninstall must leave no ambiguous mixed-version CLI/GUI state; generated manifests and checksums are artifact-tested.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12357,
+      "state": " ",
+      "identifier": "GOLD-R4-02a",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-02a Real version-transition matrix:** Windows, macOS, DEB and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12400,
+      "state": " ",
+      "identifier": "GOLD-R4-04",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-04 Zero-friction onboarding and repair:** one guided path handles provider/local-model choice, autonomy, channels, permissions, optional integrations and readiness checks with actionable errors. Resume interrupted setup, repair damaged/missing config, preserve operator data, expose logs/Doctor, and make update/rollback/uninstall safe for a non-technical user.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12401,
+      "state": " ",
+      "identifier": "GOLD-R4-05",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-05 Full GUI/CLI capability parity:** generate a canonical capability inventory from real command/channel/config registries, map every supported operation and state to both surfaces, implement missing GUI flows, and add drift tests. Disabled/unavailable/error states must be explicit; no stub, dead button, lossy config parser or misleading `CLI-only` label may remain.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12560,
+      "state": " ",
+      "identifier": "GOLD-R4-06",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-06 Buddy product-grade utility:** evolve Buddy into an always-available desktop companion with useful quick actions, current task/session context, notifications, approvals, channel/automation status, drag/drop or share ingestion, voice/media entry where supported, safe interruption/cancel, and direct handoff into the full GUI/CLI. Every action must traverse the same permission, cost, audit and Custom-Home boundaries as the primary surfaces.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12561,
+      "state": " ",
+      "identifier": "GOLD-R4-07",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-07 Channel parity and onboarding quality:** compare the current channel registry against OpenClaw and the relevant adopted sources, implement every high-value channel/behavior still missing, and fully wire add/edit/probe/remove, credentials, allowlists, media/reply/streaming behavior, health/error status and GUI/CLI onboarding. Unsupported channels require an explicit evidence-based skip, not silent absence.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12562,
+      "state": " ",
+      "identifier": "GOLD-R4-08",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12563,
+      "state": " ",
+      "identifier": "GOLD-R4-09",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-09 DAU, accessibility and polish gate:** keyboard-only and screen-reader navigation, scaling/high-DPI, contrast, localization-safe layout, clear progress/cancel/retry, no terminal flashes for GUI users, and no unexplained jargon or raw stack traces. Test the complete fresh-user journey rather than isolated screens.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12564,
+      "state": " ",
+      "identifier": "GOLD-R4-10",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-10 Truthful high-reach repository launch:** regenerate README, SVG diagrams, screenshots/demos, install snippets, comparison tables, feature matrix, architecture/security story, release notes, website/wiki metadata and social preview from the verified final product. Lead with NEOTH's real differentiators and zero-friction path, keep every claim linked to shipped behavior, and prepare channel-specific launch material without faking publication, users or benchmarks.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12565,
+      "state": " ",
+      "identifier": "GOLD-R4-11",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-11 Default-on local communication adaptation:** ship a subject-isolated, deterministic local communication-profile engine that learns observable presentation and clarification preferences across authenticated sessions, applies them on every CLI, Channel, GUI, Buddy, Council, retry, fallback and sub-agent prompt path, and exposes the same inspect/correct/pin/reset/forget controls everywhere. Explicit settings outrank feedback and passive evidence; passive evidence requires bounded provenance, multi-session confidence and decay. FULL-AUTO may promote stable low-risk accommodations to durable-until-revoked state, but never bypasses subject, poisoning, privacy or medical-inference guards. Health, autism and ADHD labels may be stored only after an explicit operator declaration and are not exported to a provider unless the operator explicitly selects label export; the default prompt exports accommodations only. Incognito performs zero profile reads and writes. `self-dev accept` must transactionally apply every proposal type or report a typed recoverable failure; `Accepted` without an effect is forbidden.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12566,
+      "state": " ",
+      "identifier": "GOLD-R4-12",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-12 Real Mobile Companion product:** replace the current loopback/one-shot pairing preview with a versioned, authenticated, durable phone protocol and installable Android and iOS clients. Pairing must use an actually reachable route/carrier, bind a durable revocable device identity and scoped authority, survive daemon/app restart and upgrade, provide chat/stream/cancel/status/notifications/file-transfer plus encrypted ACKed offline replay, and expose list/status/revoke/retry in CLI, GUI and Buddy. Release gates must build, sign and content-test APK/AAB and iOS archive/TestFlight-ready artifacts, exercise emulator/simulator and clean-device pair/reconnect/revoke/upgrade flows, and never call timeout/rejection a successful pair.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12567,
+      "state": " ",
+      "identifier": "GOLD-R4-13",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-13 Cluster product completion:** retain the proven authenticated durable gossip/ACK/replay substrate, then finish the missing master-side task coordinator, idempotent delegated-execution/result outbox, correlation/deadline/retry/redelegation, operator/device/capability binding, transactional audited peer mutation and GUI/CLI/Buddy/Doctor control parity. The product must state and test whether remote material remains an explicit backup/restore ledger or participates in recall; cross-origin conflicts may never be silently merged. Every advertised transport and mDNS setting must be consumed or removed, and no worker-only task executor may be marketed as complete distributed execution.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12568,
+      "state": " ",
+      "identifier": "GOLD-R4-13a",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13a — Authoritative membership and real revoke:** model",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12623,
+      "state": " ",
+      "identifier": "GOLD-R4-13b",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13b — Durable master coordinator and result return:** add a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12635,
+      "state": " ",
+      "identifier": "GOLD-R4-13c",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13c — Idempotent distributed cost authority:** bind every",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12646,
+      "state": " ",
+      "identifier": "GOLD-R4-13d",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13d — Typed task, result and artifact contract:** replace the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12652,
+      "state": " ",
+      "identifier": "GOLD-R4-13e",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13e — Capability, capacity and locality registry:** announce",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12658,
+      "state": " ",
+      "identifier": "GOLD-R4-13f",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13f — Correct production scheduler:** separate load pressure",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12666,
+      "state": " ",
+      "identifier": "GOLD-R4-13g",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13g — Carrier and configuration truth:** Peeroxide and Iroh",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12678,
+      "state": " ",
+      "identifier": "GOLD-R4-13h",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13h — GUI, CLI, Buddy and Channel parity:** one typed",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12690,
+      "state": " ",
+      "identifier": "GOLD-R4-13i",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13i — Live daemon observability and Doctor:** publish a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12699,
+      "state": " ",
+      "identifier": "GOLD-R4-13j",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13j — Rolling upgrade and artifact capability contract:**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12704,
+      "state": " ",
+      "identifier": "GOLD-R4-13k",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13k — Backup versus recall authority:** foreign events remain",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12709,
+      "state": " ",
+      "identifier": "GOLD-R4-13l",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-13l — Real multi-process release qualification:** for every",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12720,
+      "state": " ",
+      "identifier": "GOLD-R4-14",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-14 OpenClaw-class LLM provider and model parity:** every",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12830,
+      "state": " ",
+      "identifier": "GOLD-R4-15",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-15 Operator-sovereign explicit secret and sensitive-data",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12850,
+      "state": " ",
+      "identifier": "GOLD-R4-15a",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15a Authenticated explicit-intent authority:** model local",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12857,
+      "state": " ",
+      "identifier": "GOLD-R4-15b",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15b Complete source and destination resolvers:** support the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12864,
+      "state": " ",
+      "identifier": "GOLD-R4-15c",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15c Exact single-use binding and TOCTOU resistance:** bind the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12871,
+      "state": " ",
+      "identifier": "GOLD-R4-15d",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15d Whole-product no-leak sentinel:** a test secret must be",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12878,
+      "state": " ",
+      "identifier": "GOLD-R4-15e",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15e Durable replay/crash reconciliation:** persist only",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12883,
+      "state": " ",
+      "identifier": "GOLD-R4-15f",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15f Correct move ordering:** copy/send first, authenticate a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12889,
+      "state": " ",
+      "identifier": "GOLD-R4-15g",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15g CLI private-input and receipt parity:** typed commands and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12894,
+      "state": " ",
+      "identifier": "GOLD-R4-15h",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15h GUI and Buddy parity:** provide source/destination",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12899,
+      "state": " ",
+      "identifier": "GOLD-R4-15i",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15i Channel capability and subject parity:** bind \"send to",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 12906,
+      "state": " ",
+      "identifier": "GOLD-R4-15j",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15j Provider-refusal parity:** the compiled operator",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13021,
+      "state": " ",
+      "identifier": "GOLD-R4-15k",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15k Policy and failure truth:** distinguish operator-authored",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13027,
+      "state": " ",
+      "identifier": "GOLD-R4-15k1",
+      "section": "3. Status Dashboard",
+      "raw": "    - [ ] **GOLD-R4-15k1 Bounded provider envelopes:** incrementally read and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13138,
+      "state": " ",
+      "identifier": "GOLD-R4-15l",
+      "section": "3. Status Dashboard",
+      "raw": "  - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13432,
+      "state": " ",
+      "identifier": "GOLD-R3-13a",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-13a Graphify durable publication/recovery:** prove immutable",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13438,
+      "state": " ",
+      "identifier": "GOLD-R3-13b",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R3-13b Codegraph/MCP current-surface truth:** preserve only the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13443,
+      "state": " ",
+      "identifier": "GOLD-R4-01g",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-01g Cross-platform Graphify execution containment:** prove a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13453,
+      "state": " ",
+      "identifier": "GOLD-R4-05a",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-05a SelfMap quiescence and surface truth:** make reload and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13458,
+      "state": " ",
+      "identifier": "GOLD-R4-14a",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-14a Provider output-ceiling authorization parity:** bind each",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 13464,
+      "state": " ",
+      "identifier": "GOLD-R4-08g",
+      "section": "3. Status Dashboard",
+      "raw": "- [ ] **GOLD-R4-08g Graphify/Provider exact-head qualification:** run the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14691,
+      "state": " ",
+      "identifier": "ADOPT31-A1",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A1** CancelScope generation counter — `AtomicU32` generation + `is_stale(gen)`",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14695,
+      "state": " ",
+      "identifier": "ADOPT31-A2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A2** Realtime conversation loop orchestrator — 6 `tokio::mpsc` stages",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14700,
+      "state": " ",
+      "identifier": "ADOPT31-A3",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A3** Silero VAD backend behind NEOTH's existing `VadBackend` trait seam —",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14737,
+      "state": " ",
+      "identifier": "ADOPT31-A5",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A5** Sentence-batching between LLM stream and TTS — batch 3 sentences before",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14740,
+      "state": " ",
+      "identifier": "ADOPT31-A6",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A6** Short-segment false-barge-in guard — **PRIMITIVE GEBAUT, END-TO-END OFFEN**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14749,
+      "state": " ",
+      "identifier": "ADOPT31-A7",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-A7** Speculative turn tracker — soft-end / reopen / committed states so a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14807,
+      "state": " ",
+      "identifier": "ADOPT31-B6",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-B6** Pre-flight token/cost estimate shown before a long distillation starts.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14817,
+      "state": " ",
+      "identifier": "ADOPT31-B8",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-B8** Proactive document watcher — `daemon/doc_ingest_cron.rs` (new), watching",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14869,
+      "state": " ",
+      "identifier": "ADOPT31-B12",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-B12** *(v1.1)* Embedding dedup before routing, plus a PatchExistingSkill route",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14915,
+      "state": " ",
+      "identifier": "TESTDEBT-WAL-01",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **TESTDEBT-WAL-01** — 40 vorbestehende rote Lib-Tests, großenteils **eine** Fehlerklasse.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14951,
+      "state": " ",
+      "identifier": "ADOPT31-C3",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-C3** Per-agent/peer trust score — **ENTSCHEIDUNG NÖTIG, nicht bauen ohne sie.**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 14990,
+      "state": "~",
+      "identifier": "ADOPT31-C5",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [~] **ADOPT31-C5** Pre-work multi-role sign-off gate — **NEU GESCHNITTEN (2026-08-01);",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15011,
+      "state": "~",
+      "identifier": "ADOPT31-C6",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [~] **ADOPT31-C6** Credential placeholder vault — **UMSKOPIERT (2026-08-01), zwei Drittel",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15151,
+      "state": " ",
+      "identifier": "ADOPT31-E2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-E2** AST node-boundary chunking for code embedding — tree-sitter, ~2500-char",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15251,
+      "state": " ",
+      "identifier": "ADOPT31-G7",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-G7** *(v1.1)* Screenshot contrast pass — headless Slint render feeding a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15263,
+      "state": " ",
+      "identifier": "ADOPT31-H2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-H2** *(optional, low priority)* System-design knowledge pack. system-design-101",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15325,
+      "state": " ",
+      "identifier": "ADOPT31-W1",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-W1** `adw/goal.rs` (new) — `Goal{id,intent,constraints,acceptance,non_goals,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15333,
+      "state": " ",
+      "identifier": "ADOPT31-W2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-W2** `neoth goal from-map <path>` — ingest a wayfinder map into a `Goal`:",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15366,
+      "state": " ",
+      "identifier": "ADOPT31-I2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I2** `AdwSpec` + graph executor — `adw/{mod,spec,exec}.rs` (new; the pipeline",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15377,
+      "state": " ",
+      "identifier": "ADOPT31-I3",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I3** Work-class topologies + router — `coding/adw/builtin.rs` (new). Built-in",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15382,
+      "state": " ",
+      "identifier": "ADOPT31-I4",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I4** WAL node-transition audit — one `ExtendedSubtype::AdwNodeTransition`",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15387,
+      "state": " ",
+      "identifier": "ADOPT31-I5",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I5** Operator-authored specs — load from `~/.neoth/adw/<id>.yaml`, validated",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15392,
+      "state": " ",
+      "identifier": "ADOPT31-I6",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I6** Parallel lanes + racing — `lanes > 1` fans out over the existing",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15397,
+      "state": " ",
+      "identifier": "ADOPT31-I7",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-I7** *(v1.1)* `Isolation::Sandbox` — locally-supervised isolated environment",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15405,
+      "state": " ",
+      "identifier": "ADOPT31-V1",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-V1** `adw/evidence.rs` (new) — `Evidence{criterion,node,kind,verdict,proof,at}`",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15411,
+      "state": " ",
+      "identifier": "ADOPT31-V2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-V2** Wire the gate: `check_coverage` **before** a run may start (unmapped",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15415,
+      "state": " ",
+      "identifier": "ADOPT31-V3",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-V3** WAL evidence ledger — `ExtendedSubtype::{AdwNodeTransition, AdwEvidence}`",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15420,
+      "state": " ",
+      "identifier": "ADOPT31-V4",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-V4** `neoth adw explain <run-id>` — reconstruct an entire run from the WAL",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15423,
+      "state": " ",
+      "identifier": "ADOPT31-V5",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-V5** Council integration for `EvidenceKind::CouncilVerdict` — route the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15450,
+      "state": " ",
+      "identifier": "ADOPT31-X2",
+      "section": "WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)",
+      "raw": "- [ ] **ADOPT31-X2** `PLAN/CRG_ADOPTION_2026_07_20.md` and the R3-16 disposition matrix must",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15868,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-01",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-01 — ADR-009 INTENT/RESULT WAL pairs:** implement paired OsFileWriteIntent, ChannelEgressIntent, MediaCallIntent, SelfUpdateIntent and OsAppLaunchIntent subtypes at every real effect edge; focused tests must prove intent-before-effect, exactly one terminal result, replayability and secret-safe payloads. Source: ADR/009 and LOST_FEATURES P1.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15927,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-08",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-08 — Recall-parity evaluation harness:** ship transcript/WAL goldset mining, operator labeling, four-grader batch orchestration and family-bias clustering as one reproducible workflow with resumable artifacts, provenance and a release-gating report. Stage 3b authenticated local transcript ingress accepted 2026-09-13 (Wave 10): finite opt-in, exact RAW/Bound delivery and recovery, guarded V38 leases, monotonic expiry/revocation and live WAL proof reads; 242 selected tests plus one parent-owned child, compiler/format gates and independent review pass. Full item stays OPEN for the local candidate/label/grader workflow and reproducible acceptance. Evidence: `docs/gold-wave10-verification.md`. Source: SPEC_recall_parity_methodology.md.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15932,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-13",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-13 — Sub-200ms voice streaming capture:** research and select the compiled-in Silero/VAD path, then wire cpal capture → VAD → streaming STT with visible download/readiness/progress/cancel states and measured latency evidence on supported release targets. Source: FEATURE_EVAL.md C-17.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15933,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-14",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-14 — Proactive delivery beyond Telegram:** route plan_delivery through every supported channel's real send path, preserving account, policy, permit, WAL, retry and receipt binding; channel-contract tests must reject SidecarOnly false positives. Source: proactive_dispatcher.rs findings.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15935,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-15",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-15 — First-class WebChat surface:** implement the authenticated HTTP/WebSocket adapter, registry/config/credential/health/message lifecycle, account routing and CLI/GUI/Buddy onboarding; clean-machine and migration fixtures must include it. Source: Plan 001 channel ledger.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15936,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-16",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-16 — ChannelAccountId end to end:** thread the canonical account identity through config, credentials, inbound/outbound messages, sessions, routes, pairing, queues, runtime health, permits, WAL, all surfaces and importer; multi-account isolation and migration tests are required. Source: Plan 001 gap F-01.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15951,
+      "state": " ",
+      "identifier": "GOLD-LF-P1-23",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P1-23 — Close the orphaned Plan 001/002/003 criteria:** keep all 65 GOLD-LF-001/002/003 leaves below individually tracked and evidence-backed, synchronize their owning WS-R4 rollups, and mechanically prevent a plan leaf from being open while its parent is reported complete. Source: LOST_FEATURES tracker-hygiene row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15970,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-07",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-07 — EXP-FD-1..5 fractal-dimension experiments:** complete the reasoning-depth literature/design note, then implement all five reproducible gated experiments with datasets, metrics, provenance and explicit promotion/rejection criteria. Source: dimension.rs gated experiment backlog.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15982,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-13",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-13 — CloakBrowser stealth fetch plugin:** document the Playwright-rs versus chromiumoxide decision, then ship a pinned managed browser/runtime with policy, network, credential, progress, cancellation and clean-machine lifecycle wiring. Source: CloakBrowser recovery row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15987,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-18",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-18 — Per-node skill assignment and channel binding:** extend authenticated cluster handshakes/routing with operator-controlled node capabilities, skill assignments and channel/account bindings, including conflict, failover and surface-parity tests. Source: Veronica Delta §6.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15989,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-20",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-20 — Pinned verified n8n/Paperless installs:** bind exact versions, recursive artifact checksums/signatures and authenticated readiness to installer/update/repair/rollback/uninstall jobs; port-only success is insufficient. Source: installer recovery row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 15990,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-21",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-21 — neoth-archive-bridge Obsidian plugin:** ship the pinned external TypeScript plugin and NEOTH pairing/sync contract together, including install/update/repair/uninstall, vault preservation, offline behavior and clean-machine artifact tests. Source: archive-bridge recovery row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16027,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-25",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-25 — First-class Voice Call surface:** implement the fully gated call adapter, account/config/credential/media/session lifecycle, typed health and receipts, all-surface onboarding and clean-machine qualification. Source: Plan 001 channel ledger.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16028,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-26",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-26 — Three-phase streaming indicator:** drive waiting/receiving/finalizing UI state from the canonical stream controller, including cancellation/error/reconnect and reduced-motion behavior; no timer-only fake progress. Source: GUI-Polish recovery row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16073,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-26b",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "  - [ ] **GOLD-LF-P2-26b daemon-owned macOS/reconnect runtime:** replace both",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16101,
+      "state": " ",
+      "identifier": "GOLD-LF-P2-27",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-P2-27 — Recall citation chips:** render bound source/provenance and WarmHit score from typed recall results, with keyboard/screen-reader behavior and stale/missing-source handling. Source: GUI-Polish recovery row.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16109,
+      "state": " ",
+      "identifier": "GOLD-LF-001-03",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-03 — Carry ChannelAccountId across every consumer:** config, credentials, messages, identities, sessions, routing, pairing, queues, runtime, health, permits, WAL, CLI, GUI, Buddy and importer all use the same identity. Source: Plan 001 DoD 3.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16110,
+      "state": " ",
+      "identifier": "GOLD-LF-001-04",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-04 — Migrate legacy flat channel config transactionally:** convert to the default account with exact behavior preservation, rollback, crash recovery and idempotent rerun evidence. Source: Plan 001 DoD 4.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16111,
+      "state": " ",
+      "identifier": "GOLD-LF-001-05",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-05 — Generate all channel consumers from one descriptor:** Core, CLI, GUI, Buddy, importer, docs and artifacts derive from the canonical registry; drift tests reject parallel hardcoded lists. Source: Plan 001 DoD 5.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16112,
+      "state": " ",
+      "identifier": "GOLD-LF-001-06",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-06 — Qualify all 13 overlapping adapters:** each adapter passes its pinned behavioral, account, credential, media, health and migration contracts. Source: Plan 001 DoD 6.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16113,
+      "state": " ",
+      "identifier": "GOLD-LF-001-07",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-07 — Implement all 12 missing official adapters:** every retained adapter is fully managed and passes clean-machine release qualification. Source: Plan 001 DoD 7.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16114,
+      "state": " ",
+      "identifier": "GOLD-LF-001-08",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-08 — Ship Voice Call and WebChat as first-class surfaces:** both have real registry/runtime/config/health/onboarding consumers and equivalent safety gates. Source: Plan 001 DoD 8.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16115,
+      "state": " ",
+      "identifier": "GOLD-LF-001-09",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-09 — Resolve WeChat, Yuanbao and Zalo ClawBot honestly:** each is source-verified and fully managed or has an explicit evidence-backed release decision; docs-only support claims fail the gate. Source: Plan 001 DoD 9.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16118,
+      "state": " ",
+      "identifier": "GOLD-LF-001-12",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-12 — Guide iMessage and Google Chat relinks:** transport conversion requires explicit relink and remains blocked until authenticated target probing succeeds. Source: Plan 001 DoD 12.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16119,
+      "state": " ",
+      "identifier": "GOLD-LF-001-13",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-13 — Complete OpenClaw migration lifecycle:** plan/apply/status/rollback binds the exact source set and proves atomicity, crash resume, idempotency and secret-redacted audit. Source: Plan 001 DoD 13.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16120,
+      "state": " ",
+      "identifier": "GOLD-LF-001-14",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-14 — Match per-account workflows across surfaces:** CLI, GUI and Buddy expose equivalent onboarding, status, repair, migration and durable progress states. Source: Plan 001 DoD 14.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16121,
+      "state": " ",
+      "identifier": "GOLD-LF-001-15",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-15 — Bundle or signed-manage every required runtime:** no compiler, language runtime or verifier installation is delegated to the user. Source: Plan 001 DoD 15.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16122,
+      "state": " ",
+      "identifier": "GOLD-LF-001-16",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-16 — Pass clean-machine installer and migration journeys:** exact Windows, macOS and Linux release artifacts complete install, migrate, repair and rollback tests. Source: Plan 001 DoD 16.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16123,
+      "state": " ",
+      "identifier": "GOLD-LF-001-17",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-17 — Bind public channel claims to release truth:** generated README, docs, Wiki, Obsidian and SVG outputs match the release registry and artifact digest. Source: Plan 001 DoD 17.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16124,
+      "state": " ",
+      "identifier": "GOLD-LF-001-18",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-18 — Prove exact-head channel gates green:** CI, Security, CodeQL, release-artifact, channel-contract and installer runs all succeed on the pushed candidate head. Source: Plan 001 DoD 18.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16125,
+      "state": " ",
+      "identifier": "GOLD-LF-001-19",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-001-19 — Gate GOLD-R4-07 on all Plan-001 evidence:** the parent and dependent v1.0 release boxes cannot close until GOLD-LF-001-01..18 are evidence-backed. Source: Plan 001 DoD 19.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16129,
+      "state": " ",
+      "identifier": "GOLD-LF-002-01",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-01 — Complete the capability catalog:** one validated catalog covers every public adoption, all 181 skills, all 15 channels, both bridges, every installer module/model/workflow/preset/hook and released resource. Source: Plan 002 DoD 1.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16130,
+      "state": " ",
+      "identifier": "GOLD-LF-002-02",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-02 — Require a complete lifecycle or explicit unavailable state:** every catalog capability implements its target lifecycle or has a tested target-specific UnavailableReason. Source: Plan 002 DoD 2.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16131,
+      "state": " ",
+      "identifier": "GOLD-LF-002-03",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-03 — Use one durable job API on every surface:** CLI, GUI, Buddy, wizard, Doctor, first-use consumers and migrations expose the same revision, progress and error contract. Source: Plan 002 DoD 3.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16132,
+      "state": " ",
+      "identifier": "GOLD-LF-002-04",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-04 — Persist every job state restart-safely:** queued, byte/step progress, validating, configuring, awaiting-user action with bound continuation, ready, failed, cancelled and retry all survive restart correctly. Source: Plan 002 DoD 4.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16133,
+      "state": " ",
+      "identifier": "GOLD-LF-002-05",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-05 — Make Ready probe-backed:** exact artifact/config binding plus an authenticated capability-specific probe is required before any Ready transition. Source: Plan 002 DoD 5.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16134,
+      "state": " ",
+      "identifier": "GOLD-LF-002-06",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-06 — Execute the three intent-only wizard flags:** each flag starts a real job and noninteractive scripts fail when readiness fails. Source: Plan 002 DoD 6.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16135,
+      "state": " ",
+      "identifier": "GOLD-LF-002-07",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-07 — Complete local-model lifecycle parity:** Qwen, Ouro, CLIP, Whisper, Faster-Whisper, Piper and Ollama expose progress/cancel/retry/validation/status/update/safe-prune in GUI, CLI and Buddy. Source: Plan 002 DoD 7.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16136,
+      "state": " ",
+      "identifier": "GOLD-LF-002-08",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-08 — Complete Obsidian coupling:** install/bind app, vault, L6, readers/writers, four pinned plugins and the real archive bridge while normal uninstall preserves the vault. Source: Plan 002 DoD 8.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16139,
+      "state": " ",
+      "identifier": "GOLD-LF-002-10",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-10 — Ship runnable Keet and WhatsApp Baileys sidecars:** exact release artifacts manage their runtimes and expose resumable QR/session progress. Source: Plan 002 DoD 10.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16140,
+      "state": " ",
+      "identifier": "GOLD-LF-002-11",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-11 — Prove all-channel configuration and migration:** all 15 channels have lossless CLI/GUI config and typed authenticated behavior/health probes; OpenClaw multi-account/policy migration is lossless or blocks before apply. Source: Plan 002 DoD 11.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16141,
+      "state": " ",
+      "identifier": "GOLD-LF-002-12",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-12 — Ship real Android and iOS companions:** installable distributables consume the production pairing protocol and provide chat, approvals and integration-job parity. Source: Plan 002 DoD 12.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16142,
+      "state": " ",
+      "identifier": "GOLD-LF-002-13",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-13 — Materialize every skill resource and prerequisite:** bundled skills include all sibling assets and dependency-bearing skills cannot enable before exact prerequisites are Ready. Source: Plan 002 DoD 13.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16143,
+      "state": " ",
+      "identifier": "GOLD-LF-002-14",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-14 — Eliminate manual stock-release dependencies:** no feature requires the user to install Node/npm/pnpm, Python/pip, Hugging Face CLI, Docker, minisign/cosign, build tools or a hidden sidecar. Source: Plan 002 DoD 14.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16144,
+      "state": " ",
+      "identifier": "GOLD-LF-002-15",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-15 — Pin every executable source:** target release locks contain no latest, main or otherwise unversioned executable source. Source: Plan 002 DoD 15.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16145,
+      "state": " ",
+      "identifier": "GOLD-LF-002-16",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-16 — Gate mutations and keep secrets out of telemetry:** required audit/permission precedes every mutating job and secrets never enter argv, logs, setup.db, WAL, manifests or public status JSON. Source: Plan 002 DoD 16.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16146,
+      "state": " ",
+      "identifier": "GOLD-LF-002-17",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-17 — Separate safe uninstall from confirmed purge:** normal uninstall removes only owned program files/services and preserves operator data; purge is explicit and confirmed. Source: Plan 002 DoD 17.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16147,
+      "state": " ",
+      "identifier": "GOLD-LF-002-18",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-18 — Verify one recursive manifest across all packages:** Windows installer, macOS app/pkg/dmg, Linux deb/rpm, portable archives, updater and uninstallers consume and verify the same closed capability manifest. Source: Plan 002 DoD 18.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16148,
+      "state": " ",
+      "identifier": "GOLD-LF-002-19",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-19 — Pass exact-head lifecycle and quality matrices:** clean-machine, update, repair, rollback, uninstall, accessibility, mobile, CI, Security and CodeQL gates are green on the pushed head. Source: Plan 002 DoD 19.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16149,
+      "state": " ",
+      "identifier": "GOLD-LF-002-20",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-20 — Reconcile all public material to shipped capabilities:** README, docs, Wiki, diagrams, release notes and roadmap are generated from or checked against verified release truth. Source: Plan 002 DoD 20.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16150,
+      "state": " ",
+      "identifier": "GOLD-LF-002-21",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-21 — Pass repository-wide static and test gates:** git diff check, Rust formatting, workspace Clippy and workspace tests all exit zero on frozen source. Source: Plan 002 DoD 21.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16151,
+      "state": " ",
+      "identifier": "GOLD-LF-002-22",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-002-22 — Block v1.0 publication until all adoption criteria pass:** no tag or publication occurs before GOLD-LF-002-01..21 and the explicit operator-owned signing/publisher step. Source: Plan 002 DoD 22.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16155,
+      "state": " ",
+      "identifier": "GOLD-LF-003-01",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-01 — Package a bound surface inventory:** deterministic surface-bindings-v1.json is generated, packaged and digest-bound to the exact capability lock, Graphify snapshot, version and commit. Source: Plan 003 DoD 1.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16156,
+      "state": " ",
+      "identifier": "GOLD-LF-003-02",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-02 — Give every public operation one identity/disposition:** recursively cover CLI, slash, config/lifecycle, GUI, Buddy and onboarding operations. Source: Plan 003 DoD 2.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16157,
+      "state": " ",
+      "identifier": "GOLD-LF-003-03",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-03 — Eliminate unclassified and enabled-orphan controls:** generated audits and runtime tests report zero of both classes. Source: Plan 003 DoD 3.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16158,
+      "state": " ",
+      "identifier": "GOLD-LF-003-04",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-04 — Provide full-GUI parity for public CLI operations:** every operation has Direct/Guided execution; internal/unavailable exceptions are explicit, evidenced and not marketed as support. Source: Plan 003 DoD 4.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16159,
+      "state": " ",
+      "identifier": "GOLD-LF-003-05",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-05 — Complete Buddy actions and exact handoff:** common actions finish inline and advanced actions preserve session, task and operation context into the target surface. Source: Plan 003 DoD 5.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16160,
+      "state": " ",
+      "identifier": "GOLD-LF-003-06",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-06 — Share typed mutation execution across surfaces:** CLI, GUI and Buddy use identical executor, gates, postcondition, state revision and audit receipt. Source: Plan 003 DoD 6.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16161,
+      "state": " ",
+      "identifier": "GOLD-LF-003-07",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-07 — Remove human-stdout success parsing:** machine paths consume typed results/errors and never silently discard stderr evidence. Source: Plan 003 DoD 7.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16162,
+      "state": " ",
+      "identifier": "GOLD-LF-003-08",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-08 — Share one onboarding session/task graph:** CLI and GUI use a versioned checkpoint/resume/repair workflow and converge to identical state. Source: Plan 003 DoD 8.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16163,
+      "state": " ",
+      "identifier": "GOLD-LF-003-09",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-09 — Make preset and Local onboarding truthful:** preview exact effects/prerequisites, prove local execution, and never navigate away or write Ready on failure. Source: Plan 003 DoD 9.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16164,
+      "state": " ",
+      "identifier": "GOLD-LF-003-10",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-10 — Render durable adoption-job state everywhere:** Plan-002 jobs expose honest phase/byte/step progress, required action, cancel, retry, resume, logs and postcondition in CLI, GUI and Buddy. Source: Plan 003 DoD 10.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16165,
+      "state": " ",
+      "identifier": "GOLD-LF-003-11",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-11 — Bind dynamic chat tabs and send receipts:** channel/account tabs derive from Plan 001 and every receipt proves the displayed route/account binding. Source: Plan 003 DoD 11.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16166,
+      "state": " ",
+      "identifier": "GOLD-LF-003-12",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-12 — Complete session, slash and cancellation behavior:** selection loads/resumes canonical transcript/context, slash picker derives from the real registry and normal streaming cancels immediately. Source: Plan 003 DoD 12.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16167,
+      "state": " ",
+      "identifier": "GOLD-LF-003-13",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-13 — Share the conversation/session/task controller:** main GUI, CLI and Buddy use the same controller and attachment policy. Source: Plan 003 DoD 13.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16168,
+      "state": " ",
+      "identifier": "GOLD-LF-003-14",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-14 — Complete the Buddy product matrix:** test hotkey, focus, placement/DPI, sessions, attachments/screenshot, immediate cancel, approvals, jobs, private notifications, channel state and exact handoff. Source: Plan 003 DoD 14.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16169,
+      "state": " ",
+      "identifier": "GOLD-LF-003-15",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-15 — Expose every adopted capability lifecycle:** all Plan-002 capabilities surface their declared install/config/auth/probe/status/update/repair/uninstall actions where required. Source: Plan 003 DoD 15.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16170,
+      "state": " ",
+      "identifier": "GOLD-LF-003-16",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-16 — Equalize dangerous-operation ceremony:** restore, credential, uninstall, prune and self-improve operations have the same confirmation, permission, audit and rollback guarantees across surfaces. Source: Plan 003 DoD 16.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16171,
+      "state": " ",
+      "identifier": "GOLD-LF-003-17",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-17 — Ship complete exact-commit self-knowledge:** every real release contains verified Graphify, source map, surface lock, Wiki export and Obsidian-ready export for one commit. Source: Plan 003 DoD 17.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16172,
+      "state": " ",
+      "identifier": "GOLD-LF-003-18",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-18 — Expose self-knowledge verification on all surfaces:** CLI, GUI and Buddy can status, verify, query and open it, with unmistakable stale/unverified states. Source: Plan 003 DoD 18.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16173,
+      "state": " ",
+      "identifier": "GOLD-LF-003-19",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-19 — Keep self-improve proposal-first and reversible:** review, gates, tests, postcondition, audit and rollback are mandatory and a release cannot be silently mutated. Source: Plan 003 DoD 19.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16174,
+      "state": " ",
+      "identifier": "GOLD-LF-003-20",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-20 — Pass accessibility and adverse-environment matrices:** keyboard, screen reader, reduced motion, large text, small window, 100–300% DPI, multi-monitor, offline, slow network, interrupted job and reboot cases pass. Source: Plan 003 DoD 20.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16175,
+      "state": " ",
+      "identifier": "GOLD-LF-003-21",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-21 — Reach Ready from clean release artifacts:** Windows, macOS and Linux installs need no manual external dependency installation beyond explicit sign-in, QR or OS-permission actions. Source: Plan 003 DoD 21.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16176,
+      "state": " ",
+      "identifier": "GOLD-LF-003-22",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-22 — Regenerate every public surface from release truth:** README, CLI docs, GUI tour/copy, Wiki, Obsidian, screenshots/SVGs and launch material agree with the verified candidate. Source: Plan 003 DoD 22.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16177,
+      "state": " ",
+      "identifier": "GOLD-LF-003-23",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-23 — Prove all exact-head parity gates green:** CI, tests, Security, CodeQL, Plan-001 fixtures, Plan-002 clean-machine/adoption tests, parity tests and self-knowledge verification succeed visibly. Source: Plan 003 DoD 23.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16178,
+      "state": " ",
+      "identifier": "GOLD-LF-003-24",
+      "section": "WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)",
+      "raw": "- [ ] **GOLD-LF-003-24 — Forbid evidence-free WS-R4 closure:** no completion claim may rely only on dirty local work, an unpushed commit, source-only implementation or environment-limited result. Source: Plan 003 DoD 24.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16225,
+      "state": " ",
+      "identifier": "GOLD-CC-01",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-01 Typed connector/source/action boundary and policy contract:** introduce one closed descriptor and capability vocabulary for `AgentChannel`, `ContextSource`, `ResearchBackend` and `ActionSink`, with distinct account, subject, read/write/import, consent, retention, egress, credential, side-effect and resource-limit classes. Connector health is a timestamped observation, not mutable global authority; fallback across credential, egress or provider boundaries requires a fresh policy decision. **Depends on:** `GOLD-CC-00`. **Done:** registry/config validation rejects duplicate or ambiguous identities, forbidden capability combinations and feature-off adapters; tests prove a context account cannot silently enter channel routing, MCP dispatch or action execution; install/repair remains a separately authorized integration job.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16227,
+      "state": " ",
+      "identifier": "GOLD-CC-02",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-02 Encrypted Context Evidence substrate and reversible erasure:** add one instance-home-scoped, fail-closed `context.db` data plane for account metadata, source objects, immutable revisions/tombstones, normalized events, provenance/source spans, cursors, dead letters and projection checkpoints. Bind content through an account-scoped cipher/key reference, quotas and retention; WAL receives content-free metadata/receipts only. **Depends on:** `GOLD-CC-01` and typed `InstancePaths`. **Done:** malformed existing state never becomes empty success; cross-account/subject reads fail closed; atomic batch plus cursor commit is idempotent; crash-after-DB-before-WAL is reconciled through a durable audit outbox; complete account purge removes eligible evidence, derived rows, cursor state and key material while retaining only policy-allowed content-free receipts.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16229,
+      "state": " ",
+      "identifier": "GOLD-CC-02a",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-02a Receipt-ledger freshness authority and snapshot-rollback resistance:** bind every committed Context Evidence receipt-ledger head to an authenticated, non-filesystem `ReceiptFreshnessAnchor` that atomically compare-and-advances `(instance_id, ledger_key_id, generation, manifest_digest)`. A local HMAC, DPAPI, Keychain or file anchor alone is not a freshness authority against a complete coordinated local snapshot rollback and may never be described as one. The selected production anchor must be independently rollback-resistant on every supported release platform, or use a pinned authenticated remote authority; unavailable, stale, lower-generation, mismatched-instance/key/head, replayed or indeterminate anchor state blocks receipt ACK/admission and is surfaced as a typed degraded state. **Depends on:** `GOLD-CC-01`, `GOLD-CC-02`, typed `InstancePaths` and the bounded Context Evidence receipt-ledger primitive. **Done:** local pending evidence is durable before external-anchor advance; restart and recovery either materialize the exact anchored candidate or fail closed; initialization, append, restart, torn local commit, torn anchor advance, same-process and cross-process contention, key replacement/loss, manifest/shard replay and complete coordinated local-directory snapshot restore are covered; an older local snapshot cannot ACK or append against a newer anchor; supported Windows, macOS and Linux anchors have real qualification evidence; CLI, GUI, Buddy and Doctor expose one truthful configured/healthy/degraded contract; no unconfigured local-only fallback claims full-snapshot rollback protection.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16231,
+      "state": " ",
+      "identifier": "GOLD-CC-02b",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-02b Context Evidence receipt audit, export and forensic visibility:** expose the bounded authenticated receipt ledger through a production read capability and merge it into every existing operator or audit evidence surface, including `WalAction::Show` (`neoth wal show`), `WalAction::Export` (signed `neoth wal export`), every configured audit-RPC read/verification endpoint and forensic verification; any future surface that reads, verifies, reports or exports security evidence must consume the same unified reader before it may be exposed. A ledger-only receipt may not become durable security evidence that the operator cannot inspect or export. Pin ledger-v1 as the first production emission format and route any manually injected or unreleased historical primary-WAL `0x27` frame through an explicit offline forensic migration path rather than silently treating it as absent or duplicating it. **Depends on:** `GOLD-CC-02` and the bounded Context Evidence receipt-ledger primitive. **Done:** readers validate manifest, shard, handle/payload, generation and anchor bindings with fixed directory, byte, allocation and output limits; primary-WAL and ledger evidence have one deterministic ordered/exported representation without a full-home retained-payload scan; signed exports bind the exact ledger head and receipt set; tamper, rollback, collision, missing key/anchor, legacy-primary-only evidence, output truncation and concurrent append fixtures fail closed or report a typed incomplete result; CLI, GUI, Buddy, Doctor and audit consumers expose the same content-free receipt truth; a source-wide inventory/allowlist regression fails if any current or newly introduced receipt/audit output path bypasses the unified reader.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16233,
+      "state": " ",
+      "identifier": "GOLD-CC-03",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-03 Connector account control plane, bounded supervisor and Doctor:** implement account registration, `CredentialRef` binding, scope/retention/AI-mode snapshots, backfill window, single-flight sync, cursor-gap recovery, pause/resume/revoke/remove, bounded rate/deadline/backoff/concurrency/output and receipt-backed health. Health probes are observation-only; repair/install/update are separate explicit jobs. **Depends on:** `GOLD-CC-01..02`. **Done:** missing/revoked/malformed credentials block before effects; restart, cancellation, rate-limit, expired-token, duplicate delivery and concurrent-sync fixtures neither skip ranges nor duplicate evidence; every task is owned and drained; CLI/GUI/Buddy/Doctor consume the same content-free state/revision/progress/error contract and never call configuration presence `Ready`.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16235,
+      "state": " ",
+      "identifier": "GOLD-CC-04",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-04 Local reference vertical — deterministic Import plus Obsidian ContextSource:** deliver the first complete read-only vertical without network, OAuth, browser sessions or background sidecars. Explicitly selected import fixtures and allowed Obsidian material normalize into source-bound events, preserve evidence spans, commit through `GOLD-CC-02`, exercise the `GOLD-CC-03` lifecycle and support plan/dry-run, confirmed apply, status, pause/resume and selective erase. Existing `memory::foreign_import` parsers and Obsidian primitives may be reused, but legacy direct-to-GroundTruth paths require an explicit migration/cutover proof rather than a silent reroute. **Done:** golden fixtures prove source-hash binding, scope rejection, atomic failure/no cursor advance, dedupe, revision, tombstone, restart, audit-outbox recovery and erase; restricted folders remain copy-only unless promoted; no content reaches WAL/logs/Incognito/provider prompts or trusted GroundTruth automatically.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16237,
+      "state": " ",
+      "identifier": "GOLD-CC-05",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-05 Reversible identity and relationship graph:** create account participant/project identities, aliases, candidate links and durable reversible merge/split/review receipts. Stable source identifiers may auto-link only under exact documented evidence rules; name, display handle, avatar, contact overlap or LLM inference alone may only propose a merge. Operator identity, authenticated channel sender identity and inferred external people remain separate namespaces. **Depends on:** `GOLD-CC-02` and `GOLD-CC-04`. **Done:** weak-signal collisions never auto-merge; private/business/subject boundaries are enforced; merge, split, source removal and account erasure rebuild all affected projections deterministically with provenance and without orphaned facts.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16239,
+      "state": " ",
+      "identifier": "GOLD-CC-06",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-06 Evidence-based extraction and safe Context projection:** run deterministic parsers before any explicitly consented model extraction; every claim, commitment, date, project or relationship retains source span, confidence, extractor version, policy revision and revocation/expiry state. External text remains typed untrusted data with no system, skill, tool, memory-promotion or action authority. **Depends on:** `GOLD-CC-05`, `GOLD-R3-14` and the applicable NCT content/projector contract before provider delivery. **Done:** adversarial HTML/mail/chat/attachment instructions, nested delimiters, Unicode/control obfuscation, stale/retracted sources, model failure and replay remain data-only; every displayed claim exposes evidence and correction/removal controls; only reviewed/corroborated projections may enter existing GroundTruth/recall consumers.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16241,
+      "state": " ",
+      "identifier": "GOLD-CC-07",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-07 Kin-compatible People projection without a second source of truth:** audit and pin the exact Kin upstream, licence and runtime boundary, then add only a read-only projection client/sidecar after NEOTH has a stable People read model. NEOTH remains authoritative for identity, evidence, retention, deletion and policy; Kin cannot independently ingest, mutate or retain connector authority. **Depends on:** `GOLD-CC-02`, `GOLD-CC-05` and `GOLD-CC-06`. **Done:** optional lifecycle, authentication and minimum-data projection are explicit; stopped/corrupt/removed Kin cannot block NEOTH sync or erasure; rebuild/delete propagation is deterministic; no `kin.db` dual write, hidden cloud backend, raw secret or unreviewed dependency ships.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16243,
+      "state": " ",
+      "identifier": "GOLD-CC-08",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-08 Generic WorkItem and bounded Context-to-Work projection:** introduce a distinct, provenance-bound lifecycle for contextual commitments, follow-ups, decisions and projects. Existing coding Kanban remains a separate consumer; mapping is explicit, deduplicated and reversible, and inferred context cannot become autonomous work or mutate coding state. **Depends on:** `GOLD-CC-02`, `GOLD-CC-05` and `GOLD-CC-06`. **Done:** source correction/retraction deterministically revises or closes projected work; confidence/staleness/deadline state is visible; no WorkItem reaches the coding Kanban or external system without an explicit audited operator action.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16245,
+      "state": " ",
+      "identifier": "GOLD-CC-09",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-09 Beeper read-only breadth connector:** add Beeper only as an optional feature-gated adapter after its exact API/auth/version/terms are pinned. Start read-only, account-scoped and content-minimal with a hard mutation-deny gate, bounded sync and source-ID/cursor mapping independent of Beeper internals. **Depends on:** `GOLD-CC-03..06`. **Done:** all attempted writes fail before network I/O; auth loss, pagination/restart, duplicate/backfill, removal and later native-connector migration pass fixtures; no cross-account data, token, raw message or unredacted health output leaks.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16247,
+      "state": " ",
+      "identifier": "GOLD-CC-10",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-10 Native productive Connector matrix:** implement only individually approved official/read-capable connectors, beginning with Gmail, Google Contacts and Google Calendar, then Microsoft Graph, Slack, Matrix, GitHub, Mastodon and Bluesky according to current API, licence and platform-policy review. Each source gets a unique descriptor, least-privilege OAuth scopes, bounded full/delta sync, provenance, retry/gap recovery, erase and common contract suite. **Depends on:** `GOLD-CC-03..06`; each source additionally requires a pinned source-specific API/terms record. **Done:** no connector is advertised from config parsing alone; each passes dataflow, recovery, policy, privacy, purge and content-free observability tests plus a source-specific mock/live qualification plan.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16249,
+      "state": " ",
+      "identifier": "GOLD-CC-11",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-11 Experimental personal bridges and Agent-Reach research backends:** gate Telegram personal, Baileys/WhatsApp, Signal, BlueBubbles, OpenCLI/browser-session paths and any Agent-Reach-compatible research bridge behind explicit experimental features, risk acceptance, isolated accounts, read-only defaults, kill switches and exportable state. Agent-Reach is never auto-installed, never receives ambient NEOTH/browser credentials, never becomes source of truth and may emit only bounded, schema-validated, provenance-rich untrusted results through a pinned/sandboxed adapter. **Depends on:** `GOLD-CC-01..06`, the relevant R4 channel/lifecycle contracts and an independent supply-chain/platform review. **Done:** every bridge declares exact support/risk/re-auth/retention/erase behavior; binary/image/package digests and worker ownership are verified; SSRF/DNS/redirect, output/memory/task, prompt-injection, secret-egress and shutdown tests pass; unsupported bridges remain visibly unavailable rather than silently falling back across authority boundaries.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16251,
+      "state": " ",
+      "identifier": "GOLD-CC-12",
+      "section": "WS-CC — Context Connectors & People Intelligence (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-CC-12 Explicit ActionSink and permission-bound closed loop:** allow connector-derived context to create drafts, events, tasks or communications only through a separately registered `ActionSink` and NEOTH's existing authority gates. Exact target, operation, evidence, expiry, nonce, subject, policy revision and single-use permit bind every execution; inferred relationship/fact/context is never standalone authority. **Depends on:** `GOLD-CC-06`, `GOLD-CC-08` and `GOLD-R4-15`. **Done:** missing/expired/replayed/revoked approval fails before tool/provider/network effects; retry and crash recovery cannot duplicate actions; correction/erase preserves allowed receipts without retaining forbidden content; CLI, GUI and Buddy consume one preview/progress/error/postcondition contract.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16318,
+      "state": " ",
+      "identifier": "GOLD-NCT-01",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-01 — Reproducible current-path baseline and duplication",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16334,
+      "state": " ",
+      "identifier": "GOLD-NCT-02",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-02 — Canonical NIR/1 schema, limits and golden vectors:** add",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16343,
+      "state": " ",
+      "identifier": "GOLD-NCT-03",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-03 — Immutable subject-scoped ContentRef store:** add",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16358,
+      "state": " ",
+      "identifier": "GOLD-NCT-04",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-04 — Revision-bound StateDelta transaction layer:** add",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16365,
+      "state": " ",
+      "identifier": "GOLD-NCT-05",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-05 — One context projector for every provider boundary:** add",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16373,
+      "state": " ",
+      "identifier": "GOLD-NCT-06",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-06 — NEXUS V2 handoff/result migration without a parallel",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16381,
+      "state": " ",
+      "identifier": "GOLD-NCT-07",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-07 — Authoritative provider usage and per-edge telemetry:**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16389,
+      "state": " ",
+      "identifier": "GOLD-NCT-08",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-08 — Qualified non-latent codec registry:** implement",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16399,
+      "state": " ",
+      "identifier": "GOLD-NCT-09",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-09 — Deterministic shadow route planner and immutable",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16407,
+      "state": " ",
+      "identifier": "GOLD-NCT-10",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-10 — Active bounded routing with operator controls:** activate",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16415,
+      "state": " ",
+      "identifier": "GOLD-NCT-11",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-11 — Canonical authenticated transfer manifest and key",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16431,
+      "state": " ",
+      "identifier": "GOLD-NCT-12",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-12 — Fail-closed admission, replay and downgrade pipeline:**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16439,
+      "state": " ",
+      "identifier": "GOLD-NCT-13",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-13 — NIR action firewall over existing NEOTH authority",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16446,
+      "state": " ",
+      "identifier": "GOLD-NCT-14",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-14 — Durable Cluster master coordinator using vetted Buzz",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16467,
+      "state": " ",
+      "identifier": "GOLD-NCT-15",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-15 — Fenced task ownership and generation-bound cluster",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16488,
+      "state": " ",
+      "identifier": "GOLD-NCT-16",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-16 — Stable device/node/agent identity, pairing and endpoint",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16518,
+      "state": " ",
+      "identifier": "GOLD-NCT-17",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-17 — Distributed BudgetToken and provider-permit binding:**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16533,
+      "state": " ",
+      "identifier": "GOLD-NCT-18",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-18 — Versioned A2A 1.0 NIR profile:** implement against the",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16547,
+      "state": " ",
+      "identifier": "GOLD-NCT-19",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-19 — Bounded MCP NIR resource/tool profile:** expose only",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16553,
+      "state": " ",
+      "identifier": "GOLD-NCT-20",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-20 — Exact-runtime latent backend contract and managed",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16574,
+      "state": " ",
+      "identifier": "GOLD-NCT-21",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-21 — Collective-compute backend, vLLM/LMCache and optional",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16586,
+      "state": " ",
+      "identifier": "GOLD-NCT-22",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-22 — Babel observation, routing hysteresis and controlled",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16598,
+      "state": " ",
+      "identifier": "GOLD-NCT-23",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-23 — Frozen config, daemon API and lifecycle ownership:** add",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16606,
+      "state": " ",
+      "identifier": "GOLD-NCT-24",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-24 — Complete CLI, status, Doctor, GUI and Buddy parity:**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16615,
+      "state": " ",
+      "identifier": "GOLD-NCT-25",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-25 — Production-consumer adoption ledger:** enumerate and",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16623,
+      "state": " ",
+      "identifier": "GOLD-NCT-26",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-26 — Migration, fuzz, security, benchmark and negative-",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16635,
+      "state": " ",
+      "identifier": "GOLD-NCT-27",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-NCT-27 — Zero-friction packaging and exact-release self-",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16647,
+      "state": " ",
+      "identifier": "GOLD-ADOPT-BUZZ-01",
+      "section": "WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)",
+      "raw": "- [ ] **GOLD-ADOPT-BUZZ-01 — Pinned selective Buzz adoption with explicit",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16777,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-ARCHIFY-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-ARCHIFY-01 — Source-pinned architecture evidence, not a",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16793,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-GN-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-GN-01 — Native pre-change code-graph impact receipt; no",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16811,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-S2C-VISUAL-REVIEW-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-S2C-VISUAL-REVIEW-01 — Deterministic local Slint visual",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16830,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-TAILCAT-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-TAILCAT-01 — Experimental one-shot Tailcat diagnostic",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16868,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-WIKISKILL-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-WIKISKILL-01 — Evidence-bound skill evolution with sealed",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16888,
+      "state": " ",
+      "identifier": "GOLD-ADAPT-AIMEM-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADAPT-AIMEM-01 — WAL-authoritative cross-harness workstream",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16910,
+      "state": " ",
+      "identifier": "GOLD-ADOPT-MODULAR-01",
+      "section": "WS-ADOPT30 — Bounded external-adoption review (2026-08-30)",
+      "raw": "- [ ] **GOLD-ADOPT-MODULAR-01 — Optional operator-installed MAX Serve provider",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16948,
+      "state": " ",
+      "identifier": null,
+      "section": "5. Definition of GOLD (Release Gate)",
+      "raw": "- [ ] WS-LF: all 118 `GOLD-LF-*` inventory-integrity, recovered-feature and plans/001-003 acceptance tasks are `[x]`; no P1/P2 item is deferred to 1.1, hidden behind a broad WS-R4 rollup, or closed solely by a source-only/partial implementation.",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16949,
+      "state": " ",
+      "identifier": null,
+      "section": "5. Definition of GOLD (Release Gate)",
+      "raw": "- [ ] WS-NCT: `GOLD-NCT-00..27` plus `GOLD-ADOPT-BUZZ-01`,",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    },
+    {
+      "line": 16959,
+      "state": " ",
+      "identifier": "GOLD-RELEASE-ARTIFACTS",
+      "section": "5. Definition of GOLD (Release Gate)",
+      "raw": "- [ ] **GOLD-RELEASE-ARTIFACTS** Signed release artifacts exist (cargo-dist or manual) with sha256 companion hashes — ✅ **CI COMPLETE, operator-tag-push-gated (verified 2026-07-14):** `.github/workflows/release.yml` fully implements the signed pipeline — matrix `cargo build --release` bakes `NEOTH_RELEASE_MINISIGN_PUBKEY` via `option_env!`, per-artifact `.sha256` + aggregated `SHA256SUMS`, cosign keyless `.cosign.bundle`, **minisign `.minisig` via the in-process `neoth release sign`** (dogfoods the just-built Linux `neoth` public binary; `neothd` is packaged only as the compatibility launcher; reads `NEOTH_RELEASE_MINISIGN_SECRET`), and uploads archives + `.sha256` + `SHA256SUMS` + `.cosign.bundle` + `.minisig` to the GitHub Release. Signing code: `cli/release.rs` → `updater/sig_keygen.rs::sign_minisig` (ed25519-dalek + blake2 pre-hash); verify counterpart `updater/sig_verify.rs` is consumed before `atomic_replace_binary`. PROG-13 keypair already live (secret+variable, 2026-06-04). **No code/CI work remains — the box stays `[ ]` only because the ARTIFACTS come into existence when the operator pushes a `v[0-9]+.[0-9]+.[0-9]+` tag (public release = operator action, not agent-performable).**",
+      "closedByThisInventory": false,
+      "disposition": "requires-source-and-evidence-reconciliation"
+    }
+  ],
+  "scope": "All open and partial tasks retained verbatim. Raw boxes are neither current implementation gaps nor current completion claims.",
+  "goldComplete": false
+}

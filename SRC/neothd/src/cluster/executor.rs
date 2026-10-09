@@ -827,7 +827,7 @@ async fn run_one_task_execution_inner(
                     effective_output_token_ceiling,
                 });
             }
-            return TaskExecutionResult::suppressed(TaskResultBody {
+            TaskExecutionResult::suppressed(TaskResultBody {
                 task_id: job.task_id,
                 status: TaskResultStatus::Failed {
                     error: "provider_outcome_indeterminate_after_membership_revoke".to_string(),
@@ -836,7 +836,7 @@ async fn run_one_task_execution_inner(
                 provider_name: Some(provider_name),
                 requested_max_output_tokens: job.max_output_tokens,
                 effective_output_token_ceiling,
-            });
+            })
         }
         ProviderCallOutcome::Deadline => {
             tracing::warn!(
@@ -874,7 +874,7 @@ async fn run_one_task_execution_inner(
                     effective_output_token_ceiling,
                 });
             }
-            return TaskExecutionResult::suppressed(TaskResultBody {
+            TaskExecutionResult::suppressed(TaskResultBody {
                 task_id: job.task_id,
                 status: TaskResultStatus::Failed {
                     error: "provider_outcome_indeterminate_after_deadline".to_string(),
@@ -883,7 +883,7 @@ async fn run_one_task_execution_inner(
                 provider_name: Some(provider_name),
                 requested_max_output_tokens: job.max_output_tokens,
                 effective_output_token_ceiling,
-            });
+            })
         }
         ProviderCallOutcome::Finished(provider_outcome) => {
             let result = match provider_outcome {

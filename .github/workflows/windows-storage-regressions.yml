@@ -1,15 +1,20 @@
 # =============================================================================
 # NEOTH — W460 hosted Windows storage regressions
 #
-# This manual lane compiles only the neoth library, then executes the exact
-# Windows regressions selected below. It does not build the workspace, GUI, or
-# release targets.
+# The default lane compiles the neoth library and executes its exact selection.
+# The explicit full-CI repair mode also runs two integration test binaries.
+# Neither selection builds workspace GUI or release targets.
 # =============================================================================
 
 name: Windows storage regressions
 
 on:
   workflow_dispatch:
+    inputs:
+      full_ci_repairs_only:
+        description: 'Run the nine library and two integration cases from full CI 37932521328'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,6 +74,23 @@ jobs:
           git rev-parse HEAD > "$evidence/SOURCE_HEAD"
           test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
 
+          expected_selection=1022
+          if [[ "${{ inputs.full_ci_repairs_only }}" == "true" ]]; then
+            expected_selection=9
+            printf 'full-ci-37932521328-repairs\n' > "$evidence/selection-mode.txt"
+          cat > "$evidence/selection.tsv" <<'EOF'
+          cli::chat::tests::chat_incognito_never_preloads_populated_retained_recall_into_first_provider_request	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_preloads_retained_recall_before_first_provider_request_for_both_mining_modes	neothd/src/cli/chat.rs
+          cli::chat::tests::transcript_mining_chat_default_stays_legacy_unbound	neothd/src/cli/chat.rs
+          cli::chat::tests::transcript_mining_chat_incognito_overrides_configured_opt_in	neothd/src/cli/chat.rs
+          cli::chat::tests::transcript_mining_chat_opt_in_binds_one_operator_row_without_post_reply_duplicate	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_propagates_provider_error	neothd/src/cli/chat.rs
+          cli::chat::tests::one_shot_chat_rechecks_revoked_consent_before_dispatch	neothd/src/cli/chat.rs
+          cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack	neothd/src/cli/dream.rs
+          cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer	neothd/src/cli/dream.rs
+          EOF
+          else
+            printf 'full-storage-selection\n' > "$evidence/selection-mode.txt"
           cat > "$evidence/selection.tsv" <<'EOF'
           channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids	neothd/src/channels/registry.rs
           channels::registry::tests::operator_and_migration_alias_namespaces_preserve_whatsapp_transport	neothd/src/channels/registry.rs
@@ -1093,6 +1115,7 @@ jobs:
           cli::eval::tests::verify_command_containment_preserves_normal_output_and_exit_status	neothd/src/cli/eval.rs
           cli::eval::tests::verify_command_timeout_kills_long_child	neothd/src/cli/eval.rs
           EOF
+          fi
 
           # Exercise newest regressions first without dropping any selected identity.
           python3 - "$evidence/selection.tsv" <<'PY'
@@ -1116,7 +1139,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 1022 ]]; then
+          if [[ "$expected" -ne "$expected_selection" ]]; then
             selection_valid=0
           fi
           sha256sum neothd/src/cli/channel/converted_relink.rs neothd/src/cli/doctor/checks/integrations.rs neothd/src/config/credentials/file_migration_batch.rs neothd/src/cli/channel/openclaw_migration/participants.rs neothd/src/cli/channel/openclaw_migration.rs Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -1262,7 +1285,7 @@ jobs:
               listed=$((listed + 1))
               run_status=0
               "$test_binary" "$test_name" --exact --test-threads=1 >> "$log" 2>&1 || run_status=$?
-              if [[ "$run_status" -eq 0 ]]; then
+              if [[ "$run_status" -eq 0 && "$(grep -Fxc "test $test_name ... ok" "$log" || true)" -eq 1 ]]; then
                 passed=$((passed + 1))
                 printf '%02d\tpassed\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
               else
@@ -1272,17 +1295,61 @@ jobs:
             done < "$evidence/selection.tsv"
           fi
 
+          cd "$GITHUB_WORKSPACE/SRC"
           printf 'expected=%s\nselection_valid=%s\ncompile_status=%s\ntotal=%s\nlisted=%s\npassed=%s\nfailed=%s\nmissing=%s\n' \
             "$expected" "$selection_valid" "$compile_status" "$total" "$listed" "$passed" "$failed" "$missing" > "$evidence/final-counts.txt"
           sha256sum "$evidence/compile.log" > "$evidence/log-sha256sums.txt"
           while IFS= read -r -d '' log; do
             sha256sum "$log" >> "$evidence/log-sha256sums.txt"
           done < <(find "$evidence/logs" -type f -name '*.log' -print0 | sort -z)
-          sha256sum "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$artifact_log" "$binary_receipt" "$binary_sha256" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
+          sha256sum "$evidence/selection-mode.txt" ../.github/workflows/windows-storage-regressions.yml neothd/src/cli/chat_turn_pipeline.rs ../.github/workflows/ci.yml .config/nextest.toml > "$evidence/repair-input-sha256sums.txt"
+          sha256sum "$evidence/repair-input-sha256sums.txt" "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$artifact_log" "$binary_receipt" "$binary_sha256" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
           printf 'compile_status=%s\n' "$compile_status" >> "$GITHUB_OUTPUT"
           if [[ "$selection_valid" -ne 1 || "$compile_status" -ne 0 || "$total" -ne "$expected" || "$listed" -ne "$expected" || "$failed" -ne 0 || "$missing" -ne 0 ]]; then
             exit 1
           fi
+
+      - name: Run exact full-CI integration repair cases
+        if: ${{ !cancelled() && inputs.full_ci_repairs_only && steps.regression-run.outputs.compile_status == '0' }}
+        timeout-minutes: 15
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/windows-storage-regressions/integration-repairs"
+          mkdir -p "$evidence"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/source-head.txt"
+          cat > "$evidence/selection.tsv" <<'EOF'
+          attachment_wiring_source_gate	attachment_ignoring_slashes_are_rejected_before_extraction
+          no_outbound_network	no_direct_pre_expansion_network_construction_outside_reviewed_boundaries
+          EOF
+          failed=0
+          visited=0
+          : > "$evidence/results.tsv"
+          while IFS=$'\t' read -r binary identity; do
+            visited=$((visited + 1))
+            log="$evidence/$binary.log"
+            status=0
+            cargo test -p neoth --test "$binary" --locked "$identity" -- --exact --list --color never > "$log" 2>&1 || status=$?
+            if [[ "$status" -eq 0 && "$(grep -Fxc "$identity: test" "$log" || true)" -eq 1 ]]; then
+              cargo test -p neoth --test "$binary" --locked "$identity" -- --exact --test-threads=1 --color never >> "$log" 2>&1 || status=$?
+              if [[ "$status" -ne 0 || "$(grep -Fxc "test $identity ... ok" "$log" || true)" -ne 1 ]]; then
+                status=1
+              fi
+            else
+              status=1
+            fi
+            if [[ "$status" -ne 0 ]]; then
+              failed=$((failed + 1))
+              cat "$log"
+            fi
+            printf '%s\t%s\t%s\n' "$binary" "$identity" "$status" >> "$evidence/results.tsv"
+          done < "$evidence/selection.tsv"
+          printf 'selected=2\nvisited=%s\nfailed=%s\n' "$visited" "$failed" > "$evidence/final-counts.txt"
+          sha256sum neothd/tests/attachment_wiring_source_gate.rs neothd/tests/no_outbound_network.rs neothd/src/cli/chat.rs neothd/src/cli/chat_turn_pipeline.rs Cargo.lock ../.github/workflows/windows-storage-regressions.yml > "$evidence/source-sha256sums.txt"
+          (cd "$evidence" && sha256sum source-head.txt selection.tsv results.tsv final-counts.txt source-sha256sums.txt ./*.log > evidence-sha256sums.txt)
+          test "$visited" -eq 2
+          test "$failed" -eq 0
 
       - name: Save completed Cargo registry and target cache
         if: ${{ always() && !cancelled() && steps.regression-run.outputs.compile_status == '0' && steps.cargo-cache.outputs.cache-hit != 'true' }}

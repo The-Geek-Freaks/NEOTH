@@ -642,7 +642,7 @@ async fn updater_status_client_round_trips_live_listener_and_refuses_invalid_req
     listener.abort();
     let _ = listener.await;
     drop(writer);
-    wal_join.await.unwrap();
+    wal_join.await.unwrap().expect("finalize fixture WAL");
 }
 
 #[test]

@@ -1,0 +1,2247 @@
+{
+  "schema": "neoth.wave2526.audit-completion-and-ci-repair.v1",
+  "base": "ff82ed565a7af371905b03da0d537e919ea5f0eb",
+  "status": "source-integrated-hosted-validation-pending",
+  "fullCiPriorProducer": {
+    "conclusion": "failure",
+    "databaseId": 37932521328,
+    "headSha": "ff82ed565a7af371905b03da0d537e919ea5f0eb",
+    "jobs": [
+      {
+        "completedAt": "2026-10-09T12:49:36Z",
+        "conclusion": "failure",
+        "databaseId": 113826484834,
+        "name": "Exact distribution license notices",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:11Z",
+            "conclusion": "success",
+            "name": "Verify lost-feature inventory contract",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:11Z",
+            "conclusion": "success",
+            "name": "Verify OpenClaw provider parity snapshot",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:11Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "failure",
+            "name": "Verify all locked release-target notices",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "skipped",
+            "name": "Verify clean-machine authenticity bootstrap contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "skipped",
+            "name": "Verify release workflow and public asset contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 16,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826484834"
+      },
+      {
+        "completedAt": "2026-10-09T13:00:06Z",
+        "conclusion": "failure",
+        "databaseId": 113826485115,
+        "name": "Linux quality / Rust 1.91",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:05Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:13Z",
+            "conclusion": "success",
+            "name": "GUI token-drift contract and source gate",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:22Z",
+            "conclusion": "success",
+            "name": "Setup Rust 1.91",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:51Z",
+            "conclusion": "success",
+            "name": "Install Linux build deps (fontconfig + X11 + Xvfb)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:51Z",
+            "conclusion": "success",
+            "name": "Cache Cargo registry + target",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:51Z",
+            "conclusion": "success",
+            "name": "Discard restored Linux test receipt",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:52Z",
+            "conclusion": "success",
+            "name": "Install cargo-nextest",
+            "number": 8,
+            "startedAt": "2026-10-09T12:49:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:50:05Z",
+            "conclusion": "success",
+            "name": "cargo fmt --check (workspace)",
+            "number": 9,
+            "startedAt": "2026-10-09T12:49:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:50:05Z",
+            "conclusion": "skipped",
+            "name": "Generate rustfmt repair patch",
+            "number": 10,
+            "startedAt": "2026-10-09T12:50:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:50:05Z",
+            "conclusion": "skipped",
+            "name": "Upload rustfmt repair patch",
+            "number": 11,
+            "startedAt": "2026-10-09T12:50:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:55:24Z",
+            "conclusion": "success",
+            "name": "cargo clippy slim core",
+            "number": 12,
+            "startedAt": "2026-10-09T12:50:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "failure",
+            "name": "cargo clippy workspace",
+            "number": 13,
+            "startedAt": "2026-10-09T12:55:24Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "skipped",
+            "name": "cargo doctest workspace",
+            "number": 14,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "skipped",
+            "name": "Prepare Linux GUI callback runtime prerequisites",
+            "number": 15,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "skipped",
+            "name": "cargo nextest workspace (Linux)",
+            "number": 16,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "success",
+            "name": "Remove Linux GUI callback containment profile",
+            "number": 17,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "success",
+            "name": "Upload Linux JUnit report",
+            "number": 18,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:02Z",
+            "conclusion": "skipped",
+            "name": "Post Cache Cargo registry + target",
+            "number": 35,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:03Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 36,
+            "startedAt": "2026-10-09T13:00:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:00:03Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 37,
+            "startedAt": "2026-10-09T13:00:03Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485115"
+      },
+      {
+        "completedAt": "2026-10-09T13:08:38Z",
+        "conclusion": "failure",
+        "databaseId": 113826485130,
+        "name": "Ubuntu beta compile + Clippy (advisory)",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:09Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Setup Rust beta",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:30Z",
+            "conclusion": "success",
+            "name": "Install Linux build deps (fontconfig + X11)",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:31Z",
+            "conclusion": "success",
+            "name": "Cache Cargo sources (beta; no build artefacts)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:08:34Z",
+            "conclusion": "failure",
+            "name": "cargo clippy workspace (beta)",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:08:34Z",
+            "conclusion": "skipped",
+            "name": "Post Cache Cargo sources (beta; no build artefacts)",
+            "number": 11,
+            "startedAt": "2026-10-09T13:08:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:08:35Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 12,
+            "startedAt": "2026-10-09T13:08:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:08:35Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-10-09T13:08:35Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485130"
+      },
+      {
+        "completedAt": "2026-10-09T12:49:37Z",
+        "conclusion": "success",
+        "databaseId": 113826485146,
+        "name": "Isolated release signer",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:05Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable with rustfmt",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Cache signer dependencies",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Verify formatting",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:27Z",
+            "conclusion": "success",
+            "name": "Test locked signer implementation",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:28Z",
+            "conclusion": "success",
+            "name": "Install cargo-audit",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:27Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:32Z",
+            "conclusion": "success",
+            "name": "Audit signer lockfile without workspace exceptions",
+            "number": 8,
+            "startedAt": "2026-10-09T12:49:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Post Cache signer dependencies",
+            "number": 15,
+            "startedAt": "2026-10-09T12:49:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 16,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485146"
+      },
+      {
+        "completedAt": "2026-10-09T15:00:45Z",
+        "conclusion": "failure",
+        "databaseId": 113826485163,
+        "name": "windows-2022 tests / Rust 1.91",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:05Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:16Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:29Z",
+            "conclusion": "success",
+            "name": "Setup Rust 1.91",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:29Z",
+            "conclusion": "success",
+            "name": "Enforce MSVC toolchain on Windows (ADV-11)",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:30Z",
+            "conclusion": "success",
+            "name": "Restore Cargo registry + target",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:33Z",
+            "conclusion": "success",
+            "name": "Install cargo-nextest",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:54:00Z",
+            "conclusion": "success",
+            "name": "Compile nextest workspace test binaries",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:54:00Z",
+            "conclusion": "skipped",
+            "name": "Upload macOS compile observability",
+            "number": 8,
+            "startedAt": "2026-10-09T13:54:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:54:00Z",
+            "conclusion": "skipped",
+            "name": "Verify macOS native GUI fixture discovery",
+            "number": 9,
+            "startedAt": "2026-10-09T13:54:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:55:21Z",
+            "conclusion": "success",
+            "name": "Save completed Cargo registry + target",
+            "number": 10,
+            "startedAt": "2026-10-09T13:54:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:55:21Z",
+            "conclusion": "skipped",
+            "name": "Save interrupted Cargo registry + target",
+            "number": 11,
+            "startedAt": "2026-10-09T13:55:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:00:40Z",
+            "conclusion": "failure",
+            "name": "Run nextest workspace tests",
+            "number": 12,
+            "startedAt": "2026-10-09T13:55:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:00:41Z",
+            "conclusion": "success",
+            "name": "Upload JUnit report",
+            "number": 13,
+            "startedAt": "2026-10-09T15:00:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:00:43Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 26,
+            "startedAt": "2026-10-09T15:00:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:00:43Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-10-09T15:00:43Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485163"
+      },
+      {
+        "completedAt": "2026-10-09T12:49:45Z",
+        "conclusion": "success",
+        "databaseId": 113826485299,
+        "name": "example WASM plugins build against ABI v1",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Install Rust + wasm32 target",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Cache wasm32 build",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:41Z",
+            "conclusion": "success",
+            "name": "Build all shipped guest examples",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:41Z",
+            "conclusion": "success",
+            "name": "Verify WASM artefacts + versioned NEOTH exports",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:42Z",
+            "conclusion": "success",
+            "name": "Upload wasm artefact",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:44Z",
+            "conclusion": "success",
+            "name": "Post Cache wasm32 build",
+            "number": 13,
+            "startedAt": "2026-10-09T12:49:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:44Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 14,
+            "startedAt": "2026-10-09T12:49:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:44Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-10-09T12:49:44Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485299"
+      },
+      {
+        "completedAt": "2026-10-09T12:53:51Z",
+        "conclusion": "success",
+        "databaseId": 113826485310,
+        "name": "feature-flag compile / os-clipboard",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:09Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:16Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "skipped",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:45Z",
+            "conclusion": "success",
+            "name": "cargo check --features os-clipboard",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:45Z",
+            "conclusion": "skipped",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:53:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:45Z",
+            "conclusion": "skipped",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:53:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:49Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T12:53:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:49Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T12:53:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:49Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:53:49Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485310"
+      },
+      {
+        "completedAt": "2026-10-09T12:49:05Z",
+        "conclusion": "success",
+        "databaseId": 113826485332,
+        "name": "W186 live-audio hosted validation / Select W186 live-audio platform",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Build allowlisted platform matrix",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:03Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485332"
+      },
+      {
+        "completedAt": "2026-10-09T15:20:33Z",
+        "conclusion": "failure",
+        "databaseId": 113826485366,
+        "name": "macos-14 tests / Rust 1.91",
+        "startedAt": "2026-10-09T12:49:09Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:12Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:28Z",
+            "conclusion": "success",
+            "name": "Setup Rust 1.91",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:28Z",
+            "conclusion": "skipped",
+            "name": "Enforce MSVC toolchain on Windows (ADV-11)",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:28Z",
+            "conclusion": "success",
+            "name": "Restore Cargo registry + target",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:30Z",
+            "conclusion": "success",
+            "name": "Install cargo-nextest",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:19:43Z",
+            "conclusion": "failure",
+            "name": "Compile nextest workspace test binaries",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:19:47Z",
+            "conclusion": "success",
+            "name": "Upload macOS compile observability",
+            "number": 8,
+            "startedAt": "2026-10-09T15:19:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:19:47Z",
+            "conclusion": "skipped",
+            "name": "Verify macOS native GUI fixture discovery",
+            "number": 9,
+            "startedAt": "2026-10-09T15:19:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:19:47Z",
+            "conclusion": "skipped",
+            "name": "Save completed Cargo registry + target",
+            "number": 10,
+            "startedAt": "2026-10-09T15:19:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:29Z",
+            "conclusion": "success",
+            "name": "Save interrupted Cargo registry + target",
+            "number": 11,
+            "startedAt": "2026-10-09T15:19:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:29Z",
+            "conclusion": "skipped",
+            "name": "Run nextest workspace tests",
+            "number": 12,
+            "startedAt": "2026-10-09T15:20:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:29Z",
+            "conclusion": "success",
+            "name": "Upload JUnit report",
+            "number": 13,
+            "startedAt": "2026-10-09T15:20:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:30Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 26,
+            "startedAt": "2026-10-09T15:20:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:32Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 27,
+            "startedAt": "2026-10-09T15:20:30Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485366"
+      },
+      {
+        "completedAt": "2026-10-09T12:49:35Z",
+        "conclusion": "success",
+        "databaseId": 113826485374,
+        "name": "Keet companion / frozen standalone",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:15Z",
+            "conclusion": "success",
+            "name": "Setup Node.js",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:16Z",
+            "conclusion": "success",
+            "name": "Enable pinned pnpm",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:31Z",
+            "conclusion": "success",
+            "name": "Install, verify, test, and package",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:31Z",
+            "conclusion": "success",
+            "name": "Post Setup Node.js",
+            "number": 9,
+            "startedAt": "2026-10-09T12:49:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:31Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 10,
+            "startedAt": "2026-10-09T12:49:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:31Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 11,
+            "startedAt": "2026-10-09T12:49:31Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485374"
+      },
+      {
+        "completedAt": "2026-10-09T13:17:00Z",
+        "conclusion": "success",
+        "databaseId": 113826485411,
+        "name": "feature-flag compile / ssh-tunnel",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "skipped",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:55:34Z",
+            "conclusion": "success",
+            "name": "cargo check --features ssh-tunnel",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:16:23Z",
+            "conclusion": "success",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:55:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:16:23Z",
+            "conclusion": "skipped",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T13:16:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:16:57Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T13:16:23Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:16:58Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T13:16:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:16:58Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T13:16:58Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485411"
+      },
+      {
+        "completedAt": "2026-10-09T12:53:58Z",
+        "conclusion": "success",
+        "databaseId": 113826485446,
+        "name": "gold-smoke eval suite",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:41Z",
+            "conclusion": "success",
+            "name": "Build neoth + neothd compatibility launchers (debug)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:41Z",
+            "conclusion": "success",
+            "name": "Export generated CLI reference from the compiled source",
+            "number": 6,
+            "startedAt": "2026-10-09T12:53:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:42Z",
+            "conclusion": "success",
+            "name": "Upload generated CLI reference",
+            "number": 7,
+            "startedAt": "2026-10-09T12:53:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:42Z",
+            "conclusion": "success",
+            "name": "Run gold-smoke eval suite",
+            "number": 8,
+            "startedAt": "2026-10-09T12:53:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:44Z",
+            "conclusion": "success",
+            "name": "Upload eval report (report.json + report.md)",
+            "number": 9,
+            "startedAt": "2026-10-09T12:53:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:56Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 17,
+            "startedAt": "2026-10-09T12:53:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:56Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 18,
+            "startedAt": "2026-10-09T12:53:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:53:56Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 19,
+            "startedAt": "2026-10-09T12:53:56Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485446"
+      },
+      {
+        "completedAt": "2026-10-09T12:57:36Z",
+        "conclusion": "success",
+        "databaseId": 113826485523,
+        "name": "feature-flag compile / qwen-metal",
+        "startedAt": "2026-10-09T12:49:06Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:08Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:26Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:26Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:26Z",
+            "conclusion": "skipped",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:21Z",
+            "conclusion": "success",
+            "name": "cargo check --features qwen-metal",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:26Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:21Z",
+            "conclusion": "skipped",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:57:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:21Z",
+            "conclusion": "skipped",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:57:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:34Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T12:57:21Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:35Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T12:57:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:57:36Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:57:35Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485523"
+      },
+      {
+        "completedAt": "2026-10-09T12:49:22Z",
+        "conclusion": "success",
+        "databaseId": 113826485608,
+        "name": "feature-flag compile / qwen-cuda",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:09Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "cargo check --features qwen-cuda",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485608"
+      },
+      {
+        "completedAt": "2026-10-09T12:51:53Z",
+        "conclusion": "failure",
+        "databaseId": 113826485649,
+        "name": "feature-flag compile / cluster-iroh",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:19Z",
+            "conclusion": "skipped",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "failure",
+            "name": "cargo check --features cluster-iroh",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "skipped",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:51:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "skipped",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:51:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "skipped",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T12:51:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T12:51:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:51:51Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T12:51:51Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485649"
+      },
+      {
+        "completedAt": "2026-10-09T13:05:35Z",
+        "conclusion": "success",
+        "databaseId": 113826485658,
+        "name": "feature-flag compile / channel-adapters",
+        "startedAt": "2026-10-09T12:49:02Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:04Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:03Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Install Rust stable",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "success",
+            "name": "Cache cargo",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "Pre-flight — verify nvcc available (qwen-cuda only)",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "cargo check --features channel-adapters",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:18Z",
+            "conclusion": "skipped",
+            "name": "cargo test ssh-tunnel contract",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:05:16Z",
+            "conclusion": "success",
+            "name": "cargo test IRC and Nostr adapter contracts",
+            "number": 8,
+            "startedAt": "2026-10-09T12:49:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:05:33Z",
+            "conclusion": "success",
+            "name": "Post Cache cargo",
+            "number": 15,
+            "startedAt": "2026-10-09T13:05:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:05:34Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+            "number": 16,
+            "startedAt": "2026-10-09T13:05:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:05:34Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-09T13:05:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826485658"
+      },
+      {
+        "completedAt": "2026-10-09T13:27:18Z",
+        "conclusion": "success",
+        "databaseId": 113826519557,
+        "name": "W186 live-audio hosted validation / W186 live-audio / macOS",
+        "startedAt": "2026-10-09T12:49:37Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:40Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:38Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:44Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:44Z",
+            "conclusion": "skipped",
+            "name": "Install Linux live-audio build dependencies",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:53Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:54Z",
+            "conclusion": "success",
+            "name": "Restore live-audio Cargo cache",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:55Z",
+            "conclusion": "success",
+            "name": "Bind W186 fixture identities to their declared source",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:26:44Z",
+            "conclusion": "success",
+            "name": "Compile and run exact live-audio fixtures",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:27:13Z",
+            "conclusion": "success",
+            "name": "Save completed live-audio Cargo registry + target",
+            "number": 8,
+            "startedAt": "2026-10-09T13:26:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:27:13Z",
+            "conclusion": "skipped",
+            "name": "Save interrupted live-audio Cargo registry + target",
+            "number": 9,
+            "startedAt": "2026-10-09T13:27:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:27:15Z",
+            "conclusion": "success",
+            "name": "Upload W186 live-audio hosted evidence",
+            "number": 10,
+            "startedAt": "2026-10-09T13:27:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:27:15Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 20,
+            "startedAt": "2026-10-09T13:27:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:27:16Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 21,
+            "startedAt": "2026-10-09T13:27:15Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826519557"
+      },
+      {
+        "completedAt": "2026-10-09T13:24:46Z",
+        "conclusion": "success",
+        "databaseId": 113826519659,
+        "name": "W186 live-audio hosted validation / W186 live-audio / Windows",
+        "startedAt": "2026-10-09T12:49:07Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:10Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:10Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:17Z",
+            "conclusion": "skipped",
+            "name": "Install Linux live-audio build dependencies",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:33Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:34Z",
+            "conclusion": "success",
+            "name": "Restore live-audio Cargo cache",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:37Z",
+            "conclusion": "success",
+            "name": "Bind W186 fixture identities to their declared source",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:04Z",
+            "conclusion": "success",
+            "name": "Compile and run exact live-audio fixtures",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:41Z",
+            "conclusion": "success",
+            "name": "Save completed live-audio Cargo registry + target",
+            "number": 8,
+            "startedAt": "2026-10-09T13:24:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:41Z",
+            "conclusion": "skipped",
+            "name": "Save interrupted live-audio Cargo registry + target",
+            "number": 9,
+            "startedAt": "2026-10-09T13:24:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:42Z",
+            "conclusion": "success",
+            "name": "Upload W186 live-audio hosted evidence",
+            "number": 10,
+            "startedAt": "2026-10-09T13:24:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:44Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 20,
+            "startedAt": "2026-10-09T13:24:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:24:44Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 21,
+            "startedAt": "2026-10-09T13:24:44Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826519659"
+      },
+      {
+        "completedAt": "2026-10-09T13:04:59Z",
+        "conclusion": "success",
+        "databaseId": 113826519696,
+        "name": "W186 live-audio hosted validation / W186 live-audio / Linux",
+        "startedAt": "2026-10-09T12:49:07Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T12:49:09Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T12:49:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:12Z",
+            "conclusion": "success",
+            "name": "Checkout",
+            "number": 2,
+            "startedAt": "2026-10-09T12:49:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:20Z",
+            "conclusion": "success",
+            "name": "Install Linux live-audio build dependencies",
+            "number": 3,
+            "startedAt": "2026-10-09T12:49:12Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:28Z",
+            "conclusion": "success",
+            "name": "Setup Rust stable",
+            "number": 4,
+            "startedAt": "2026-10-09T12:49:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:29Z",
+            "conclusion": "success",
+            "name": "Restore live-audio Cargo cache",
+            "number": 5,
+            "startedAt": "2026-10-09T12:49:28Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T12:49:29Z",
+            "conclusion": "success",
+            "name": "Bind W186 fixture identities to their declared source",
+            "number": 6,
+            "startedAt": "2026-10-09T12:49:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:45Z",
+            "conclusion": "success",
+            "name": "Compile and run exact live-audio fixtures",
+            "number": 7,
+            "startedAt": "2026-10-09T12:49:29Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:55Z",
+            "conclusion": "success",
+            "name": "Save completed live-audio Cargo registry + target",
+            "number": 8,
+            "startedAt": "2026-10-09T13:04:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:55Z",
+            "conclusion": "skipped",
+            "name": "Save interrupted live-audio Cargo registry + target",
+            "number": 9,
+            "startedAt": "2026-10-09T13:04:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:56Z",
+            "conclusion": "success",
+            "name": "Upload W186 live-audio hosted evidence",
+            "number": 10,
+            "startedAt": "2026-10-09T13:04:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:57Z",
+            "conclusion": "success",
+            "name": "Post Checkout",
+            "number": 20,
+            "startedAt": "2026-10-09T13:04:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T13:04:57Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 21,
+            "startedAt": "2026-10-09T13:04:57Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113826519696"
+      },
+      {
+        "completedAt": "2026-10-09T15:20:39Z",
+        "conclusion": "failure",
+        "databaseId": 113889450015,
+        "name": "Gold CI",
+        "startedAt": "2026-10-09T15:20:36Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-09T15:20:37Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-09T15:20:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:37Z",
+            "conclusion": "failure",
+            "name": "Require every Gold contract",
+            "number": 2,
+            "startedAt": "2026-10-09T15:20:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-09T15:20:37Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 3,
+            "startedAt": "2026-10-09T15:20:37Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328/job/113889450015"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37932521328"
+  },
+  "sourceChanges": [
+    {
+      "path": "SRC/neothd/src/cli/todo.rs",
+      "baseSha256": "15C4D3ECA52C36E87B943C613B045ABDA01A17D4927E0F91B5FF5933D320CBAA",
+      "candidateSha256": "82F25F7ED1532348B484934BDD55322E33E19CEFAD068A0461AE85B995E15025",
+      "candidate": "work/gold-20260906/wave2530-oneshot-startup-interlock/candidate/todo.rs"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "baseSha256": "B66D746DCD5E8681863F0B85338A62B0DCAB6548DC35CC27FDF2E598CF7BA911",
+      "candidateSha256": "EECBEAB68966A2B04E69BF799163BEB88E3422135519975FEFA443DC693B1E70",
+      "candidate": "work/gold-20260906/wave2530-oneshot-startup-interlock/candidate/cli-reference.yml"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "baseSha256": "746E0C0BE85789301D8E98C4174E963DFDB8D53EE1CD62EB90BB3F0986B00E2B",
+      "candidateSha256": "BB0D6C70DB7C6601E943C79177372C39E455E0C8780F4EE17FCCC8C0DE8567A7",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/hyperswarm.rs"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "baseSha256": "3D96EFF28C0281379010FF817C14CF707EC19089381A173A702CB7944FFFBB03",
+      "candidateSha256": "5D76FCE98B2F33427D78ACE8E02689F1C05600228A901B1789F6D00CEEAA29B1",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/executor.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion_runtime.rs",
+      "baseSha256": "76D442C84F14A52F0E7E15962DCA9E4DFB1F507F04AAE56AB671A200F3695811",
+      "candidateSha256": "2965E1FAB753F2D6813292A6C4AEC877656CF0E2DE3CB3391FEFEC9645120490",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/companion_runtime.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "baseSha256": "85FD2E4F963E2C16ECFEA14C334DC341CCC292156F7FA7098FB3DF25D180CDEF",
+      "candidateSha256": "122361A684F51C68EDA29CEC6883DC04D51506B8D5DBA469FC09EABB33E39864",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/chat_runtime.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "baseSha256": "09B229DEC61298A6F59BF57E8078C5F8C4A4D08B8F7FCCE2905C6BFA4C040395",
+      "candidateSha256": "C81C187335F0632F2D68B42D8029972A2A87B14F7B3BDB8B8990D43C385E0A6B",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/SRC_neothd_src_daemon_audit_rpc_client.rs"
+    },
+    {
+      "path": "SRC/neothd/src/cli/updater.rs",
+      "baseSha256": "B524FF5CB946E4DF8A34EC53C7F40668ECAD2EA2CD1271A230E96C92047332F6",
+      "candidateSha256": "DCF47F4216EB1AD6915905943002C6D5C52F814BFE067BB1F9D77519507FFF6F",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/SRC_neothd_src_cli_updater.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "baseSha256": "64240F953518E9193C84234B60F029C48F5F0BED63026A53EF71A8B012317FDA",
+      "candidateSha256": "27A61EDC16EF7D733CD752492948132FBC62A3D5D3984E28B50684DDAF1D7F26",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/SRC_neothd_src_daemon_audit_rpc_tests.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "baseSha256": "043EB3FD3141FC71B659BE51F25351404DCAFB7C4DD92BC8DDDE19D2AC34B116",
+      "candidateSha256": "48D1FBAA058D1AF1583C6323CAD1F9708899961034BA013B5D0BE216F2765234",
+      "candidate": "work/gold-20260906/wave2525-workspace-clippy-repair/candidate/SRC_neothd_src_daemon_wizard_ipc_tests.rs"
+    },
+    {
+      "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+      "baseSha256": "72AC74273184E93ED4BCBDFA9E0A7F3B32B662551BCFC1898F9DA8CA9879BD18",
+      "candidateSha256": "66D4457D75031C2290AF691A8797F69E732DD30695B4F989C544F3C2186B08B6",
+      "candidate": "work/gold-20260906/wave2524-hickory-family-repair/candidate/hickory-resolver-lock-candidate.yml"
+    },
+    {
+      "path": "SRC/neothd/src/cli/identity.rs",
+      "baseSha256": "F71659D05716374F7D3C3A9D7CACCB469BEFA299B4D180EBBE6D42EEF1A57FB3",
+      "candidateSha256": "906D41D3F0D106604E1E81A61014678014560790270F0D0D9275630142082C51",
+      "candidate": "work/gold-20260906/wave2527-remaining-audit-callers/candidate/identity.rs"
+    },
+    {
+      "path": "SRC/neothd/src/cli/consent.rs",
+      "baseSha256": "253F18C09AD5A7DED44906D4D900A4603B8CE910FDF4DB91D1FAE9E07AD08110",
+      "candidateSha256": "DDAF840ED8231FFF3B3C710B1B64C9ED2BF89E2C2ABC26EB40CD12A59B6046C1",
+      "candidate": "work/gold-20260906/wave2527-remaining-audit-callers/candidate/consent.rs"
+    },
+    {
+      "path": "SRC/neothd/src/cli/consent_outbox.rs",
+      "baseSha256": "40F03B335CB0DC0F1E811F2B2F240B60A2EC61DF023EF49FE3393D515B7F914F",
+      "candidateSha256": "64C515770DD1B33F67A59912455EAD8E9DE1A0043385F80C461DE7F5CFA6BD83",
+      "candidate": "work/gold-20260906/wave2527-remaining-audit-callers/candidate/consent_outbox.rs"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/pidfile.rs",
+      "baseSha256": "C299BD6EC39CB637A157050C249E7F82DD909ADE012BA7A9655638D93AE20318",
+      "candidate": "work/gold-20260906/wave2530-oneshot-startup-interlock/candidate/pidfile.rs",
+      "candidateSha256": "1282F9FCAB9E63A30751E3156B8E3248CB067F0C4CA030318D6FCC63B2F36FB0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "baseSha256": "0BC67E21C2FDBC10D55AB1F3209F07188AD67EDEC64D67C5E9FFA876892C514B",
+      "candidate": "work/gold-20260906/wave2533-windows-full-repair/candidate/chat.rs",
+      "candidateSha256": "529F79F2E95FD29D3CB44086B4FB2CDA3CC758E75C917F5ADB8ECD11CE56031A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/dream.rs",
+      "baseSha256": "70AF618F42DCC61535608F7A57AD988094FBEE17BDE147811D540B24F2E0376C",
+      "candidate": "work/gold-20260906/wave2533-windows-full-repair/candidate/dream.rs",
+      "candidateSha256": "05DE3F58A7EB59A7091E6C5F3284B10AA2B436698A5BB4FC22EDB7C07A231579"
+    },
+    {
+      "path": "SRC/neothd/tests/attachment_wiring_source_gate.rs",
+      "baseSha256": "9687A20BE11C8E5D1E7A00836D2049F3BC88C5FBF15C0D227854420779B30D69",
+      "candidate": "work/gold-20260906/wave2533-windows-full-repair/candidate/attachment_wiring_source_gate.rs",
+      "candidateSha256": "591A0931B86F2BC423F7A8338715061FC5A4DEE8EBECE622697B03BD669EFDDC"
+    },
+    {
+      "path": "SRC/.config/nextest.toml",
+      "baseSha256": "1BDC72578261FB6EDBA1574BB4E9CF6A238DDF70636A587D1D2E2D459653EDC9",
+      "candidate": "work/gold-20260906/wave2533-windows-full-repair/candidate/nextest.toml",
+      "candidateSha256": "279339B1C6C8B6D8AF543BA28DA71F092DE560B563CA77590642A20D02E1EC47"
+    },
+    {
+      "path": ".github/workflows/windows-storage-regressions.yml",
+      "baseSha256": "4AC7D624FDA2126FBF08ED3C99FBAE3877F67369DBAF6E52371E31D2D4B3CEFC",
+      "candidate": "work/gold-20260906/wave2534-windows-repair-selection/candidate/windows-storage-regressions.yml",
+      "candidateSha256": "AE1FEA9EF7F86E1022F499F6C3ED34FE4F1BF55444EF632C48C3367368839CDD"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "baseSha256": "6AF79D699BBF183152A3646C11F9108FBAC6026141BD7F1BBFA7538CAA40D67A",
+      "candidate": "work/gold-20260906/wave2535-macos-compile-phases/candidate/ci.yml",
+      "candidateSha256": "194C0820394BF0D9B1E4F0971D2C7196A204846B4B223A7F048CB05E66EEA387"
+    },
+    {
+      "path": "packaging/tests/test_ci_cadence_contract.py",
+      "baseSha256": "FDA86FD10E9101755C91387BD2675C9F158F9058F7B55C3996C7A1BEEC41D3F6",
+      "candidate": "work/gold-20260906/wave2535-macos-compile-phases/candidate/test_ci_cadence_contract.py",
+      "candidateSha256": "B4B92BFD208AE9BC35C9196F703837A670812960F05168F0CB7A5C798105E431"
+    }
+  ],
+  "selectedOwnerTests": 56,
+  "newRustDefinitions": 10,
+  "newRequiredRegistrations": 27,
+  "portableTests": 2890,
+  "windowsFailureDisposition": {
+    "path": "work/gold-20260906/wave2533-windows-full-repair/CANDIDATE.json",
+    "sha256": "648356E2109677660CA70818048DD225BD1C8BD95DC3A9671BC0992EF9A58B75",
+    "run": 37932521328,
+    "job": 113826485163,
+    "failures": 11,
+    "revalidated": false
+  },
+  "windowsTargetedValidation": {
+    "workflow": ".github/workflows/windows-storage-regressions.yml",
+    "input": "full_ci_repairs_only=true",
+    "library": 9,
+    "integration": 2,
+    "status": "pending"
+  },
+  "macosFailureDisposition": {
+    "path": "work/gold-20260906/wave2535-macos-compile-phases/CANDIDATE.json",
+    "sha256": "F3BC19C2B1FE19E57893FB1F678206CD770F03B6229CE4360E6221129D0C1ADA",
+    "run": 37932521328,
+    "job": 113826485366,
+    "runtimeExecuted": false
+  },
+  "requiredIdentities": [
+    "cli::todo::tests::oneshot_required_audit_waits_for_authenticated_shutdown_and_preserves_subtype",
+    "cli::todo::tests::oneshot_required_audit_propagates_real_shutdown_failure_after_append_ack",
+    "cli::todo::tests::oneshot_optional_audit_keeps_best_effort_posture_after_real_shutdown_failure",
+    "cli::todo::tests::oneshot_deadline_reaps_the_actual_writer_while_append_ack_is_pending",
+    "cli::todo::tests::oneshot_caller_cancellation_reaps_writer_despite_a_retained_handle",
+    "cli::todo::tests::oneshot_finalization_uses_the_original_deadline_and_reaps_retained_writer",
+    "cli::identity::tests::emit_identity_merged_surfaces_audit_rpc_failure",
+    "cli::identity::tests::identity_merge_standalone_audit_finalizes_once_and_preserves_aliases",
+    "cli::consent::tests::standalone_consent_decision_finalizes_without_persisting_permission",
+    "cli::consent::tests::grant_and_revoke_emit_consent_audit_frames_via_oneshot",
+    "cli::consent::tests::required_prepared_audit_failure_leaves_permission_marker_unchanged",
+    "cli::consent_outbox::tests::audit_outage_cannot_trap_authority_from_emergency_revoke",
+    "cli::consent_outbox::tests::optional_terminal_audit_is_queued_before_unrelated_grant",
+    "cli::consent_outbox::tests::standalone_delivery_uses_unique_namespace_not_daemon_segment",
+    "cli::todo::tests::oneshot_offline_audit_blocks_daemon_until_actual_writer_reaped",
+    "cli::todo::tests::oneshot_raced_daemon_owner_rejects_before_creating_wal",
+    "config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing",
+    "config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file",
+    "config::credentials::tests::keychain_empty_ssh_authority_disables_legacy_without_file_copy",
+    "config::keychain::tests::ssh_tunnel_bundle_round_trips_through_every_keychain_path",
+    "config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle",
+    "config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed",
+    "config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite",
+    "cli::chat::tests::chat_incognito_never_preloads_populated_retained_recall_into_first_provider_request",
+    "cli::chat::tests::chat_preloads_retained_recall_before_first_provider_request_for_both_mining_modes",
+    "cli::chat::tests::chat_propagates_provider_error",
+    "cli::chat::tests::one_shot_chat_rechecks_revoked_consent_before_dispatch"
+  ],
+  "staticReview": [
+    "Actual completion wait joins the writer and observes the result channel",
+    "One absolute append/finalization deadline; supervisor retains cleanup through caller cancellation",
+    "No resend or new operation authority; optional/daemon-forwarded audit postures preserved",
+    "All previous40 focused cases retained with six exact additions",
+    "Only unused private PublicRendezvous wrappers removed; live SharedPublicRendezvous discovery preserved",
+    "Fixture completion assertions strengthened, no lint suppression",
+    "Hosted Hickory candidate includes exact feature compile and matching notices; explicit package-delta admission required",
+    "Two new real WAL tests inspect preserved payload/namespace and closing marker",
+    "Existing outbox Delivered test now also inspects prepared receipt and writer closing marker",
+    "Retained required-grant failure, emergency-revoke, pending-audit and live-daemon failure cases selected explicitly",
+    "No new timeout handling duplicated into individual consumers",
+    "W2528 continues serial independent Linux diagnostics after completed lint failures; every original failed step remains fatal, no continue-on-error and no changed commands/budgets.",
+    "W2530 actual PID startup lock acquired before WAL creation and moved into retained completion supervisor until writer reaped",
+    "Required and optional raced-daemon fixtures both forbid WAL creation; required propagates failure and optional remains best effort",
+    "Cross-process daemon-start helper must execute one exact test while finalization is retained; cancellation reaps writer before releasing startup lock",
+    "No general lock refactor, PID/nonce mutation, automatic retry, provider permission or additional daemon endpoint",
+    "W2531 explicit Linux complete/partial Cargo checkpoints survive earlier fatal lint findings; only successful actual test-binary preparation can admit complete key",
+    "All38 protected command/fatality/JUnit-clear/one-worker lines and18 Python test identities retained; no local execution or measured speedup claimed",
+    "Existing cache pin/path namespace retained; fixed per-lock partial key bounds duplicate checkpoint families; five-minute saves; no remote cache deletions or quota changes",
+    "W2532 preserves all existing SSH transport checks and adds seven actual config credential authority cases outside transport namespace",
+    "Each added SSH identity must be discovered once and report exactly one successful test terminal; failures print actual captured output and remain fatal",
+    "Seven existing portable tests newly required, no product credential logic or new Rust test definitions in this leaf",
+    "W2533 heap-owns CLI preparation and engine futures at production adapter; five actual Windows stack-overflow cases remain required",
+    "Both provider/revocation tests require exact quarantined top-level and every cause, plus typed Provider-stage diagnostic context",
+    "Two DREAM test deadlines allow real startup/fsync but keep ACK/finalization held and require actual writer reap; no production deadline change",
+    "Attachment source gate tracks typed Attachments error return while retaining source writer/drop/order guard",
+    "Actual Windows throughput exceeded65m; bounded85m global90m step180m job leaves one worker/testthread and zero retries",
+    "W2534 optional nine-library plus two-integration Windows repair selection; full default1022 selection byte-identical; discovery and actual pass required",
+    "New focused Windows acceptance does not substitute for full Windows or Gold acceptance",
+    "Successful test compile saved before separate CLI phase under partial key",
+    "No macOS cache save after failed compile; timeout can leave tool descendants writing",
+    "Complete key requires actual test compile and actual native fixture CLI success",
+    "Compile150m and tests30m unchanged; separate45m CLI; overall240m includes15m cache/setup margin",
+    "One compiler worker and four macOS test threads unchanged; no runtime retries or source gate removal"
+  ],
+  "additionalSourceBindings": [
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "A7EA49DB2164A70334930DD02D547060169BBDCAF61284E656CBD5CE1195156D"
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "sha256": "6AFBB336C2678A43C414E1BB39114B9DA059D22034C0876404B50CC09985951B"
+    }
+  ],
+  "sshAuthorityCases": 7,
+  "dependencyCandidate": {
+    "family": "hickory-resolver/net/proto",
+    "version": "0.26.3",
+    "upstream": "https://github.com/hickory-dns/hickory-dns/releases/tag/v0.26.3",
+    "hostedSolver": "pending",
+    "acceptedLock": false,
+    "generatedNotices": "pending"
+  },
+  "roadmap": {
+    "baselineInventory": "docs/verification/gold-wave2522-roadmap-open-inventory.json",
+    "rawOpenAndPartial": 243,
+    "originalRowsPreserved": true,
+    "complete": false
+  },
+  "protectedDirtyFiles": {
+    "gitignore": "338772D422D97241514BD764BEE748AE92FD9D9B2E1866299EB404CE43E59591",
+    "physicalCargoLock": "A53BF380469CD0242E9F64735AEAAF2ABF6BCE4098E32200E8EF00DB61B2552A"
+  },
+  "localRuntimeExecuted": false,
+  "hostedCandidateValidation": "pending",
+  "allStandaloneWritersMigrated": false,
+  "durableDeliveryAccepted": false,
+  "physicalDeviceAccepted": false,
+  "releaseAccepted": false,
+  "goldComplete": false
+}

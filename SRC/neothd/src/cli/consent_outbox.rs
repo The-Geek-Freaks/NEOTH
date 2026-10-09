@@ -648,29 +648,16 @@ async fn deliver_raw(home: &Path, event_type: u8, payload: Vec<u8>) -> Result<()
         return Ok(());
     }
 
-    let wal_dir = home.join("wal");
-    std::fs::create_dir_all(&wal_dir)
-        .with_context(|| format!("create standalone WAL directory {}", wal_dir.display()))?;
-    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "consent-change");
-    let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.to_path_buf())
-        .with_context(|| format!("spawn standalone consent WAL {}", segment.display()))?;
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-    let append_result = writer.append(header, payload).await;
-    drop(writer);
-    let join_result = join.await;
-    append_result.with_context(|| {
-        format!(
-            "standalone consent WAL append was not acknowledged in {}",
-            segment.display()
-        )
-    })?;
-    join_result.with_context(|| {
-        format!(
-            "standalone consent WAL writer task failed for {}",
-            segment.display()
-        )
-    })?;
-    Ok(())
+    crate::cli::todo::emit_named_oneshot_audit_at_with_subtype(
+        home,
+        event_type,
+        0,
+        payload,
+        "CONSENT_MUTATION",
+        true,
+        "consent-change",
+    )
+    .await
 }
 
 fn audit_payload(record: &PendingConsentMutation) -> Result<(u8, Vec<u8>)> {
@@ -1390,5 +1377,22 @@ mod tests {
         assert!(names[0].contains("-consent-change-000001.wal"));
         assert_ne!(names[0], "000001.wal");
         assert!(journal_path(home.path()).exists());
+        let bytes = std::fs::read(home.path().join("wal").join(&names[0])).unwrap();
+        let mut prepared_receipts = 0;
+        let mut closing_markers = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_CONSENT_GRANTED {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                assert_eq!(payload["phase"], "prepared");
+                assert_eq!(payload["required_audit"], true);
+                prepared_receipts += 1;
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                closing_markers += 1;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(prepared_receipts, 1, "the outbox delivers its phase once");
+        assert_eq!(closing_markers, 1, "Delivered includes writer finalization");
     }
 }

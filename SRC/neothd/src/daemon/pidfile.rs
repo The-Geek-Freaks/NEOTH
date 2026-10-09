@@ -309,6 +309,36 @@ pub(crate) fn acquire_offline_agents_fan_out_interlock(
     Ok(Some(OfflineAgentsFanOutInterlock { _lock: lock }))
 }
 
+/// Holds the daemon startup lock for a common one-shot audit until its actual
+/// writer has finished. This lease never publishes a PID or endpoint nonce.
+pub(crate) struct OfflineOneShotAuditInterlock {
+    _lock: File,
+}
+
+/// Recheck daemon absence and race startup on the same exclusive OS lock.
+/// Busy or ambiguous ownership must not fall back to a second direct writer.
+pub(crate) fn acquire_offline_oneshot_audit_interlock(
+    pidfile: &Path,
+) -> Result<Option<OfflineOneShotAuditInterlock>> {
+    if let Some(parent) = pidfile.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create one-shot audit PID directory {}", parent.display()))?;
+    }
+    if live_daemon_pid(pidfile)?.is_some() {
+        return Ok(None);
+    }
+    let Some(lock) = open_exclusive(pidfile)
+        .with_context(|| format!("acquire one-shot audit interlock {}", pidfile.display()))?
+    else {
+        return Ok(None);
+    };
+    // The acquired startup lock is the absence proof. Probing again would
+    // observe this lease itself and misclassify unmodified stale PID bytes.
+    let _ = std::fs::metadata(pidfile)
+        .with_context(|| format!("recheck one-shot audit interlock {}", pidfile.display()))?;
+    Ok(Some(OfflineOneShotAuditInterlock { _lock: lock }))
+}
+
 enum ExistingLockState {
     Missing,
     Held,

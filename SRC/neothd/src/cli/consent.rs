@@ -251,38 +251,16 @@ pub(crate) async fn emit_consent_decision(
         return Ok(());
     }
 
-    let wal_dir = home.join("wal");
-    std::fs::create_dir_all(&wal_dir).with_context(|| {
-        format!(
-            "create consent-decision WAL directory {}",
-            wal_dir.display()
-        )
-    })?;
-    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "consent-decision");
-    let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.to_path_buf())
-        .with_context(|| {
-            format!(
-                "spawn standalone consent-decision WAL {}",
-                segment.display()
-            )
-        })?;
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_CONSENT_DECISION, &payload).build();
-    let append_result = writer.append(header, payload).await;
-    drop(writer);
-    let join_result = join.await;
-    append_result.with_context(|| {
-        format!(
-            "standalone consent-decision WAL append was not acknowledged in {}",
-            segment.display()
-        )
-    })?;
-    join_result.with_context(|| {
-        format!(
-            "standalone consent-decision WAL writer task failed for {}",
-            segment.display()
-        )
-    })?;
-    Ok(())
+    crate::cli::todo::emit_named_oneshot_audit_at_with_subtype(
+        home,
+        EVENT_TYPE_CONSENT_DECISION,
+        0,
+        payload,
+        "CONSENT_DECISION",
+        true,
+        "consent-decision",
+    )
+    .await
 }
 
 pub(crate) fn consent_status_rows(
@@ -1812,5 +1790,50 @@ mod tests {
         }
         required_phases.sort();
         assert_eq!(required_phases, vec!["committed", "prepared"]);
+    }
+
+    #[tokio::test]
+    async fn standalone_consent_decision_finalizes_without_persisting_permission() {
+        let home = TempDir::new().unwrap();
+        let route = consent::ConsentRoute::new(
+            ProviderKind::OpenaiApi,
+            Some("https://api.openai.com/v1"),
+        );
+        emit_consent_decision(
+            home.path(),
+            &route,
+            consent::ConsentDecision::AllowOnce,
+            ConsentMutationSource::Tty,
+        )
+        .await
+        .unwrap();
+        assert!(!consent::marker_path(home.path(), route.kind).exists());
+        let segments = wal_segments(home.path());
+        assert_eq!(segments.len(), 1);
+        assert!(segments[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("-consent-decision-000001.wal"));
+        let mut decisions = Vec::new();
+        let mut closing_markers = 0;
+        crate::wal::scan::for_each_frame(&std::fs::read(&segments[0]).unwrap(), |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_CONSENT_DECISION {
+                assert_eq!(frame.header.event_subtype, 0);
+                decisions.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                closing_markers += 1;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(closing_markers, 1);
+        assert_eq!(decisions[0]["decision"], "allow_once");
+        assert_eq!(decisions[0]["source"], "tty");
+        assert_eq!(
+            decisions[0]["endpoint_origin"],
+            serde_json::to_value(consent::route_endpoint_origin(&route).unwrap()).unwrap()
+        );
     }
 }

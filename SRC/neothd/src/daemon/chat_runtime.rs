@@ -263,11 +263,11 @@ impl DaemonChatRuntime {
             )
             .await;
         cancellation.close();
-        if std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1") {
-            if let Err(error) = &result {
-                let (stage, kind) = companion_failure_diagnostics(error);
-                eprintln!("NEOTH_COMPANION_CHAT_FAILURE={stage}:{kind}");
-            }
+        if std::env::var("NEOTH_COMPANION_DIAGNOSTICS").as_deref() == Ok("1")
+            && let Err(error) = &result
+        {
+            let (stage, kind) = companion_failure_diagnostics(error);
+            eprintln!("NEOTH_COMPANION_CHAT_FAILURE={stage}:{kind}");
         }
         match result {
             Ok(response) => Ok(response),

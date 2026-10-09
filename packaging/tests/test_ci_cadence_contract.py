@@ -679,7 +679,26 @@ class CiCadenceContractTests(unittest.TestCase):
         # The Linux visual-ingest regression decodes a real silent video.
         # Missing ffmpeg/ffprobe must fail that test, never silently skip it.
         self.assertIn("ffmpeg", dependencies)
+        # A lint finding must remain fatal while allowing later independent
+        # diagnostics. No step may turn the original failure into success.
+        slim_clippy = steps["cargo clippy slim core"]
+        workspace_clippy = steps["cargo clippy workspace"]
+        self.assertIn("id: slim-clippy", slim_clippy)
+        self.assertNotIn("if:", slim_clippy)
+        self.assertNotIn("continue-on-error:", slim_clippy)
+        self.assertIn("id: workspace-clippy", workspace_clippy)
+        self.assertIn(
+            "if: ${{ !cancelled() && (steps.slim-clippy.outcome == 'success' "
+            "|| steps.slim-clippy.outcome == 'failure') }}",
+            workspace_clippy,
+        )
+        self.assertNotIn("continue-on-error:", workspace_clippy)
         doctests = steps["cargo doctest workspace"]
+        self.assertIn(
+            "if: ${{ !cancelled() && (steps.workspace-clippy.outcome == 'success' "
+            "|| steps.workspace-clippy.outcome == 'failure') }}",
+            doctests,
+        )
         runtime = steps["cargo nextest workspace (Linux)"]
         self.assertIn("id: doctests", doctests)
         self.assertNotIn("continue-on-error:", doctests)
@@ -784,12 +803,65 @@ class CiCadenceContractTests(unittest.TestCase):
             ['cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings'],
         )
 
+        cache_restore = steps["Restore Linux Cargo registry + target"]
+        cache_complete = steps["Save completed Linux Cargo registry + target"]
+        cache_partial = steps["Save partial Linux Cargo registry + target"]
+        self.assertIn("id: linux-cargo-cache", cache_restore)
+        self.assertIn(
+            "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+            cache_restore,
+        )
+        self.assertIn(
+            "key: linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            cache_restore,
+        )
+        self.assertIn(
+            "if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome == 'success' && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}",
+            cache_complete,
+        )
+        self.assertIn(
+            "key: ${{ steps.linux-cargo-cache.outputs.cache-primary-key }}",
+            cache_complete,
+        )
+        self.assertIn(
+            "if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome != 'success' && (steps.slim-clippy.outcome == 'success' || steps.slim-clippy.outcome == 'failure') && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}",
+            cache_partial,
+        )
+        self.assertIn(
+            "key: linux-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}",
+            cache_partial,
+        )
+        for cache_step in (cache_complete, cache_partial):
+            self.assertIn(
+                "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
+                cache_step,
+            )
+            self.assertIn("timeout-minutes: 5", cache_step)
+            self.assertNotIn("continue-on-error", cache_step)
+        for cache_step in (cache_restore, cache_complete, cache_partial):
+            for path in (
+                "~/.cargo/registry/index/",
+                "~/.cargo/registry/cache/",
+                "~/.cargo/git/db/",
+                "SRC/target/",
+            ):
+                self.assertIn(path, cache_step)
+        self.assertLess(
+            linux_quality.index("- name: Restore Linux Cargo registry + target"),
+            linux_quality.index("- name: Discard restored Linux test receipt"),
+        )
+        self.assertLess(
+            linux_quality.index("- name: Save completed Linux Cargo registry + target"),
+            linux_quality.index("- name: cargo nextest workspace (Linux)"),
+        )
+        self.assertNotIn("cache-hit", runtime)
+
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
         platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]
         nextest = (ROOT / "SRC" / ".config" / "nextest.toml").read_text(encoding="utf-8")
         self.assertIn('global-timeout = "45m"', nextest)
         self.assertIn(
-            '[profile.ci-windows]\ninherits = "ci"\nglobal-timeout = "65m"',
+            '[profile.ci-windows]\ninherits = "ci"\nglobal-timeout = "85m"',
             nextest,
         )
         self.assertIn("timeout-minutes: ${{ matrix.job_timeout_minutes }}", platform_tests)
@@ -807,8 +879,8 @@ class CiCadenceContractTests(unittest.TestCase):
                     "            junit_name: macos",
                     "            test_build_timeout_minutes: 150",
                     "            test_execution_timeout_minutes: 30",
-                    "            # Compile + execute bounds plus checkout/toolchain/cache/setup.",
-                    "            job_timeout_minutes: 190",
+                    "            # Compile150 + fixture CLI45 + tests30 + cache/setup15 minutes.",
+                    "            job_timeout_minutes: 240",
                 ]
             ),
             platform_tests,
@@ -821,16 +893,18 @@ class CiCadenceContractTests(unittest.TestCase):
                     "            # Run 35113128375 then reached the old 50-minute bound while",
                     "            # compiling at one job.  Keep that memory boundary and allow the",
                     "            # restored interrupted target plus the current GUI/lib changes to",
-                    "            # finish building before the separate 60-minute test window.",
+                    "            # finish building before the separate test window.",
+                    "            # Run 37932521328 hit the 65m global limit after 18078/19262 tests.",
+                    "            # Keep serial execution; give the full suite a bounded 85m budget.",
                     "            build_jobs: 1",
                     "            # Localhost port-binding tests race on Windows under parallel",
                     "            # process execution; serial execution preserves the real contract.",
                     "            test_threads: 1",
                     "            junit_name: windows",
                     "            test_build_timeout_minutes: 80",
-                    "            test_execution_timeout_minutes: 70",
-                    "            # 80-minute compile + 70-minute execution + 10-minute setup/cache margin.",
-                    "            job_timeout_minutes: 160",
+                    "            test_execution_timeout_minutes: 90",
+                    "            # 80-minute compile + 90-minute execution + 10-minute setup/cache margin.",
+                    "            job_timeout_minutes: 180",
                 ]
             ),
             platform_tests,
@@ -914,10 +988,6 @@ class CiCadenceContractTests(unittest.TestCase):
                     '  sleeper_pid=""',
                     "done",
                     'wait "$cargo_pid"',
-                    "# Native P118 fixtures launch the real CLI; nextest --no-run does not",
-                    "# produce that ordinary executable. Non-macOS returned above.",
-                    "cargo build -p neoth --bin neoth --locked",
-                    'echo "$PWD/target/debug" >> "$GITHUB_PATH"',
                 ]
             ),
         )
@@ -994,6 +1064,47 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertLess(compile_step, junit_cleanup)
         self.assertLess(junit_cleanup, compile_command)
         self.assertLess(compile_command, discovery_step)
+        cli_fixture = steps["Build macOS native fixture CLI"]
+        checkpoint = steps["Save macOS compiled test checkpoint"]
+        self.assertIn("id: native-fixture-cli", cli_fixture)
+        self.assertIn("if: runner.os == 'macOS'", cli_fixture)
+        self.assertIn("timeout-minutes: 45", cli_fixture)
+        self.assertEqual(
+            step_run_command(cli_fixture),
+            "\n".join(
+                [
+                    "# Native P118 fixtures launch the real ordinary CLI executable.",
+                    "cargo build -p neoth --bin neoth --locked",
+                    'echo "$PWD/target/debug" >> "$GITHUB_PATH"',
+                ]
+            ),
+        )
+        self.assertIn(
+            "if: ${{ !cancelled() && runner.os == 'macOS' && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}",
+            checkpoint,
+        )
+        self.assertIn("timeout-minutes: 5", checkpoint)
+        self.assertIn(
+            "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
+            checkpoint,
+        )
+        self.assertIn(
+            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests",
+            checkpoint,
+        )
+        for path in (
+            "~/.cargo/registry/index/",
+            "~/.cargo/registry/cache/",
+            "~/.cargo/git/db/",
+            "SRC/target/",
+        ):
+            self.assertIn(path, checkpoint)
+        checkpoint_step = platform_tests.index("- name: Save macOS compiled test checkpoint")
+        cli_step = platform_tests.index("- name: Build macOS native fixture CLI")
+        self.assertLess(compile_command, checkpoint_step)
+        self.assertLess(checkpoint_step, cli_step)
+        self.assertLess(cli_step, discovery_step)
+        self.assertNotIn("cargo build -p neoth --bin neoth --locked", step_run_command(build))
         cli_build = platform_tests.index("cargo build -p neoth --bin neoth --locked")
         cli_path = platform_tests.index('echo "$PWD/target/debug" >> "$GITHUB_PATH"')
         self.assertLess(compile_command, cli_build)
@@ -1042,14 +1153,14 @@ class CiCadenceContractTests(unittest.TestCase):
         )
         self.assertNotIn("restore-keys: |\n            #", cache_restore)
         self.assertIn(
-            "if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}",
+            "if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && (runner.os != 'macOS' || steps.native-fixture-cli.outcome == 'success') && steps.cargo-cache.outputs.cache-hit != 'true' }}",
             complete_save,
         )
         self.assertIn(
             "key: ${{ steps.cargo-cache.outputs.cache-primary-key }}", complete_save
         )
         self.assertIn(
-            "if: ${{ !cancelled() && failure() && steps.compile-tests.outcome == 'failure' }}",
+            "if: ${{ !cancelled() && runner.os != 'macOS' && failure() && steps.compile-tests.outcome == 'failure' }}",
             partial_save,
         )
         self.assertIn(
@@ -1120,6 +1231,28 @@ class CiCadenceContractTests(unittest.TestCase):
             "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
         ):
             self.assertIn(f"run_exact {identity}", adapter_test)
+
+        ssh_authority = workflow_steps(feature_matrix)[
+            "cargo test SSH credential authority contracts"
+        ]
+        self.assertIn("if: matrix.feature == 'ssh-tunnel'", ssh_authority)
+        self.assertIn("timeout-minutes: 10", ssh_authority)
+        self.assertIn("cargo test -p neoth --lib --locked --features ssh-tunnel", ssh_authority)
+        self.assertIn("--exact --list --color never", ssh_authority)
+        self.assertIn("--exact --test-threads=1 --color never", ssh_authority)
+        self.assertIn('grep -Fxc "$test_name: test"', ssh_authority)
+        self.assertIn('grep -Fxc "test $test_name ... ok"', ssh_authority)
+        self.assertNotIn("continue-on-error", ssh_authority)
+        for identity in (
+            "config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing",
+            "config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file",
+            "config::credentials::tests::keychain_empty_ssh_authority_disables_legacy_without_file_copy",
+            "config::keychain::tests::ssh_tunnel_bundle_round_trips_through_every_keychain_path",
+            "config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle",
+            "config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed",
+            "config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite",
+        ):
+            self.assertEqual(ssh_authority.count(f"run_ssh_authority_exact {identity}"), 1)
 
     def test_macos_native_gui_discovery_requires_exact_suite_ownership(self) -> None:
         suites = {

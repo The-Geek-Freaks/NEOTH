@@ -115,11 +115,16 @@ fn attachment_ignoring_slashes_are_rejected_before_extraction() {
         extract < correction,
         "a rejected attachment turn must not mutate the learned profile"
     );
+    let extraction = engine[extract..correction]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
     assert!(
-        engine[extract..correction].contains("writer.clone()")
-            && engine[extract..correction].contains("drop(writer);")
-            && engine[extract..correction].contains("return Err(error);"),
-        "extraction must use the caller-owned writer and fail before correction persistence"
+        extraction.contains("writer.clone()")
+            && extraction.contains(
+                "Err(error)=>{drop(writer);returnErr(tag_chat_turn_failure(error,ChatTurnFailureStage::Attachments,));}"
+            ),
+        "extraction must drop its writer clone and return the original error with its attachment stage before correction persistence"
     );
 }
 

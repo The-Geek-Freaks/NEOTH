@@ -21,8 +21,8 @@ report-name = "neoth-nextest"
 store-success-output = false
 store-failure-output = true
 
-# The serial Windows suite needs more than 45m (run 36685748514).
+# The serial Windows suite exceeded 65m with 1184 cases unrun (37932521328).
 # Inherit retries, per-test limits and JUnit settings without extending Linux.
 [profile.ci-windows]
 inherits = "ci"
-global-timeout = "65m"
+global-timeout = "85m"

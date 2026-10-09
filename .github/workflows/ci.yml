@@ -199,16 +199,20 @@ jobs:
             xvfb \
             ffmpeg
 
-      - name: Cache Cargo registry + target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Linux Cargo registry + target
+        id: linux-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: linux-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: linux-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
+            linux-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}
+            linux-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+            linux-1.91-cargo-complete-
             linux-1.91-cargo-
 
       # A failed format/lint/compile phase must not upload a cached older run's
@@ -249,6 +253,7 @@ jobs:
       # GOLD-SEC-16: keep the supported no-default-feature launcher contract
       # separate because workspace feature unification enables wizard.
       - name: cargo clippy slim core
+        id: slim-clippy
         timeout-minutes: 20
         working-directory: SRC
         run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
@@ -258,13 +263,19 @@ jobs:
       # Run 36826661054 restored no cache and reached this step's 30-minute
       # limit without a compiler diagnostic. Keep the serial memory boundary;
       # reserve 45 minutes for the same complete lint on a cold cache.
+      # Completed lint failures remain fatal to the job. Continue collecting
+      # independent workspace/doctest/runtime findings on the same producer;
+      # cancelled or skipped preparation must not admit the later phases.
       - name: cargo clippy workspace
+        id: workspace-clippy
+        if: ${{ !cancelled() && (steps.slim-clippy.outcome == 'success' || steps.slim-clippy.outcome == 'failure') }}
         timeout-minutes: 45
         working-directory: SRC
         run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       - name: cargo doctest workspace
         id: doctests
+        if: ${{ !cancelled() && (steps.workspace-clippy.outcome == 'success' || steps.workspace-clippy.outcome == 'failure') }}
         timeout-minutes: 20
         working-directory: SRC
         run: cargo test --workspace --doc --locked
@@ -324,9 +335,38 @@ jobs:
           } >> "$GITHUB_ENV"
           sudo timeout 10 apparmor_parser -r "$profile_file"
 
+      # Save compiled inputs before runtime tests, even when an earlier lint
+      # failed. Cache contents never replace this run's compile or test steps.
+      - name: Save completed Linux Cargo registry + target
+        if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome == 'success' && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.linux-cargo-cache.outputs.cache-primary-key }}
+
+      # A failed or skipped preparation can retain dependencies under a
+      # separate partial key. It can never populate the completed key.
+      - name: Save partial Linux Cargo registry + target
+        if: ${{ !cancelled() && steps.gui-runtime-prerequisites.outcome != 'success' && (steps.slim-clippy.outcome == 'success' || steps.slim-clippy.outcome == 'failure') && steps.linux-cargo-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: linux-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}
+
       - name: cargo nextest workspace (Linux)
         # A documentation failure remains fatal to the job, but must not hide
-        # the independent runtime suite. Earlier setup/lint failures still stop it.
+        # the independent runtime suite. Setup/format failure still stops it;
+        # completed lint failures keep their original fatal job outcomes.
         if: ${{ !cancelled() && (steps.doctests.outcome == 'success' || steps.doctests.outcome == 'failure') && steps.gui-runtime-prerequisites.outcome == 'success' }}
         # A milestone must expose remaining failures across the full suite.
         # Continue after test failures within the existing timeout; no retries.
@@ -379,23 +419,25 @@ jobs:
             junit_name: macos
             test_build_timeout_minutes: 150
             test_execution_timeout_minutes: 30
-            # Compile + execute bounds plus checkout/toolchain/cache/setup.
-            job_timeout_minutes: 190
+            # Compile150 + fixture CLI45 + tests30 + cache/setup15 minutes.
+            job_timeout_minutes: 240
           - os: windows-2022
             # Run 34881450745: rustc-LLVM OOM while compiling at four jobs.
             # Run 35113128375 then reached the old 50-minute bound while
             # compiling at one job.  Keep that memory boundary and allow the
             # restored interrupted target plus the current GUI/lib changes to
-            # finish building before the separate 60-minute test window.
+            # finish building before the separate test window.
+            # Run 37932521328 hit the 65m global limit after 18078/19262 tests.
+            # Keep serial execution; give the full suite a bounded 85m budget.
             build_jobs: 1
             # Localhost port-binding tests race on Windows under parallel
             # process execution; serial execution preserves the real contract.
             test_threads: 1
             junit_name: windows
             test_build_timeout_minutes: 80
-            test_execution_timeout_minutes: 70
-            # 80-minute compile + 70-minute execution + 10-minute setup/cache margin.
-            job_timeout_minutes: 160
+            test_execution_timeout_minutes: 90
+            # 80-minute compile + 90-minute execution + 10-minute setup/cache margin.
+            job_timeout_minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -487,11 +529,6 @@ jobs:
             sleeper_pid=""
           done
           wait "$cargo_pid"
-          # Native P118 fixtures launch the real CLI; nextest --no-run does not
-          # produce that ordinary executable. Non-macOS returned above.
-          cargo build -p neoth --bin neoth --locked
-          echo "$PWD/target/debug" >> "$GITHUB_PATH"
-
       - name: Upload macOS compile observability
         if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -500,6 +537,31 @@ jobs:
           path: ${{ runner.temp }}/macos-nextest-compile-observability.log
           if-no-files-found: warn
           retention-days: 14
+
+      # Preserve a quiescent, successful test compile before the separate CLI
+      # build. It remains a partial checkpoint, never the complete acceptance key.
+      - name: Save macOS compiled test checkpoint
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}-compiled-tests
+
+      - name: Build macOS native fixture CLI
+        id: native-fixture-cli
+        if: runner.os == 'macOS'
+        timeout-minutes: 45
+        shell: bash
+        working-directory: SRC
+        run: |
+          # Native P118 fixtures launch the real ordinary CLI executable.
+          cargo build -p neoth --bin neoth --locked
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
 
       - name: Verify macOS native GUI fixture discovery
         if: runner.os == 'macOS'
@@ -511,7 +573,7 @@ jobs:
           python3 ../packaging/tests/verify_macos_native_gui_fixture_discovery.py "$fixture_list"
 
       - name: Save completed Cargo registry + target
-        if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && (runner.os != 'macOS' || steps.native-fixture-cli.outcome == 'success') && steps.cargo-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -523,7 +585,9 @@ jobs:
 
       - name: Save interrupted Cargo registry + target
         # An interrupted compile must never occupy the immutable complete key.
-        if: ${{ !cancelled() && failure() && steps.compile-tests.outcome == 'failure' }}
+        # macOS timeout can leave tool children writing; retain only its earlier
+        # successful, quiescent checkpoint instead of archiving a live target.
+        if: ${{ !cancelled() && runner.os != 'macOS' && failure() && steps.compile-tests.outcome == 'failure' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -795,6 +859,35 @@ jobs:
         if: matrix.feature == 'ssh-tunnel'
         working-directory: SRC
         run: cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1
+
+      # Credential authority is outside the transport::ssh_ filter. Discover
+      # and execute every required migration/bundle case explicitly.
+      - name: cargo test SSH credential authority contracts
+        if: matrix.feature == 'ssh-tunnel'
+        timeout-minutes: 10
+        shell: bash
+        working-directory: SRC
+        run: |
+          run_ssh_authority_exact() {
+            local test_name="$1"
+            local listed executed
+            listed="$(cargo test -p neoth --lib --locked --features ssh-tunnel "$test_name" -- --exact --list --color never)"
+            printf '%s\n' "$listed"
+            test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
+            if ! executed="$(cargo test -p neoth --lib --locked --features ssh-tunnel "$test_name" -- --exact --test-threads=1 --color never 2>&1)"; then
+              printf '%s\n' "$executed"
+              return 1
+            fi
+            printf '%s\n' "$executed"
+            test "$(printf '%s\n' "$executed" | grep -Fxc "test $test_name ... ok")" -eq 1
+          }
+          run_ssh_authority_exact config::credentials::tests::unavailable_keychain_aborts_legacy_ssh_migration_without_writing
+          run_ssh_authority_exact config::credentials::tests::keychain_ssh_authority_wins_without_leaking_into_credentials_file
+          run_ssh_authority_exact config::credentials::tests::keychain_empty_ssh_authority_disables_legacy_without_file_copy
+          run_ssh_authority_exact config::keychain::tests::ssh_tunnel_bundle_round_trips_through_every_keychain_path
+          run_ssh_authority_exact config::keychain::tests::file_empty_ssh_authority_wins_over_keychain_bundle
+          run_ssh_authority_exact config::keychain::tests::corrupt_keychain_ssh_bundle_fails_closed
+          run_ssh_authority_exact config::keychain::tests::ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite
 
       # Each exact hermetic test is listed before execution. cargo test exits
       # zero on an empty filter, so the exact `: test` count is the proof that

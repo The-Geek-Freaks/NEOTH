@@ -299,6 +299,22 @@ jobs:
             'cli::agents::tests::w2464_controlled_real_fan_out_blocks_daemon_until_terminal_writer_cleanup' \
             'cli::agents::tests::w2464_cancelled_real_fan_out_retains_lease_until_retained_writer_clone_releases' \
             'daemon::pidfile::tests::w2464_agents_fan_out_interlock_blocks_cross_process_daemon_start_then_releases' \
+            'cli::identity::tests::emit_identity_merged_surfaces_audit_rpc_failure' \
+            'cli::identity::tests::identity_merge_standalone_audit_finalizes_once_and_preserves_aliases' \
+            'cli::consent::tests::standalone_consent_decision_finalizes_without_persisting_permission' \
+            'cli::consent::tests::grant_and_revoke_emit_consent_audit_frames_via_oneshot' \
+            'cli::consent::tests::required_prepared_audit_failure_leaves_permission_marker_unchanged' \
+            'cli::consent_outbox::tests::audit_outage_cannot_trap_authority_from_emergency_revoke' \
+            'cli::consent_outbox::tests::optional_terminal_audit_is_queued_before_unrelated_grant' \
+            'cli::consent_outbox::tests::standalone_delivery_uses_unique_namespace_not_daemon_segment' \
+            'cli::todo::tests::oneshot_required_audit_waits_for_authenticated_shutdown_and_preserves_subtype' \
+            'cli::todo::tests::oneshot_required_audit_propagates_real_shutdown_failure_after_append_ack' \
+            'cli::todo::tests::oneshot_optional_audit_keeps_best_effort_posture_after_real_shutdown_failure' \
+            'cli::todo::tests::oneshot_deadline_reaps_the_actual_writer_while_append_ack_is_pending' \
+            'cli::todo::tests::oneshot_caller_cancellation_reaps_writer_despite_a_retained_handle' \
+            'cli::todo::tests::oneshot_finalization_uses_the_original_deadline_and_reaps_retained_writer' \
+            'cli::todo::tests::oneshot_offline_audit_blocks_daemon_until_actual_writer_reaped' \
+            'cli::todo::tests::oneshot_raced_daemon_owner_rejects_before_creating_wal' \
             'cli::dream::tests::standalone_dream_audit_waits_for_real_writer_completion' \
             'cli::dream::tests::dream_audit_absolute_deadline_aborts_pending_append_ack' \
             'cli::dream::tests::dream_audit_absolute_deadline_reaps_retained_writer' \
@@ -335,6 +351,10 @@ jobs:
             'SRC/neothd/src/config/mod.rs' \
             'SRC/neothd/src/consent.rs' \
             'SRC/neothd/src/providers/cost_authorization.rs' \
+            'SRC/neothd/src/cli/identity.rs' \
+            'SRC/neothd/src/cli/consent.rs' \
+            'SRC/neothd/src/cli/consent_outbox.rs' \
+            'SRC/neothd/src/cli/todo.rs' \
             'SRC/neothd/src/cli/dream.rs' \
             'SRC/neothd/src/cli/cluster.rs' \
             'SRC/neothd/src/cli/chat.rs' \
@@ -347,7 +367,7 @@ jobs:
             sha256sum "${source_path#SRC/}"
           done < "$proof_dir/source-paths.txt" > "$proof_dir/SHA256SUMS.txt"
           expected_updater_count="$(wc -l < "$proof_dir/selection.txt")"
-          test "$expected_updater_count" -eq 40
+          test "$expected_updater_count" -eq 56
           ordinal=0
           while IFS= read -r identity; do
             ordinal=$((ordinal + 1))

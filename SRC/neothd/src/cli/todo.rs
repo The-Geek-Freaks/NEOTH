@@ -656,6 +656,73 @@ pub(crate) async fn emit_oneshot_audit_at_with_subtype(
     label: &'static str,
     required: bool,
 ) -> Result<()> {
+    emit_named_oneshot_audit_at_with_subtype(
+        home,
+        event_type,
+        event_subtype,
+        payload,
+        label,
+        required,
+        "oneshot-audit",
+    )
+    .await
+}
+
+pub(crate) async fn emit_named_oneshot_audit_at_with_subtype(
+    home: &std::path::Path,
+    event_type: u8,
+    event_subtype: u8,
+    payload: Vec<u8>,
+    label: &'static str,
+    required: bool,
+    segment_prefix: &'static str,
+) -> Result<()> {
+    deliver_oneshot_audit_at(
+        home,
+        OneShotAuditFrame {
+            event_type,
+            event_subtype,
+            payload,
+            label,
+            segment_prefix,
+        },
+        required,
+        std::time::Duration::from_secs(30),
+        #[cfg(test)]
+        OneShotAuditTestHooks::default(),
+    )
+    .await
+}
+
+struct OneShotAuditFrame {
+    event_type: u8,
+    event_subtype: u8,
+    payload: Vec<u8>,
+    label: &'static str,
+    segment_prefix: &'static str,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct OneShotAuditTestHooks {
+    after_absence_probe: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+    ack_gate: Option<crate::wal::writer::TestAckGate>,
+    fail_shutdown_marker: bool,
+    retained_writer: Option<tokio::sync::oneshot::Sender<crate::wal::writer::WalWriterHandle>>,
+    reaped: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+async fn deliver_oneshot_audit_at(
+    home: &std::path::Path,
+    frame: OneShotAuditFrame,
+    required: bool,
+    completion_timeout: std::time::Duration,
+    #[cfg(test)] mut hooks: OneShotAuditTestHooks,
+) -> Result<()> {
+    let label = frame.label;
     let delivery: Result<()> = async {
         let daemon_live = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
             .context("inspect daemon ownership before audit delivery")?
@@ -663,9 +730,9 @@ pub(crate) async fn emit_oneshot_audit_at_with_subtype(
         if daemon_live {
             crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
                 home,
-                event_type,
-                event_subtype,
-                &payload,
+                frame.event_type,
+                frame.event_subtype,
+                &frame.payload,
             )
             .await
             .map_err(anyhow::Error::new)
@@ -673,26 +740,103 @@ pub(crate) async fn emit_oneshot_audit_at_with_subtype(
             return Ok(());
         }
 
+        #[cfg(test)]
+        if let Some((observed, resume)) = hooks.after_absence_probe.take() {
+            let _ = observed.send(());
+            resume
+                .await
+                .context("one-shot audit absence fixture cancelled before ownership")?;
+        }
+        let offline_owner =
+            crate::daemon::pidfile::acquire_offline_oneshot_audit_interlock(
+                &home.join("neothd.pid"),
+            )
+            .context("acquire exclusive one-shot audit ownership")?
+            .context("daemon ownership changed before one-shot audit; no local writer started")?;
+
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir)
             .with_context(|| format!("create audit WAL directory {}", wal_dir.display()))?;
-        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "oneshot-audit");
-        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
-            .with_context(|| format!("spawn home-bound writer for {label}"))?;
-        let header = crate::wal::HeaderBuilder::new(event_type, &payload)
-            .event_subtype(event_subtype)
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, frame.segment_prefix);
+        #[cfg(test)]
+        let test_segment = segment.clone();
+        let (writer, completion) =
+            crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+                .with_context(|| format!("spawn home-bound writer for {label}"))?;
+        #[cfg(test)]
+        let writer = match hooks.ack_gate.take() {
+            Some(gate) => writer.with_test_ack_gate(gate),
+            None => writer,
+        };
+        let header = crate::wal::HeaderBuilder::new(frame.event_type, &frame.payload)
+            .event_subtype(frame.event_subtype)
             .build();
-        let append = writer
-            .append(header, payload)
+        let deadline = tokio::time::Instant::now() + completion_timeout;
+        let (mut result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+        // Retain the actual writer through finalization even when the requesting
+        // command is cancelled. An ACK does not prove the closing marker succeeded.
+        tokio::spawn(async move {
+            let abort = completion.abort_handle();
+            let appended = {
+                let append = writer.append(header, frame.payload);
+                tokio::pin!(append);
+                tokio::select! {
+                    biased;
+                    _ = result_tx.closed() => {
+                        abort.abort();
+                        Err(anyhow::anyhow!("one-shot audit caller cancelled during append"))
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        abort.abort();
+                        Err(anyhow::anyhow!("one-shot audit append exceeded its absolute deadline"))
+                    }
+                    result = &mut append => result.with_context(|| format!("durably append {label}")),
+                }
+            };
+            #[cfg(test)]
+            if appended.is_ok() {
+                if hooks.fail_shutdown_marker {
+                    crate::wal::writer::fail_compaction_marker_write_for_test(&test_segment);
+                }
+                if let Some(signal) = hooks.retained_writer.take() {
+                    let _ = signal.send(writer.clone());
+                }
+            }
+            drop(writer);
+            let finalized = completion.wait();
+            tokio::pin!(finalized);
+            let joined = tokio::select! {
+                biased;
+                _ = result_tx.closed() => {
+                    abort.abort();
+                    let reaped = finalized.await;
+                    Err(anyhow::anyhow!("one-shot audit caller cancelled; writer reaped: {reaped:?}"))
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    abort.abort();
+                    let reaped = finalized.await;
+                    Err(anyhow::anyhow!("one-shot audit finalization exceeded its absolute deadline; writer reaped: {reaped:?}"))
+                }
+                result = &mut finalized => result.with_context(|| format!("finalize home-bound writer after {label}")),
+            };
+            drop(offline_owner);
+            #[cfg(test)]
+            if let Some(signal) = hooks.reaped.take() {
+                let _ = signal.send(());
+            }
+            let outcome = match (appended, joined) {
+                (Ok(_), Ok(())) => Ok(()),
+                (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+                (Err(append), Err(finalize)) => Err(anyhow::anyhow!(
+                    "{append:#}; additionally failed to finalize one-shot audit: {finalize:#}"
+                )),
+            };
+            let _ = result_tx.send(outcome);
+        });
+        result_rx
             .await
-            .with_context(|| format!("durably append {label}"));
-        drop(writer);
-        let joined = join
-            .await
-            .with_context(|| format!("join home-bound writer after {label}"));
-        append?;
-        joined?;
-        Ok(())
+            .context("one-shot audit supervisor ended before terminal writer cleanup")?
     }
     .await;
 
@@ -700,11 +844,11 @@ pub(crate) async fn emit_oneshot_audit_at_with_subtype(
         Ok(()) => Ok(()),
         Err(error) if required => Err(error).with_context(|| {
             format!(
-                "required audit `{label}` was not durably recorded; refusing the protected mutation"
+                "required audit '{label}' was not durably completed; the protected operation must not report success"
             )
         }),
         Err(error) => {
-            tracing::warn!(%error, label, "optional audit was not recorded");
+            tracing::warn!(%error, label, "optional audit was not durably completed");
             Ok(())
         }
     }
@@ -973,6 +1117,351 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::permissions::AutonomyLevel;
+
+    fn oneshot_frame() -> OneShotAuditFrame {
+        OneShotAuditFrame {
+            event_type: crate::wal::events::EVENT_TYPE_EXTENDED,
+            event_subtype: crate::wal::events::ExtendedSubtype::SelfImproveJournalDiscarded as u8,
+            payload: br#"{"source":"completion-regression"}"#.to_vec(),
+            label: "SELF_IMPROVE_JOURNAL_DISCARDED",
+            segment_prefix: "oneshot-audit",
+        }
+    }
+
+    fn oneshot_frames(home: &std::path::Path) -> Vec<(u8, u8, Vec<u8>)> {
+        let mut frames = Vec::new();
+        for entry in std::fs::read_dir(home.join("wal")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "wal") {
+                let bytes = std::fs::read(path).unwrap();
+                crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+                    frames.push((
+                        frame.header.event_type,
+                        frame.header.event_subtype,
+                        frame.payload.to_vec(),
+                    ));
+                    Ok(())
+                })
+                .unwrap();
+            }
+        }
+        frames
+    }
+
+    #[tokio::test]
+    async fn oneshot_required_audit_waits_for_authenticated_shutdown_and_preserves_subtype() {
+        let home = tempfile::tempdir().unwrap();
+        let expected = oneshot_frame();
+        emit_oneshot_audit_at_with_subtype(
+            home.path(),
+            expected.event_type,
+            expected.event_subtype,
+            expected.payload.clone(),
+            expected.label,
+            true,
+        )
+        .await
+        .unwrap();
+        let frames = oneshot_frames(home.path());
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame.0 == expected.event_type
+                    && frame.1 == expected.event_subtype
+                    && frame.2 == expected.payload)
+                .count(),
+            1
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame.0 == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER)
+                .count(),
+            1,
+            "success includes the writer's authenticated closing marker"
+        );
+    }
+
+    #[tokio::test]
+    async fn oneshot_required_audit_propagates_real_shutdown_failure_after_append_ack() {
+        let home = tempfile::tempdir().unwrap();
+        let error = deliver_oneshot_audit_at(
+            home.path(),
+            oneshot_frame(),
+            true,
+            std::time::Duration::from_secs(30),
+            OneShotAuditTestHooks {
+                fail_shutdown_marker: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("an acknowledged frame must not hide writer finalization failure");
+        assert!(format!("{error:#}").contains("injected compaction marker write failure"));
+        let frames = oneshot_frames(home.path());
+        assert_eq!(frames.len(), 1, "audit was written once before shutdown failed");
+        assert_eq!(frames[0].2, oneshot_frame().payload);
+    }
+
+    #[tokio::test]
+    async fn oneshot_optional_audit_keeps_best_effort_posture_after_real_shutdown_failure() {
+        let home = tempfile::tempdir().unwrap();
+        deliver_oneshot_audit_at(
+            home.path(),
+            oneshot_frame(),
+            false,
+            std::time::Duration::from_secs(30),
+            OneShotAuditTestHooks {
+                fail_shutdown_marker: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("optional audit failure stays best-effort");
+        assert_eq!(oneshot_frames(home.path()).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn oneshot_deadline_reaps_the_actual_writer_while_append_ack_is_pending() {
+        let home = tempfile::tempdir().unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(oneshot_frame().event_type);
+        let (reaped_tx, reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            let gate = gate.clone();
+            async move {
+                deliver_oneshot_audit_at(
+                    &home,
+                    oneshot_frame(),
+                    true,
+                    std::time::Duration::from_secs(2),
+                    OneShotAuditTestHooks {
+                        ack_gate: Some(gate),
+                        reaped: Some(reaped_tx),
+                        ..Default::default()
+                    },
+                )
+                .await
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), gate.wait_until_durable())
+            .await
+            .expect("real writer reached the durable-before-ACK gate");
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .expect_err("pending ACK expires");
+        assert!(format!("{error:#}").contains("append exceeded its absolute deadline"));
+        reaped_rx.await.expect("actual writer was reaped before returning");
+        assert_eq!(oneshot_frames(home.path()).len(), 1, "no audit redispatch");
+    }
+
+    #[tokio::test]
+    async fn oneshot_caller_cancellation_reaps_writer_despite_a_retained_handle() {
+        let home = tempfile::tempdir().unwrap();
+        let (retained_tx, retained_rx) = tokio::sync::oneshot::channel();
+        let (reaped_tx, reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move {
+                deliver_oneshot_audit_at(
+                    &home,
+                    oneshot_frame(),
+                    true,
+                    std::time::Duration::from_secs(30),
+                    OneShotAuditTestHooks {
+                        retained_writer: Some(retained_tx),
+                        reaped: Some(reaped_tx),
+                        ..Default::default()
+                    },
+                )
+                .await
+            }
+        });
+        let retained = tokio::time::timeout(std::time::Duration::from_secs(5), retained_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(5), reaped_rx)
+            .await
+            .unwrap()
+            .expect("caller cancellation cannot detach the writer");
+        let frame = oneshot_frame();
+        let header = crate::wal::HeaderBuilder::new(frame.event_type, &frame.payload)
+            .event_subtype(frame.event_subtype)
+            .build();
+        assert!(retained.append(header, frame.payload).await.is_err());
+        assert_eq!(oneshot_frames(home.path()).len(), 1, "cancellation never resends");
+    }
+
+    #[tokio::test]
+    async fn oneshot_finalization_uses_the_original_deadline_and_reaps_retained_writer() {
+        let home = tempfile::tempdir().unwrap();
+        let (retained_tx, retained_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move {
+                deliver_oneshot_audit_at(
+                    &home,
+                    oneshot_frame(),
+                    true,
+                    std::time::Duration::from_secs(2),
+                    OneShotAuditTestHooks {
+                        retained_writer: Some(retained_tx),
+                        ..Default::default()
+                    },
+                )
+                .await
+            }
+        });
+        let retained = tokio::time::timeout(std::time::Duration::from_secs(5), retained_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .expect_err("retained handle cannot block completion forever");
+        assert!(format!("{error:#}").contains("finalization exceeded its absolute deadline"));
+        let frame = oneshot_frame();
+        let header = crate::wal::HeaderBuilder::new(frame.event_type, &frame.payload)
+            .event_subtype(frame.event_subtype)
+            .build();
+        assert!(retained.append(header, frame.payload).await.is_err());
+        assert_eq!(oneshot_frames(home.path()).len(), 1);
+    }
+
+
+    const ONESHOT_INTERLOCK_CHILD_PATH: &str = "NEOTH_ONESHOT_INTERLOCK_CHILD_PATH";
+
+    #[test]
+    #[ignore = "helper launched by one-shot audit owner parent"]
+    fn oneshot_audit_child_daemon_start() {
+        let Some(path) = std::env::var_os(ONESHOT_INTERLOCK_CHILD_PATH) else {
+            return;
+        };
+        assert!(
+            crate::daemon::pidfile::acquire(std::path::Path::new(&path)).is_err(),
+            "a separate daemon cannot start while the actual audit writer remains owned"
+        );
+    }
+
+    #[tokio::test]
+    async fn oneshot_offline_audit_blocks_daemon_until_actual_writer_reaped() {
+        let home = tempfile::tempdir().unwrap();
+        let pidfile = home.path().join("neothd.pid");
+        let original = b"stale informational body\n";
+        std::fs::write(&pidfile, original).unwrap();
+        let (retained_tx, retained_rx) = tokio::sync::oneshot::channel();
+        let (reaped_tx, reaped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move {
+                deliver_oneshot_audit_at(
+                    &home,
+                    oneshot_frame(),
+                    true,
+                    std::time::Duration::from_secs(90),
+                    OneShotAuditTestHooks {
+                        retained_writer: Some(retained_tx),
+                        reaped: Some(reaped_tx),
+                        ..Default::default()
+                    },
+                )
+                .await
+            }
+        });
+        let retained = tokio::time::timeout(std::time::Duration::from_secs(10), retained_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(&pidfile).unwrap(), original);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("cli::todo::tests::oneshot_audit_child_daemon_start")
+            .env(ONESHOT_INTERLOCK_CHILD_PATH, &pidfile)
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "daemon-start child failed: {} {}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&child.stdout).contains("running 1 test"),
+            "the cross-process helper must actually execute exactly one test"
+        );
+        assert_eq!(std::fs::read(&pidfile).unwrap(), original);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(10), reaped_rx)
+            .await
+            .unwrap()
+            .expect("the supervisor reaps the actual writer before releasing its startup lock");
+        let frame = oneshot_frame();
+        let header = crate::wal::HeaderBuilder::new(frame.event_type, &frame.payload)
+            .event_subtype(frame.event_subtype)
+            .build();
+        assert!(retained.append(header, frame.payload).await.is_err());
+        assert_eq!(std::fs::read(&pidfile).unwrap(), original);
+        assert_eq!(oneshot_frames(home.path()).len(), 1, "no audit redispatch");
+        let daemon = crate::daemon::pidfile::acquire(&pidfile)
+            .expect("daemon can start only after actual writer cleanup");
+        drop(daemon);
+    }
+
+    #[tokio::test]
+    async fn oneshot_raced_daemon_owner_rejects_before_creating_wal() {
+        for required in [true, false] {
+            let home = tempfile::tempdir().unwrap();
+            let pidfile = home.path().join("neothd.pid");
+            let (observed_tx, observed_rx) = tokio::sync::oneshot::channel();
+            let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn({
+                let home = home.path().to_path_buf();
+                async move {
+                    deliver_oneshot_audit_at(
+                        &home,
+                        oneshot_frame(),
+                        required,
+                        std::time::Duration::from_secs(30),
+                        OneShotAuditTestHooks {
+                            after_absence_probe: Some((observed_tx, resume_rx)),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                }
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(10), observed_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            let daemon = crate::daemon::pidfile::acquire(&pidfile)
+                .expect("daemon wins the real startup lock after the initial absence probe");
+            let original = std::fs::read(&pidfile).unwrap();
+            resume_tx.send(()).unwrap();
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10), task)
+                .await
+                .unwrap()
+                .unwrap();
+            if required {
+                let error = result.expect_err("required audit cannot ignore the ownership race");
+                assert!(format!("{error:#}").contains("no local writer started"));
+            } else {
+                result.expect("optional audit remains best effort without starting a second writer");
+            }
+            assert!(!home.path().join("wal").exists(), "no direct WAL effect before ownership");
+            assert_eq!(std::fs::read(&pidfile).unwrap(), original);
+            drop(daemon);
+        }
+    }
 
     fn full_task_policy() -> crate::permissions::AutonomyPolicySnapshot {
         let mut cfg = crate::config::FreedomConfig::default();

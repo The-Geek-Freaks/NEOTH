@@ -1851,7 +1851,7 @@ mod tests {
             crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf()).unwrap();
         ready.wait().await.unwrap();
         drop(writer);
-        wal_join.await.unwrap();
+        wal_join.await.unwrap().expect("finalize fixture WAL");
 
         let args = UpdaterArgs {
             action: UpdaterAction::Status {

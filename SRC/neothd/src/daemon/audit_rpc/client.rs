@@ -1890,7 +1890,7 @@ mod tests {
                 .expect("accept same-user updater-status client");
             let mut byte = [0_u8; 1];
             stream
-                .read(&mut byte)
+                .read_exact(&mut byte)
                 .await
                 .expect("observe request write before stalling response");
             let _ = entered_tx.send(());

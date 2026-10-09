@@ -9761,15 +9761,19 @@ async fn run_chat_with_consent_to(
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<()> {
     let wal_segment = args.wal_segment.clone(); // direct CLI custody; never enters prepared engine
-    let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepare_cli_chat_turn(
-        args,
-        config,
-        provider,
-        ephemeral_consent,
-        retained_skill_admission,
-        stream_control_token,
-        cancellation,
-        output,
+    // Heap-own the large preparation and engine futures at the CLI adapter,
+    // so nested callers do not carry either state machine on the Windows stack.
+    let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = Box::pin(
+        prepare_cli_chat_turn(
+            args,
+            config,
+            provider,
+            ephemeral_consent,
+            retained_skill_admission,
+            stream_control_token,
+            cancellation,
+            output,
+        ),
     )
     .await?
     else {
@@ -9787,13 +9791,13 @@ async fn run_chat_with_consent_to(
         prepared.preparation.first_tour_home.clone(),
     )
     .context("spawn home-bound WAL writer")?;
-    let result = chat_turn_pipeline::run_prepared_chat_turn(
+    let result = Box::pin(chat_turn_pipeline::run_prepared_chat_turn(
         &mut prepared,
         provider,
         &writer,
         &segment_path,
         output,
-    )
+    ))
     .await;
     prepared.preparation.cancellation.close();
     let response_feedback_home = prepared.preparation.first_tour_home.clone();
@@ -20784,11 +20788,20 @@ modes:
         let error = run_chat_with(args, config, &provider)
             .await
             .expect_err("missing live consent marker must stop the final dispatch");
-        let surfaced = format!("{error:#}");
-        assert_eq!(
-            surfaced,
-            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined"
+        let opaque =
+            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined";
+        assert_eq!(error.to_string(), opaque);
+        assert!(matches!(
+            error
+                .downcast_ref::<chat_turn_pipeline::ChatTurnFailureContext>()
+                .map(|context| context.stage),
+            Some(chat_turn_pipeline::ChatTurnFailureStage::Provider)
+        ));
+        assert!(
+            error.chain().all(|cause| cause.to_string() == opaque),
+            "every diagnostic layer must retain only the quarantined message"
         );
+        let surfaced = format!("{error:#}");
         for secret in [
             "Reply with one short greeting.",
             "openai_api",
@@ -23707,11 +23720,20 @@ template = "[REDACTED]"
         let error = run_chat_with(args, config, &provider)
             .await
             .expect_err("the synthetic transport must fail after authorization");
-        let surfaced = format!("{error:#}");
-        assert_eq!(
-            surfaced,
-            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined"
+        let opaque =
+            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined";
+        assert_eq!(error.to_string(), opaque);
+        assert!(matches!(
+            error
+                .downcast_ref::<chat_turn_pipeline::ChatTurnFailureContext>()
+                .map(|context| context.stage),
+            Some(chat_turn_pipeline::ChatTurnFailureStage::Provider)
+        ));
+        assert!(
+            error.chain().all(|cause| cause.to_string() == opaque),
+            "every diagnostic layer must retain only the quarantined message"
         );
+        let surfaced = format!("{error:#}");
         assert!(
             !surfaced.contains("simulated upstream failure"),
             "opaque provider failure must not expose the raw upstream text"

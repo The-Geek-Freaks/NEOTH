@@ -918,18 +918,19 @@ mod tests {
                 emit_dream_composed_at_with_lifecycle_signals(
                     &home,
                     &dream_report(),
-                    Duration::from_millis(25),
+                    Duration::from_secs(2),
                     Some((None, Some(writer_reaped_tx))),
                     Some(gate),
                 )
                 .await
             }
         });
-        tokio::time::timeout(Duration::from_secs(1), gate.wait_until_durable())
+        tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable())
             .await
             .expect("real DREAM_COMPOSED append must reach the durable-before-ack gate");
-        let result = task
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
             .await
+            .expect("pending append supervisor must finish within the fixture bound")
             .expect("pending append deadline supervisor must finish");
         assert!(
             result
@@ -938,7 +939,7 @@ mod tests {
                 .contains("append exceeded its absolute deadline"),
             "the absolute budget bounds the real append acknowledgement"
         );
-        tokio::time::timeout(Duration::from_secs(1), writer_reaped_rx)
+        tokio::time::timeout(Duration::from_secs(5), writer_reaped_rx)
             .await
             .expect("pending append deadline must reap the actual writer")
             .expect("pending append supervisor must report terminal cleanup");
@@ -954,17 +955,21 @@ mod tests {
                 emit_dream_composed_at_with_lifecycle_signals(
                     &home,
                     &dream_report(),
-                    Duration::from_millis(25),
+                    Duration::from_secs(2),
                     Some((Some(append_admitted_tx), Some(writer_reaped_tx))),
                     None,
                 )
                 .await
             }
         });
-        let retained_writer = append_admitted_rx
+        let retained_writer = tokio::time::timeout(Duration::from_secs(5), append_admitted_rx)
             .await
+            .expect("real append admission must finish within the fixture bound")
             .expect("real append must be admitted before the deadline fixture holds its writer");
-        let result = task.await.expect("deadline fixture supervisor must finish");
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("deadline supervisor must finish within the fixture bound")
+            .expect("deadline fixture supervisor must finish");
         assert!(
             result
                 .expect_err("retained writer must exhaust the absolute deadline")
@@ -972,7 +977,7 @@ mod tests {
                 .contains("absolute deadline"),
             "the one budget covers finalization after a successful append"
         );
-        tokio::time::timeout(Duration::from_secs(1), writer_reaped_rx)
+        tokio::time::timeout(Duration::from_secs(5), writer_reaped_rx)
             .await
             .expect("deadline path must reap the actual writer")
             .expect("deadline supervisor must report terminal cleanup");

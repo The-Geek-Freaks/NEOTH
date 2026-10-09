@@ -463,13 +463,12 @@ impl SharedPublicRendezvousCarrier {
             .err();
         // The dispatcher owns the actor join; awaiting it is the terminal
         // proof that the DHT/UDX actor drained.
-        if let Some(dispatcher) = self.dispatcher.lock().await.take() {
-            if let Err(error) = dispatcher
+        if let Some(dispatcher) = self.dispatcher.lock().await.take()
+            && let Err(error) = dispatcher
                 .await
                 .context("shared public carrier dispatcher panicked")
-            {
-                first_error.get_or_insert(error);
-            }
+        {
+            first_error.get_or_insert(error);
         }
         let mut sticky = self.terminal_failure.lock().await;
         // The actor may fail after destroy has already returned an error.
@@ -554,16 +553,15 @@ impl SharedPublicRendezvous {
             .await
             .context("remove exact shared public route admission")
             .err();
-        if last {
-            if let Err(error) = self
+        if last
+            && let Err(error) = self
                 .carrier
                 .peer_handle
                 .leave(self.topic)
                 .await
                 .context("leave shared public route topic")
-            {
-                first_error.get_or_insert(error);
-            }
+        {
+            first_error.get_or_insert(error);
         }
         match first_error {
             Some(error) => Err(error),
@@ -668,59 +666,6 @@ impl PublicRendezvous {
         self.connections.recv().await
     }
 
-    /// Wait for the joined server topic's initial route publication receipt.
-    ///
-    /// Pairing requires both the topic announcement and the separate
-    /// `hash(server_public_key)` announcement used to route `PEER_HANDSHAKE`.
-    /// It does not claim a later client will observe either record. The caller
-    /// retains this rendezvous and must use `shutdown_checked` on every
-    /// non-ready terminal path.
-    pub(crate) async fn wait_for_initial_discovery(
-        &self,
-        shutdown: &mut tokio::sync::watch::Receiver<bool>,
-        deadline: tokio::time::Instant,
-    ) -> Result<()> {
-        self.wait_for_initial_discovery_until_stop(shutdown, None, deadline)
-            .await
-    }
-
-    /// Wait for first publication while retaining the rendezvous owner until
-    /// either its caller-owned stop, daemon shutdown, or deadline selects a
-    /// checked terminal path.
-    pub(crate) async fn wait_for_initial_discovery_until_stop(
-        &self,
-        shutdown: &mut tokio::sync::watch::Receiver<bool>,
-        local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
-        deadline: tokio::time::Instant,
-    ) -> Result<()> {
-        let handle = self
-            .peer_handle
-            .as_ref()
-            .context("public rendezvous lost its peeroxide handle before discovery readiness")?;
-        match wait_for_bootstrap_or_stop(
-            handle.server_publication(self.topic),
-            shutdown,
-            local_stop,
-            deadline,
-        )
-        .await
-        {
-            BootstrapWait::Ready(Ok(publication)) if publication.both_announcements_succeeded() => {
-                Ok(())
-            }
-            BootstrapWait::Ready(Ok(_)) => {
-                anyhow::bail!(
-                    "public rendezvous initial publication did not establish both required routes"
-                )
-            }
-            BootstrapWait::Ready(Err(error)) => {
-                Err(error).context("public rendezvous initial publication receipt")
-            }
-            BootstrapWait::CancelledOrExpired => {
-                anyhow::bail!("public rendezvous cancelled or expired during initial publication")
-            }
-        }
-    }
     /// Stop advertising the topic while retaining the control handle until
     /// `shutdown_checked` destroys and joins the actor. The authenticated
     /// connection can therefore finish its terminal response after discovery
@@ -729,16 +674,14 @@ impl PublicRendezvous {
         let Some(handle) = self.peer_handle.as_ref() else {
             anyhow::bail!("public rendezvous was already shut down");
         };
-        let result =
-            match tokio::time::timeout(std::time::Duration::from_secs(2), handle.leave(self.topic))
-                .await
-            {
-                Ok(result) => result.context("peeroxide leave public rendezvous topic"),
-                Err(_) => Err(anyhow::anyhow!(
-                    "peeroxide leave public rendezvous topic timed out"
-                )),
-            };
-        result
+        match tokio::time::timeout(std::time::Duration::from_secs(2), handle.leave(self.topic))
+            .await
+        {
+            Ok(result) => result.context("peeroxide leave public rendezvous topic"),
+            Err(_) => Err(anyhow::anyhow!(
+                "peeroxide leave public rendezvous topic timed out"
+            )),
+        }
     }
 
     /// Gracefully destroy the Peeroxide actor and await its nested DHT owner.
@@ -842,32 +785,6 @@ pub(crate) async fn spawn_public_rendezvous(
     .await
 }
 
-/// Start a public rendezvous with a daemon-owned Noise server key.  The
-/// caller must retain and durably own this key before publishing its public
-/// half in an invitation.  This does not loosen v2 admission: the expected
-/// authenticated remote static key remains mandatory and teardown is shared
-/// with [`spawn_public_rendezvous`].
-pub(crate) async fn spawn_public_rendezvous_with_key(
-    topic: [u8; 32],
-    expected_remote_static_key: [u8; 32],
-    server_key_pair: peeroxide::KeyPair,
-    companion_diagnostic_scope: peeroxide::CompanionDiagnosticScope,
-    deadline: tokio::time::Instant,
-    shutdown: tokio::sync::watch::Receiver<bool>,
-    local_stop: Option<&mut tokio::sync::watch::Receiver<bool>>,
-) -> Result<PublicRendezvous> {
-    spawn_public_rendezvous_with_optional_key(
-        topic,
-        expected_remote_static_key,
-        Some(server_key_pair),
-        companion_diagnostic_scope,
-        deadline,
-        shutdown,
-        local_stop,
-    )
-    .await
-}
-
 async fn spawn_public_rendezvous_with_optional_key(
     topic: [u8; 32],
     expected_remote_static_key: [u8; 32],
@@ -933,7 +850,7 @@ async fn spawn_public_rendezvous_with_optional_key(
 
     let join_result = tokio::select! {
         biased;
-        _ = public_start_shutdown_requested(&mut shutdown, local_stop.as_deref_mut()) => None,
+        _ = public_start_shutdown_requested(&mut shutdown, local_stop) => None,
         _ = tokio::time::sleep_until(deadline) => None,
         result = peer_handle.join(topic, server_only_join_opts()) => Some(result),
     };

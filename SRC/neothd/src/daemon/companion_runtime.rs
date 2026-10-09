@@ -460,7 +460,7 @@ impl CompanionRuntime {
             }
         }
         let tasks = std::mem::take(&mut *self.listener_tasks.lock().await);
-        for (_, owner) in &tasks {
+        for owner in tasks.values() {
             if let Err(error) = signal_listener_stop(owner, "runtime shutdown") {
                 first_error.get_or_insert(error);
             }
@@ -749,6 +749,7 @@ impl CompanionRuntime {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn run_pair_listener(
         self: &Arc<Self>,
         topic: [u8; 32],
@@ -1073,7 +1074,8 @@ impl CompanionRuntime {
             let mut tasks = self.pair_tasks.lock().await;
             let keys = tasks
                 .iter()
-                .filter_map(|(key, owner)| owner.task.is_finished().then(|| key.clone()))
+                .filter(|(_, owner)| owner.task.is_finished())
+                .map(|(key, _)| key.clone())
                 .collect::<Vec<_>>();
             keys.into_iter()
                 .filter_map(|key| tasks.remove(&key))
@@ -1634,7 +1636,7 @@ impl CompanionRuntime {
                             lease.complete_confirmed().context(
                                 "close no-write companion chat marker after terminal serialization failure",
                             )?;
-                            return Err(error.into());
+                            return Err(error);
                         }
                         Err(teardown_error) => {
                             self.mark_degraded().await;

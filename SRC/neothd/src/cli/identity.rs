@@ -181,25 +181,16 @@ async fn emit_identity_merged(
         })?;
         return Ok(());
     }
-    let wal_dir = home.join("wal");
-    std::fs::create_dir_all(&wal_dir)
-        .with_context(|| format!("create WAL dir {}", wal_dir.display()))?;
-    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "identity-merge");
-    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
-        .context("0x9B IDENTITY_MERGED: WAL writer spawn failed; merge not recorded")?;
-    let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_IDENTITY_MERGED, &payload)
-            .build();
-    let append = writer
-        .try_append_sync(header, payload)
-        .context("0x9B IDENTITY_MERGED: frame append failed (audit gap)");
-    drop(writer);
-    let drained = join
-        .await
-        .context("0x9B IDENTITY_MERGED: WAL writer task panicked");
-    append?;
-    drained?;
-    Ok(())
+    crate::cli::todo::emit_named_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
+        0,
+        payload,
+        "IDENTITY_MERGED",
+        true,
+        "identity-merge",
+    )
+    .await
 }
 
 fn render_list(ids: &[identity_store::Identity], output: OutputFormat) {
@@ -246,6 +237,58 @@ mod tests {
         assert!(
             r.is_err(),
             "a missing daemon audit listener must surface as Err, not a silent skip"
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_merge_standalone_audit_finalizes_once_and_preserves_aliases() {
+        let home = tempfile::tempdir().unwrap();
+        let aliases = vec![identity_store::Alias {
+            channel: "telegram".to_owned(),
+            account_id: Some("work".to_owned()),
+            sender_id: "12345".to_owned(),
+            chat_id: "67890".to_owned(),
+        }];
+        emit_identity_merged(home.path(), false, "canonical", "victim", &aliases)
+            .await
+            .unwrap();
+        let segments: Vec<_> = std::fs::read_dir(home.path().join("wal"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "wal"))
+            .collect();
+        assert_eq!(segments.len(), 1);
+        assert!(segments[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("-identity-merge-000001.wal"));
+        let mut receipts = Vec::new();
+        let mut closing_markers = 0;
+        crate::wal::scan::for_each_frame(&std::fs::read(&segments[0]).unwrap(), |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_IDENTITY_MERGED {
+                assert_eq!(frame.header.event_subtype, 0);
+                receipts.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                closing_markers += 1;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(receipts.len(), 1, "the merge audit must never be resent");
+        assert_eq!(closing_markers, 1, "success includes actual writer finalization");
+        let receipt = &receipts[0];
+        assert_eq!(receipt["canonical"], "canonical");
+        assert_eq!(receipt["victim"], "victim");
+        assert_eq!(receipt["aliases_reassigned"], 1);
+        assert_eq!(
+            receipt["aliases"],
+            serde_json::json!([{
+                "channel": "telegram",
+                "account_id": "work",
+                "sender_id": "12345",
+                "chat_id": "67890"
+            }])
         );
     }
 }
