@@ -18866,3 +18866,11 @@ Vollintegrations-Abschluss auf dem vorherigen Producer: failure. Fehlgeschlagene
 Producer d0a6fc67650b6fb8af6e61a44e9296060784cb5c besteht Code Quality 37951576638. Preflight 37951577612 stoppt ausschließlich an Rust-Formatierung. Das originale GitHub-Artefakt 11626127597 ist gegen den API-SHA256 F20A220A05F39514991929BF3114AFB80CC766952FFAA7BB757A7EBD52C0AB5A geprüft; der Patch wird auf genau vier eigene Rust-Dateien übernommen. Kein lokaler Formatter wurde ausgeführt.
 
 Der zusätzliche Workflow-Validierungsfehler 37951575897 meldet die maximale Ausdruckslänge 21000: Durch die neue direkte Input-Interpolation wurde der bestehende große Auswahlblock als GitHub-Ausdruck ausgewertet. Der boolesche Modus wird jetzt durch die Step-Umgebung übergeben. Alle 1022 Standardfälle und die explizite Auswahl von neun Bibliotheks- und zwei Integrationsfällen bleiben erhalten. Frische Preflight-/Workflow-Ausführung, Abhängigkeitslösung und Plattformabnahmen stehen weiterhin aus; keine Gold-Freigabe.
+
+### W2538 — Hickory-Reparatur ohne fremde Windows-Abhängigkeitsänderungen
+
+Der originale Hosted-Lauf 37952271667 auf b15ec976c707e6a9aab184d27afeb2ff801a5cfd kompiliert cluster-iroh erfolgreich; alle fünf Lizenzgenerator-Fälle und die Reproduktion bestehen. Die Original-ZIP ist gegen API-SHA256 geprüft, alle 17 Einträge und sechs Quellbindungen sind geprüft. Root lehnt die Übernahme dieses Kandidaten dennoch ab: Cargo änderte zusätzlich 21 Windows-sys-Abhängigkeitszuordnungen fremder Pakete.
+
+Der Solver-Workflow bewahrt jetzt das ungekürzte Solver-Ergebnis als Beleg, ersetzt im Baseline-Text ausschließlich hickory-resolver, hickory-net und hickory-proto durch die vom Solver erzeugten 0.26.3-Blöcke und verlangt genau sechs Paketidentitätsänderungen. Alle anderen Blöcke bleiben erhalten. Erst die tatsächliche erneute locked-Kompilation und die reproduzierten Lizenzhinweise qualifizieren diesen engeren Kandidaten für Root-Übernahme. Die lokale, uncommittete Lockdatei bleibt unverändert; eine spätere akzeptierte Übernahme erfolgt ausschließlich im Index.
+
+Workflow statisch geprüft; neue Hosted-Ausführung steht aus. Keine Laufzeit-, Plattform-, Geräte-, Release- oder Gold-Abnahme wird behauptet. Alle ursprünglichen Backlog-Zeilen bleiben erhalten. Bericht: docs/verification/gold-wave2538-hickory-minimal-graph.json.

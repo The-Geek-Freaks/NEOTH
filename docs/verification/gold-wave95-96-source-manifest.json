@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T15:26:01.7927236Z",
-  "validationStatus": "source-published-fresh-hosted-validation-pending",
+  "capturedUtc": "2026-10-09T15:42:16.1908745Z",
+  "validationStatus": "static-reviewed-hickory-minimal-workflow-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -143,8 +143,8 @@
     },
     {
       "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
-      "bytes": 6614,
-      "sha256": "66D4457D75031C2290AF691A8797F69E732DD30695B4F989C544F3C2186B08B6"
+      "bytes": 9556,
+      "sha256": "529273A25126BF03FCEACF944E09202FE92BAB089ED87C48426F9A3987B01683"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -4182,6 +4182,11 @@
       "sha256": "14187AFB7FBD8A027B3D37C9A87D0A44F58F1AE58DEB3821661452C8901695B8"
     },
     {
+      "path": "docs/verification/gold-wave2538-hickory-minimal-graph.json",
+      "bytes": 1395,
+      "sha256": "C3FC9648EE37088E8824765863032087BB01FBD54D7F9E639DDC86D42CACF1B1"
+    },
+    {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
@@ -5338,8 +5343,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2541843,
-      "sha256": "525ECA03A9B8243AD39107B60F93BAA9A7E922A76779CCD3F7EF46BD6EB845F2"
+      "bytes": 2543206,
+      "sha256": "7D004A126DA04EE892CB0C2316A0EDD46824FBF3AF8ADD9CF17D622E67212E61"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

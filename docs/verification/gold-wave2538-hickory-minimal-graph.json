@@ -1,0 +1,40 @@
+{
+  "schema": "neoth.wave2538.hickory-minimal-graph.v1",
+  "base": "b15ec976c707e6a9aab184d27afeb2ff801a5cfd",
+  "status": "static-reviewed-workflow-pending-hosted-candidate",
+  "rejectedSolver": {
+    "unrelatedWindowsDependencyRetargets": 21,
+    "noticeReproduction": "success",
+    "producer": "b15ec976c707e6a9aab184d27afeb2ff801a5cfd",
+    "custody": "work/gold-20260906/wave2537-hickory-family-admission/ROOT_SCOPE_REVIEW.json",
+    "imported": false,
+    "run": 37952271667,
+    "archiveSha256": "C22B23474F99C06F9B987DB8EAC1C19717265D708CBC358AD9BA4D8765ED0BFA",
+    "noticeUnitTests": 5,
+    "compile": "success"
+  },
+  "repair": {
+    "family": [
+      "hickory-net",
+      "hickory-proto",
+      "hickory-resolver"
+    ],
+    "solverOriginalRetained": true,
+    "nonFamilyBlocks": "preserved from baseline",
+    "version": "0.26.3",
+    "workflowSha256": "529273A25126BF03FCEACF944E09202FE92BAB089ED87C48426F9A3987B01683",
+    "expectedPackageIdentityChanges": 6,
+    "requiredHostedChecks": [
+      "cargo check -p neoth --locked --features cluster-iroh",
+      "notice unit tests",
+      "notice generation and reproduction"
+    ]
+  },
+  "portableRegistrations": 2890,
+  "localRuntimeExecuted": false,
+  "localCodeParserExecuted": false,
+  "physicalDirtyLockPreserved": true,
+  "dependencyCandidateImported": false,
+  "fullPlatformAcceptance": "pending",
+  "goldComplete": false
+}

@@ -63,26 +63,75 @@ jobs:
           cargo update --manifest-path SRC/Cargo.toml \
             -p hickory-resolver@0.26.2 --precise 0.26.3 \
             2>&1 | tee hickory-resolver-lock/solver.log
-          cp SRC/Cargo.lock hickory-resolver-lock/resolved-Cargo.lock
-          git diff --binary --full-index -- SRC/Cargo.lock \
-            > hickory-resolver-lock/Cargo.lock.patch
+          cp SRC/Cargo.lock hickory-resolver-lock/solver-Cargo.lock
           python3 - <<'PY'
           from hashlib import sha256
           import json
           from pathlib import Path
+          import re
           import tomllib
 
           root = Path("hickory-resolver-lock")
           before_path = root / "baseline-Cargo.lock"
+          solver_path = root / "solver-Cargo.lock"
           after_path = root / "resolved-Cargo.lock"
-          before = tomllib.loads(before_path.read_text())["package"]
-          after = tomllib.loads(after_path.read_text())["package"]
+          before_text = before_path.read_text()
+          solver_text = solver_path.read_text()
+          before = tomllib.loads(before_text)["package"]
+          solved = tomllib.loads(solver_text)["package"]
+          family = {"hickory-resolver", "hickory-net", "hickory-proto"}
           key = lambda p: (p["name"], p["version"], p.get("source", ""))
+
+          # Cargo may retarget broad windows-sys edges unrelated to Hickory.
+          # Preserve every non-family package block byte-for-byte and require
+          # Cargo's real locked feature check to accept that narrower graph.
+          replacements = {}
+          for block in re.split(r"(?=^\[\[package\]\])", solver_text, flags=re.MULTILINE):
+              packages = tomllib.loads(block).get("package", [])
+              if not packages:
+                  continue
+              package = packages[0]
+              if package["name"] in family:
+                  if len(packages) != 1 or package["name"] in replacements:
+                      raise SystemExit("ambiguous solved Hickory block")
+                  if package["version"] != "0.26.3":
+                      raise SystemExit("solver did not produce exact Hickory family")
+                  replacements[package["name"]] = block
+          if set(replacements) != family:
+              raise SystemExit("missing solved Hickory package block")
+
+          candidate_blocks = []
+          replaced = set()
+          for block in re.split(r"(?=^\[\[package\]\])", before_text, flags=re.MULTILINE):
+              packages = tomllib.loads(block).get("package", [])
+              name = packages[0]["name"] if packages else None
+              if name in family:
+                  if len(packages) != 1 or name in replaced:
+                      raise SystemExit("ambiguous baseline Hickory block")
+                  replaced.add(name)
+                  candidate_blocks.append(replacements[name])
+              else:
+                  candidate_blocks.append(block)
+          if replaced != family:
+              raise SystemExit("baseline Hickory family missing")
+          candidate_text = "".join(candidate_blocks)
+          after = tomllib.loads(candidate_text)["package"]
           old = {key(p): p for p in before}
           new = {key(p): p for p in after}
-          if len(old) != len(before) or len(new) != len(after):
+          solver = {key(p): p for p in solved}
+          if len(old) != len(before) or len(new) != len(after) or len(solver) != len(solved):
               raise SystemExit("duplicate package identity")
-          family = {"hickory-resolver", "hickory-net", "hickory-proto"}
+          old_other = {k: p for k, p in old.items() if k[0] not in family}
+          new_other = {k: p for k, p in new.items() if k[0] not in family}
+          if old_other != new_other:
+              raise SystemExit("minimal candidate changed a non-Hickory package")
+          after_path.write_text(candidate_text, encoding="utf-8", newline="\n")
+          Path("SRC/Cargo.lock").write_bytes(after_path.read_bytes())
+          solver_changes = [
+              {"identity": list(k), "before": old.get(k), "after": solver.get(k)}
+              for k in sorted(set(old) | set(solver))
+              if old.get(k) != solver.get(k)
+          ]
           for name in family:
               selected = [p for p in after if p["name"] == name]
               if len(selected) != 1 or selected[0]["version"] != "0.26.3":
@@ -96,6 +145,9 @@ jobs:
               "schema": "neoth.hickory-family-candidate.v1",
               "baselineSha256": sha256(before_path.read_bytes()).hexdigest(),
               "candidateSha256": sha256(after_path.read_bytes()).hexdigest(),
+              "solverSha256": sha256(solver_path.read_bytes()).hexdigest(),
+              "solverChanges": solver_changes,
+              "nonFamilyPackagesPreserved": old_other == new_other,
               "changes": changed,
               "unrelatedPackageChanges": [d for d in changed if d["identity"][0] not in family],
               "requiredFamilyVersion": "0.26.3",
@@ -103,9 +155,11 @@ jobs:
               "imported": False,
           }
           (root / "package-delta.json").write_text(json.dumps(report, indent=2) + "\n")
-          if len(changed) > 80:
-              raise SystemExit("dependency change ceiling exceeded; retain evidence for review")
+          if len(changed) != 6 or any(d["identity"][0] not in family for d in changed):
+              raise SystemExit("candidate must replace exactly the three Hickory packages")
           PY
+          git diff --binary --full-index -- SRC/Cargo.lock \
+            > hickory-resolver-lock/Cargo.lock.patch
 
       - name: Compile the actual Iroh feature contract with the candidate lock
         working-directory: SRC

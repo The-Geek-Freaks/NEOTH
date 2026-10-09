@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "source-published-fresh-hosted-validation-pending",
+  "status": "static-reviewed-hickory-minimal-workflow-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 412928,
-    "sha256": "B833B6FA84334436118D56435785D56418214F9F102CE8AC604A914DEDDE5985"
+    "bytes": 413128,
+    "sha256": "BF835567C0B2CCD6A88AEA4AC04E334F5A4744D168E40721334F6C14F8CB99C4"
   },
-  "sourceInputs": 2253,
+  "sourceInputs": 2254,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -81029,6 +81029,32 @@
       }
     ],
     "note": "Original hosted format patch for four files and environment-bound Windows repair selection;2890portable;no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2538HickoryMinimalGraph": {
+    "base": "b15ec976c707e6a9aab184d27afeb2ff801a5cfd",
+    "sources": [
+      {
+        "path": ".github/workflows/hickory-resolver-lock-candidate.yml",
+        "bytes": 9556,
+        "sha256": "529273A25126BF03FCEACF944E09202FE92BAB089ED87C48426F9A3987B01683",
+        "blob": "986ccaa985e130aefd6722a8d91c7b1d7193ffdd"
+      },
+      {
+        "path": "docs/verification/gold-wave2538-hickory-minimal-graph.json",
+        "bytes": 1395,
+        "sha256": "C3FC9648EE37088E8824765863032087BB01FBD54D7F9E639DDC86D42CACF1B1",
+        "blob": "bee038053e6af9b6bc5ea720be512fdcfdb2a6e4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2543206,
+        "sha256": "7D004A126DA04EE892CB0C2316A0EDD46824FBF3AF8ADD9CF17D622E67212E61",
+        "blob": "cab157d124b79c8310aa232dcfde341add51c635"
+      }
+    ],
+    "note": "Reject solver Windows retargeting; retain non-Hickory baseline blocks and require actual locked feature check plus notices. No local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
