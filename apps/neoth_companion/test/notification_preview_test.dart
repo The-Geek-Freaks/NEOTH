@@ -69,6 +69,7 @@ void main() {
     await f.controller.setVisible(true);
     await f.deliver(f.event()); expect(f.controller.current?.text, 'An incoming message');
     expect(f.calls.every((call) => call.method == 'configure'), isTrue);
+    f.controller.dispose();
   });
 
   testWidgets('JM07 duplicate delivery and dismissal cannot restart a preview deadline', (tester) async {
@@ -78,6 +79,7 @@ void main() {
     f.now = f.now.add(const Duration(seconds: 1));
     await f.deliver(event); expect(f.controller.current, isNull);
     await f.deliver(f.event(source: 'b' * 64)); expect(f.controller.current, isNotNull);
+    f.controller.dispose();
   });
 
   testWidgets('JM07 delayed delivery expires at the original thirty second boundary', (tester) async {
@@ -109,6 +111,7 @@ void main() {
       {...f.event(), 'expiresAt': f.now.millisecondsSinceEpoch + 30001},
     ]) { await f.deliver(event); expect(f.controller.current, isNull); }
     await f.deliver({...f.event(), 'text': '🙂' * 512}); expect(f.controller.current, isNotNull);
+    f.controller.dispose();
   });
 
   testWidgets('JM07 quiet hours reject overnight and remove a card at quiet start', (tester) async {

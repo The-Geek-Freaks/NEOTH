@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W2518 native admitted; W2519 opt-in notification preview and app network metadata implemented; fresh hosted native pending",
+  "status": "widget-fixture-timer-cleanup-pending-hosted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 412245,
-    "sha256": "B9EA7079347F4EF8320BAC2DCC2850F9035ECA23830233C35D837515F6DD66C9"
+    "bytes": 412166,
+    "sha256": "E43FBE88639E46389F53A0503C099AAC781371F54897EB1CBA0FCDC8923FF5F7"
   },
   "sourceInputs": 2249,
   "requiredNativeTests": [
@@ -80563,6 +80563,38 @@
       }
     ],
     "note": "New 11 Flutter/14 Kotlin regression sources; next native gate requires67Flutter/14Kotlin/73sources/14FFI, actual APK network permissions and built iOS privacy description. W2518 native proof6010CE71 accepted on aed658d5; no device/release claim.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2519PreviewFixtureCleanup": {
+    "base": "8fd26a86219e0ae1497495d6e833ab4f40634aa1",
+    "sources": [
+      {
+        "path": "apps/neoth_companion/test/notification_preview_test.dart",
+        "bytes": 11797,
+        "sha256": "E3E952BF7EE8360738F9A6185F060F2FBFE477133E8757EFA11F0932D90BDB54",
+        "blob": "c218d6609d27ac391bd470ee0893fccf438dcadd"
+      },
+      {
+        "path": "docs/verification/gold-wave2519-notification-preview.json",
+        "bytes": 4231,
+        "sha256": "4F2B4E9CC56DBAFC31154FE802BB663258666B954D2024464B79D5FD235C2687",
+        "blob": "9e5a9bce3ca656930b106005843d8a014fd6a8c4"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 45040,
+        "sha256": "9E72C4122B901499AE30A9E746FA482167906C4E7C5FAAD5212B0D7B5090175B",
+        "blob": "4185d7c889b9a80bbad3dff3acc1d07339bd9387"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2524431,
+        "sha256": "DEFDC1137C4211A13D23C14C346F2BB52740F8ECCF1E49ABE28B731C9D8CFB67",
+        "blob": "239dc85aae886cfb5ca3abfb5172a4e0a9c8a127"
+      }
+    ],
+    "note": "Three test controllers now dispose before widget-test completion. Prior hosted analyzer clean;64 passed,3 pending-timer failures; native skipped. No product behavior changed, no local runtime executed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

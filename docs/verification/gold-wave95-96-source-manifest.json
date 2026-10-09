@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T11:17:46.3846465Z",
-  "validationStatus": "W2518 native admitted; W2519 opt-in notification preview and app network metadata implemented; fresh hosted native pending",
+  "capturedUtc": "2026-10-09T11:28:35.8189684Z",
+  "validationStatus": "widget-fixture-timer-cleanup-pending-hosted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -518,8 +518,8 @@
     },
     {
       "path": "apps/neoth_companion/test/notification_preview_test.dart",
-      "bytes": 11713,
-      "sha256": "B21D897B4C23C72DF7ADE9B42CA9B2D5DB6CA6CCAAAFBB1FFDFB159BACEF190A"
+      "bytes": 11797,
+      "sha256": "E3E952BF7EE8360738F9A6185F060F2FBFE477133E8757EFA11F0932D90BDB54"
     },
     {
       "path": "apps/neoth_companion/test/secure_store_conversation_test.dart",
@@ -4163,8 +4163,8 @@
     },
     {
       "path": "docs/verification/gold-wave2519-notification-preview.json",
-      "bytes": 3321,
-      "sha256": "D630D58227B0F920CBF3D64960B0491F7F141E19B5F069B1B93F90F47863CAC8"
+      "bytes": 4231,
+      "sha256": "4F2B4E9CC56DBAFC31154FE802BB663258666B954D2024464B79D5FD235C2687"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5313,8 +5313,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 44201,
-      "sha256": "951F62C58B39F15AE1817CD034155A0A4A6F95E558FB777B2B9B8637F110EC9C"
+      "bytes": 45040,
+      "sha256": "9E72C4122B901499AE30A9E746FA482167906C4E7C5FAAD5212B0D7B5090175B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5323,8 +5323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2523592,
-      "sha256": "F97FF48216D6BB29F20C5E1153D95909A2C3A18A403BC473C75141165BC1E7A5"
+      "bytes": 2524431,
+      "sha256": "DEFDC1137C4211A13D23C14C346F2BB52740F8ECCF1E49ABE28B731C9D8CFB67"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

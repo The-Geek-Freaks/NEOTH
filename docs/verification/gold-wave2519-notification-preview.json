@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2519.notification-preview.v1",
-  "status": "implemented-static-reviewed-awaiting-hosted-and-native",
+  "status": "implemented-test-fixture-lifecycle-repaired-awaiting-hosted-and-native",
   "base": "aed658d5e445df14167178ae5cc774b9f25c0390",
   "pipelineItem": "JM-07",
   "scope": "Android foreground-only opt-in notification previews adapted from the Jarvis behavior into NEOTH presentation and owners",
@@ -50,5 +50,23 @@
     "run": "37920857872",
     "proofSha256": "6010CE71AB21C6CD87E46FB891FD7B2E6EFC955CB069B86A13992BBDD547381A",
     "validForNewFeature": false
+  },
+  "firstHostedAttempt": {
+    "run": "37923441706",
+    "producer": "8fd26a86219e0ae1497495d6e833ab4f40634aa1",
+    "analyzer": "No issues found",
+    "flutterPassed": 64,
+    "flutterFailed": 3,
+    "failure": "Three widget fixtures left their 30-second preview timer active until the binding invariant; addTearDown ran too late",
+    "nativeJobsExecuted": 0,
+    "reviewPath": "work/gold-20260906/wave2519-preview-fixture-repair/FAILED_FLUTTER_REVIEW.json",
+    "reviewSha256": "D19D9BBAC0FC926071A0788C0C348D379675CFBB9304426B6A30DB39B32D0A9C"
+  },
+  "fixtureRepair": {
+    "path": "apps/neoth_companion/test/notification_preview_test.dart",
+    "change": "Dispose each of the three affected controllers before its widget-test callback returns; retain fallback teardown and all assertions",
+    "productBehaviorChanged": false,
+    "expectedCaseCount": 67,
+    "hostedRerun": "pending"
   }
 }
