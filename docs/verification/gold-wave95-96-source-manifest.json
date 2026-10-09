@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T11:55:50.6572178Z",
-  "validationStatus": "apk-inspector-provenance-repaired-native-rerun-pending",
+  "capturedUtc": "2026-10-09T12:25:12.8931036Z",
+  "validationStatus": "mobile-native-admitted-on66ab1f2a-doc-only-closure",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -4163,8 +4163,8 @@
     },
     {
       "path": "docs/verification/gold-wave2519-notification-preview.json",
-      "bytes": 5438,
-      "sha256": "529D16A2D78151EF04F783B581927F55A335BC2968D5A66C3E7A5367EEC4948B"
+      "bytes": 7209,
+      "sha256": "3CAF198EC6F60EBC9C670D297CBB9E98FD4094A2A86FDA038997BE6FB3AC9CEA"
     },
     {
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
@@ -5313,8 +5313,8 @@
     },
     {
       "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
-      "bytes": 47207,
-      "sha256": "C6726ADE289B618419A4D599FEA2F895899B63CA047A0A6FF4C2AE167B3C6B1A"
+      "bytes": 48885,
+      "sha256": "27D717C45E67E817048D2BB3DC04DCE205F6CC2ADE0C66DB03A7E667EF179975"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
@@ -5323,8 +5323,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2526598,
-      "sha256": "81460AB9A029CDB597886FCBDDC0C1C61599F0BEFA7D46BD5BF2747D1B68526F"
+      "bytes": 2528276,
+      "sha256": "09526B8AC81094F6AB0780CDCEF6573076DD979A6368E8F97D93C62C6F554664"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

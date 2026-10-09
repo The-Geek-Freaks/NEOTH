@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "apk-inspector-provenance-repaired-native-rerun-pending",
+  "status": "mobile-native-admitted-on66ab1f2a-doc-only-closure",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 412177,
-    "sha256": "CEF5A0E543E28F2392C6B1582420C6A3A1A281C9E7CDD18DC13FF74BC7290A89"
+    "bytes": 412173,
+    "sha256": "5E7A2412A279D3D64F7C5D97CF5805F4BE8CABFCC548E3D2E25AE69A8E3FDCA1"
   },
   "sourceInputs": 2249,
   "requiredNativeTests": [
@@ -80633,6 +80633,32 @@
       }
     ],
     "note": "Hosted prior run green with67Flutter/14Kotlin; independent admission rejected empty stderr-only aapt2 version. Capture and hash-bind original version report; cache only digest-verified original Flutter archives. No local runtime, physical device or release acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2519NativeAdmissionAnd2521ColdCache": {
+    "base": "66ab1f2acd17243b4eefddeae74d07a4ab75a063",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave2519-notification-preview.json",
+        "bytes": 7209,
+        "sha256": "3CAF198EC6F60EBC9C670D297CBB9E98FD4094A2A86FDA038997BE6FB3AC9CEA",
+        "blob": "0f5cd04e49a5c804fa961a43457a0af3af5c344f"
+      },
+      {
+        "path": "PLAN/JARVIS_MOBILE_PORT_PIPELINE.md",
+        "bytes": 48885,
+        "sha256": "27D717C45E67E817048D2BB3DC04DCE205F6CC2ADE0C66DB03A7E667EF179975",
+        "blob": "c315dde20008b109cd6360055a4e5d690e95f5ed"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2528276,
+        "sha256": "09526B8AC81094F6AB0780CDCEF6573076DD979A6368E8F97D93C62C6F554664",
+        "blob": "a2248ae3e0e41580fb2e6e2bc43fd6304d7e5f8c"
+      }
+    ],
+    "note": "Run37927396385 independently admitted67Flutter/14Kotlin/73sources/4archives/170entries/3APKpermissions/14FFI and original inspector provenance. SDK cold paths verified; warm speedup, physical devices, new voice and release remain open. This commit changes documentation/inventories only.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

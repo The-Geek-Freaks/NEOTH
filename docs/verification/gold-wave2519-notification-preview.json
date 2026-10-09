@@ -1,6 +1,6 @@
 {
   "schema": "neoth.gold-wave2519.notification-preview.v1",
-  "status": "hosted-tests-and-builds-green-root-native-admission-rejected-provenance-repair-pending",
+  "status": "hosted-and-native-admitted-on-recorded-producer-device-and-release-open",
   "base": "aed658d5e445df14167178ae5cc774b9f25c0390",
   "pipelineItem": "JM-07",
   "scope": "Android foreground-only opt-in notification previews adapted from the Jarvis behavior into NEOTH presentation and owners",
@@ -25,8 +25,8 @@
     "nativeSourceBindings": 73,
     "ffiExports": 14,
     "localRuntimeExecuted": false,
-    "hostedAccepted": false,
-    "nativeAccepted": false,
+    "hostedAccepted": true,
+    "nativeAccepted": true,
     "deviceAccepted": false,
     "releaseAccepted": false,
     "androidApkPermissionProofsExpected": 3
@@ -41,9 +41,10 @@
     "https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy"
   ],
   "remaining": [
-    "Fresh hosted Flutter/Kotlin/native validation and independent original archive admission",
     "Physical Android permission, lock, foreground/background, revocation and actual incoming-notification display",
-    "JM08 voice/media lifecycle, signed distribution and all original Gold backlog"
+    "JM08 voice/media lifecycle and separately recorded JM01 Home, door-camera/intercom, chat-camera and timer/alarm adaptation",
+    "Warm SDK cache hit and any repeatable performance improvement remain unmeasured",
+    "Signed distribution and all original open Gold backlog"
   ],
   "priorNativePrerequisite": {
     "producer": "aed658d5e445df14167178ae5cc774b9f25c0390",
@@ -83,7 +84,7 @@
   "apkInspectorRepair": {
     "cause": "aapt2 version is emitted on stderr; stdout-only capture produced empty provenance",
     "change": "Capture both streams; require one well-formed version line; save the original report and bind its SHA256 in each APK proof",
-    "freshHostedAndRootAdmission": "pending"
+    "freshHostedAndRootAdmission": "accepted on37927396385 /66ab1f2acd17243b4eefddeae74d07a4ab75a063"
   },
   "sdkArchiveCache": {
     "wave": 2521,
@@ -92,7 +93,43 @@
     "sha256CheckedOnEveryHitAndMiss": true,
     "freshSdkExtraction": true,
     "testsAndBuildOutputsCached": false,
-    "hostedValidated": false,
-    "speedupMeasured": false
+    "hostedValidated": true,
+    "speedupMeasured": false,
+    "warmCacheHitValidated": false,
+    "proof": {
+      "path": "work\\gold-20260906\\wave2519-apk-provenance-repair\\native-preparation\\FLUTTER_ARCHIVE_CACHE_ADMISSION.json",
+      "sha256": "AB544E7BD6A01A770B78A2DBE414E1E3FC1243251CF67E0C765FF252D2212A27",
+      "verifiedArchiveUses": 2,
+      "architectureDigests": [
+        "ca9624a6de7a1a8962f2f0a3e2a57b16434ca34f1137b8d9dc68c5ca1f187133",
+        "30f337aeb2f7a0d324cfae9a3718c1caa8a5abcb19eff933b337332465f9cfe8"
+      ],
+      "scope": "Cold download/hash/save/fresh-extract paths passed for ARM64 and x64; no warm-cache speedup claimed",
+      "repositoryCacheUsageGiB": 9.51,
+      "sdkArchiveTotalGiB": 2.92
+    }
+  },
+  "acceptedNative": {
+    "producer": "66ab1f2acd17243b4eefddeae74d07a4ab75a063",
+    "run": "37927396385",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/37927396385",
+    "proofPath": "work\\gold-20260906\\wave2519-apk-provenance-repair\\native-preparation\\ROOT_MOBILE_ADMISSION.json",
+    "proofSha256": "9CE9B8B311D32702F62C346080DA70A4B164A2A3A412EB1B8AB6FA38A7189481",
+    "archives": 4,
+    "entries": 170,
+    "sourceBindings": 73,
+    "flutterPassed": 67,
+    "kotlinPassed": 14,
+    "androidAbis": 3,
+    "androidPermissionProofs": 3,
+    "runnerDefinedTExports": 14,
+    "apkInspectorOriginalVersionReportBound": true,
+    "iOSLocalNetworkDescriptionBound": true,
+    "runtimeExecutionProducer": "141621920157a07456e47f9b20d37433505693ab",
+    "runtimeExecutionRun": "37914390018",
+    "newRuntimeExecutionClaimed": false,
+    "localRuntimeExecuted": false,
+    "deviceAccepted": false,
+    "releaseAccepted": false
   }
 }
