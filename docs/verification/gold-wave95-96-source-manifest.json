@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-10-09T08:34:57.4975700Z",
-  "validationStatus": "mobile-conversation-implemented-hosted-pending",
+  "capturedUtc": "2026-10-09T08:37:54.4372380Z",
+  "validationStatus": "mobile-conversation-formatted-hosted-pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -5263,8 +5263,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2513022,
-      "sha256": "07195B85F440C393D2A59F4A7B9C4A6808F3EA5B4F85A02B9F54FF5CCDC4A6D8"
+      "bytes": 2513526,
+      "sha256": "EB14A30E021FFC3DFEB33EA8C595B1A00A5381CC7BE696868D6D4D7A6AE0AB2B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -7163,8 +7163,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 100803,
-      "sha256": "B3C2EE706EE1164AC206D7DF745E5206D8EFA0AB00A6E635457A621D73407C75"
+      "bytes": 103058,
+      "sha256": "85FD2E4F963E2C16ECFEA14C334DC341CCC292156F7FA7098FB3DF25D180CDEF"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -7173,13 +7173,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_authority.rs",
-      "bytes": 70140,
-      "sha256": "B2131170F5166A4AD4C5F26DFE39027DA678D639A1BC460A59DD9D47CC70B887"
+      "bytes": 74070,
+      "sha256": "15C5D7BE67E77A6F07142CA52798C0D6E94B6313803A5931F8C578E01BCF13D7"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_protocol.rs",
-      "bytes": 64395,
-      "sha256": "DD0FE0BE080583458CCC75D3EC58A3396C6F8893DC661ACCF4AA752197E21218"
+      "bytes": 66501,
+      "sha256": "D7999F3B1125425CCE547822F628B031CEBF670863F4BCA2050988583815F5C4"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime_unavailable.rs",
@@ -7188,8 +7188,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/companion_runtime.rs",
-      "bytes": 124728,
-      "sha256": "50C526F06A5C915CAC2848FC6A5EF807E415469CE84589359792B003B2771ED4"
+      "bytes": 125587,
+      "sha256": "76D442C84F14A52F0E7E15962DCA9E4DFB1F507F04AAE56AB671A200F3695811"
     },
     {
       "path": "SRC/neothd/src/daemon/companion_stream.rs",

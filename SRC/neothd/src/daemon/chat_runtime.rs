@@ -506,8 +506,16 @@ impl DaemonChatRuntime {
         activity: Option<&crate::mcp::dispatch_loop::ToolActivitySink>,
         sink: &mut super::companion_stream::CompanionStreamSink,
     ) -> std::result::Result<DaemonPlainChatResponse, CompanionChatTurnError> {
-        self.execute_admitted_companion_stream_turn(request, cancellation, effect_gate, activity, sink, None)
-            .await.map(|result| result.response)
+        self.execute_admitted_companion_stream_turn(
+            request,
+            cancellation,
+            effect_gate,
+            activity,
+            sink,
+            None,
+        )
+        .await
+        .map(|result| result.response)
     }
 
     #[cfg(any(test, feature = "cluster"))]
@@ -572,34 +580,67 @@ impl DaemonChatRuntime {
             serde_json::to_vec(&response).map_err(|_| CompanionChatTurnError::Indeterminate)?;
         validate_daemon_plain_chat_response(&response, bytes.len())
             .map_err(|_| CompanionChatTurnError::Indeterminate)?;
-        Ok(AdmittedCompanionTurnResponse { response, canonical_history_committed })
+        Ok(AdmittedCompanionTurnResponse {
+            response,
+            canonical_history_committed,
+        })
     }
 
     #[cfg(any(test, feature = "cluster"))]
     pub(crate) async fn companion_conversation_history(
-        &self, conversation: Option<&super::companion_authority::AdmittedCompanionConversation>,
-        request_id: uuid::Uuid, revision: u64, current_turn_committed: bool, read_canonical: bool,
+        &self,
+        conversation: Option<&super::companion_authority::AdmittedCompanionConversation>,
+        request_id: uuid::Uuid,
+        revision: u64,
+        current_turn_committed: bool,
+        read_canonical: bool,
     ) -> super::companion_protocol::CompanionConversationHistory {
-        use super::companion_protocol::{CompanionConversationHistory, CompanionHistoryState, CompanionHistoryTurn};
-        let mut snapshot = CompanionConversationHistory {
-            conversation_schema_version: 1, request_id, revision,
-            conversation_id: conversation.and_then(|value| value.conversation_id()),
-            state: CompanionHistoryState::NotFound, current_turn_committed: false, bounded_tail: true, turns: Vec::new(),
+        use super::companion_protocol::{
+            CompanionConversationHistory, CompanionHistoryState, CompanionHistoryTurn,
         };
-        let Some(conversation) = conversation else { return snapshot; };
-        if conversation.is_incognito() { snapshot.state = CompanionHistoryState::Incognito; return snapshot; }
+        let mut snapshot = CompanionConversationHistory {
+            conversation_schema_version: 1,
+            request_id,
+            revision,
+            conversation_id: conversation.and_then(|value| value.conversation_id()),
+            state: CompanionHistoryState::NotFound,
+            current_turn_committed: false,
+            bounded_tail: true,
+            turns: Vec::new(),
+        };
+        let Some(conversation) = conversation else {
+            return snapshot;
+        };
+        if conversation.is_incognito() {
+            snapshot.state = CompanionHistoryState::Incognito;
+            return snapshot;
+        }
         snapshot.state = CompanionHistoryState::Unavailable;
-        if !read_canonical { return snapshot; }
-        let Some(session_id) = conversation.session_id().map(str::to_owned) else { return snapshot; };
+        if !read_canonical {
+            return snapshot;
+        }
+        let Some(session_id) = conversation.session_id().map(str::to_owned) else {
+            return snapshot;
+        };
         let db_path = self.selected_home.join("views.db");
-        let rows = tokio::task::spawn_blocking(move ||
-            crate::memory::transcript_store::read_admitted_companion_history_at(&db_path, &session_id)).await;
+        let rows = tokio::task::spawn_blocking(move || {
+            crate::memory::transcript_store::read_admitted_companion_history_at(
+                &db_path,
+                &session_id,
+            )
+        })
+        .await;
         if let Ok(Ok(Some(rows))) = rows {
             snapshot.state = CompanionHistoryState::Available;
             snapshot.current_turn_committed = current_turn_committed;
-            snapshot.turns = rows.into_iter().map(|row| CompanionHistoryTurn {
-                role: row.role, text: row.text, truncated: row.truncated,
-            }).collect();
+            snapshot.turns = rows
+                .into_iter()
+                .map(|row| CompanionHistoryTurn {
+                    role: row.role,
+                    text: row.text,
+                    truncated: row.truncated,
+                })
+                .collect();
         }
         snapshot
     }
@@ -1826,51 +1867,120 @@ mod tests {
 
     #[tokio::test]
     async fn companion_signed_conversation_joins_context_and_recovers_without_provider_effect() {
-        use crate::daemon::companion_protocol::{CompanionConversationSelection as Selection,
-            CompanionConversationReadRequest, CompanionConversationReadSelection, CompanionHistoryState};
-        let (runtime, provider, home, writer, writer_join) = test_runtime_with_companion_effect_adapter(true, 0).await;
+        use crate::daemon::companion_protocol::{
+            CompanionConversationReadRequest, CompanionConversationReadSelection,
+            CompanionConversationSelection as Selection, CompanionHistoryState,
+        };
+        let (runtime, provider, home, writer, writer_join) =
+            test_runtime_with_companion_effect_adapter(true, 0).await;
         let authority = DeviceAuthority::load(home.path()).unwrap();
         let key = SigningKey::from_bytes(&[41; 32]);
-        let descriptor = ReconnectDescriptor { schema_version: 3, carrier: "peeroxide-hyperswarm-v3".into(),
-            rendezvous_topic: [1; 32], daemon_noise_public_key: [2; 32], descriptor_generation: 1 };
-        let enrollment = EnrollmentProof::signed([3; 32], [4; 32], [5; 32], [6; 32], CompanionScope::ChatSend,
-            "conversation-runtime".into(), &key).unwrap();
-        let pending = authority.begin_enrollment(enrollment, [4; 32], descriptor, 1).unwrap();
-        authority.reconcile_audit(pending.mutation_id, AuditObservation::Observed).unwrap();
+        let descriptor = ReconnectDescriptor {
+            schema_version: 3,
+            carrier: "peeroxide-hyperswarm-v3".into(),
+            rendezvous_topic: [1; 32],
+            daemon_noise_public_key: [2; 32],
+            descriptor_generation: 1,
+        };
+        let enrollment = EnrollmentProof::signed(
+            [3; 32],
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            CompanionScope::ChatSend,
+            "conversation-runtime".into(),
+            &key,
+        )
+        .unwrap();
+        let pending = authority
+            .begin_enrollment(enrollment, [4; 32], descriptor, 1)
+            .unwrap();
+        authority
+            .reconcile_audit(pending.mutation_id, AuditObservation::Observed)
+            .unwrap();
         let mut first_public = None;
         let mut first_request = None;
         let mut private_session = None;
-        for (index, message) in ["signed alpha", "foreign beta", "alpha follow-up", "private canary", "alpha final"].into_iter().enumerate() {
+        for (index, message) in [
+            "signed alpha",
+            "foreign beta",
+            "alpha follow-up",
+            "private canary",
+            "alpha final",
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let now = 2 + index as i64 * 2;
-            let challenge = authority.begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], now).unwrap();
+            let challenge = authority
+                .begin_chat_reconnect_for_observed_noise([5; 32], 1, "boot".into(), [7; 32], now)
+                .unwrap();
             let selection = match index {
-                2 | 4 => Selection::Resume { conversation_id: first_public.unwrap() },
+                2 | 4 => Selection::Resume {
+                    conversation_id: first_public.unwrap(),
+                },
                 3 => Selection::New { incognito: true },
                 _ => Selection::New { incognito: false },
             };
-            let request = CompanionChatRequest::signed_with_conversation_v1(&challenge, uuid::Uuid::now_v7(), message.into(), selection, false, &key).unwrap();
+            let request = CompanionChatRequest::signed_with_conversation_v1(
+                &challenge,
+                uuid::Uuid::now_v7(),
+                message.into(),
+                selection,
+                false,
+                &key,
+            )
+            .unwrap();
             let lease = authority.authorize_chat(&request, now + 1).unwrap();
             if index == 0 {
                 first_public = lease.admitted_conversation().unwrap().conversation_id();
                 first_request = Some(request.request_id);
-                private_session = lease.admitted_conversation().unwrap().session_id().map(str::to_owned);
+                private_session = lease
+                    .admitted_conversation()
+                    .unwrap()
+                    .session_id()
+                    .map(str::to_owned);
             }
-            let (mut sink, _receiver) = super::super::companion_stream::CompanionStreamSink::new(request.request_id);
+            let (mut sink, _receiver) =
+                super::super::companion_stream::CompanionStreamSink::new(request.request_id);
             let result = Box::pin(runtime.execute_admitted_companion_stream_turn(
-                DaemonPlainChatRequest { schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION, message: request.message.clone() },
-                chat_turn_pipeline::ChatTurnCancellation::default(), lease.chat_effect_gate(), None, &mut sink,
+                DaemonPlainChatRequest {
+                    schema_version: crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
+                    message: request.message.clone(),
+                },
+                chat_turn_pipeline::ChatTurnCancellation::default(),
+                lease.chat_effect_gate(),
+                None,
+                &mut sink,
                 lease.admitted_conversation(),
-            )).await.unwrap();
+            ))
+            .await
+            .unwrap();
             assert_eq!(result.canonical_history_committed, index != 3);
-            let history = runtime.companion_conversation_history(lease.admitted_conversation(), request.request_id, lease.revision,
-                result.canonical_history_committed, result.canonical_history_committed).await;
+            let history = runtime
+                .companion_conversation_history(
+                    lease.admitted_conversation(),
+                    request.request_id,
+                    lease.revision,
+                    result.canonical_history_committed,
+                    result.canonical_history_committed,
+                )
+                .await;
             history.validate().unwrap();
-            assert_eq!(history.state, if index == 3 { CompanionHistoryState::Incognito } else { CompanionHistoryState::Available });
+            assert_eq!(
+                history.state,
+                if index == 3 {
+                    CompanionHistoryState::Incognito
+                } else {
+                    CompanionHistoryState::Available
+                }
+            );
             if index == 4 {
                 assert_eq!(history.turns.len(), 6);
                 let encoded = serde_json::to_string(&history).unwrap();
                 assert!(!encoded.contains(private_session.as_ref().unwrap()));
-                assert!(!encoded.contains("private canary")); assert!(!encoded.contains("foreign beta"));
+                assert!(!encoded.contains("private canary"));
+                assert!(!encoded.contains("foreign beta"));
             }
             lease.complete_confirmed().unwrap();
         }
@@ -1880,24 +1990,71 @@ mod tests {
             let context = requests[2].system.as_deref().unwrap();
             assert!(context.contains("signed alpha") && context.contains("daemon runtime reply"));
             assert!(!context.contains("foreign beta"));
-            assert!(!requests[3].system.as_deref().unwrap_or("").contains("signed alpha"));
-            assert!(!requests[4].system.as_deref().unwrap().contains("private canary"));
+            assert!(
+                !requests[3]
+                    .system
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("signed alpha")
+            );
+            assert!(
+                !requests[4]
+                    .system
+                    .as_deref()
+                    .unwrap()
+                    .contains("private canary")
+            );
         }
         drop(authority);
         let authority = DeviceAuthority::load(home.path()).unwrap();
-        let challenge = authority.begin_chat_reconnect_for_observed_noise([5; 32], 2, "new-boot".into(), [8; 32], 20).unwrap();
-        let query = CompanionConversationReadRequest::signed(&challenge, uuid::Uuid::now_v7(),
-            CompanionConversationReadSelection::Recover { created_by_request: first_request.unwrap() }, &key).unwrap();
+        let challenge = authority
+            .begin_chat_reconnect_for_observed_noise([5; 32], 2, "new-boot".into(), [8; 32], 20)
+            .unwrap();
+        let query = CompanionConversationReadRequest::signed(
+            &challenge,
+            uuid::Uuid::now_v7(),
+            CompanionConversationReadSelection::Recover {
+                created_by_request: first_request.unwrap(),
+            },
+            &key,
+        )
+        .unwrap();
         let lease = authority.authorize_conversation_read(&query, 21).unwrap();
-        assert_eq!(lease.admitted_conversation().unwrap().conversation_id(), first_public);
-        let history = runtime.companion_conversation_history(lease.admitted_conversation(), query.request_id, lease.revision, false, true).await;
-        assert_eq!(history.turns.len(), 6); assert!(!history.current_turn_committed);
-        assert!(lease.chat_effect_gate().intent(crate::providers::ChatTurnEffectKind::Provider {
-            call_scope: "read-must-not-start", streaming: false,
-        }, "read-only").await.is_err());
+        assert_eq!(
+            lease.admitted_conversation().unwrap().conversation_id(),
+            first_public
+        );
+        let history = runtime
+            .companion_conversation_history(
+                lease.admitted_conversation(),
+                query.request_id,
+                lease.revision,
+                false,
+                true,
+            )
+            .await;
+        assert_eq!(history.turns.len(), 6);
+        assert!(!history.current_turn_committed);
+        assert!(
+            lease
+                .chat_effect_gate()
+                .intent(
+                    crate::providers::ChatTurnEffectKind::Provider {
+                        call_scope: "read-must-not-start",
+                        streaming: false,
+                    },
+                    "read-only"
+                )
+                .await
+                .is_err()
+        );
         assert_eq!(provider.calls.load(Ordering::SeqCst), 5);
-        lease.complete_confirmed().unwrap(); drop(lease);
-        runtime.close_and_drain().await; drop(runtime); drop(writer); writer_join.await.unwrap().unwrap();
+        lease.complete_confirmed().unwrap();
+        drop(lease);
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
     }
 
     #[tokio::test]

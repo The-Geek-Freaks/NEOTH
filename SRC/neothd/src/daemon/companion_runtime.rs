@@ -29,11 +29,11 @@ use crate::{
             StatusLease,
         },
         companion_protocol::{
-            CompanionChatClientFrame, CompanionConversationAdmission, CompanionConversationReadRequest,
-            COMPANION_V3_SCHEMA_VERSION, CompanionChatActivitySnapshot, CompanionChatOutcome,
-            CompanionChatRecord, CompanionChatRecordKind,
-            CompanionChatTerminal, CompanionDenied, CompanionDeniedCode, CompanionDeviceId,
-            CompanionReadiness, CompanionScope, CompanionStatusSnapshot,
+            COMPANION_V3_SCHEMA_VERSION, CompanionChatActivitySnapshot, CompanionChatClientFrame,
+            CompanionChatOutcome, CompanionChatRecord, CompanionChatRecordKind,
+            CompanionChatTerminal, CompanionConversationAdmission,
+            CompanionConversationReadRequest, CompanionDenied, CompanionDeniedCode,
+            CompanionDeviceId, CompanionReadiness, CompanionScope, CompanionStatusSnapshot,
             CompanionToolActivityEvent, CompanionToolActivityPhase, EnrollmentAccepted,
             EnrollmentProof, ReconnectDescriptor, ServerFrame, StatusProof,
         },
@@ -1340,7 +1340,9 @@ impl CompanionRuntime {
         let request = match incoming {
             CompanionChatClientFrame::Chat(request) => request,
             CompanionChatClientFrame::ConversationRead(request) => {
-                return self.run_conversation_read(request, connection, rendezvous, shutdown, device_stop).await;
+                return self
+                    .run_conversation_read(request, connection, rendezvous, shutdown, device_stop)
+                    .await;
             }
         };
         let request_id = request.request_id;
@@ -1376,15 +1378,21 @@ impl CompanionRuntime {
         let effect_gate = lease.chat_effect_gate();
         if let Some(conversation) = lease.admitted_conversation() {
             let admission = ServerFrame::ConversationAdmission(CompanionConversationAdmission {
-                conversation_schema_version: 1, request_id, revision: request.revision,
-                conversation_id: conversation.conversation_id(), incognito: conversation.is_incognito(),
+                conversation_schema_version: 1,
+                request_id,
+                revision: request.revision,
+                conversation_id: conversation.conversation_id(),
+                incognito: conversation.is_incognito(),
             });
             let write = async {
                 lease.check_chat_delivery()?;
                 write_activity_frame(&mut connection, &admission).await
-            }.await;
+            }
+            .await;
             if let Err(error) = write {
-                return self.finish_chat_carrier(connection, rendezvous, &lease, Err(error)).await;
+                return self
+                    .finish_chat_carrier(connection, rendezvous, &lease, Err(error))
+                    .await;
             }
         }
         // Mint only after the signed request has passed the device lease.
@@ -1438,8 +1446,11 @@ impl CompanionRuntime {
                     tool_activity_sink.as_ref(),
                 ))
                 .await
-                .map(|response| super::chat_runtime::AdmittedCompanionTurnResponse {
-                    response, canonical_history_committed: false,
+                .map(|response| {
+                    super::chat_runtime::AdmittedCompanionTurnResponse {
+                        response,
+                        canonical_history_committed: false,
+                    }
                 })
             }
         };
@@ -1522,13 +1533,24 @@ impl CompanionRuntime {
             };
         }
         let canonical_history_committed = !cancelled_by_owner.load(Ordering::Acquire)
-            && result.as_ref().is_ok_and(|output| output.canonical_history_committed);
+            && result
+                .as_ref()
+                .is_ok_and(|output| output.canonical_history_committed);
         let history = if lease.admitted_conversation().is_some() {
-            Some(self.chat_runtime.companion_conversation_history(
-                lease.admitted_conversation(), request_id, lease.revision,
-                canonical_history_committed, canonical_history_committed,
-            ).await)
-        } else { None };
+            Some(
+                self.chat_runtime
+                    .companion_conversation_history(
+                        lease.admitted_conversation(),
+                        request_id,
+                        lease.revision,
+                        canonical_history_committed,
+                        canonical_history_committed,
+                    )
+                    .await,
+            )
+        } else {
+            None
+        };
         let terminal = if cancelled_by_owner.load(Ordering::Acquire) {
             // The provider may have crossed a concrete effect boundary before
             // its cancellation was observed. Do not label that response as
@@ -1547,7 +1569,8 @@ impl CompanionRuntime {
                     schema_version: COMPANION_V3_SCHEMA_VERSION,
                     request_id,
                     outcome: CompanionChatOutcome::Accepted,
-                    records: output.response
+                    records: output
+                        .response
                         .records
                         .into_iter()
                         .map(|record| CompanionChatRecord {
@@ -1626,46 +1649,72 @@ impl CompanionRuntime {
         let write = async {
             if let Some(history) = history {
                 lease.check_chat_delivery()?;
-                write_activity_frame(&mut connection, &ServerFrame::ConversationHistory(history)).await?;
+                write_activity_frame(&mut connection, &ServerFrame::ConversationHistory(history))
+                    .await?;
             }
             lease.check_chat_delivery()?;
             connection.write(&bytes).await.map_err(anyhow::Error::from)
-        }.await;
-        self.finish_chat_carrier(connection, rendezvous, &lease, write).await
+        }
+        .await;
+        self.finish_chat_carrier(connection, rendezvous, &lease, write)
+            .await
     }
 
     async fn run_conversation_read(
-        &self, request: CompanionConversationReadRequest, mut connection: peeroxide::SwarmConnection,
+        &self,
+        request: CompanionConversationReadRequest,
+        mut connection: peeroxide::SwarmConnection,
         rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
-        shutdown: watch::Receiver<bool>, device_stop: watch::Receiver<bool>,
+        shutdown: watch::Receiver<bool>,
+        device_stop: watch::Receiver<bool>,
     ) -> Result<()> {
         let now = match companion_now_unix_i64() {
             Ok(now) => now,
-            Err(error) => return self.close_unaccepted_chat_connection(connection, rendezvous, error).await,
+            Err(error) => {
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, error)
+                    .await;
+            }
         };
         let lease = match self.authority.authorize_conversation_read(&request, now) {
             Ok(lease) => lease,
             Err(error) => {
                 let denied = CompanionDenied::new(CompanionDeniedCode::DeviceDenied)?;
                 let _ = write_frame(&mut connection, &ServerFrame::Denied(denied)).await;
-                return self.close_unaccepted_chat_connection(connection, rendezvous, error).await;
+                return self
+                    .close_unaccepted_chat_connection(connection, rendezvous, error)
+                    .await;
             }
         };
-        let history = self.chat_runtime.companion_conversation_history(
-            lease.admitted_conversation(), request.request_id, request.revision, false, true,
-        ).await;
+        let history = self
+            .chat_runtime
+            .companion_conversation_history(
+                lease.admitted_conversation(),
+                request.request_id,
+                request.revision,
+                false,
+                true,
+            )
+            .await;
         let write = async {
-            anyhow::ensure!(!*shutdown.borrow() && !*device_stop.borrow(), "conversation read owner stopped");
+            anyhow::ensure!(
+                !*shutdown.borrow() && !*device_stop.borrow(),
+                "conversation read owner stopped"
+            );
             lease.check_chat_delivery()?;
             write_activity_frame(&mut connection, &ServerFrame::ConversationHistory(history)).await
-        }.await;
-        self.finish_chat_carrier(connection, rendezvous, &lease, write).await
+        }
+        .await;
+        self.finish_chat_carrier(connection, rendezvous, &lease, write)
+            .await
     }
 
     async fn finish_chat_carrier(
-        &self, connection: peeroxide::SwarmConnection,
+        &self,
+        connection: peeroxide::SwarmConnection,
         rendezvous: crate::cluster::hyperswarm::SharedPublicRendezvous,
-        lease: &StatusLease, write: Result<()>,
+        lease: &StatusLease,
+        write: Result<()>,
     ) -> Result<()> {
         drop(connection);
         let drained = rendezvous.shutdown_checked().await;
@@ -2168,9 +2217,10 @@ async fn write_chat_challenge_with_activity_advertisement(
     connection: &mut peeroxide::SwarmConnection,
     challenge: &crate::daemon::companion_protocol::ChatChallenge,
 ) -> Result<()> {
-    let bytes = crate::daemon::companion_protocol::encode_chat_challenge_with_conversation_advertisement(
-        challenge,
-    )?;
+    let bytes =
+        crate::daemon::companion_protocol::encode_chat_challenge_with_conversation_advertisement(
+            challenge,
+        )?;
     tokio::time::timeout(CONNECTION_FRAME_TIMEOUT, connection.write(&bytes))
         .await
         .context("companion chat challenge write timeout")??;
