@@ -314,32 +314,50 @@ mod tests {
             (Some("device_start_failed"), true),
             (Some("/private/microphone/device"), false),
             (Some("Device failed: secret"), false),
-            (Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), false),
+            (
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                false,
+            ),
         ] {
             let home = tempdir().unwrap();
             let mut store = MicConsentStore::open(home.path()).unwrap();
-            let MicPreflight::ConfirmationRequired { challenge } = store.preflight(DIGEST, 10).unwrap()
+            let MicPreflight::ConfirmationRequired { challenge } =
+                store.preflight(DIGEST, 10).unwrap()
             else {
                 panic!("fresh consent required");
             };
-            let capability = store.decide(challenge, MicDecision::AllowOnce, 11).unwrap().unwrap();
+            let capability = store
+                .decide(challenge, MicDecision::AllowOnce, 11)
+                .unwrap()
+                .unwrap();
             let consumed = store.consume_for_open(capability, DIGEST, 12).unwrap();
             let operation = consumed.operation_id().to_owned();
-            let (_, _, terminal) = MicOpenIntentAdmission::from_consumed(consumed).into_frame().unwrap();
+            let (_, _, terminal) = MicOpenIntentAdmission::from_consumed(consumed)
+                .into_frame()
+                .unwrap();
             let result = terminal.complete(MicOpenOutcome::Failed, code, 13);
             if valid {
                 let (header, payload) = result.unwrap().into_frame().unwrap();
-                assert_eq!(header.event_subtype, ExtendedSubtype::MicrophoneOpenResult as u8);
+                assert_eq!(
+                    header.event_subtype,
+                    ExtendedSubtype::MicrophoneOpenResult as u8
+                );
                 let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-                assert_eq!(payload, serde_json::json!({
-                    "schema_version": 1,
-                    "operation_id": operation,
-                    "outcome": "failed",
-                    "error_code": "device_start_failed",
-                    "completed_at_unix": 13,
-                }));
+                assert_eq!(
+                    payload,
+                    serde_json::json!({
+                        "schema_version": 1,
+                        "operation_id": operation,
+                        "outcome": "failed",
+                        "error_code": "device_start_failed",
+                        "completed_at_unix": 13,
+                    })
+                );
             } else {
-                assert!(result.is_err(), "untyped/private diagnostics must not enter the receipt");
+                assert!(
+                    result.is_err(),
+                    "untyped/private diagnostics must not enter the receipt"
+                );
             }
             assert!(matches!(
                 store.preflight(DIGEST, 14).unwrap(),

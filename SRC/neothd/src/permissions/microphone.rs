@@ -502,7 +502,12 @@ mod tests {
         assert_eq!(admission.admitted_at_unix(), 15);
         assert!(admission.allow_once());
         assert_eq!(admission.operation_id().len(), 64);
-        assert!(admission.operation_id().bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(
+            admission
+                .operation_id()
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        );
         assert!(matches!(
             s.preflight(A, 16).unwrap(),
             MicPreflight::ConfirmationRequired { .. }
@@ -516,7 +521,10 @@ mod tests {
         else {
             panic!("fresh store requires consent");
         };
-        let capability = store.decide(challenge, MicDecision::AllowAlways, 11).unwrap().unwrap();
+        let capability = store
+            .decide(challenge, MicDecision::AllowAlways, 11)
+            .unwrap()
+            .unwrap();
         let first = store.consume_for_open(capability, A, 12).unwrap();
         assert!(!first.allow_once());
         assert_eq!(first.permission_revision(), 1);

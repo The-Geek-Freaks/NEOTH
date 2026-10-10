@@ -760,7 +760,10 @@ mod tests {
             matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechProgress { voiced_samples }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2)
         );
         assert!(
-            state.observe_probability(0.1, vad_block()).unwrap().is_none()
+            state
+                .observe_probability(0.1, vad_block())
+                .unwrap()
+                .is_none()
         );
         assert!(
             matches!(state.observe_probability(0.1, vad_block()).unwrap(), Some(LiveUtteranceEvent::UtteranceReady { voiced_samples, .. }) if voiced_samples == LIVE_VAD_FRAME_SAMPLES * 2)

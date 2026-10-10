@@ -1338,7 +1338,9 @@ mod tests {
 
     #[tokio::test]
     async fn settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal() {
-        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_EXTENDED, ExtendedSubtype};
+        use crate::wal::events::{
+            EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_EXTENDED, ExtendedSubtype,
+        };
         use crate::wal::microphone_receipts::{TurnCancelAdmission, TurnCancelCause};
 
         for (cause, expected_cause) in [
@@ -1356,19 +1358,30 @@ mod tests {
             ));
             let registry = task_registry();
             let supervisor = AuthorizedTextTurnSupervisor::new(bridge.clone(), registry.clone())
-                .await.unwrap();
+                .await
+                .unwrap();
             let turn = open_authorized_text_turn(
-                Arc::clone(&supervisor.owner), decision(), GuiChatSurface::Main,
-            ).await.unwrap();
+                Arc::clone(&supervisor.owner),
+                decision(),
+                GuiChatSurface::Main,
+            )
+            .await
+            .unwrap();
             drop(turn);
             let settled = supervisor.wait_for_dropped_turn().await.unwrap();
             let mut digest = Sha256::new();
             digest.update(b"neoth/a2/settled-authorized-turn/v1\0");
             digest.update(bridge.started.metadata.turn_id.as_uuid().as_bytes());
             let expected_hash = hex::encode(digest.finalize());
-            assert_eq!(settled.terminal_kind(), AuthorizedTextTurnTerminal::Cancelled);
+            assert_eq!(
+                settled.terminal_kind(),
+                AuthorizedTextTurnTerminal::Cancelled
+            );
             assert_eq!(settled.turn_id_sha256(), expected_hash);
-            assert_eq!(settled.cancel_proof().unwrap().turn_id_sha256(), expected_hash);
+            assert_eq!(
+                settled.cancel_proof().unwrap().turn_id_sha256(),
+                expected_hash
+            );
             assert_eq!(*bridge.cancel_calls.lock().unwrap(), 1);
 
             let home = tempfile::tempdir().unwrap();
@@ -1376,8 +1389,10 @@ mod tests {
             std::fs::create_dir(&wal).unwrap();
             let segment = crate::wal::writer::unique_standalone_segment_path(&wal, "turn-cancel");
             let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
-                segment.clone(), home.path().to_path_buf(),
-            ).unwrap();
+                segment.clone(),
+                home.path().to_path_buf(),
+            )
+            .unwrap();
             let admission = TurnCancelAdmission::from_settled_turn(settled, cause, 123).unwrap();
             writer.append_realtime_turn_cancel(admission).await.unwrap();
             drop(writer);
@@ -1398,14 +1413,21 @@ mod tests {
                     authenticated_markers += 1;
                 }
                 Ok(())
-            }).unwrap();
-            assert_eq!(receipts, vec![serde_json::json!({
-                "schema_version": 1,
-                "turn_id": expected_hash,
-                "cause": expected_cause,
-                "cancelled_at_unix": 123,
-            })]);
-            assert!(authenticated_markers > 0, "closed receipts require authentication markers");
+            })
+            .unwrap();
+            assert_eq!(
+                receipts,
+                vec![serde_json::json!({
+                    "schema_version": 1,
+                    "turn_id": expected_hash,
+                    "cause": expected_cause,
+                    "cancelled_at_unix": 123,
+                })]
+            );
+            assert!(
+                authenticated_markers > 0,
+                "closed receipts require authentication markers"
+            );
         }
     }
 }

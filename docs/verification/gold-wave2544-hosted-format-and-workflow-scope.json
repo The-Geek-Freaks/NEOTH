@@ -1,0 +1,47 @@
+{
+  "schema": "neoth.gold.wave2544.hosted-format-and-workflow-scope.v1",
+  "producer": "7cf990ccc8b3ed3dd3f4dba24925870624e68913",
+  "run": 38043118851,
+  "artifact": 11666329104,
+  "archiveSha256": "BB2667FB08798CA108223585410BF3CE7B5BDA89B271AA6A22D6434474B29477",
+  "patchSha256": "BF0AD76A337C2ED94E743BDB7BF1D20E68B6C6163E61E42C79B91CB528F08252",
+  "sourceBlobBindings": [
+    {
+      "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+      "before": "8ff40384425ac6db425d06b71863921dccd2d6d4",
+      "after": "6c5608d2e19231fc8e9d94bf7f5d229d460a46d6"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+      "before": "78e1431f6c8da72a5e0f6fd5ed96206ff85e9bdc",
+      "after": "fae427edc41568af04333b6e991cb33b8c7bb30b"
+    },
+    {
+      "path": "SRC/neothd/src/media/dictation.rs",
+      "before": "6fb327b064a1b3f2feef23bc9c1c7e58bb7b4577",
+      "after": "1b6b16e01659635ab73fd0be2421c34041e9015e"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/microphone.rs",
+      "before": "2c563cb923e275b8d0f9bb4b0fb68acc6663b4fc",
+      "after": "c812d062f6ed006868313af02c20586753b7e2be"
+    },
+    {
+      "path": "SRC/neothd/src/wal/microphone_receipts.rs",
+      "before": "31890127d74aaf457a4cfddac4be8fa138a78c35",
+      "after": "ba5436304315efff8e394c9ad6742ae9da7e7f51"
+    }
+  ],
+  "scopeCorrection": {
+    "producer": "7cf990ccc8b3ed3dd3f4dba24925870624e68913",
+    "path": ".github/workflows/cli-reference.yml",
+    "preimage": "4A36A890AF56FB353AEA72D3A65F7331802E6A003069E322FF9B1FAAE1598EB8",
+    "candidate": "9E02AAF1DE1D65E3C764D4BAF63CD9E3776FB431DE90AE68D5259B7431AB5FD4",
+    "issue": "Build-current-public-CLI text anchor also matched macOS job title; remove unintended duplicate core-audio steps there",
+    "runtimeExecuted": false
+  },
+  "localFormatterExecuted": false,
+  "localRuntimeExecuted": false,
+  "hostedValidation": "pending",
+  "goldComplete": false
+}

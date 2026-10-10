@@ -738,17 +738,19 @@ mod tests {
                 "owned-boot".into(),
             );
             let request_id = crate::daemon::gui_chat_bridge::GuiChatRequestId::new();
-            let result = bridge.preflight(GuiChatBridgePreflightInput {
-                request_id,
-                session_id: "owned-session".into(),
-                origin_surface: GuiChatSurface::Buddy,
-                message: "visible request".into(),
-                model: None,
-                skill_id: None,
-                incognito: false,
-                reasoning_display: false,
-                attachment_paths: vec![],
-            }).await;
+            let result = bridge
+                .preflight(GuiChatBridgePreflightInput {
+                    request_id,
+                    session_id: "owned-session".into(),
+                    origin_surface: GuiChatSurface::Buddy,
+                    message: "visible request".into(),
+                    model: None,
+                    skill_id: None,
+                    incognito: false,
+                    reasoning_display: false,
+                    attachment_paths: vec![],
+                })
+                .await;
             assert!(runtime.decisions.lock().unwrap().is_empty());
             assert!(bridge.active.lock().unwrap().is_none());
             {
@@ -775,9 +777,15 @@ mod tests {
             assert_eq!(prompt.expires_at_unix_ms, 1234);
             assert_eq!(prompt.routes.len(), 1);
             assert_eq!(prompt.routes[0].provider, "fixture");
-            assert_eq!(prompt.routes[0].endpoint_origin.as_deref(), Some("https://example.invalid"));
+            assert_eq!(
+                prompt.routes[0].endpoint_origin.as_deref(),
+                Some("https://example.invalid")
+            );
             assert!(matches!(
-                bridge.decide(receipt, GuiChatConsentDecision::Deny).await.unwrap(),
+                bridge
+                    .decide(receipt, GuiChatConsentDecision::Deny)
+                    .await
+                    .unwrap(),
                 GuiChatBridgeDecisionOutcome::Denied
             ));
             let decisions = runtime.decisions.lock().unwrap();
@@ -786,7 +794,10 @@ mod tests {
             assert_eq!(decisions[0].preflight_id.0, "preflight-fixture");
             assert_eq!(decisions[0].consent_challenge.0, "challenge-fixture");
             assert_eq!(decisions[0].preflight_descriptor_digest.0, "a".repeat(64));
-            assert_eq!(decisions[0].decision, protocol::GuiChatConsentDecision::Deny);
+            assert_eq!(
+                decisions[0].decision,
+                protocol::GuiChatConsentDecision::Deny
+            );
             assert!(decisions[0].consent_proof.is_none());
             assert!(bridge.active.lock().unwrap().is_none());
         }

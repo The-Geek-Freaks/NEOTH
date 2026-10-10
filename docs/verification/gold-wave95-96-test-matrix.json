@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "core-audio-repair-published-validation-pending",
+  "status": "hosted-format-applied-targeted-validation-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 414235,
-    "sha256": "0A24B1E5F1352DD7FB82ADEB5522002CFC1ED910915580CBF42ADEACE198A96C"
+    "bytes": 414442,
+    "sha256": "0E0C8A77A2E3B98A0D13CA0E592A5AB20CFBB7C8F25582C08BE66F6C50FAF058"
   },
-  "sourceInputs": 2260,
+  "sourceInputs": 2261,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3204,13 +3204,13 @@
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
       "junitClass": "neoth"
     },
     {
@@ -15997,73 +15997,73 @@
     {
       "test": "daemon::authorized_text_turn::tests::genuine_bridge_reasoning_event_never_reaches_voice_sink",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::genuine_bridge_delta_and_terminal_are_forwarded_in_order",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::sealed_start_cursor_replays_visible_delta_before_exchange_upper_bound",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::failed_exchange_cancels_and_observes_terminal_before_returning_error",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::partial_attach_error_commits_cursor_and_never_replays_speech",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::cancellation_preserves_terminal_delivered_before_later_attach_error",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::cancel_racing_a_complete_terminal_mints_no_cancel_proof",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::normal_preobserved_cancelled_terminal_never_mints_auto_cancel_proof",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::dropped_consumer_is_cancelled_and_settled_by_its_existing_supervisor",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::second_start_is_refused_before_any_second_bridge_start",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::idle_supervisor_shutdown_wakes_and_joins_the_retained_daemon_registry",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::authorized_text_turn::tests::actual_bridge_denial_starts_no_turn_and_a_later_start_remains_admissible",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "junitClass": "neoth"
     },
     {
@@ -16081,13 +16081,13 @@
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_wrong_session_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+      "sourceSha256": "FDCDFEC08A80F3BEEB062BFE436C5D4E8926D7BC6E6F65668C263355F9644085",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::conversation_gui_bridge::tests::direct_frame_rejects_stale_subscription_generation_before_gui_projection",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
-      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+      "sourceSha256": "FDCDFEC08A80F3BEEB062BFE436C5D4E8926D7BC6E6F65668C263355F9644085",
       "junitClass": "neoth"
     },
     {
@@ -16189,13 +16189,13 @@
     {
       "test": "media::dictation::tests::live_utterance_state_reports_ordered_progress_after_the_first_speech_block",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::noise_and_hangover_silence_emit_no_speech_progress",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "263408E398AE880FF1DBE05F769D99E72D1789B17DAF008C820D1E9CF61ADB7D",
+      "sourceSha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
       "junitClass": "neoth"
     },
     {
@@ -16225,37 +16225,37 @@
     {
       "test": "permissions::microphone::tests::once_is_config_bound_and_consumed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::denial_expiry_and_revoke_fail_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::independent_store_revoke_invalidates_stale_challenge_and_capability",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::oversized_or_nonregular_persisted_state_fails_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::microphone::tests::symlinked_persisted_state_fails_closed",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "junitClass": "neoth"
     },
     {
       "test": "wal::microphone_receipts::tests::consumed_admission_forms_one_sealed_intent_then_terminal_result",
       "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs",
-      "sourceSha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
+      "sourceSha256": "B4E0F16707A58D524B4D02C86F5EE9C5C2037FFEBA4D2B6D72AF2386179E7E2A",
       "junitClass": "neoth"
     },
     {
@@ -17371,25 +17371,25 @@
     {
       "junitClass": "neoth",
       "test": "daemon::authorized_text_turn::tests::settled_cancellation_writes_bound_cause_once_and_finishes_authenticated_wal",
-      "sourceSha256": "9A80823ED54F5ACA72A4EB9FC4F418605817848C796A2E81390E441A02DB97FE",
+      "sourceSha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
       "sourcePath": "SRC/neothd/src/daemon/authorized_text_turn.rs"
     },
     {
       "junitClass": "neoth",
       "test": "daemon::conversation_gui_bridge::tests::direct_bridge_rejects_foreign_preflight_and_preserves_bound_consent_prompt",
-      "sourceSha256": "DE08A61AC1E6CB2D878513BE2B491B7B7D69B91F6F7D77D0FD556931267A0CD6",
+      "sourceSha256": "FDCDFEC08A80F3BEEB062BFE436C5D4E8926D7BC6E6F65668C263355F9644085",
       "sourcePath": "SRC/neothd/src/daemon/conversation_gui_bridge.rs"
     },
     {
       "junitClass": "neoth",
       "test": "permissions::microphone::tests::persistent_grant_mints_distinct_admissions_and_revoke_invalidates_pending_open",
-      "sourceSha256": "ADCCE6C9F957467582C4EF0664017AC8590CB52B729351341FD9298531CAD093",
+      "sourceSha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
       "sourcePath": "SRC/neothd/src/permissions/microphone.rs"
     },
     {
       "junitClass": "neoth",
       "test": "wal::microphone_receipts::tests::failed_open_requires_bounded_typed_error_and_keeps_consumed_operation_binding",
-      "sourceSha256": "FAB70C6C2679F7596488668A9A820705AE1DA7EA0F0306459424CA055A0FD092",
+      "sourceSha256": "B4E0F16707A58D524B4D02C86F5EE9C5C2037FFEBA4D2B6D72AF2386179E7E2A",
       "sourcePath": "SRC/neothd/src/wal/microphone_receipts.rs"
     }
   ],
@@ -81203,6 +81203,62 @@
       }
     ],
     "note": "W2540 partial 154 cases accepted. W2542 core authority tests/lint repairs and W2543 Windows collector fix await hosted validation. Failed Windows run retains failed status; nine successful libtest summaries are not independent exit-code proof.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave2544HostedFormatAndScope": {
+    "base": "7cf990ccc8b3ed3dd3f4dba24925870624e68913",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 34933,
+        "sha256": "9E02AAF1DE1D65E3C764D4BAF63CD9E3776FB431DE90AE68D5259B7431AB5FD4",
+        "blob": "90f55c6ae0e43cf36d0299b5c49a610ffecefa3b"
+      },
+      {
+        "path": "docs/verification/gold-wave2544-hosted-format-and-workflow-scope.json",
+        "bytes": 1932,
+        "sha256": "425C07B493990513796BCC28C714974518BFEF01D7C2DDB2C47BCFD4ED43F507",
+        "blob": "d4e2bc7d1336082b3d680de1f5a3d5b57b03bf42"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2548824,
+        "sha256": "11A7B3DD34E40899C7FF718A559BE08148051836E646913EEA8D9C3F35BCD0B6",
+        "blob": "f5e1e8e39a946dfae0833857bab22a00aad4be80"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/authorized_text_turn.rs",
+        "bytes": 52787,
+        "sha256": "7A5060FA2F63EBD6D9133FCAD588A7CB753E81DD6D61E0A7BC096114A4CAAF42",
+        "blob": "6c5608d2e19231fc8e9d94bf7f5d229d460a46d6"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/conversation_gui_bridge.rs",
+        "bytes": 33301,
+        "sha256": "FDCDFEC08A80F3BEEB062BFE436C5D4E8926D7BC6E6F65668C263355F9644085",
+        "blob": "fae427edc41568af04333b6e991cb33b8c7bb30b"
+      },
+      {
+        "path": "SRC/neothd/src/media/dictation.rs",
+        "bytes": 32118,
+        "sha256": "437D60EC40C89932868A8A068934669B0B99C1C8D90698650E7066BC3F91A6D7",
+        "blob": "1b6b16e01659635ab73fd0be2421c34041e9015e"
+      },
+      {
+        "path": "SRC/neothd/src/permissions/microphone.rs",
+        "bytes": 23519,
+        "sha256": "5916A6F0E56A3E09F5B324CE57966B3223B2D8BD35F64BA19CA57C144B6DC4BA",
+        "blob": "c812d062f6ed006868313af02c20586753b7e2be"
+      },
+      {
+        "path": "SRC/neothd/src/wal/microphone_receipts.rs",
+        "bytes": 13152,
+        "sha256": "B4E0F16707A58D524B4D02C86F5EE9C5C2037FFEBA4D2B6D72AF2386179E7E2A",
+        "blob": "ba5436304315efff8e394c9ad6742ae9da7e7f51"
+      }
+    ],
+    "note": "Original source-bound rustfmt patch applied; remove unintended duplicate core-audio steps from macOS branch. No local formatter/runtime; Windows collector and core Clippy validation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
