@@ -366,6 +366,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 ),
                 "\n".join(
                     [
+                        "python3 .github/scripts/test_verify_rust_case.py",
                         "python3 .github/scripts/mobile/test_mobile_interop_selection.py",
                         "python3 packaging/tests/test_ci_cadence_contract.py",
                         "python3 packaging/tests/test_bluebubbles_daemon_adoption_canary.py",

@@ -1,0 +1,17 @@
+{
+  "schema": "neoth.gold.wave2545.preflight-collector-contract.v1",
+  "producer": "d90e3bdeb9eaaae307b37c3ae172a7ed4d5fe3eb",
+  "failedRun": 38043500892,
+  "failedJob": 114188279222,
+  "failedCase": "CiCadenceContractTests.test_preflight_only_runs_allowlisted_noncompiling_commands",
+  "cause": "The new twelve-case Rust-output verifier ran successfully; its invocation was missing from the exact Preflight command allowlist.",
+  "source": "packaging/tests/test_ci_cadence_contract.py",
+  "sourceSha256": "B4B92BFD208AE9BC35C9196F703837A670812960F05168F0CB7A5C798105E431",
+  "candidateSha256": "79338FCC28190EB5857FCA6C7785956FBAF4AE841E0598593B83D4382EDC786D",
+  "fix": "Add only the already intended offline verifier test command to the exact allowlist; equality comparison and all other commands remain unchanged.",
+  "hostedCollectorTests": 12,
+  "hostedCollectorTestsStatus": "passed-on-failed-parent-run",
+  "localExecutableValidationRan": false,
+  "preflightValidation": "pending-on-repair-producer",
+  "goldComplete": false
+}

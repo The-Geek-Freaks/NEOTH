@@ -18904,3 +18904,7 @@ W2543 speichert künftig die nativen Exitcodes und pro Fall einen JSON-Auswertun
 ### W2544 — Hosted-Format und begrenzte Workflow-Auswahl
 
 Preflight 38043118851 auf 7cf990ccc8b3ed3dd3f4dba24925870624e68913 verlangt Formatänderungen in den fünf W2542-Rust-Dateien; Code Quality 38043119072 besteht. Root übernimmt ausschließlich den ursprünglichen Hosted-rustfmt-Patch aus Artefakt 11666329104 mit geprüften API-/ZIP-/Patch-Digests und Git-Vor-/Nachbildern. Kein lokaler Formatter läuft. Ein zu breiter Textanker hatte die neuen Core-Audio-Schritte zusätzlich in den macOS-Provider-Job eingefügt; diese unbeabsichtigte Kopie wird entfernt. Die beabsichtigte Auswahl bleibt im Linux-Job. Erneute Fast-Checks und beide gezielten Laufzeit-Abnahmen bleiben erforderlich.
+
+### W2545 — Expliziter Preflight-Vertrag für die Testauswertung
+
+Preflight 38043500892 auf d90e3bdeb9eaaae307b37c3ae172a7ed4d5fe3eb bestätigt das Rust-Format sowie alle zwölf neuen Tests der Windows-Testauswertung. Anschließend lehnt der bestehende Vertrag für erlaubte Preflight-Befehle den noch nicht eingetragenen Testaufruf ab. W2545 ergänzt ausschließlich diesen bereits beabsichtigten Offline-Aufruf in der exakten Befehlsliste; Vergleichsstrenge, übrige Befehle und Build-Sperre bleiben erhalten. Erneuter Hosted-Preflight sowie gezielte Audio-/Windows-Abnahmen bleiben erforderlich. Bericht: docs/verification/gold-wave2545-preflight-collector-contract.json.
